@@ -253,8 +253,19 @@ function CardStatusBadge({ info }: { info: CardStateInfo }) {
 // TranscriptPeek - Hover preview using real RichTranscriptView
 // ============================================================
 
-/** Global cache for fetched tail messages to avoid refetching on re-hover */
+/** Global cache for fetched tail messages to avoid refetching on re-hover.
+ * Entries are invalidated when new transcript events arrive for that session
+ * so the peek reflects the latest assistant turn instead of a stale snapshot
+ * from the first hover. */
 const tailMessageCache = new Map<string, TranscriptViewMessage[]>();
+
+if (typeof window !== 'undefined' && window.electronAPI?.on) {
+  window.electronAPI.on('transcript:event', (event: { sessionId?: string }) => {
+    if (event?.sessionId) {
+      tailMessageCache.delete(event.sessionId);
+    }
+  });
+}
 
 const PEEK_SETTINGS = {
   showToolCalls: true,
@@ -276,19 +287,15 @@ function TranscriptPeek({ sessionId, anchorRef, onClose }: TranscriptPeekProps) 
   const peekRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
 
-  // Fetch tail messages on mount
+  // Always refetch on mount so the peek reflects the latest turn. The cache
+  // still seeds initial state for an instant render; the fresh fetch
+  // overwrites it. Fetch a generous tail because the projector coalesces
+  // adjacent assistant_message events, and legacy codex-acp sessions stored
+  // one canonical event per streaming token before the writer started
+  // coalescing -- a small tail would only show the last few tokens of those
+  // sessions.
   useEffect(() => {
-    if (tailMessageCache.has(sessionId)) {
-      setMessages(tailMessageCache.get(sessionId)!);
-      setLoading(false);
-      return;
-    }
-
     let cancelled = false;
-    // Fetch a generous tail. The projector coalesces adjacent assistant_message
-    // events, and legacy codex-acp sessions stored one canonical event per
-    // streaming token before the writer started coalescing -- a small tail
-    // would only show the last few tokens of those sessions.
     window.electronAPI.ai
       .getTailMessages(sessionId, 100)
       .then((msgs: TranscriptViewMessage[]) => {
@@ -300,7 +307,7 @@ function TranscriptPeek({ sessionId, anchorRef, onClose }: TranscriptPeekProps) 
       })
       .catch(() => {
         if (!cancelled) {
-          setMessages([]);
+          setMessages((prev) => prev ?? []);
           setLoading(false);
         }
       });
