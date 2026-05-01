@@ -51,6 +51,7 @@ import {
   getDefaultAIModel,
   incrementCompletedSessionsWithTools,
   markCommunityPopupShown,
+  normalizeAIProviderOverrides,
   shouldShowCommunityPopup,
   wasCommunityPopupShownThisLaunch
 } from '../../utils/store';
@@ -3101,7 +3102,7 @@ export class AIService {
         return { success: false, error: 'workspacePath is required' };
       }
 
-      const normalizedOverrides = this.normalizeProjectOverrides(overrides);
+      const normalizedOverrides = normalizeAIProviderOverrides(overrides);
 
       // If overrides is null/undefined or empty, clear the overrides
       if (!normalizedOverrides || (Object.keys(normalizedOverrides).length === 0)) {
@@ -3434,39 +3435,6 @@ export class AIService {
     return normalizeCodexProviderConfig(
       stripTransientProviderFields(providerSettings)
     );
-  }
-
-  private normalizeProjectOverrides(overrides: any): any {
-    if (!overrides || typeof overrides !== 'object') {
-      return overrides;
-    }
-
-    const providers = overrides.providers;
-    if (!providers || typeof providers !== 'object') {
-      return overrides;
-    }
-
-    const normalizedProviders = normalizeCodexProviderConfig(providers);
-    const codexConfig = normalizedProviders['openai-codex'];
-
-    // Remove empty codex config
-    if (codexConfig && Object.keys(codexConfig).length === 0) {
-      const { 'openai-codex': _removed, ...restProviders } = normalizedProviders;
-      if (Object.keys(restProviders).length === 0) {
-        const { providers: _unusedProviders, ...restOverrides } = overrides;
-        // Strip the property when the caller passed it explicitly as `undefined`
-        // (e.g. clearing the override): the spread above still copies it as an
-        // own property, which would prevent the empty-overrides check below from
-        // collapsing the object back to `undefined`.
-        if (restOverrides.customClaudeCodePath === undefined) {
-          delete restOverrides.customClaudeCodePath;
-        }
-        return Object.keys(restOverrides).length > 0 ? restOverrides : undefined;
-      }
-      return { ...overrides, providers: restProviders };
-    }
-
-    return { ...overrides, providers: normalizedProviders };
   }
 
   private getProviderSetting(provider: string, key: string): any {

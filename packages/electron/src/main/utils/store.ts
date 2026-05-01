@@ -997,7 +997,7 @@ export function getEffectiveTrackerAutomation(
   };
 }
 
-function normalizeAIProviderOverrides(overrides: AIProviderOverrides | undefined): AIProviderOverrides | undefined {
+export function normalizeAIProviderOverrides(overrides: AIProviderOverrides | undefined): AIProviderOverrides | undefined {
   if (!overrides || typeof overrides !== 'object') {
     return overrides;
   }
@@ -1010,19 +1010,21 @@ function normalizeAIProviderOverrides(overrides: AIProviderOverrides | undefined
   const normalizedProviders = normalizeCodexProviderConfig(providers);
   const codexConfig = normalizedProviders['openai-codex'];
 
-  // Remove empty codex config
+  // Drop an empty codex config entry (artifact of UI clearing the override).
   if (codexConfig && Object.keys(codexConfig).length === 0) {
     const { 'openai-codex': _removed, ...restProviders } = normalizedProviders;
-    const nextProviders = Object.keys(restProviders).length > 0 ? restProviders : undefined;
-
-    if (!nextProviders && !overrides.defaultProvider && overrides.customClaudeCodePath === undefined) {
-      return undefined;
+    if (Object.keys(restProviders).length === 0) {
+      const { providers: _unusedProviders, ...restOverrides } = overrides;
+      // Spreading the input keeps own-but-undefined keys (e.g. an explicit
+      // `customClaudeCodePath: undefined` from a "clear override" save), which
+      // would prevent the empty-overrides check below from collapsing the
+      // object back to `undefined`.
+      if (restOverrides.customClaudeCodePath === undefined) {
+        delete restOverrides.customClaudeCodePath;
+      }
+      return Object.keys(restOverrides).length > 0 ? restOverrides : undefined;
     }
-
-    return {
-      ...overrides,
-      ...(nextProviders ? { providers: nextProviders } : {}),
-    };
+    return { ...overrides, providers: restProviders };
   }
 
   return {

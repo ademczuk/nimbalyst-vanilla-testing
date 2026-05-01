@@ -1,0 +1,102 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const { getAIProviderOverridesMock } = vi.hoisted(() => ({
+  getAIProviderOverridesMock: vi.fn(),
+}));
+
+vi.mock('../store', async () => {
+  const actual = await vi.importActual<typeof import('../store')>('../store');
+  return {
+    ...actual,
+    getAIProviderOverrides: getAIProviderOverridesMock,
+  };
+});
+
+import { mergeAISettings, GlobalAISettings } from '../aiSettingsMerge';
+import { normalizeAIProviderOverrides } from '../store';
+
+const baseGlobal: GlobalAISettings = {
+  defaultProvider: 'claude-code',
+  apiKeys: {},
+  providerSettings: {},
+  showToolCalls: false,
+  aiDebugLogging: false,
+  showPromptAdditions: false,
+  customClaudeCodePath: '/usr/local/bin/claude-global',
+};
+
+describe('mergeAISettings -- customClaudeCodePath', () => {
+  beforeEach(() => {
+    getAIProviderOverridesMock.mockReset();
+  });
+
+  it('inherits the global path when no project override is set', () => {
+    getAIProviderOverridesMock.mockReturnValue(undefined);
+
+    const effective = mergeAISettings(baseGlobal, '/workspace/a');
+
+    expect(effective.customClaudeCodePath).toBe('/usr/local/bin/claude-global');
+    expect(effective.overrides.customClaudeCodePath).toBe(false);
+  });
+
+  it('uses the project override when set, marking it as overridden', () => {
+    getAIProviderOverridesMock.mockReturnValue({
+      customClaudeCodePath: '/opt/project/claude',
+    });
+
+    const effective = mergeAISettings(baseGlobal, '/workspace/a');
+
+    expect(effective.customClaudeCodePath).toBe('/opt/project/claude');
+    expect(effective.overrides.customClaudeCodePath).toBe(true);
+  });
+
+  it('treats an empty-string override as an explicit override (use bundled SDK)', () => {
+    getAIProviderOverridesMock.mockReturnValue({
+      customClaudeCodePath: '',
+    });
+
+    const effective = mergeAISettings(baseGlobal, '/workspace/a');
+
+    expect(effective.customClaudeCodePath).toBe('');
+    expect(effective.overrides.customClaudeCodePath).toBe(true);
+  });
+
+  it('returns the global path unchanged when no workspace path is provided', () => {
+    const effective = mergeAISettings(baseGlobal, undefined);
+
+    expect(effective.customClaudeCodePath).toBe('/usr/local/bin/claude-global');
+    expect(effective.overrides.customClaudeCodePath).toBe(false);
+    expect(getAIProviderOverridesMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('normalizeAIProviderOverrides', () => {
+  it('collapses to undefined when only an empty codex provider is present', () => {
+    const result = normalizeAIProviderOverrides({
+      providers: { 'openai-codex': {} },
+    });
+
+    expect(result).toBeUndefined();
+  });
+
+  it('drops an empty codex entry while preserving other override fields', () => {
+    const result = normalizeAIProviderOverrides({
+      providers: { 'openai-codex': {} },
+      customClaudeCodePath: '/opt/project/claude',
+    });
+
+    expect(result).toEqual({ customClaudeCodePath: '/opt/project/claude' });
+    expect(result && 'providers' in result).toBe(false);
+  });
+
+  it('strips own-but-undefined customClaudeCodePath so an otherwise-empty override collapses', () => {
+    const input: Record<string, unknown> = {
+      providers: { 'openai-codex': {} },
+      customClaudeCodePath: undefined,
+    };
+
+    const result = normalizeAIProviderOverrides(input as any);
+
+    expect(result).toBeUndefined();
+  });
+});
