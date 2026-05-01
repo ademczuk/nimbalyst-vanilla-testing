@@ -49,6 +49,18 @@ export interface AssistantMessageDescriptor {
   text: string;
   mode?: 'agent' | 'planning';
   createdAt?: Date;
+  /**
+   * Extended-thinking output emitted by Claude Code (and other providers)
+   * alongside the regular `text` content. Stored on the assistant_message
+   * payload so we don't have to add a new event_type and migrate the
+   * `ai_transcript_events` CHECK constraint. Renderers should display this
+   * collapsed-by-default.
+   */
+  thinking?: string;
+  /** Signature accompanying the thinking block, when present. */
+  thinkingSignature?: string;
+  /** Per-turn model id (e.g. "claude-opus-4-7"). New in Claude Code 2.1.x. */
+  model?: string;
 }
 
 export interface SystemMessageDescriptor {

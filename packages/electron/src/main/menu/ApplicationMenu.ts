@@ -300,6 +300,19 @@ export async function createApplicationMenu() {
                     }
                 },
                 {
+                    id: 'file-import-claude-code-sessions',
+                    label: 'Import Claude Code Sessions...',
+                    click: async () => {
+                        AnalyticsService.getInstance().sendEvent('claude_code_import_dialog_opened', {
+                            source: 'file_menu',
+                        });
+                        const focused = getFocusedWindow();
+                        if (focused) {
+                            focused.webContents.send('show-session-import-dialog');
+                        }
+                    }
+                },
+                {
                     // Hidden menu item that handles Cmd+N dynamically based on current mode
                     id: 'file-new-dynamic',
                     label: 'New',
@@ -1359,15 +1372,6 @@ export async function createApplicationMenu() {
                                 const focused = getFocusedWindow();
                                 if (focused) {
                                     focused.webContents.send('show-figma-mcp-migration');
-                                }
-                            }
-                        },
-                        {
-                            label: 'Show Session Import Dialog',
-                            click: async () => {
-                                const focused = getFocusedWindow();
-                                if (focused) {
-                                    focused.webContents.send('show-session-import-dialog');
                                 }
                             }
                         },

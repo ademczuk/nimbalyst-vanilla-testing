@@ -39,6 +39,18 @@ export interface UserMessagePayload {
 
 export interface AssistantMessagePayload {
   mode: 'agent' | 'planning';
+  /**
+   * Extended-thinking output. Stored on the assistant_message payload so we
+   * can render it without introducing a new event_type (the
+   * `ai_transcript_events.event_type` CHECK constraint locks the allowed
+   * set). Renderers should treat this as collapsed-by-default secondary
+   * content.
+   */
+  thinking?: string;
+  /** Signature accompanying the thinking block. */
+  thinkingSignature?: string;
+  /** Per-turn model id (e.g. "claude-opus-4-7"). New in Claude Code 2.1.x. */
+  model?: string;
 }
 
 export interface SystemMessagePayload {

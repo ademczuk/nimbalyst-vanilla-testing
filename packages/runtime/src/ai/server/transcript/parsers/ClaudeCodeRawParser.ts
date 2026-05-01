@@ -179,6 +179,11 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
         }
         const parentToolUseId: string | undefined = parsed.parent_tool_use_id;
         const messageId: string | undefined = parsed.message.id;
+        // Per-turn model id (Claude Code 2.1.x). Threaded into every
+        // descriptor we emit for this turn so the renderer can label each
+        // assistant chunk with the model that produced it.
+        const turnModel: string | undefined =
+          typeof parsed.message.model === 'string' ? parsed.message.model : undefined;
 
         if (Array.isArray(parsed.message.content)) {
           for (const block of parsed.message.content) {
@@ -197,6 +202,28 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
                 type: 'assistant_message',
                 text: block.text,
                 createdAt: msg.createdAt,
+                ...(turnModel ? { model: turnModel } : {}),
+              });
+            } else if (block.type === 'thinking' && (block.thinking || block.text)) {
+              // Extended-thinking output. Persist as an assistant_message
+              // with empty text and the thinking content on the side-channel
+              // so we don't have to migrate the event_type CHECK constraint.
+              const thinkingText: string =
+                typeof block.thinking === 'string'
+                  ? block.thinking
+                  : typeof block.text === 'string'
+                    ? block.text
+                    : '';
+              if (!thinkingText) continue;
+              const thinkingSignature: string | undefined =
+                typeof block.signature === 'string' ? block.signature : undefined;
+              descriptors.push({
+                type: 'assistant_message',
+                text: '',
+                thinking: thinkingText,
+                ...(thinkingSignature ? { thinkingSignature } : {}),
+                ...(turnModel ? { model: turnModel } : {}),
+                createdAt: msg.createdAt,
               });
             } else if (block.type === 'tool_use') {
               const toolDescriptors = this.parseToolUse(
@@ -211,6 +238,20 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
               if (result) descriptors.push(result);
             }
           }
+        }
+      } else if (parsed.type === 'attachment' && parsed.attachment) {
+        // Mid-session context delta (deferred_tools_delta, mcp_instructions_delta,
+        // skill_listing). Render as a status system_message with a deterministic
+        // summary so the transcript faithfully shows when context changed.
+        const summary = summariseAttachment(parsed.attachment);
+        if (summary) {
+          descriptors.push({
+            type: 'system_message',
+            text: summary,
+            systemType: 'status',
+            searchable: false,
+            createdAt: msg.createdAt,
+          });
         }
       } else if (parsed.type === 'error' && parsed.error) {
         const errorContent =
@@ -308,11 +349,18 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
       const teamName = typeof args.team_name === 'string' ? args.team_name : null;
       const teammateMode = typeof args.mode === 'string' ? args.mode : null;
       const isBackground = args.run_in_background === true;
+      // Claude Code 2.1.x carries the actual agent type on the `subagent_type`
+      // arg (e.g. "Explore", "general-purpose"). Fall back to the tool name
+      // ("Agent"/"Task") when it's missing for older runs.
+      const agentType =
+        typeof args.subagent_type === 'string' && args.subagent_type
+          ? args.subagent_type
+          : toolName;
 
       descriptors.push({
         type: 'subagent_started',
         subagentId: toolId,
-        agentType: toolName,
+        agentType,
         teammateName,
         teamName,
         teammateMode,
@@ -449,5 +497,32 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
   private extractReminderKind(metadata?: Record<string, unknown>): string | undefined {
     const kind = metadata?.reminderKind;
     return typeof kind === 'string' ? kind : undefined;
+  }
+}
+
+/**
+ * Render a Claude Code 2.1.x `attachment` payload as a one-line status
+ * message. Each attachment subtype has a deterministic summary so the
+ * transcript can be diffed reliably across imports.
+ */
+function summariseAttachment(attachment: any): string | null {
+  if (!attachment || typeof attachment !== 'object') return null;
+  switch (attachment.type) {
+    case 'deferred_tools_delta': {
+      const added = Array.isArray(attachment.addedNames) ? attachment.addedNames : [];
+      const removed = Array.isArray(attachment.removedNames) ? attachment.removedNames : [];
+      const parts: string[] = [];
+      if (added.length) parts.push(`Tools added: ${added.join(', ')}`);
+      if (removed.length) parts.push(`Tools removed: ${removed.join(', ')}`);
+      return parts.length ? parts.join(' · ') : null;
+    }
+    case 'mcp_instructions_delta': {
+      const added = Array.isArray(attachment.addedNames) ? attachment.addedNames : [];
+      return added.length ? `MCP instructions added: ${added.join(', ')}` : null;
+    }
+    case 'skill_listing':
+      return 'Skills list refreshed';
+    default:
+      return null;
   }
 }

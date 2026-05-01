@@ -39,6 +39,7 @@ export const MessageSegment: React.FC<MessageSegmentProps> = ({
   isUser,
   isCollapsed = false,
   showToolCalls,
+  showThinking,
   expandedTools,
   onToggleToolExpand,
   documentContext,
@@ -146,6 +147,26 @@ export const MessageSegment: React.FC<MessageSegmentProps> = ({
     // Including any whitespace before the tag (e.g., newlines)
     // [\s\S]*? matches any character including newlines (non-greedy)
     return content.replace(/\s*<NIMBALYST_SYSTEM_MESSAGE>[\s\S]*?<\/NIMBALYST_SYSTEM_MESSAGE>/g, '').trim();
+  };
+
+  // Render extended-thinking content as a collapsed-by-default block.
+  // Persisted on the assistant_message payload (see AssistantMessagePayload.thinking).
+  const renderThinking = () => {
+    if (isUser) return null;
+    if (!showThinking) return null;
+    const thinking = (message as TranscriptViewMessage).thinking;
+    if (!thinking || !thinking.trim()) return null;
+    return (
+      <details className="rich-transcript-thinking rounded-md border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)]">
+        <summary className="flex items-center gap-1.5 px-2 py-1 text-xs text-[var(--nim-text-muted)] cursor-pointer select-none">
+          <MaterialSymbol icon="psychology" size={14} />
+          <span>Thinking</span>
+        </summary>
+        <div className="px-2 pb-2 pt-1 text-xs text-[var(--nim-text-muted)] whitespace-pre-wrap">
+          {thinking}
+        </div>
+      </details>
+    );
   };
 
   // Render text content
@@ -555,6 +576,7 @@ export const MessageSegment: React.FC<MessageSegmentProps> = ({
   return (
     <div className="flex flex-col gap-2">
       {renderAttachments()}
+      {renderThinking()}
       {renderTextContent()}
       {renderToolCall()}
       {renderEdits()}

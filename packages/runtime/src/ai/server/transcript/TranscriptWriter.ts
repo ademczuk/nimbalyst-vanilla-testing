@@ -78,16 +78,27 @@ export class TranscriptWriter {
     options?: {
       mode?: 'agent' | 'planning';
       createdAt?: Date;
+      thinking?: string;
+      thinkingSignature?: string;
+      model?: string;
     },
   ): Promise<TranscriptEvent> {
     const mode = options?.mode ?? 'agent';
+    const hasExtras =
+      options?.thinking !== undefined ||
+      options?.thinkingSignature !== undefined ||
+      options?.model !== undefined;
 
     // Coalesce streaming chunks: if the previous event in this session is
     // also an assistant_message with the same mode/subagent, append to it
     // rather than inserting a new row. ACP and similar streaming protocols
     // emit one chunk per token; without this we'd persist thousands of
     // single-token events per session.
-    const last = await this.loadLastEvent(sessionId);
+    //
+    // Skip coalescing when the new chunk carries thinking/model metadata --
+    // those need to land on their own event so the renderer can place them
+    // in the correct part of the turn.
+    const last = hasExtras ? null : await this.loadLastEvent(sessionId);
     if (
       last &&
       last.eventType === 'assistant_message' &&
@@ -101,7 +112,14 @@ export class TranscriptWriter {
       return refreshed ?? this.toTranscriptEvent(sessionId, last);
     }
 
-    const payload: AssistantMessagePayload = { mode };
+    const payload: AssistantMessagePayload = {
+      mode,
+      ...(options?.thinking !== undefined ? { thinking: options.thinking } : {}),
+      ...(options?.thinkingSignature !== undefined
+        ? { thinkingSignature: options.thinkingSignature }
+        : {}),
+      ...(options?.model !== undefined ? { model: options.model } : {}),
+    };
 
     return this.insertEvent(sessionId, {
       eventType: 'assistant_message',

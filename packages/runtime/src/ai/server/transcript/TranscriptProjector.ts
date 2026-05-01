@@ -62,6 +62,11 @@ export interface TranscriptViewMessage {
   systemMessage?: SystemMessagePayload;
   subagentId: string | null;
 
+  /** Extended-thinking content rendered by the assistant message UI as a collapsed-by-default block. */
+  thinking?: string;
+  /** Per-turn model id (Claude Code 2.1.x). */
+  model?: string;
+
   // -- Optimistic/live UI state (not from database) --
   /** True when this message represents an error (auth failure, API error, etc.) */
   isError?: boolean;
@@ -168,7 +173,11 @@ function coalesceAdjacentAssistantMessages(
       previous.type === 'assistant_message' &&
       message.type === 'assistant_message' &&
       previous.subagentId === message.subagentId &&
-      previous.mode === message.mode
+      previous.mode === message.mode &&
+      // Don't fuse a thinking-only message into a regular text message --
+      // the renderer needs them as distinct UI blocks.
+      previous.thinking === undefined &&
+      message.thinking === undefined
     ) {
       previous.text = `${previous.text ?? ''}${message.text ?? ''}`;
       continue;
@@ -206,6 +215,8 @@ function projectEvent(
       const p = event.payload as unknown as AssistantMessagePayload;
       base.text = event.searchableText ?? undefined;
       base.mode = p.mode;
+      if (p.thinking !== undefined) base.thinking = p.thinking;
+      if (p.model !== undefined) base.model = p.model;
       break;
     }
     case 'system_message': {

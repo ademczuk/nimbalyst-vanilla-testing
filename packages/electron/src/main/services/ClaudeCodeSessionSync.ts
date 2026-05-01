@@ -29,14 +29,115 @@ export interface SyncResult {
   messagesAdded: number;
 }
 
+/** See ClaudeCodeSessionScanner.getClaudeProjectsDir for override semantics. */
+function projectsDir(): string {
+  return process.env.NIMBALYST_CLAUDE_PROJECTS_DIR || path.join(homedir(), '.claude', 'projects');
+}
+
 /**
  * Get the full path to a session JSONL file
  */
 function getSessionFilePath(workspacePath: string, sessionId: string): string {
-  // Escape workspace path for Claude Code directory format
   const escapedPath = workspacePath.replace(/\//g, '-');
-  const projectsDir = path.join(homedir(), '.claude', 'projects');
-  return path.join(projectsDir, escapedPath, `${sessionId}.jsonl`);
+  return path.join(projectsDir(), escapedPath, `${sessionId}.jsonl`);
+}
+
+/**
+ * Get the per-session sidecar directory for subagent JSONLs and externalised
+ * tool results. Lives next to the main `<sessionId>.jsonl`.
+ */
+function getSessionSidecarDir(workspacePath: string, sessionId: string): string {
+  const escapedPath = workspacePath.replace(/\//g, '-');
+  return path.join(projectsDir(), escapedPath, sessionId);
+}
+
+interface SubagentSidecar {
+  /** Agent id from the file name (matches the spawning Task/Agent tool_use.id). */
+  agentId: string;
+  /** Parsed JSONL entries. */
+  entries: ClaudeCodeEntry[];
+  /** Merged contents of `agent-<id>.meta.json` (agentType, description). */
+  meta: { agentType?: string; description?: string } | null;
+}
+
+/**
+ * Read every subagent JSONL under `<sessionId>/subagents/`. Returns one
+ * record per file with the agent id parsed out of the file name.
+ */
+async function readSubagentSidecars(
+  workspacePath: string,
+  sessionId: string,
+): Promise<SubagentSidecar[]> {
+  const subagentsDir = path.join(getSessionSidecarDir(workspacePath, sessionId), 'subagents');
+  let dirents: import('fs').Dirent[];
+  try {
+    dirents = await fs.readdir(subagentsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const jsonlFiles = dirents
+    .filter(d => d.isFile() && d.name.startsWith('agent-') && d.name.endsWith('.jsonl'));
+
+  const sidecars: SubagentSidecar[] = [];
+  for (const dirent of jsonlFiles) {
+    const filePath = path.join(subagentsDir, dirent.name);
+    const baseName = dirent.name.slice('agent-'.length, -'.jsonl'.length);
+    // Compaction subagent files are named `agent-acompact-<hash>.jsonl`. The
+    // canonical parser treats these like any other subagent.
+    const agentId = baseName;
+
+    const entries = await parseSessionFile(filePath).catch(() => [] as ClaudeCodeEntry[]);
+    const metaPath = path.join(subagentsDir, `agent-${agentId}.meta.json`);
+    let meta: SubagentSidecar['meta'] = null;
+    try {
+      const raw = await fs.readFile(metaPath, 'utf-8');
+      meta = JSON.parse(raw);
+    } catch {
+      // meta.json is optional
+    }
+
+    sidecars.push({ agentId, entries, meta });
+  }
+  return sidecars;
+}
+
+/**
+ * Convert subagent JSONL entries into raw messages on the parent session.
+ *
+ * Each emitted message sets `parent_tool_use_id = <agentId>` so the live
+ * `ClaudeCodeRawParser` resolves them via its existing
+ * `context.hasSubagent(parentToolUseId)` path. This means subagent messages
+ * appear under the same `subagent_id` canonical event as the spawning
+ * `Agent`/`Task` tool call -- matching how live runs are stored today.
+ */
+function buildSubagentMessages(
+  sidecars: SubagentSidecar[],
+): Array<{ direction: 'input' | 'output'; content: string; metadata: any; timestamp: string }> {
+  const out: Array<{ direction: 'input' | 'output'; content: string; metadata: any; timestamp: string }> = [];
+
+  for (const sidecar of sidecars) {
+    for (const entry of sidecar.entries) {
+      const msg = entryToMessage(entry);
+      if (!msg) continue;
+
+      // Override the subagent linkage. We rewrite the JSON content payload to
+      // include `parent_tool_use_id = sidecar.agentId` so the canonical
+      // parser routes downstream events under that subagent.
+      try {
+        const payload = JSON.parse(msg.content);
+        payload.parent_tool_use_id = sidecar.agentId;
+        msg.content = JSON.stringify(payload);
+      } catch {
+        // If the content isn't JSON for some reason, drop it -- the parser
+        // can't make a useful canonical event from it without the linkage.
+        continue;
+      }
+      out.push(msg);
+    }
+  }
+
+  return out;
 }
 
 /**
@@ -65,6 +166,54 @@ async function parseSessionFile(filePath: string): Promise<ClaudeCodeEntry[]> {
 }
 
 /**
+ * Claude Code 2.1.x stashes large tool results in
+ * `<sessionId>/tool-results/<id>.txt` and inlines a `<persisted-output>`
+ * marker into the JSONL with a path back to the file. If we don't load the
+ * external file the imported transcript shows only the 2KB preview.
+ *
+ * This walks every `tool_result` block on the entry, detects the marker,
+ * and rewrites the block's content with the full file contents.
+ */
+async function inlinePersistedOutputs(entry: ClaudeCodeEntry): Promise<void> {
+  const message = entry.message;
+  if (!message) return;
+  const content = message.content;
+  if (!Array.isArray(content)) return;
+
+  for (const block of content) {
+    if (!block || block.type !== 'tool_result') continue;
+
+    if (typeof block.content === 'string') {
+      const replacement = await loadPersistedOutput(block.content);
+      if (replacement !== null) block.content = replacement;
+    } else if (Array.isArray(block.content)) {
+      for (const inner of block.content) {
+        if (inner && inner.type === 'text' && typeof inner.text === 'string') {
+          const replacement = await loadPersistedOutput(inner.text);
+          if (replacement !== null) inner.text = replacement;
+        }
+      }
+    }
+  }
+}
+
+const PERSISTED_OUTPUT_PATTERN = /<persisted-output>[\s\S]*?Full output saved to:\s*(.+?)\s*\n[\s\S]*?<\/persisted-output>/;
+
+async function loadPersistedOutput(text: string): Promise<string | null> {
+  const match = text.match(PERSISTED_OUTPUT_PATTERN);
+  if (!match) return null;
+  const externalPath = match[1].trim();
+  if (!externalPath || !path.isAbsolute(externalPath)) return null;
+  try {
+    const data = await fs.readFile(externalPath, 'utf-8');
+    return data;
+  } catch (error: any) {
+    log.warn(`Failed to inline persisted-output from ${externalPath}: ${error?.message ?? error}`);
+    return null;
+  }
+}
+
+/**
  * Convert Claude Code JSONL entry to Nimbalyst message format
  *
  * IMPORTANT: This must produce the SAME format as ClaudeCodeProvider.logAgentMessage()
@@ -75,34 +224,59 @@ async function parseSessionFile(filePath: string): Promise<ClaudeCodeEntry[]> {
  * - Output (text): { type: "text", content: "..." }
  * - Output (assistant): { type: "assistant", message: { content: [...], ... } }
  * - Output (user/tool result): { type: "user", message: { role: "user", content: [...] }, ... }
+ * - Output (attachment): { type: "attachment", attachment: {...}, uuid, session_id }
  */
 function entryToMessage(entry: ClaudeCodeEntry): { direction: 'input' | 'output'; content: string; metadata: any; timestamp: string } | null {
-  // Skip queue-operation entries (these are internal SDK bookkeeping)
-  if ((entry as any).type === 'queue-operation') {
-    return null;
+  // Named branches for non-conversational entry types. Each is handled
+  // explicitly so future format changes are easy to spot.
+  switch (entry.type) {
+    case 'queue-operation':
+      // Internal SDK enqueue/dequeue bookkeeping. No transcript value.
+      return null;
+    case 'last-prompt':
+      // Rolling bookmark of the most recent user prompt. Already covered by
+      // the actual user-message entry; importing it would duplicate.
+      return null;
+    case 'file-history-snapshot':
+      // AI file-edit snapshot. Belongs to the file-history pipeline, not the
+      // chat transcript.
+      return null;
+    case 'summary':
+      // LLM-generated session summary. Used as a title source by the scanner;
+      // not surfaced as a transcript message.
+      return null;
+    case 'attachment':
+      return attachmentToMessage(entry);
+    case 'system':
+      // Standalone system messages from the CLI -- preserved as raw output
+      // so the canonical parser can render them as system_message events.
+      return systemEntryToMessage(entry);
+    case 'user':
+    case 'assistant':
+      break; // fall through to conversational handling below
+    default:
+      return null;
   }
 
   // Skip meta messages (command outputs, caveats, etc.) - these clutter the transcript
-  if ((entry as any).isMeta) {
+  if (entry.isMeta) {
     return null;
   }
 
-  // Skip system/summary/snapshot entries - only process user and assistant messages
-  if (entry.type !== 'user' && entry.type !== 'assistant') {
-    return null;
-  }
+  const timestamp = entry.timestamp ?? new Date().toISOString();
 
-  // Check if this is a user message that's actually input (first message without parentUuid)
-  // vs a tool result response (has parentUuid or contains tool_result)
-  const isFirstUserMessage = entry.type === 'user' &&
-    !entry.parentUuid &&
-    entry.message?.content &&
-    (typeof entry.message.content === 'string' ||
-     (Array.isArray(entry.message.content) &&
-      entry.message.content.some((p: any) => p.type === 'text') &&
-      !entry.message.content.some((p: any) => p.type === 'tool_result')));
+  // Identify a "real" user prompt by content shape, not by parentUuid.
+  // Claude Code 2.1.x links every entry to its predecessor via parentUuid,
+  // so prompts after the first turn carry one too. A user entry is a prompt
+  // when its content is text-only (string or text-only array, no
+  // tool_result blocks) AND it doesn't look like CLI bookkeeping
+  // (command name/output/caveat/system-reminder wrappers).
+  const isUserPromptInput = entry.type === 'user' &&
+    !!entry.message?.content &&
+    isPlainTextContent(entry.message.content) &&
+    !isCliBookkeepingText(extractTextContent(entry.message.content));
 
-  if (isFirstUserMessage) {
+  if (isUserPromptInput) {
     // This is a user INPUT message - format like ClaudeCodeProvider does for input
     // Extract the prompt text
     let promptText = '';
@@ -129,7 +303,7 @@ function entryToMessage(entry: ClaudeCodeEntry): { direction: 'input' | 'output'
           cwd: entry.cwd,
         }
       }),
-      timestamp: entry.timestamp,
+      timestamp,
       metadata: null,
     };
   }
@@ -153,7 +327,7 @@ function entryToMessage(entry: ClaudeCodeEntry): { direction: 'input' | 'output'
           uuid: entry.uuid,
           tool_use_result: (entry as any).toolUseResult,
         }),
-        timestamp: entry.timestamp,
+        timestamp,
         metadata: null,
       };
     }
@@ -167,7 +341,7 @@ function entryToMessage(entry: ClaudeCodeEntry): { direction: 'input' | 'output'
         session_id: entry.sessionId,
         uuid: entry.uuid,
       }),
-      timestamp: entry.timestamp,
+      timestamp,
       metadata: null,
     };
   }
@@ -190,12 +364,113 @@ function entryToMessage(entry: ClaudeCodeEntry): { direction: 'input' | 'output'
         session_id: entry.sessionId,
         uuid: entry.uuid,
       }),
-      timestamp: entry.timestamp,
+      timestamp,
       metadata: null,
     };
   }
 
   return null;
+}
+
+/**
+ * A user entry is a real prompt when its content is text-only -- either a
+ * plain string or an array whose blocks are all text. Anything carrying a
+ * `tool_result` block is a tool response, not a prompt.
+ */
+function isPlainTextContent(content: unknown): boolean {
+  if (typeof content === 'string') return content.trim().length > 0;
+  if (Array.isArray(content)) {
+    if (content.length === 0) return false;
+    if (content.some((b: any) => b?.type === 'tool_result')) return false;
+    return content.every((b: any) => b?.type === 'text');
+  }
+  return false;
+}
+
+function extractTextContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
+      .map((b: any) => b.text)
+      .join('\n');
+  }
+  return '';
+}
+
+/**
+ * Detect CLI bookkeeping wrapped inside user-role messages: slash commands
+ * (`<command-name>`, `<command-message>`), local command stdout, caveats,
+ * and system reminders. These look like user input but are CLI-generated
+ * metadata, so we route them through the system_message canonical path
+ * instead of the prompt path.
+ */
+function isCliBookkeepingText(text: string): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('<command-name>') ||
+    lower.includes('<command-message>') ||
+    lower.includes('<local-command-stdout>') ||
+    lower.includes('<local-command-caveat>') ||
+    lower.includes('<system-reminder>') ||
+    lower.includes('<nimbalyst_system_message>') ||
+    lower.includes('caveat: the messages below were generated')
+  );
+}
+
+/**
+ * Translate an `attachment` entry (mid-session context delta) into a raw
+ * output message. The canonical parser turns these into `system_message`
+ * events with a deterministic summary -- see ClaudeCodeRawParser.
+ */
+function attachmentToMessage(
+  entry: ClaudeCodeEntry,
+): { direction: 'output'; content: string; metadata: any; timestamp: string } | null {
+  if (!entry.attachment) return null;
+  return {
+    direction: 'output',
+    content: JSON.stringify({
+      type: 'attachment',
+      attachment: entry.attachment,
+      session_id: entry.sessionId,
+      uuid: entry.uuid,
+    }),
+    timestamp: entry.timestamp ?? new Date().toISOString(),
+    metadata: null,
+  };
+}
+
+/**
+ * Translate a top-level `system` entry into a raw output message that the
+ * canonical parser renders as a system_message.
+ */
+function systemEntryToMessage(
+  entry: ClaudeCodeEntry,
+): { direction: 'output'; content: string; metadata: any; timestamp: string } | null {
+  if (!entry.message) return null;
+  const content = entry.message.content;
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content
+            .filter((part: any) => part?.type === 'text' && typeof part.text === 'string')
+            .map((part: any) => part.text)
+            .join('\n')
+        : '';
+  if (!text.trim()) return null;
+  return {
+    direction: 'output',
+    content: JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: text },
+      session_id: entry.sessionId,
+      uuid: entry.uuid,
+    }),
+    timestamp: entry.timestamp ?? new Date().toISOString(),
+    metadata: null,
+  };
 }
 
 /**
@@ -240,7 +515,15 @@ export async function checkSyncStatus(
     const messages = await messagesStore.list(existingSession.id);
     const dbMessageCount = messages.length;
 
-    if (dbMessageCount === metadata.messageCount) {
+    // Compare per-session timestamps rather than entry counts. The 2.1.x JSONL
+    // emits non-conversational entries (attachments, queue-operations, etc.)
+    // that we deliberately skip during sync, so message counts will not match
+    // between DB and file even when fully up-to-date.
+    const fileUpdatedAt = metadata.updatedAt;
+    const dbUpdatedAt = existingSession.updatedAt ?? 0;
+    const TOLERANCE_MS = 1000;
+
+    if (fileUpdatedAt <= dbUpdatedAt + TOLERANCE_MS) {
       return {
         sessionId: metadata.sessionId,
         status: 'up-to-date',
@@ -278,6 +561,31 @@ export async function syncSession(
     // Parse session file
     const entries = await parseSessionFile(filePath);
 
+    // Inline any externalised tool-result payloads (Claude Code 2.1.x stores
+    // large tool outputs in <sessionId>/tool-results/ and references them
+    // via <persisted-output> markers in the JSONL).
+    if (metadata.hasExternalToolResults) {
+      await Promise.all(entries.map(inlinePersistedOutputs));
+    }
+
+    // Read any subagent sidecar JSONLs. Each one becomes a stream of raw
+    // messages on the parent session, tagged with `parent_tool_use_id` so
+    // the canonical parser routes them under the existing subagent_id path.
+    const subagentSidecars = metadata.hasSubagents
+      ? await readSubagentSidecars(metadata.workspacePath, metadata.sessionId)
+      : [];
+    if (subagentSidecars.length > 0) {
+      log.debug(
+        `Session ${metadata.sessionId}: loaded ${subagentSidecars.length} subagent sidecar JSONL(s)`,
+      );
+      // Inline persisted-output markers in subagent entries too.
+      if (metadata.hasExternalToolResults) {
+        for (const sidecar of subagentSidecars) {
+          await Promise.all(sidecar.entries.map(inlinePersistedOutputs));
+        }
+      }
+    }
+
     // Check if session exists
     const existingSession = await sessionStore.get(metadata.sessionId);
     const existingMessages = existingSession ? await messagesStore.list(metadata.sessionId) : [];
@@ -314,11 +622,18 @@ export async function syncSession(
       log.info(`Updated session ${metadata.sessionId} with token usage: ${metadata.tokenUsage.totalTokens} total`);
     }
 
-    // Convert entries to messages and sort by timestamp
-    const allMessages = entries
+    // Convert main-session entries plus subagent sidecar entries into raw
+    // messages, then sort the merged set by timestamp so subagent activity
+    // interleaves with the parent in the order it actually happened.
+    const mainMessages = entries
       .map(entryToMessage)
-      .filter((msg): msg is NonNullable<typeof msg> => msg !== null)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      .filter((msg): msg is NonNullable<typeof msg> => msg !== null);
+
+    const subagentMessages = buildSubagentMessages(subagentSidecars);
+
+    const allMessages = [...mainMessages, ...subagentMessages].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    );
 
     // Import messages (skip already imported ones)
     let messagesAdded = 0;

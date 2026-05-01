@@ -173,6 +173,13 @@ All events include `$session_id` property automatically. Dev users are marked wi
 | --- | --- | --- | --- | --- | --- |
 | `session_exported` | `ExportHandlers.ts` | User exports a session as HTML file or copies to clipboard | `format` (html/clipboard/pdf) | (pending release as of c28302ea) |  |
 
+### Claude Code Session Import
+
+| Event Name | File(s) | Trigger | Properties | First Added (Public) | Significant Changes |
+| --- | --- | --- | --- | --- | --- |
+| `claude_code_import_dialog_opened` | `ApplicationMenu.ts` | User opens the Import Claude Code Sessions dialog from the File menu | `source` (file_menu) | (pending release) |  |
+| `claude_code_import_completed` | `ClaudeCodeSessionHandlers.ts` | Sync of selected Claude Code sessions finishes | `successCount`<br/>`failureCount`<br/>`messagesAdded`<br/>`sessionsRequested` | (pending release) |  |
+
 ### Feature Toggles
 
 | Event Name | File(s) | Trigger | Properties | First Added (Public) | Significant Changes |

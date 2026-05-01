@@ -7,9 +7,9 @@ import { safeHandle, removeHandler } from '../utils/ipcRegistry';
 import { AISessionsRepository, AgentMessagesRepository } from '@nimbalyst/runtime';
 import {
   scanAllSessions,
-  isSessionImportEnabled,
   type SessionMetadata,
 } from '../services/ClaudeCodeSessionScanner';
+import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import {
   checkSyncStatus,
   syncSession,
@@ -54,14 +54,6 @@ export function initializeClaudeCodeSessionHandlers() {
   // Scan for Claude Code sessions
   safeHandle('claude-code:scan-sessions', async (event, { workspacePath }: { workspacePath?: string }) => {
     try {
-      // Check if feature is enabled (dev mode only for now)
-      if (!isSessionImportEnabled()) {
-        return {
-          success: false,
-          error: 'Session import is only available in development mode',
-        };
-      }
-
       // Scan filesystem for sessions (optionally filtered by workspace)
       const sessionMetadata = await scanAllSessions(workspacePath);
 
@@ -152,13 +144,6 @@ export function initializeClaudeCodeSessionHandlers() {
   // Sync specific sessions
   safeHandle('claude-code:sync-sessions', async (event, { sessionIds, workspacePath }: { sessionIds: string[]; workspacePath?: string }) => {
     try {
-      if (!isSessionImportEnabled()) {
-        return {
-          success: false,
-          error: 'Session import is only available in development mode',
-        };
-      }
-
       log.info(`Syncing ${sessionIds.length} sessions...`);
 
       // Get store references from repositories
@@ -189,8 +174,16 @@ export function initializeClaudeCodeSessionHandlers() {
 
       const successCount = results.filter(r => r.success).length;
       const failureCount = results.length - successCount;
+      const totalMessagesAdded = results.reduce((sum, r) => sum + (r.messagesAdded ?? 0), 0);
 
       log.info(`Sync complete: ${successCount} succeeded, ${failureCount} failed`);
+
+      AnalyticsService.getInstance().sendEvent('claude_code_import_completed', {
+        successCount,
+        failureCount,
+        messagesAdded: totalMessagesAdded,
+        sessionsRequested: sessionIds.length,
+      });
 
       return {
         success: true,

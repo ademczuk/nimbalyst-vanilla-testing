@@ -23,30 +23,125 @@ export interface SessionMetadata {
   tokenUsage: {
     inputTokens: number;
     outputTokens: number;
+    cacheCreationInputTokens: number;
+    cacheReadInputTokens: number;
     totalTokens: number;
     categories?: TokenUsageCategory[];
   };
   firstMessage: string | null;
   hasErrors: boolean;
+  /** Whether the session has an `<sessionId>/subagents/` sidecar dir. */
+  hasSubagents: boolean;
+  /** Whether the session has an `<sessionId>/tool-results/` sidecar dir. */
+  hasExternalToolResults: boolean;
+  /** CLI-side codename like "agile-cooking-gosling" (Claude Code 2.1.x). */
+  slug: string | null;
+}
+
+/**
+ * Entry types in a Claude Code JSONL file.
+ *
+ * Conversational entries (`user`, `assistant`) carry a `message` object.
+ * Several non-conversational entry types ride alongside them:
+ *
+ * - `attachment` -- mid-session context delta (tools added, MCP instructions,
+ *   skill listing). Carries an `attachment` object instead of a `message`.
+ * - `last-prompt` -- rolling bookmark of the most recent user prompt.
+ * - `queue-operation` -- internal SDK enqueue/dequeue tracking.
+ * - `file-history-snapshot` -- AI file-edit snapshots.
+ * - `summary` -- LLM-generated session summary (legacy title source).
+ * - `system` -- system messages from the CLI.
+ */
+export type ClaudeCodeEntryType =
+  | 'user'
+  | 'assistant'
+  | 'summary'
+  | 'system'
+  | 'attachment'
+  | 'last-prompt'
+  | 'queue-operation'
+  | 'file-history-snapshot';
+
+export interface ClaudeCodeMessageUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  /** New in Claude Code 2.1.x. */
+  server_tool_use?: {
+    web_search_requests?: number;
+    web_fetch_requests?: number;
+  };
+  service_tier?: string;
+  cache_creation?: {
+    ephemeral_5m_input_tokens?: number;
+    ephemeral_1h_input_tokens?: number;
+  };
+  inference_geo?: string;
+  iterations?: any[];
+  speed?: string;
+}
+
+export interface ClaudeCodeMessage {
+  id?: string;
+  role?: string;
+  content?: any;
+  /** Per-turn model id (e.g. "claude-opus-4-7"). New in 2.1.x. */
+  model?: string;
+  stop_reason?: string;
+  stop_sequence?: string | null;
+  stop_details?: any;
+  usage?: ClaudeCodeMessageUsage;
+}
+
+export interface ClaudeCodeAttachment {
+  type: 'deferred_tools_delta' | 'mcp_instructions_delta' | 'skill_listing' | string;
+  addedNames?: string[];
+  removedNames?: string[];
+  addedBlocks?: string[];
+  content?: string;
+  [key: string]: any;
 }
 
 export interface ClaudeCodeEntry {
-  uuid: string;
-  parentUuid?: string;
-  sessionId: string;
-  timestamp: string;
-  type: 'user' | 'assistant' | 'summary' | 'system' | 'file-history-snapshot';
-  message?: {
-    id?: string;
-    role?: string;
-    content?: any;
-    usage?: {
-      input_tokens?: number;
-      output_tokens?: number;
-      cache_creation_input_tokens?: number;
-      cache_read_input_tokens?: number;
-    };
-  };
+  uuid?: string;
+  parentUuid?: string | null;
+  sessionId?: string;
+  timestamp?: string;
+  type: ClaudeCodeEntryType;
+  message?: ClaudeCodeMessage;
+  /** True for entries belonging to subagent JSONL files. */
+  isSidechain?: boolean;
+  /** Mid-session context delta (only on `type: 'attachment'`). */
+  attachment?: ClaudeCodeAttachment;
+  /** Most recent user prompt (only on `type: 'last-prompt'`). */
+  lastPrompt?: string;
+  /** SDK queue-operation kind (only on `type: 'queue-operation'`). */
+  operation?: 'enqueue' | 'dequeue' | string;
+  /** Tool-result payload that supplements `message.content` tool_result blocks. */
+  toolUseResult?: any;
+  /** Subagent id (only on entries inside `subagents/agent-<id>.jsonl`). */
+  agentId?: string;
+  /** Prompt id (only on subagent entries). */
+  promptId?: string;
+  /** Origin: "external", "internal", etc. */
+  userType?: string;
+  /** SDK entrypoint: "sdk-ts", "cli", etc. */
+  entrypoint?: string;
+  /** SDK request id on assistant messages. */
+  requestId?: string;
+  /** Links a tool-result entry back to the assistant turn that produced it. */
+  sourceToolAssistantUUID?: string;
+  /** Human-readable session codename. */
+  slug?: string;
+  /** LLM-generated session title (preferred over legacy `summary` entries). */
+  aiTitle?: string;
+  /** Used by `file-history-snapshot` entries. */
+  snapshot?: any;
+  isSnapshotUpdate?: boolean;
+  messageId?: string;
+  /** Marks a message as a meta entry (command output, caveat). */
+  isMeta?: boolean;
   cwd?: string;
   gitBranch?: string;
   version?: string;
@@ -68,9 +163,15 @@ export function normalizeWorkspacePath(escapedPath: string): string {
 }
 
 /**
- * Get the ~/.claude/projects directory path
+ * Get the directory that holds Claude Code project sidecars.
+ *
+ * Defaults to `~/.claude/projects`. Tests override the location by setting
+ * `NIMBALYST_CLAUDE_PROJECTS_DIR` so they can run against a fixture
+ * workspace instead of the user's real Claude Code data.
  */
 function getClaudeProjectsDir(): string {
+  const override = process.env.NIMBALYST_CLAUDE_PROJECTS_DIR;
+  if (override) return override;
   return path.join(homedir(), '.claude', 'projects');
 }
 
@@ -105,7 +206,11 @@ export async function scanWorkspaceDirectories(): Promise<string[]> {
 }
 
 /**
- * Get all session JSONL files in a workspace directory
+ * Get all session JSONL files in a workspace directory.
+ *
+ * Returns only top-level main-conversation JSONL files. Per-session sidecar
+ * data (subagents, tool-results) lives in `<sessionId>/` subdirectories and
+ * is loaded on-demand during sync, not during the metadata scan.
  */
 async function getSessionFiles(workspaceDir: string): Promise<string[]> {
   const projectsDir = getClaudeProjectsDir();
@@ -117,12 +222,42 @@ async function getSessionFiles(workspaceDir: string): Promise<string[]> {
       .filter(entry =>
         entry.isFile() &&
         entry.name.endsWith('.jsonl') &&
-        !entry.name.startsWith('agent-') // Skip sidechain agent files
+        // Legacy: pre-2.1 sidechain JSONLs lived next to the main log.
+        // They are now in `<sessionId>/subagents/`, but keep the filter so
+        // older project directories still scan cleanly.
+        !entry.name.startsWith('agent-')
       )
       .map(entry => path.join(fullPath, entry.name));
   } catch (error) {
     log.error(`Failed to read session files in ${workspaceDir}:`, error);
     return [];
+  }
+}
+
+/**
+ * Check whether a session has the per-session sidecar directories used by
+ * Claude Code 2.1.x for subagent transcripts and externalised tool results.
+ */
+async function probeSessionSidecar(
+  workspaceDir: string,
+  sessionId: string,
+): Promise<{ hasSubagents: boolean; hasExternalToolResults: boolean }> {
+  const projectsDir = getClaudeProjectsDir();
+  const sidecarDir = path.join(projectsDir, workspaceDir, sessionId);
+
+  const [hasSubagents, hasExternalToolResults] = await Promise.all([
+    dirExists(path.join(sidecarDir, 'subagents')),
+    dirExists(path.join(sidecarDir, 'tool-results')),
+  ]);
+  return { hasSubagents, hasExternalToolResults };
+}
+
+async function dirExists(dirPath: string): Promise<boolean> {
+  try {
+    const stats = await fs.stat(dirPath);
+    return stats.isDirectory();
+  } catch {
+    return false;
   }
 }
 
@@ -152,11 +287,16 @@ export async function extractSessionMetadata(filePath: string): Promise<SessionM
 
     let sessionId: string | null = null;
     let title: string | null = null;
+    let aiTitle: string | null = null;
+    let summaryTitle: string | null = null;
+    let slug: string | null = null;
     let firstTimestamp: number | null = null;
     let lastTimestamp: number | null = null;
     let firstMessage: string | null = null;
     let inputTokens = 0;
     let outputTokens = 0;
+    let cacheCreationInputTokens = 0;
+    let cacheReadInputTokens = 0;
     let hasErrors = false;
     let workspacePath: string | null = null;
 
@@ -190,21 +330,27 @@ export async function extractSessionMetadata(filePath: string): Promise<SessionM
         }
       }
 
-      // Extract title from summary entries
+      // Capture slug (first occurrence wins; CLI 2.1.x sets it on every entry).
+      if (!slug && typeof entry.slug === 'string' && entry.slug) {
+        slug = entry.slug;
+      }
+
+      // Capture aiTitle when present -- the LLM-generated session title is
+      // strictly preferred over the legacy `summary` entry.
+      if (!aiTitle && typeof entry.aiTitle === 'string' && entry.aiTitle.trim()) {
+        aiTitle = entry.aiTitle.trim();
+      }
+
+      // Legacy: parse `summary` entries as a fallback title source.
       if (entry.type === 'summary') {
-        // Check for summary field directly (newer format)
         if ((entry as any).summary) {
-          title = (entry as any).summary;
-          log.debug(`Found summary title: ${title}`);
-        }
-        // Fallback to parsing from message.content (older format)
-        else if (entry.message?.content) {
+          summaryTitle = (entry as any).summary;
+        } else if (entry.message?.content) {
           const content = entry.message.content;
           if (typeof content === 'string' && content.includes('title:')) {
             const match = content.match(/title:\s*(.+?)(\n|$)/);
             if (match) {
-              title = match[1].trim();
-              log.debug(`Found title from content: ${title}`);
+              summaryTitle = match[1].trim();
             }
           }
         }
@@ -250,13 +396,22 @@ export async function extractSessionMetadata(filePath: string): Promise<SessionM
         const messageId = entry.message.id || entry.uuid;
 
         // Only count tokens once per unique message
-        if (!seenMessageIds.has(messageId)) {
+        if (messageId && !seenMessageIds.has(messageId)) {
           seenMessageIds.add(messageId);
           const usage = entry.message.usage;
           inputTokens += usage.input_tokens || 0;
           outputTokens += usage.output_tokens || 0;
+          cacheCreationInputTokens += usage.cache_creation_input_tokens || 0;
+          cacheReadInputTokens += usage.cache_read_input_tokens || 0;
         }
       }
+    }
+
+    // Title resolution priority: aiTitle (LLM-generated) > legacy `summary` entry > first-message fallback.
+    if (aiTitle) {
+      title = aiTitle;
+    } else if (summaryTitle) {
+      title = summaryTitle;
     }
 
     // Derive session ID from filename if not found in entries
@@ -268,22 +423,22 @@ export async function extractSessionMetadata(filePath: string): Promise<SessionM
     // Generate title if not found
     if (!title) {
       title = firstMessage ? firstMessage.slice(0, 50) + '...' : 'Untitled Session';
-      log.debug(`Using fallback title: ${title}`);
-    } else {
-      log.debug(`Using extracted title: ${title}`);
     }
 
     // Extract workspace path from file path if not found
+    const projectsDir = getClaudeProjectsDir();
+    const workspaceDir = path.basename(path.dirname(filePath));
     if (!workspacePath) {
-      const projectsDir = getClaudeProjectsDir();
-      const relativePath = path.relative(projectsDir, path.dirname(filePath));
-      workspacePath = normalizeWorkspacePath(relativePath);
+      workspacePath = normalizeWorkspacePath(workspaceDir);
     }
 
     // Use current time as fallback only if no timestamps found
     const now = Date.now();
     const createdAt = firstTimestamp ?? now;
     const updatedAt = lastTimestamp ?? now;
+
+    // Probe for the `<sessionId>/` sidecar dir without parsing its contents.
+    const sidecar = await probeSessionSidecar(workspaceDir, sessionId);
 
     return {
       sessionId,
@@ -295,10 +450,15 @@ export async function extractSessionMetadata(filePath: string): Promise<SessionM
       tokenUsage: {
         inputTokens,
         outputTokens,
+        cacheCreationInputTokens,
+        cacheReadInputTokens,
         totalTokens: inputTokens + outputTokens,
       },
       firstMessage,
       hasErrors,
+      hasSubagents: sidecar.hasSubagents,
+      hasExternalToolResults: sidecar.hasExternalToolResults,
+      slug,
     };
   } catch (error) {
     log.error(`Failed to extract metadata from ${filePath}:`, error);
@@ -307,7 +467,61 @@ export async function extractSessionMetadata(filePath: string): Promise<SessionM
 }
 
 /**
+ * Workspace-level index file written by Claude Code 2.1.x.
+ * Lives at `<projectsDir>/<workspaceDir>/sessions-index.json`.
+ */
+interface SessionsIndex {
+  version: number;
+  entries: SessionsIndexEntry[];
+}
+
+export interface SessionsIndexEntry {
+  sessionId: string;
+  fullPath: string;
+  fileMtime: number;
+  firstPrompt?: string;
+  summary?: string;
+  messageCount?: number;
+  created?: string;
+  modified?: string;
+  gitBranch?: string;
+  projectPath?: string;
+  isSidechain?: boolean;
+}
+
+/**
+ * Read the per-workspace `sessions-index.json` if Claude Code 2.1.x has
+ * written one. Returns null when missing or unreadable so callers can fall
+ * back to a full directory scan.
+ */
+export async function readSessionsIndex(
+  workspaceDir: string,
+): Promise<SessionsIndex | null> {
+  const indexPath = path.join(getClaudeProjectsDir(), workspaceDir, 'sessions-index.json');
+  try {
+    const raw = await fs.readFile(indexPath, 'utf-8');
+    const parsed = JSON.parse(raw) as SessionsIndex;
+    if (typeof parsed?.version !== 'number' || !Array.isArray(parsed.entries)) {
+      log.warn(`sessions-index.json at ${indexPath} has unexpected shape`);
+      return null;
+    }
+    return parsed;
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') {
+      log.warn(`Failed to read sessions-index.json at ${indexPath}: ${error?.message ?? error}`);
+    }
+    return null;
+  }
+}
+
+/**
  * Scan Claude Code sessions and return metadata
+ *
+ * Fast path: when the workspace has a `sessions-index.json` (Claude Code
+ * 2.1.x), use it to enumerate session files and to filter out sidechain
+ * sessions without opening each JSONL just to find out. Falls back to a
+ * full directory listing for older installs.
+ *
  * @param workspacePath - Optional workspace path to filter sessions. If provided, only scans that workspace.
  */
 export async function scanAllSessions(workspacePath?: string): Promise<SessionMetadata[]> {
@@ -329,7 +543,7 @@ export async function scanAllSessions(workspacePath?: string): Promise<SessionMe
   const sessions: SessionMetadata[] = [];
 
   for (const workspaceDir of workspaceDirs) {
-    const sessionFiles = await getSessionFiles(workspaceDir);
+    const sessionFiles = await resolveSessionFiles(workspaceDir);
 
     for (const filePath of sessionFiles) {
       const metadata = await extractSessionMetadata(filePath);
@@ -344,9 +558,39 @@ export async function scanAllSessions(workspacePath?: string): Promise<SessionMe
 }
 
 /**
- * Dev mode flag check (for now, always allow in dev mode)
+ * Enumerate session files for a workspace.
+ *
+ * The directory listing is the source of truth: the JSONL files that exist
+ * on disk are exactly the sessions we can import. `sessions-index.json` --
+ * when present -- is consulted only to filter out sidechain sessions
+ * without opening every JSONL. The index can drift (we've seen real users
+ * with 494 entries pointing at ~230 actual files), so we do not trust
+ * `fullPath` entries to exist.
  */
-export function isSessionImportEnabled(): boolean {
-  // For now, enable in development mode only
-  return process.env.NODE_ENV !== 'production';
+async function resolveSessionFiles(workspaceDir: string): Promise<string[]> {
+  const dirFiles = await getSessionFiles(workspaceDir);
+  const index = await readSessionsIndex(workspaceDir);
+  if (!index) return dirFiles;
+
+  const sidechainIds = new Set(
+    index.entries
+      .filter(entry => entry.isSidechain === true && typeof entry.sessionId === 'string')
+      .map(entry => entry.sessionId),
+  );
+  if (sidechainIds.size === 0) {
+    log.debug(
+      `sessions-index loaded: workspace=${workspaceDir} entries=${index.entries.length} (no sidechains to filter)`,
+    );
+    return dirFiles;
+  }
+
+  const filtered = dirFiles.filter(filePath => {
+    const sessionId = path.basename(filePath, '.jsonl');
+    return !sidechainIds.has(sessionId);
+  });
+  log.debug(
+    `sessions-index sidechain filter: workspace=${workspaceDir} dirFiles=${dirFiles.length} sidechains=${sidechainIds.size} kept=${filtered.length}`,
+  );
+  return filtered;
 }
+

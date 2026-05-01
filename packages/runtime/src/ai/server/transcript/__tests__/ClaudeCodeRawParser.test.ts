@@ -511,4 +511,107 @@ describe('ClaudeCodeRawParser', () => {
       });
     });
   });
+
+  describe('Claude Code 2.1.x format additions', () => {
+    it('emits an assistant_message with the thinking side-channel for {type:"thinking"} blocks', async () => {
+      const parser = new ClaudeCodeRawParser();
+      const msg = makeRawMessage({
+        content: JSON.stringify({
+          type: 'assistant',
+          message: {
+            id: 'msg_1',
+            role: 'assistant',
+            model: 'claude-opus-4-7',
+            content: [
+              { type: 'thinking', thinking: 'I should reason carefully', signature: 'sig123' },
+              { type: 'text', text: 'Final answer.' },
+            ],
+          },
+        }),
+      });
+
+      const descriptors = await parser.parseMessage(msg, makeContext());
+
+      expect(descriptors).toHaveLength(2);
+      expect(descriptors[0]).toMatchObject({
+        type: 'assistant_message',
+        text: '',
+        thinking: 'I should reason carefully',
+        thinkingSignature: 'sig123',
+        model: 'claude-opus-4-7',
+      });
+      expect(descriptors[1]).toMatchObject({
+        type: 'assistant_message',
+        text: 'Final answer.',
+        model: 'claude-opus-4-7',
+      });
+    });
+
+    it('summarises deferred_tools_delta attachment entries as a status system_message', async () => {
+      const parser = new ClaudeCodeRawParser();
+      const msg = makeRawMessage({
+        content: JSON.stringify({
+          type: 'attachment',
+          attachment: {
+            type: 'deferred_tools_delta',
+            addedNames: ['TodoWrite', 'WebFetch'],
+          },
+        }),
+      });
+
+      const descriptors = await parser.parseMessage(msg, makeContext());
+
+      expect(descriptors).toHaveLength(1);
+      expect(descriptors[0]).toMatchObject({
+        type: 'system_message',
+        systemType: 'status',
+        text: 'Tools added: TodoWrite, WebFetch',
+      });
+    });
+
+    it('summarises skill_listing attachments', async () => {
+      const parser = new ClaudeCodeRawParser();
+      const msg = makeRawMessage({
+        content: JSON.stringify({
+          type: 'attachment',
+          attachment: { type: 'skill_listing', content: '...' },
+        }),
+      });
+
+      const descriptors = await parser.parseMessage(msg, makeContext());
+
+      expect(descriptors).toHaveLength(1);
+      expect(descriptors[0]).toMatchObject({
+        type: 'system_message',
+        systemType: 'status',
+        text: 'Skills list refreshed',
+      });
+    });
+
+    it('uses args.subagent_type for the subagent agentType', async () => {
+      const parser = new ClaudeCodeRawParser();
+      const msg = makeRawMessage({
+        content: JSON.stringify({
+          type: 'assistant',
+          message: {
+            id: 'msg_2',
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'toolu_subagent',
+                name: 'Task',
+                input: { subagent_type: 'Explore', prompt: 'go look' },
+              },
+            ],
+          },
+        }),
+      });
+
+      const descriptors = await parser.parseMessage(msg, makeContext());
+      const started = descriptors.find(d => d.type === 'subagent_started') as any;
+      expect(started).toBeDefined();
+      expect(started.agentType).toBe('Explore');
+    });
+  });
 });

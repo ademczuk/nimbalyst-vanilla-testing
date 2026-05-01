@@ -32,6 +32,9 @@ export async function processDescriptor(
       return writer.appendAssistantMessage(sessionId, desc.text, {
         mode: desc.mode,
         createdAt: desc.createdAt,
+        thinking: desc.thinking,
+        thinkingSignature: desc.thinkingSignature,
+        model: desc.model,
       });
     }
 

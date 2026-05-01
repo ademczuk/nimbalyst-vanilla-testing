@@ -965,7 +965,9 @@ describe('TranscriptTransformer', () => {
       const subagentEvent = events.find((e) => e.eventType === 'subagent');
       expect(subagentEvent).toBeDefined();
       expect(subagentEvent!.subagentId).toBe('agent-1');
-      expect((subagentEvent!.payload as any).agentType).toBe('Agent');
+      // Claude Code 2.1.x carries the actual agent kind on input.subagent_type;
+      // the parser surfaces that as agentType when present.
+      expect((subagentEvent!.payload as any).agentType).toBe('Explore');
       expect((subagentEvent!.payload as any).status).toBe('completed');
       expect((subagentEvent!.payload as any).resultSummary).toBe('Found 10 files');
 
