@@ -122,6 +122,43 @@ interface SessionToolState {
 
 type ACPClientConnection = InstanceType<typeof ClientSideConnection>;
 
+/**
+ * Cap on retained stderr bytes. Codex CLI streams `tracing-subscriber` output
+ * to stderr; over a multi-hour session this can exceed hundreds of MB if
+ * retained whole. 64 KB is enough to keep recent error context for the
+ * exit-reason message (issue #119).
+ */
+const STDERR_TAIL_LIMIT_BYTES = 64 * 1024;
+
+/**
+ * Append `chunk` to `existing`, retaining only the last `maxBytes` of the
+ * combined data. Returns a new Buffer; does not mutate inputs.
+ *
+ * Used to bound stderr capture from long-lived child processes so the
+ * exit-reason message can still include recent context without leaking the
+ * full process stderr stream into main-process memory.
+ */
+export function appendBoundedTail(
+  existing: Buffer,
+  chunk: Buffer,
+  maxBytes: number,
+): Buffer {
+  if (maxBytes <= 0) {
+    return Buffer.alloc(0);
+  }
+  if (chunk.length >= maxBytes) {
+    return Buffer.from(chunk.subarray(chunk.length - maxBytes));
+  }
+  if (existing.length + chunk.length <= maxBytes) {
+    return Buffer.concat([existing, chunk]);
+  }
+  const keepFromExisting = maxBytes - chunk.length;
+  return Buffer.concat([
+    existing.subarray(existing.length - keepFromExisting),
+    chunk,
+  ]);
+}
+
 class AsyncEventQueue<T> {
   private readonly items: T[] = [];
   private readonly waiters: Array<(result: IteratorResult<T>) => void> = [];
@@ -411,9 +448,13 @@ export class CodexACPProtocol implements AgentProtocol {
 
     this.childProcess = child;
 
-    const stderrChunks: Buffer[] = [];
+    // Bounded rolling buffer of recent stderr. The previous unbounded
+    // `Buffer[]` accumulated for the lifetime of the Codex child process,
+    // which leaked hundreds of MB over long sessions and crashed the main
+    // process with a V8 fatal abort (issue #119).
+    let stderrTail: Buffer = Buffer.alloc(0);
     child.stderr.on('data', (chunk: Buffer) => {
-      stderrChunks.push(chunk);
+      stderrTail = appendBoundedTail(stderrTail, chunk, STDERR_TAIL_LIMIT_BYTES);
       const text = chunk.toString('utf-8').trim();
       if (text) {
         console.log(`[CodexACPProtocol:stderr] ${text}`);
@@ -424,7 +465,7 @@ export class CodexACPProtocol implements AgentProtocol {
       this.processExitError = error;
     });
     child.once('exit', (code, signal) => {
-      const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
+      const stderr = stderrTail.toString('utf-8').trim();
       const exitReason =
         code !== null
           ? `Codex ACP process exited with code ${code}`

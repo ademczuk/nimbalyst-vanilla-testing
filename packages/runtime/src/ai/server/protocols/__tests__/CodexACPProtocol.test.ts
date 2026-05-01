@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { CodexACPProtocol } from '../CodexACPProtocol';
+import { CodexACPProtocol, appendBoundedTail } from '../CodexACPProtocol';
 
 function fixturePath(): string {
   return fileURLToPath(new URL('./fixtures/mockCodexAcpAgent.mjs', import.meta.url));
@@ -82,4 +82,40 @@ describe('CodexACPProtocol', () => {
       fs.rmSync(workspacePath, { recursive: true, force: true });
     }
   }, 15000);
+});
+
+describe('appendBoundedTail', () => {
+  it('returns the combined buffer when under the limit', () => {
+    const result = appendBoundedTail(Buffer.from('abc'), Buffer.from('def'), 16);
+    expect(result.toString('utf-8')).toBe('abcdef');
+  });
+
+  it('caps the buffer to maxBytes when the combined size exceeds it', () => {
+    const result = appendBoundedTail(Buffer.from('abcdef'), Buffer.from('ghij'), 4);
+    expect(result.length).toBe(4);
+    expect(result.toString('utf-8')).toBe('ghij');
+  });
+
+  it('drops only the oldest bytes when exceeding maxBytes', () => {
+    const result = appendBoundedTail(Buffer.from('abcdefgh'), Buffer.from('ij'), 6);
+    expect(result.toString('utf-8')).toBe('efghij');
+  });
+
+  it('takes the tail of a single chunk that is itself larger than maxBytes', () => {
+    const result = appendBoundedTail(Buffer.from('xy'), Buffer.from('abcdefghij'), 4);
+    expect(result.toString('utf-8')).toBe('ghij');
+  });
+
+  it('stays bounded across many appends, simulating long-running stderr', () => {
+    const limit = 1024;
+    let tail: Buffer = Buffer.alloc(0);
+    const line = Buffer.from('codex stderr line that is forty bytes!\n');
+    // 100k iterations * 39 bytes ~= 3.9 MB of input, retained must stay <= limit.
+    for (let i = 0; i < 100_000; i++) {
+      tail = appendBoundedTail(tail, line, limit);
+    }
+    expect(tail.length).toBeLessThanOrEqual(limit);
+    // The retained tail must contain only data from the recent appends.
+    expect(tail.toString('utf-8').endsWith('codex stderr line that is forty bytes!\n')).toBe(true);
+  });
 });
