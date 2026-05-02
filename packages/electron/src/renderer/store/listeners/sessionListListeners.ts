@@ -118,7 +118,7 @@ export function initSessionListListeners(): () => void {
     window.electronAPI.on('worktree:session-created', handleWorktreeSessionCreated)
   );
 
-  // Handle child-session-added events from main-process flows like spawn_sibling.
+  // Handle child-session-added events from main-process flows like spawn_session.
   // The general `sessions:refresh-list` only refreshes `sessionRegistryAtom`.
   // Workstream tab strip and per-parent groupings read `sessionChildrenAtom`
   // and `workstreamStateAtom.childSessionIds`, which we have to patch so the

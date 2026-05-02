@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- New features go here -->
 
 ### Changed
-<!-- Changes to existing functionality go here -->
+- Rename the `spawn_sibling` MCP tool to `spawn_session` and add an `isolated: boolean` parameter. Sibling mode (default) still groups the new session into the caller's workstream so files-edited, tabs, and `get_workstream_overview` are shared. Isolated mode (`isolated: true`) creates a top-level session with no parent and no workstream container — use this when the new session should fix-and-commit work independently without polluting the caller's workstream. The `/launch-new-session` slash command now picks between modes based on the user's phrasing (e.g. "isolated bugs", "fix and commit separately" trigger isolated mode).
 
 ### Fixed
 <!-- Bug fixes go here -->

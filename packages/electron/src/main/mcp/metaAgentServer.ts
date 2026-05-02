@@ -20,12 +20,20 @@ type CreateSessionArgs = {
   worktreeId?: string;
 };
 
-type SpawnSiblingArgs = {
+type SpawnSessionArgs = {
   title?: string;
   prompt: string;
   useWorktree?: boolean;
   model?: string;
   notifyOnComplete?: boolean;
+  /**
+   * When true, the new session is created at the top level — no parent,
+   * no workstream container, no shared files-edited or tabs with the
+   * caller. Use for fix-and-commit-separately work that should not pollute
+   * the caller's workstream. When false (the default), the new session is
+   * spawned as a sibling under the caller's workstream.
+   */
+  isolated?: boolean;
 };
 
 type RespondToPromptArgs = {
@@ -48,10 +56,10 @@ interface MetaAgentToolFns {
     workspaceId: string,
     args: CreateSessionArgs
   ) => Promise<string>;
-  spawnSibling: (
+  spawnSession: (
     callerSessionId: string,
     workspaceId: string,
-    args: SpawnSiblingArgs
+    args: SpawnSessionArgs
   ) => Promise<string>;
   getSessionStatus: (
     metaSessionId: string,
@@ -285,9 +293,9 @@ function createMetaAgentMcpServer(
           },
         },
         {
-          name: "spawn_sibling",
+          name: "spawn_session",
           description:
-            "Spawn a sibling session that runs in parallel under the same workstream as the calling session. If the caller is not yet part of a workstream, a workstream container is created and the caller is reparented under it so both sessions share files-edited, tabs, and get_workstream_overview. Fire-and-forget by default — the calling session is not notified when the spawned session completes; pass notifyOnComplete=true to opt in. Use this for the /launch-new-session flow.",
+            "Spawn a new session from the calling session. By default the new session runs as a sibling under the same workstream as the caller (sharing files-edited, tabs, and get_workstream_overview); if the caller is not yet part of a workstream, a workstream container is created and the caller is reparented under it. Pass isolated=true to instead create a top-level session with no parent and no workstream — use this when the new session should fix-and-commit work independently without polluting the caller's workstream. Fire-and-forget by default — the calling session is not notified when the spawned session completes; pass notifyOnComplete=true to opt in. Use this for the /launch-new-session flow.",
           inputSchema: {
             type: "object",
             properties: {
@@ -300,10 +308,15 @@ function createMetaAgentMcpServer(
                 type: "string",
                 description: "Optional short title for the new session.",
               },
+              isolated: {
+                type: "boolean",
+                description:
+                  "Default false. When true, the new session is created at the top level — no parent, no workstream container, no shared files-edited or tabs with the caller. Use for fix-and-commit-separately work that should not pollute the caller's workstream.",
+              },
               useWorktree: {
                 type: "boolean",
                 description:
-                  "Default false. Set true only when the user explicitly asks for the new session to run in an isolated worktree.",
+                  "Default false. Set true only when the user explicitly asks for the new session to run in an isolated worktree (separate branch and working directory).",
               },
               model: {
                 type: "string",
@@ -445,12 +458,12 @@ function createMetaAgentMcpServer(
             ],
             isError: false,
           };
-        case "spawn_sibling":
+        case "spawn_session":
           return {
             content: [
               {
                 type: "text",
-                text: await toolFns.spawnSibling(aiSessionId, workspaceId, args as SpawnSiblingArgs),
+                text: await toolFns.spawnSession(aiSessionId, workspaceId, args as SpawnSessionArgs),
               },
             ],
             isError: false,
