@@ -84,9 +84,12 @@ binding = "ANALYTICS"
 dataset = "nimbalyst_sync"
 
 # Observability - enables logs, traces, and metrics in Cloudflare dashboard
+# Business metrics (auth, team joins, shares) go through Analytics Engine and
+# are unaffected by this sampling rate. This only samples per-invocation traces
+# used for debugging connection chatter.
 [observability]
 enabled = true
-head_sampling_rate = 1  # Sample 100% of requests
+head_sampling_rate = 0.05  # Sample 5% of requests
 
 # Build-time version injection (overridden by deploy script)
 [define]
