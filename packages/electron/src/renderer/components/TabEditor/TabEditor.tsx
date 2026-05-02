@@ -188,6 +188,10 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   const [reloadVersion, setReloadVersion] = useState(0);
   const [showConflictDialog, setShowConflictDialog] = useState(false);
   const [conflictDialogContent, setConflictDialogContent] = useState<string>('');
+  // Non-blocking autosave conflict banner. Set when autosave detects an
+  // external change to disk while the buffer is dirty. The buffer is
+  // preserved -- the user clicks "Reload" to pick up the disk content.
+  const [autosaveConflictDiskContent, setAutosaveConflictDiskContent] = useState<string | null>(null);
   const [showMonacoDiffBar, setShowMonacoDiffBar] = useState(false); // For Monaco diff approval bar
   const [showCustomEditorDiffBar, setShowCustomEditorDiffBar] = useState(false); // For custom editor diff approval bar
   const [isEditorReady, setIsEditorReady] = useState(false); // Track when editor is mounted and ready
@@ -672,6 +676,14 @@ export const TabEditor: React.FC<TabEditorProps> = ({
       const thisSaveId = ++saveIdRef.current;
       pendingSaveIdsRef.current.add(thisSaveId);
 
+      // Capture the content we expect to be on disk BEFORE we optimistically
+      // overwrite lastSavedContentRef. This becomes the `lastKnownContent`
+      // baseline for the IPC's conflict check: if disk contains anything
+      // else, we know an external process changed the file (e.g. an AI
+      // session recreated a previously-deleted file). For autosave, the
+      // conflict path preserves the buffer rather than clobbering disk.
+      const expectedDiskContent = lastSavedContentRef.current;
+
       // Set saving flag BEFORE saving to prevent file watcher from reloading
       isSavingRef.current = true;
 
@@ -688,10 +700,13 @@ export const TabEditor: React.FC<TabEditorProps> = ({
 
       logger.ui.info(`[TabEditor] Saving ${fileName}, saveId=${thisSaveId}, skipDiffCheck=${skipDiffCheck}`);
 
-      // Save to disk with conflict detection
+      // Save to disk with conflict detection. Always pass lastKnownContent so
+      // the main process can detect external changes and refuse to overwrite
+      // them silently.
       const result = await window.electronAPI.saveFile(
           contentToSave,
-          filePath
+          filePath,
+          expectedDiskContent
       );
 
       // console.log(`[TabEditor] saveFile returned for ${fileName}, success=${result?.success}, conflict=${result?.conflict}`);
@@ -714,6 +729,39 @@ export const TabEditor: React.FC<TabEditorProps> = ({
       if (result) {
         // Check for conflicts
         if (result.conflict) {
+          // Restore lastSavedContentRef -- we optimistically set it to
+          // contentToSave above, but the save did NOT land on disk. The
+          // baseline must remain whatever we last knew was on disk so the
+          // next conflict check is meaningful.
+          lastSavedContentRef.current = expectedDiskContent;
+
+          if (snapshotType === 'auto') {
+            // Autosave path: never overwrite silently, never prompt. Show a
+            // non-blocking banner. Buffer is preserved as-is. The user can
+            // click "Reload" to pick up disk content. Until then, autosave
+            // skips because lastSavedContentRef still mismatches disk on
+            // every retry; the banner stays up.
+            logger.ui.info('[TabEditor] Autosave conflict detected -- showing non-blocking banner, buffer preserved');
+            try {
+              window.electronAPI?.send?.('telemetry:file-save-blocked-after-delete', {
+                layer: 'conflict-mismatch',
+                filePath,
+                wasAutosave: true,
+              });
+            } catch {
+              // Telemetry must never affect program behavior.
+            }
+            if (typeof result.diskContent === 'string') {
+              setAutosaveConflictDiskContent(result.diskContent);
+            } else {
+              setAutosaveConflictDiskContent('');
+            }
+            // Keep the buffer dirty so the user's edits are preserved.
+            // Don't proceed to history snapshot for this failed save.
+            return;
+          }
+
+          // Manual save path: prompt the user as before.
           logger.ui.info('[TabEditor] Save conflict detected, prompting user');
           const shouldOverwrite = window.confirm(
               'The file has been modified externally since you opened it.\n\n' +
@@ -902,10 +950,24 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   // This replaces the old autosave timer and file-watcher IPC listener for
   // ALL editor types (built-in + custom), providing a single coordination
   // point for save timing, echo suppression, and diff mode detection.
+  //
+  // CRITICAL: gated on isEditorReady. When a sibling tab system (e.g.
+  // EditorMode + Agent Mode WorkstreamEditorTabs) opens the same file, the
+  // shared DocumentModel may already be carrying a `diffState` from the
+  // first attachment's handling of an AI edit. `onDiffRequested` fires the
+  // current `diffState` synchronously to a new subscriber, so registering
+  // before the editor mounts means `applyDiffState` runs with
+  // `editorRef.current === null`: no diff renders, but `contentRef.current`
+  // gets overwritten with `oldContent`, which then makes the mount-time
+  // pending-tag check (line ~515) skip because `oldContent === newContent`.
+  // Deferring registration to `isEditorReady` ensures the immediate-fire
+  // happens with a ready editor.
   // ============================================================
   useEffect(() => {
     const handle = documentModelHandleRef.current;
     if (!handle) return;
+    // Wait for the editor to mount before registering. See note above.
+    if (!isEditorReady) return;
 
     const cleanups: Array<() => void> = [];
 
@@ -1171,7 +1233,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
       for (const cleanup of cleanups) cleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filePath, fileName, isMarkdown, isCustom, saveWithHistory]);
+  }, [filePath, fileName, isMarkdown, isCustom, saveWithHistory, isEditorReady]);
 
 
   // Listen for "Clear All Pending" event to exit diff mode when this file's pending tag is cleared
@@ -2241,6 +2303,58 @@ export const TabEditor: React.FC<TabEditorProps> = ({
           fileName={fileName}
           editor={editorRef.current}
         />
+        {autosaveConflictDiskContent !== null && (
+          <div
+            className="autosave-conflict-banner flex items-center gap-2 px-3 py-2 text-[13px] bg-nim-warning-subtle border-b border-nim-warning text-nim"
+            role="alert"
+            data-testid="autosave-conflict-banner"
+          >
+            <span className="flex-1">
+              File changed on disk. Reload to see new content (your unsaved edits are preserved).
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                const diskContent = autosaveConflictDiskContent;
+                if (typeof diskContent === 'string' && editorRef.current) {
+                  try {
+                    if (isMarkdown) {
+                      const transformers = getEditorTransformers();
+                      editorRef.current.update(() => {
+                        const root = $getRoot();
+                        root.clear();
+                        $convertFromEnhancedMarkdownString(diskContent, transformers);
+                      }, { tag: SKIP_SCROLL_INTO_VIEW_TAG });
+                    } else if (editorRef.current.setContent) {
+                      editorRef.current.setContent(diskContent);
+                    }
+                  } catch (err) {
+                    logger.ui.error('[TabEditor] Failed to reload disk content:', err);
+                  }
+                  contentRef.current = diskContent;
+                  initialContentRef.current = diskContent;
+                  lastSavedContentRef.current = diskContent;
+                  isDirtyRef.current = false;
+                  documentModelHandleRef.current?.setDirty(false);
+                  onDirtyChange?.(false);
+                }
+                setAutosaveConflictDiskContent(null);
+              }}
+              className="px-2 py-1 rounded border border-nim text-nim hover:bg-nim-active"
+              data-testid="autosave-conflict-banner-reload"
+            >
+              Reload
+            </button>
+            <button
+              type="button"
+              onClick={() => setAutosaveConflictDiskContent(null)}
+              className="px-2 py-1 rounded border border-nim text-nim hover:bg-nim-active"
+              data-testid="autosave-conflict-banner-dismiss"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
           {isCustom ? (() => {
             // Source mode: render Monaco instead of custom editor
             if (sourceMode) {

@@ -248,11 +248,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     filters?: Array<{ name: string; extensions: string[] }>;
     defaultPath?: string;
   }) => ipcRenderer.invoke('dialog:openFile', options),
-  saveFile: (content: string, filePath: string) => {
+  saveFile: (content: string, filePath: string, lastKnownContent?: string) => {
     if (!filePath) {
       throw new Error('saveFile requires a filePath parameter. Use saveFileAs for save dialogs.');
     }
-    return ipcRenderer.invoke('save-file', content, filePath);
+    return ipcRenderer.invoke('save-file', content, filePath, lastKnownContent);
   },
   saveFileAs: (content: string) => ipcRenderer.invoke('save-file-as', content),
   showErrorDialog: (title: string, message: string) => ipcRenderer.invoke('show-error-dialog', title, message),

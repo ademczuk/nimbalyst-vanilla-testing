@@ -97,7 +97,7 @@ interface ElectronAPI {
     filters?: Array<{ name: string; extensions: string[] }>;
     defaultPath?: string;
   }) => Promise<{ canceled: boolean; filePaths: string[] }>;
-  saveFile: (content: string, filePath: string) => Promise<{ success: boolean; filePath: string; conflict?: boolean; diskContent?: string } | null>;
+  saveFile: (content: string, filePath: string, lastKnownContent?: string) => Promise<{ success: boolean; filePath: string; conflict?: boolean; diskContent?: string } | null>;
   saveFileAs: (content: string) => Promise<{ success: boolean; filePath: string } | null>;
   showErrorDialog: (title: string, message: string) => Promise<void>;
 

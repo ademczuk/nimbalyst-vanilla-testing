@@ -12,11 +12,13 @@
 
 import React, { useCallback, useRef, forwardRef, useImperativeHandle, useEffect } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
+import { store } from '@nimbalyst/runtime/store';
 import { TabsProvider, useTabs, useTabsActions } from '../../contexts/TabsContext';
 import { TabManager } from '../TabManager/TabManager';
 import { TabContent } from '../TabContent/TabContent';
 import { setSessionTabCountAtom } from '../../store';
 import { workstreamStateAtom } from '../../store/atoms/workstreamState';
+import { fileDeletedAtomFamily } from '../../store/atoms/fileWatch';
 
 // Current tab state - always kept up to date for sync flush on unmount
 const currentTabState = new Map<string, {
@@ -288,6 +290,33 @@ const WorkstreamEditorTabsInner = forwardRef<WorkstreamEditorTabsRef, Workstream
         flushToSessionStorage(workstreamId);
       };
     }, [workstreamId]);
+
+    // Subscribe to file-deletion atoms for every currently-open tab path so
+    // the workstream tab is closed when a file is deleted on disk. Without
+    // this, the workstream tab survives, autosave fires from a stale buffer,
+    // and the AI-recreated content can be silently overwritten.
+    useEffect(() => {
+      if (tabs.length === 0) return;
+      const cleanups: Array<() => void> = [];
+      for (const tab of tabs) {
+        const filePath = tab.filePath;
+        if (!filePath) continue;
+        const deletedAtom = fileDeletedAtomFamily(filePath);
+        const initial = store.get(deletedAtom);
+        const unsub = store.sub(deletedAtom, () => {
+          if (store.get(deletedAtom) === initial) return;
+          // Close the tab in this workstream
+          const stillOpen = tabsActions.findTabByPath(filePath);
+          if (stillOpen) {
+            tabsActions.removeTab(stillOpen.id);
+          }
+        });
+        cleanups.push(unsub);
+      }
+      return () => {
+        cleanups.forEach((c) => c());
+      };
+    }, [tabs, tabsActions]);
 
     // Expose current document path and workspace path to window for plugins (e.g., MockupPlatformService)
     // This mirrors what EditorMode does, but for workstream editor tabs

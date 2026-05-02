@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron';
 import { getFolderContents } from '../utils/FileTree';
 import { logger } from '../utils/logger';
-import { getWindowId } from '../window/WindowManager';
+import { getWindowId, markRecentlyDeleted } from '../window/WindowManager';
 import * as workspaceEventBus from './WorkspaceEventBus';
 
 /**
@@ -77,6 +77,12 @@ export class OptimizedWorkspaceWatcher {
                 // Always refresh file tree for deleted files
                 triggerUpdate();
                 if (gitignoreBypassed) return; // SessionFileWatcher handles editor notifications
+                // Track the deletion in the lifecycle-bound recentlyDeleted
+                // map so a stale autosave from any surviving editor cannot
+                // recreate the file with old content. Cleared by
+                // editor:released-deleted-path once the renderer has fully
+                // released the path AND observed a fresh load.
+                markRecentlyDeleted(filePath);
                 if (!window.isDestroyed()) {
                     window.webContents.send('file-changed-on-disk', { path: filePath });
                     window.webContents.send('file-deleted', { filePath });
