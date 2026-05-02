@@ -59,7 +59,7 @@ interface CreateChildSessionArgs {
   worktreeId?: string;
 }
 
-interface SpawnSiblingArgs {
+interface SpawnSessionArgs {
   title?: string;
   prompt: string;
   useWorktree?: boolean;
@@ -71,6 +71,13 @@ interface SpawnSiblingArgs {
    * parent is just kicking off work to escape a long context.
    */
   notifyOnComplete?: boolean;
+  /**
+   * When true, the new session is created at the top level — no parent, no
+   * workstream container, no shared files-edited or tabs with the caller.
+   * Use for fix-and-commit-separately work that should not pollute the
+   * caller's workstream.
+   */
+  isolated?: boolean;
 }
 
 export class MetaAgentService {
@@ -137,8 +144,8 @@ export class MetaAgentService {
           this.listWorktreesJson(workspaceId),
         createSession: (metaSessionId, workspaceId, args) =>
           this.createChildSession(metaSessionId, workspaceId, args),
-        spawnSibling: (callerSessionId, workspaceId, args) =>
-          this.spawnSibling(callerSessionId, workspaceId, args),
+        spawnSession: (callerSessionId, workspaceId, args) =>
+          this.spawnSession(callerSessionId, workspaceId, args),
         getSessionStatus: (_metaSessionId, workspaceId, targetSessionId) =>
           this.getSessionStatusJson(targetSessionId, workspaceId),
         getSessionResult: (_metaSessionId, workspaceId, targetSessionId) =>
@@ -253,6 +260,7 @@ export class MetaAgentService {
     const parsed = ModelIdentifier.tryParse(model);
     const provider = (args.provider || parsed?.provider || 'claude-code') as AIProviderType;
     const normalizedModel = args.model || ModelIdentifier.getDefaultModelId(provider);
+    const callerProvidedTitle = !!args.title?.trim();
     const title = (args.title || this.deriveTitleFromPrompt(args.prompt) || 'Meta Task').trim();
 
     let worktreeId: string | null = null;
@@ -318,7 +326,12 @@ export class MetaAgentService {
       agentRole: 'standard',
       createdBySessionId: metaSessionId,
       parentSessionId: args.parentSessionIdOverride ?? null,
-    });
+      // When the meta-agent (or any caller of spawn_session) supplies an
+      // explicit title, treat the session as already named so the out-of-band
+      // SDK title generator (see ClaudeCodeProvider.runTitleGeneration) does
+      // not clobber it via updateTitleIfNotNamed.
+      hasBeenNamed: callerProvidedTitle,
+    } as any);
 
     const initialPrompt = args.prompt?.trim();
     const shouldBypassExecution = this.shouldBypassChildAgentExecutionForTests();
@@ -374,10 +387,10 @@ export class MetaAgentService {
     };
   }
 
-  private async spawnSibling(
+  private async spawnSession(
     parentSessionId: string,
     workspaceId: string,
-    args: SpawnSiblingArgs
+    args: SpawnSessionArgs
   ): Promise<string> {
     if (!args?.prompt?.trim()) {
       throw new Error('prompt is required');
@@ -388,12 +401,20 @@ export class MetaAgentService {
       throw new Error(`Parent session ${parentSessionId} not found in this workspace`);
     }
 
-    // Resolve which row should serve as the workstream container.
-    // Cases:
-    //  - parent already has a workstream container (parent.parentSessionId set) -> use that
-    //  - parent itself is already a workstream root -> use parent.id
-    //  - otherwise -> create a synthetic workstream container and reparent the original
-    const { workstreamId, promotedParent } = await this.resolveOrCreateWorkstream(parent, workspaceId);
+    const isolated = args.isolated === true;
+
+    // Sibling mode: resolve (or create) a workstream container so the new
+    // session shares files-edited, tabs, and workstream overview with the
+    // caller. Isolated mode skips this entirely — the new session is a
+    // top-level row with no parent, intended for fix-and-commit work that
+    // should not pollute the caller's workstream.
+    let workstreamId: string | null = null;
+    let promotedParent = false;
+    if (!isolated) {
+      const resolved = await this.resolveOrCreateWorkstream(parent, workspaceId);
+      workstreamId = resolved.workstreamId;
+      promotedParent = resolved.promotedParent;
+    }
 
     const childResult = await this.createChildSessionInternal(parentSessionId, workspaceId, {
       title: args.title,
@@ -414,6 +435,7 @@ export class MetaAgentService {
 
     return JSON.stringify({
       ...childResult,
+      isolated,
       workstreamId,
       promotedParent,
       notifyOnComplete,
@@ -671,7 +693,7 @@ export class MetaAgentService {
         return;
       }
 
-      // Honor fire-and-forget: spawn_sibling sets metadata.notifyParent=false on
+      // Honor fire-and-forget: spawn_session sets metadata.notifyParent=false on
       // the child for /launch-new-session-style hand-offs where the parent does
       // not want to receive [Child Session Update] follow-up prompts.
       const childMetadata = (session.metadata as Record<string, unknown> | undefined) ?? undefined;

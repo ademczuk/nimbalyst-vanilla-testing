@@ -148,6 +148,11 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   // fallback before their own init chunk arrives.
   private static cachedSdkSkills: string[] = [];
   private static cachedSdkSlashCommands: string[] = [];
+
+  // Per-process guard: tracks sessionIds we've already attempted naming for so we
+  // don't keep nudging the SDK every turn if the first attempt failed.
+  private sessionNamingSideQuestionFiredFor: Set<string> = new Set();
+
   private markMessagesAsHidden: boolean = false; // Flag to mark next messages as hidden
   private helperMethod: 'native' | 'custom' = 'native';
 
@@ -415,6 +420,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     attachments?: any[]
   ): AsyncIterableIterator<StreamChunk> {
     const startTime = Date.now();
+
+    // Capture the original user message for the naming side-question. Held in a
+    // local const (not an instance field) so concurrent or hidden sendMessage
+    // calls can't overwrite each other's description before handleSystemInit
+    // fires.
+    const firstUserMessageDescription = message;
 
     // CRITICAL: Capture hidden mode flag at START and reset immediately
     // This prevents race conditions when concurrent sendMessage calls overlap
@@ -955,7 +966,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
               // -- Lifecycle items (side effects only, not transcript-relevant) --
 
               case 'system_init':
-                yield* this.handleSystemInit(item.chunk, sessionId, hideMessages);
+                yield* this.handleSystemInit(item.chunk, sessionId, hideMessages, firstUserMessageDescription);
                 break;
 
               case 'system_task':
@@ -1335,6 +1346,150 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   }
 
   /**
+   * If the session is still unnamed, fire two SDK control requests in parallel:
+   *   1. generateSessionTitle — built-in fast title generator (~1s)
+   *   2. askSideQuestion — text-only "/btw"-style question asking the agent
+   *      to suggest tags+phase. Returns plain text, NO tool calls (the side
+   *      question context can't reach the main turn's tool registry), so we
+   *      parse the agent's reply ourselves and persist via the repository.
+   *
+   * Must be called DURING the turn (after init, before result), because the SDK
+   * calls transport.endInput() after the first result chunk and rejects all
+   * pending control_responses with "Query closed before response received".
+   *
+   * Both calls are best-effort. The default phase fallback ensures the kanban
+   * always shows the session even if either request races the closure.
+   *
+   * Uses two undocumented SDK methods (generateSessionTitle and askSideQuestion
+   * exist in 0.2.117 runtime but are not on the public sdk.d.ts surface).
+   */
+  private async maybeFireSessionNamingSideQuestion(
+    queryRef: Query,
+    sessionId: string,
+    description: string
+  ): Promise<void> {
+    if (this.sessionNamingSideQuestionFiredFor.has(sessionId)) return;
+
+    try {
+      const { AISessionsRepository } = await import('../../../storage/repositories/AISessionsRepository');
+      const session = await AISessionsRepository.get(sessionId);
+      if (!session) return;
+      if ((session as any).hasBeenNamed === true) return;
+
+      const generateTitle = (queryRef as any).generateSessionTitle;
+      const askSide = (queryRef as any).askSideQuestion;
+      if (typeof generateTitle !== 'function') {
+        console.warn('[CLAUDE-CODE] naming skip: generateSessionTitle not exposed on Query');
+        return;
+      }
+
+      this.sessionNamingSideQuestionFiredFor.add(sessionId);
+
+      // Fire both in parallel; persist independently. allSettled so one failure
+      // doesn't abort the other.
+      await Promise.allSettled([
+        this.runTitleGeneration(queryRef, sessionId, description, generateTitle),
+        typeof askSide === 'function'
+          ? this.runTagsPhaseSideQuestion(queryRef, sessionId, askSide)
+          : Promise.resolve(),
+      ]);
+
+      // Default phase fallback — only if no phase has been set by either path
+      // (agent prompt-instruction call, side-question parse, or prior turn).
+      const refreshed = await AISessionsRepository.get(sessionId);
+      const existingPhase = (refreshed?.metadata as any)?.phase;
+      if (!existingPhase) {
+        const fallbackMetadata = { phase: 'planning' };
+        await AISessionsRepository.updateMetadata(sessionId, {
+          metadata: fallbackMetadata,
+        });
+        // Mirror the broadcast/sync that SessionNamingService does for the
+        // MCP-tool path so the kanban and iOS pick up the phase write.
+        this.emit('session:metadata-updated', { sessionId, metadata: fallbackMetadata });
+      }
+    } catch (error) {
+      // Best-effort -- never let naming errors disrupt the main session
+      console.warn('[CLAUDE-CODE] Session naming failed:', (error as Error)?.message ?? error);
+    }
+  }
+
+  private async runTitleGeneration(
+    queryRef: Query,
+    sessionId: string,
+    description: string,
+    generateTitle: any
+  ): Promise<void> {
+    try {
+      const title: string | undefined = await generateTitle.call(queryRef, description, { persist: false });
+      if (!title || typeof title !== 'string' || title.trim().length === 0) return;
+
+      const trimmed = title.trim();
+      const { SessionManager } = await import('../SessionManager');
+      const manager = new SessionManager();
+      await manager.initialize();
+      await manager.updateSessionTitle(sessionId, trimmed);
+
+      this.emit('session:title-updated', { sessionId, title: trimmed });
+      console.log(`[CLAUDE-CODE] generated session title for ${sessionId}: "${trimmed}"`);
+    } catch (error) {
+      console.warn('[CLAUDE-CODE] generateSessionTitle failed:', (error as Error)?.message ?? error);
+    }
+  }
+
+  private async runTagsPhaseSideQuestion(
+    queryRef: Query,
+    sessionId: string,
+    askSide: any
+  ): Promise<void> {
+    const VALID_PHASES = new Set(['backlog', 'planning', 'implementing', 'validating']);
+    const prompt =
+      'Reply with ONE line in this exact format and nothing else:\n' +
+      'tag1,tag2,tag3|phase\n\n' +
+      'Where:\n' +
+      '- tags: 2-4 lowercase hyphen-separated tags (type of work + area, e.g. bug-fix,ui)\n' +
+      '- phase: one of backlog, planning, implementing, validating\n' +
+      'Base your answer on what the user asked for in this conversation.';
+
+    try {
+      const reply = await askSide.call(queryRef, prompt);
+      const text: string | undefined = reply?.response;
+      if (!text || typeof text !== 'string') return;
+
+      // Take the first non-empty line of the reply and parse "tags|phase"
+      const line = text.split('\n').map((l: string) => l.trim()).find((l: string) => l.length > 0);
+      if (!line || !line.includes('|')) {
+        console.warn(`[CLAUDE-CODE] tags+phase reply not parseable: "${text.slice(0, 200)}"`);
+        return;
+      }
+
+      const [tagsRaw, phaseRaw] = line.split('|');
+      const tags = (tagsRaw ?? '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean)
+        .slice(0, 6);
+      const phaseTrim = (phaseRaw ?? '').trim().toLowerCase();
+      const phase = VALID_PHASES.has(phaseTrim) ? phaseTrim : undefined;
+
+      if (tags.length === 0 && !phase) return;
+
+      const { AISessionsRepository } = await import('../../../storage/repositories/AISessionsRepository');
+      const update: Record<string, unknown> = {};
+      if (tags.length > 0) update.tags = tags;
+      if (phase) update.phase = phase;
+      await AISessionsRepository.updateMetadata(sessionId, { metadata: update });
+      // Broadcast + mobile-sync are wired in MessageStreamingHandler so the
+      // kanban/sidebar and iOS pick up the write the same way they would
+      // for an MCP-tool-driven update via SessionNamingService.
+      this.emit('session:metadata-updated', { sessionId, metadata: update });
+      console.log(`[CLAUDE-CODE] applied side-question tags+phase for ${sessionId}: ${JSON.stringify(update)}`);
+    } catch (error) {
+      // Most likely "Query closed before response received" on short turns -- expected
+      console.warn('[CLAUDE-CODE] tags+phase side-question failed:', (error as Error)?.message ?? error);
+    }
+  }
+
+  /**
    * Interrupt the current turn so the session completes early.
    * The streaming loop breaks, the 'complete' chunk is still yielded,
    * and the AIService completion handler runs normally (including queue processing).
@@ -1568,7 +1723,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
    */
 
   /** Handle system init chunk -- capture slash commands, skills, MCP health, etc. */
-  private *handleSystemInit(chunk: any, sessionId: string | undefined, hideMessages: boolean): Generator<StreamChunk> {
+  private *handleSystemInit(
+    chunk: any,
+    sessionId: string | undefined,
+    hideMessages: boolean,
+    firstUserMessageDescription: string,
+  ): Generator<StreamChunk> {
     // Clean up stale "running" tasks from previous sessions/restarts
     if (sessionId && this.activeTasks.size === 0) {
       (async () => {
@@ -1616,6 +1776,16 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       this.mcpQuery = this.leadQuery;
       this.checkMcpServerStatuses().catch(() => {});
       this.startMcpHealthChecks();
+    }
+
+    // Fire-and-forget session-naming side-question. Must run DURING the turn
+    // (here, not post-turn) because the SDK calls transport.endInput() after the
+    // first result chunk for both string-prompt and AsyncIterable paths, killing
+    // the transport before any post-turn write could land. Init time is the
+    // earliest safe moment: subprocess alive, stdin open, MCP servers connected.
+    if (sessionId && this.leadQuery) {
+      const queryRef = this.leadQuery;
+      this.maybeFireSessionNamingSideQuestion(queryRef, sessionId, firstUserMessageDescription).catch(() => {});
     }
   }
 
@@ -2551,6 +2721,10 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
     const prompt = buildClaudeCodeSystemPrompt({
       hasSessionNaming,
+      // claude-code generates titles out-of-band via the SDK's generateSessionTitle
+      // (see maybeFireSessionNamingSideQuestion). Other providers must keep
+      // hasOutOfBandNaming = false so the agent still names the session itself.
+      hasOutOfBandNaming: true,
       worktreePath,
       isVoiceMode,
       voiceModeCodingAgentPrompt,

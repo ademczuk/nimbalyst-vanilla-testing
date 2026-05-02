@@ -548,6 +548,44 @@ export class MessageStreamingHandler {
     provider.removeAllListeners('message:logged');
     provider.on('message:logged', onMessageLogged);
 
+    // Forward provider-side title updates (from the SDK's generateSessionTitle
+    // path) to all renderers so the session list updates in real time.
+    // Mirrors the broadcast that SessionNamingService does for the MCP-tool path.
+    const onSessionTitleUpdated = (data: { sessionId: string; title: string }) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send('session:title-updated', data);
+        }
+      }
+    };
+    provider.removeAllListeners('session:title-updated');
+    provider.on('session:title-updated', onSessionTitleUpdated);
+
+    // Forward provider-side metadata updates (e.g. tags/phase from the SDK's
+    // out-of-band naming side-question and the default-phase fallback) to all
+    // renderers AND mobile sync. Mirrors what SessionNamingService does for
+    // the MCP-tool path so direct repo writes from the provider do not bypass
+    // the kanban refresh and iOS push.
+    const onSessionMetadataUpdated = (data: { sessionId: string; metadata: Record<string, unknown> }) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send('sessions:session-updated', data.sessionId, data.metadata);
+        }
+      }
+      const sp = getSyncProvider();
+      if (sp && (data.metadata.phase !== undefined || data.metadata.tags !== undefined)) {
+        const syncMeta: Record<string, unknown> = {};
+        if (data.metadata.phase !== undefined) syncMeta.phase = data.metadata.phase as string;
+        if (data.metadata.tags !== undefined) syncMeta.tags = data.metadata.tags as string[];
+        sp.pushChange(data.sessionId, {
+          type: 'metadata_updated',
+          metadata: syncMeta as any,
+        });
+      }
+    };
+    provider.removeAllListeners('session:metadata-updated');
+    provider.on('session:metadata-updated', onSessionMetadataUpdated);
+
     // Helper to sync pending prompt state to mobile
     const syncPendingPrompt = (sessionId: string, hasPendingPrompt: boolean) => {
       const sp = getSyncProvider();

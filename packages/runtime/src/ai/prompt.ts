@@ -13,8 +13,37 @@ function formatMcpToolReference(server: string, tool: string, style: ToolReferen
   return `\`mcp__${server}__${tool}\``;
 }
 
-function buildSessionNamingSection(style: ToolReferenceStyle = 'claude'): string {
+function buildSessionNamingSection(
+  style: ToolReferenceStyle = 'claude',
+  hasOutOfBandNaming: boolean = false
+): string {
   const toolReference = formatMcpToolReference('nimbalyst-session-naming', 'update_session_meta', style);
+
+  const firstTurnSection = hasOutOfBandNaming
+    ? `### First turn
+
+The session name is assigned automatically out-of-band — **do not** call this tool to set \`name\`. However, tags and phase are NOT auto-assigned. Call this tool early in your first turn to set:
+
+- \`add\`: 2-4 relevant tags (type of work + area, e.g. \`["bug-fix", "ui"]\` or \`["feature", "runtime"]\`)
+- \`phase\`: one of \`backlog\`, \`planning\`, \`implementing\`, \`validating\` based on what the user asked
+
+Example first call: \`{ "add": ["bug-fix", "electron"], "phase": "implementing" }\`
+
+This is required so the session shows up correctly on the kanban board.`
+    : `### First turn
+
+CRITICAL: You MUST call this tool during your first turn to set the session name, tags, and phase.
+
+Call it as soon as you understand what the user wants. Usually this means right away, but if the user asks you to 'implement plan.md' you would look at plan.md first to understand before naming. You **MUST** call this before the end of your first turn.
+
+On the first call, provide \`name\`, \`add\` (tags), and \`phase\`:
+\`{ "name": "Dark mode implementation", "add": ["feature", "ui"], "phase": "implementing" }\`
+
+This is required so the session shows up correctly on the kanban board.`;
+
+  const subsequentCallsSuffix = hasOutOfBandNaming
+    ? ''
+    : ' The name can only be set once -- subsequent attempts are silently ignored while other fields are still applied.';
 
   return `
 
@@ -24,18 +53,11 @@ You have one tool for managing session metadata: ${toolReference}
 
 This tool sets the session name, tags, and phase. It always returns the full current metadata in its response.
 
-### First turn
-
-CRITICAL: You MUST call this tool during your first turn to set the session name.
-
-Call it as soon as you understand what the user wants. Usually this means right away, but if the user asks you to 'implement plan.md' you would look at plan.md first to understand before naming. You **MUST** call this before the end of your first turn.
-
-On the first call, provide \`name\`, \`add\` (tags), and \`phase\`:
-\`{ "name": "Dark mode implementation", "add": ["feature", "ui"], "phase": "implementing" }\`
+${firstTurnSection}
 
 ### Subsequent calls
 
-Call again to update tags or phase as work progresses. The name can only be set once -- subsequent attempts are silently ignored while other fields are still applied.
+Call again to update tags or phase as work progresses.${subsequentCallsSuffix}
 
 - Update phase: \`{ "phase": "validating" }\`
 - Add/remove tags: \`{ "add": ["committed"], "remove": ["uncommitted"] }\`
@@ -77,6 +99,14 @@ Bad examples: "Fix null check in handleAuth" (too specific), "Update code" (too 
  */
 export interface ClaudeCodePromptOptions {
   hasSessionNaming?: boolean;
+  /**
+   * When true, the prompt tells the agent NOT to set `name` — the host will
+   * generate the title out-of-band. Only providers that actually run an
+   * out-of-band naming path (currently just claude-code via the SDK's
+   * generateSessionTitle) should pass true. Other providers must leave this
+   * false so the agent still sets a name via update_session_meta.
+   */
+  hasOutOfBandNaming?: boolean;
   /** @deprecated Use toolReferenceStyle instead */
   sessionNamingInstructionStyle?: ToolReferenceStyle;
   toolReferenceStyle?: ToolReferenceStyle;
@@ -108,6 +138,7 @@ export interface ClaudeCodePromptOptions {
 export function buildClaudeCodeSystemPrompt(options: ClaudeCodePromptOptions): string {
   const {
     hasSessionNaming = false,
+    hasOutOfBandNaming = false,
     sessionNamingInstructionStyle,
     toolReferenceStyle = 'claude',
     worktreePath,
@@ -233,7 +264,7 @@ When asked to commit your work, use the ${gitCommitProposalTool} tool instead of
 
   // Add session naming if available
   if (hasSessionNaming) {
-    prompt += buildSessionNamingSection(effectiveToolReferenceStyle);
+    prompt += buildSessionNamingSection(effectiveToolReferenceStyle, hasOutOfBandNaming);
   }
 
   // Add voice mode context if applicable
