@@ -5,6 +5,7 @@
   display: flex;
   flex-direction: column;
   background: var(--nim-bg);
+  border-top: 2px solid var(--nim-border);
   color: var(--nim-text);
   font-family: inherit;
   font-size: 12px;
