@@ -78,16 +78,15 @@ export async function getAllSessionsForSync(includeMessages = false): Promise<Ar
   const ensureTime = performance.now() - startTime;
 
   const queryStart = performance.now();
+  // The COUNT(m.id) projection used to live here, but the mapper below hardcodes
+  // messageCount: 0, so the LEFT JOIN + GROUP BY produced ~2.4s of wasted work
+  // on databases with ~1k sessions. Stripped down to an indexed SELECT.
   const { rows } = await moduleDb.query<any>(
     `SELECT s.id, s.provider, s.model, s.mode, s.session_type, s.parent_session_id, s.agent_role, s.created_by_session_id, s.title, s.workspace_id, s.draft_input,
             s.worktree_id, s.is_archived, s.is_pinned, s.branched_from_session_id, s.branch_point_message_id, s.branched_at,
-            s.created_at, s.updated_at, s.metadata, COUNT(m.id) as message_count
+            s.created_at, s.updated_at, s.metadata
      FROM ai_sessions s
-     LEFT JOIN ai_agent_messages m ON s.id = m.session_id AND m.direction = 'input' AND (m.hidden = FALSE OR m.hidden IS NULL)
      WHERE (s.is_archived = FALSE OR s.is_archived IS NULL)
-     GROUP BY s.id, s.provider, s.model, s.mode, s.session_type, s.parent_session_id, s.agent_role, s.created_by_session_id, s.title, s.workspace_id, s.draft_input,
-              s.worktree_id, s.is_archived, s.is_pinned, s.branched_from_session_id, s.branch_point_message_id, s.branched_at,
-              s.created_at, s.updated_at, s.metadata
      ORDER BY s.updated_at DESC`
   );
   const queryTime = performance.now() - queryStart;
