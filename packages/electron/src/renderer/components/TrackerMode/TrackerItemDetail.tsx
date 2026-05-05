@@ -270,6 +270,11 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
   // Rich content editor state
   const [contentMarkdown, setContentMarkdown] = useState<string | null>(null);
   const [contentLoaded, setContentLoaded] = useState(false);
+  // Bumped when an external writer (MCP, sync) changes the body content
+  // out from under us, so the Lexical editor remounts with the new value.
+  // Lexical only consumes `initialContent` at mount, so a key change is
+  // the only way to surface fresh content without an in-place editor API.
+  const [externalContentEpoch, setExternalContentEpoch] = useState(0);
   const getContentFnRef = useRef<(() => string) | null>(null);
   const contentSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Baseline of what was last persisted to PGLite for THIS item. Used as a
@@ -278,6 +283,9 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
   // under `root`), onDirtyChange would otherwise save "" and clobber the
   // real content in PGLite. We refuse any save that would shrink a
   // known-non-empty baseline to empty.
+  // Also acts as the comparator for detecting external content updates --
+  // if the atom's content diverges from this baseline, the change came
+  // from somewhere other than this panel's own save path.
   const loadedBaselineRef = useRef<string | null>(null);
 
   // Reset local editing state when navigating to a different item.
@@ -336,6 +344,35 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
 
     return () => { cancelled = true; };
   }, [item?.id, hasRichContent]);
+
+  // External content update detection.
+  // The atom's `content` is refreshed by trackerSyncListeners whenever a
+  // tracker-items-changed event arrives -- including MCP writes, sync
+  // pushes, comment additions, and our own field saves. Our own content
+  // saves are recognized because saveContent advances the baseline before
+  // the IPC round-trip, so when the broadcast echo arrives the atom value
+  // already matches. Any other divergence means an external writer changed
+  // the body, and Lexical can only adopt that by remounting -- bump the
+  // epoch in the editor key so it picks up the fresh initialContent.
+  const atomContentString = useMemo<string | null>(() => {
+    if (!hasRichContent) return null;
+    const c = item?.content;
+    if (c == null) return null;
+    return typeof c === 'string' ? c : (c as any)?.markdown ?? null;
+  }, [item?.content, hasRichContent]);
+
+  useEffect(() => {
+    if (!hasRichContent) return;
+    if (atomContentString == null) return;
+    const baseline = loadedBaselineRef.current;
+    // Initial load hasn't completed yet -- the load effect owns this state
+    if (baseline === null) return;
+    if (atomContentString === baseline) return;
+    // External update detected: refresh the editor.
+    loadedBaselineRef.current = atomContentString;
+    setContentMarkdown(atomContentString);
+    setExternalContentEpoch((e) => e + 1);
+  }, [atomContentString, hasRichContent]);
 
   // Escape to close
   useEffect(() => {
@@ -452,12 +489,20 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
     }
     if (contentSaveTimerRef.current) clearTimeout(contentSaveTimerRef.current);
     contentSaveTimerRef.current = setTimeout(async () => {
+      // Update the baseline before the IPC round-trip. The main-process
+      // updateTrackerItemContent path also broadcasts tracker-items-changed,
+      // which races with the invoke result -- if the broadcast arrives first
+      // and we haven't moved the baseline forward yet, the external-update
+      // detector below would mistake our own echo for a remote change and
+      // remount the editor mid-typing. On save failure the editor still
+      // owns the live value and the next dirty event will retry, so a
+      // briefly-optimistic baseline is safe.
+      loadedBaselineRef.current = markdown;
       try {
         await window.electronAPI.documentService.updateTrackerItemContent({
           itemId: item!.id,
           content: markdown,
         });
-        loadedBaselineRef.current = markdown;
       } catch (err) {
         console.error('[TrackerItemDetail] Failed to save content:', err);
       }
@@ -841,7 +886,7 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
               className="tracker-content-editor border border-nim rounded bg-nim min-h-[200px] overflow-hidden"
               data-testid="tracker-detail-content-editor"
             >
-              <NimbalystEditor key={item.id} config={localEditorConfig} />
+              <NimbalystEditor key={`${item.id}-${externalContentEpoch}`} config={localEditorConfig} />
             </div>
           ) : contentMode === 'collaborative' && collabEditorConfig ? (
             <div
