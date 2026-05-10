@@ -303,8 +303,8 @@ export function buildFeedbackInitialDraft(
 ): string {
   const command =
     kind === 'bug'
-      ? '/nimbalyst-feedback:bug-report'
-      : '/nimbalyst-feedback:feature-request';
+      ? '/feedback:bug-report'
+      : '/feedback:feature-request';
 
   if (kind === 'bug') {
     const consent = options.mayGatherLogs ? 'allowed' : 'not allowed';

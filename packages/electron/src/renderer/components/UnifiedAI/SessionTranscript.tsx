@@ -771,9 +771,9 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
     }
 
     // Intercept /implement command - switch to agent mode if in planning mode
-    // This allows the /implement command (or nimbalyst-planning:implement) to actually code
-    // Match both "/implement" and "/nimbalyst-planning:implement" followed by space or end
-    const implementCommandMatch = message.match(/^\/(nimbalyst-planning:)?implement(?:\s|$)/);
+    // This allows the /implement command (or planning:implement) to actually code
+    // Match "/implement", "/planning:implement", and the legacy "/nimbalyst-planning:implement" form
+    const implementCommandMatch = message.match(/^\/(?:nimbalyst-planning:|planning:)?implement(?:\s|$)/);
     if (implementCommandMatch && overrideMode === 'planning') {
       // Switch to agent mode for implementation
       overrideMode = 'agent';

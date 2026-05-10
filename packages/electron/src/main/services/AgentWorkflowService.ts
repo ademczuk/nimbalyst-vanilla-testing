@@ -790,10 +790,10 @@ export class AgentWorkflowService {
     },
   ): AgentWorkflowDescriptor {
     const namespace = options.namespace;
-    const claudeName = command.kind === 'command' && namespace
+    const claudeName = namespace
       ? `${namespace}:${command.name}`
       : command.name;
-    const codexBaseName = command.kind === 'command' && namespace
+    const codexBaseName = namespace
       ? `${namespace}-${command.name}`
       : command.name;
     const codexName = sanitizeCodexName(codexBaseName);

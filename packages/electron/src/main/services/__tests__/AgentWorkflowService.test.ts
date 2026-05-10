@@ -107,7 +107,7 @@ Review the issue, isolate the root cause, and prepare a fix plan.
     });
 
     expect(claudeEntries.some(entry => entry.name === 'repair-tools:repair')).toBe(true);
-    expect(claudeEntries.some(entry => entry.name === 'triage')).toBe(true);
+    expect(claudeEntries.some(entry => entry.name === 'repair-tools:triage')).toBe(true);
     expect(claudeEntries.some(entry => entry.name === 'compact')).toBe(true);
 
     const codexEntries = await service.listEntries({
@@ -116,7 +116,7 @@ Review the issue, isolate the root cause, and prepare a fix plan.
     });
 
     expect(codexEntries.some(entry => entry.name === 'repair-tools-repair')).toBe(true);
-    expect(codexEntries.some(entry => entry.name === 'triage')).toBe(true);
+    expect(codexEntries.some(entry => entry.name === 'repair-tools-triage')).toBe(true);
 
     const codexSkillPath = path.join(
       workspacePath,
@@ -230,11 +230,11 @@ Use this when the user needs a helper workflow.
 
     const claudeEntries = await service.listEntries({ provider: 'claude-code' });
     expect(claudeEntries.some(entry => entry.name === 'legacy-tools:inspect')).toBe(true);
-    expect(claudeEntries.some(entry => entry.name === 'helper')).toBe(true);
+    expect(claudeEntries.some(entry => entry.name === 'legacy-tools:helper')).toBe(true);
 
     const codexEntries = await service.listEntries({ provider: 'openai-codex' });
     expect(codexEntries.some(entry => entry.name === 'legacy-tools-inspect')).toBe(true);
-    expect(codexEntries.some(entry => entry.name === 'helper')).toBe(true);
+    expect(codexEntries.some(entry => entry.name === 'legacy-tools-helper')).toBe(true);
   });
 
   it('deduplicates concurrent Codex export syncs', async () => {

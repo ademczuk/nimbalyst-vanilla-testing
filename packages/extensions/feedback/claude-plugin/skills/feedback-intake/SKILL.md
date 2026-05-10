@@ -1,14 +1,14 @@
 ---
-name: bug-report
-description: Help the user file a bug report or feature request for Nimbalyst. Activates when the user opens the in-app feedback flow or runs /nimbalyst-feedback:bug-report or /nimbalyst-feedback:feature-request. Coordinates evidence gathering, anonymization, and posting to GitHub Issues.
+name: feedback-intake
+description: Help the user file a bug report or feature request for Nimbalyst. Activates when the user opens the in-app feedback flow or runs /feedback:bug-report or /feedback:feature-request. Coordinates evidence gathering, anonymization, and posting to GitHub Issues.
 ---
 
 # Nimbalyst Feedback Skill
 
 This skill is the entry point for the Nimbalyst in-app feedback flow. It activates when:
 
-- The user runs the `/nimbalyst-feedback:bug-report` slash command
-- The user runs the `/nimbalyst-feedback:feature-request` slash command
+- The user runs the `/feedback:bug-report` slash command
+- The user runs the `/feedback:feature-request` slash command
 - The user opens a session with `sessionType: 'bug-report'` or `sessionType: 'feature-request'`
 
 ## Behavior
