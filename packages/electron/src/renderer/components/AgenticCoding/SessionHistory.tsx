@@ -236,6 +236,22 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
   // Use atom sessions directly - no conversion needed
   const allSessions = allSessionsFromAtom;
 
+  // Count of sessions matching the iOS project list definition: same workspace,
+  // not archived, not workstream/blitz containers. iOS counts all sessions (incl.
+  // children), so we count from the registry rather than from sessionListRootAtom
+  // which only contains roots + blitz children.
+  const registryForCount = useAtomValue(sessionRegistryAtom);
+  const iosMatchCount = useMemo(() => {
+    let count = 0;
+    for (const s of registryForCount.values()) {
+      if (s.workspaceId !== workspacePath) continue;
+      if (s.isArchived) continue;
+      if (s.sessionType === 'workstream' || s.sessionType === 'blitz') continue;
+      count++;
+    }
+    return count;
+  }, [registryForCount, workspacePath]);
+
   const [sessions, setSessions] = useState<SessionItem[]>([]); // Filtered sessions to display
   const loading = atomLoading && allSessions.length === 0; // Only show loading on initial load
   const [error, setError] = useState<string | null>(null);
@@ -2629,6 +2645,12 @@ const SessionHistoryComponent: React.FC<SessionHistoryProps> = ({
             <path d="M6 8h4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round"/>
           </svg>
         </button>
+        <span
+          className="session-history-match-count text-[11px] text-[var(--nim-text-faint)] tabular-nums"
+          title={`${iosMatchCount} non-archived sessions in this workspace (matches the iOS project list count)${sessions.length !== iosMatchCount ? ` -- ${sessions.length} visible after current filters` : ''}`}
+        >
+          {iosMatchCount} {iosMatchCount === 1 ? 'session' : 'sessions'}
+        </span>
         <div className="session-history-sort-dropdown ml-auto relative">
           <button
             className="session-history-sort-button flex items-center justify-center px-1.5 py-1 text-xs rounded border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)] text-[var(--nim-text-muted)] cursor-pointer transition-all duration-150 outline-none hover:bg-[var(--nim-bg-tertiary)] hover:border-[var(--nim-primary)] hover:text-[var(--nim-text)] [&_svg]:block"

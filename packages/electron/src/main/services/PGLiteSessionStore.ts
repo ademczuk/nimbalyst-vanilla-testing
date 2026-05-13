@@ -95,7 +95,6 @@ export async function getAllSessionsForSync(includeMessages = false): Promise<Ar
             s.worktree_id, s.is_archived, s.is_pinned, s.branched_from_session_id, s.branch_point_message_id, s.branched_at,
             s.created_at, s.updated_at, s.metadata
      FROM ai_sessions s
-     WHERE (s.is_archived = FALSE OR s.is_archived IS NULL)
      ORDER BY s.updated_at DESC`
   );
   const queryTime = performance.now() - queryStart;

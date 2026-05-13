@@ -441,6 +441,9 @@ public final class SyncManager: ObservableObject {
 
         do {
             try database.upsertProject(project)
+            // Server's sessionCount includes archived sessions; recompute locally
+            // so the displayed count matches what SessionListView actually shows.
+            try database.refreshSessionCount(forProject: projectId)
         } catch {
             logger.error("Failed to upsert project: \(error.localizedDescription)")
         }
@@ -607,6 +610,9 @@ public final class SyncManager: ObservableObject {
 
         do {
             try database.upsertProject(project)
+            // Server's sessionCount includes archived sessions; recompute locally
+            // so the displayed count matches what SessionListView actually shows.
+            try database.refreshSessionCount(forProject: projectId)
         } catch {
             logger.error("Failed to upsert project: \(error.localizedDescription)")
         }

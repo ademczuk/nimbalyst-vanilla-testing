@@ -140,6 +140,7 @@ export interface SyncProvider {
       sessionType?: string;
       parentSessionId?: string;
       worktreeId?: string;
+      isArchived?: boolean;
       messageCount: number;
       lastMessageAt: number;
       createdAt: number;

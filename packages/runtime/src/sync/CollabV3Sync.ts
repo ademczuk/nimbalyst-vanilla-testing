@@ -944,6 +944,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       provider: cached.provider,
       model: cached.model,
       mode: cached.mode,
+      isArchived: 'isArchived' in pending ? pending.isArchived : cached.isArchived,
       messageCount: cached.messageCount,
       lastMessageAt: cached.lastMessageAt,
       createdAt: cached.createdAt,
@@ -978,6 +979,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       mode: updatedCache.mode,
       sessionType: updatedCache.sessionType,
       parentSessionId: updatedCache.parentSessionId,
+      isArchived: updatedCache.isArchived,
       messageCount: updatedCache.messageCount,
       lastMessageAt: updatedCache.lastMessageAt,
       createdAt: updatedCache.createdAt,
@@ -2675,6 +2677,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               mode: baseEntry.mode,
               sessionType: baseEntry.sessionType,
               parentSessionId: baseEntry.parentSessionId,
+              isArchived: baseEntry.isArchived,
               messageCount: baseEntry.messageCount,
               lastMessageAt: baseEntry.lastMessageAt,
               createdAt: baseEntry.createdAt,
@@ -2727,6 +2730,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               model: meta.model ?? cached.model,
               mode: (meta.mode ?? cached.mode) as CachedSessionIndex['mode'],
               parentSessionId: 'parentSessionId' in meta ? meta.parentSessionId : cached.parentSessionId,
+              isArchived: 'isArchived' in meta ? meta.isArchived : cached.isArchived,
               lastMessageAt: updatedAt ?? cached.lastMessageAt,
               updatedAt: updatedAt ?? cached.updatedAt,
               pendingExecution: 'pendingExecution' in meta ? meta.pendingExecution : cached.pendingExecution,
@@ -2752,6 +2756,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               mode: meta.mode as CachedSessionIndex['mode'],
               sessionType: meta.sessionType,
               parentSessionId: meta.parentSessionId,
+              isArchived: meta.isArchived,
               messageCount: 0,
               lastMessageAt: now,
               createdAt: now,
@@ -2772,13 +2777,14 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             // Queue the partial update to be applied when the session is cached.
             // This handles cases like isExecuting being set before syncSessionsToIndex runs,
             // or title updates from session naming that arrive before the session is indexed.
-            const hasPartialUpdate = 'isExecuting' in meta || 'pendingExecution' in meta || meta.title !== undefined || 'draftInput' in meta;
+            const hasPartialUpdate = 'isExecuting' in meta || 'pendingExecution' in meta || meta.title !== undefined || 'draftInput' in meta || 'isArchived' in meta;
             if (hasPartialUpdate) {
               // console.log('[CollabV3] Queueing partial metadata update for session:', sessionId, { isExecuting: meta.isExecuting, pendingExecution: meta.pendingExecution, title: meta.title });
               const existing = pendingMetadataUpdates.get(sessionId) || {};
               if ('isExecuting' in meta) existing.isExecuting = meta.isExecuting;
               if ('pendingExecution' in meta) existing.pendingExecution = meta.pendingExecution;
               if (meta.title !== undefined) existing.title = meta.title;
+              if ('isArchived' in meta) existing.isArchived = meta.isArchived;
               if ('draftInput' in meta) (existing as any).draftInput = (meta as any).draftInput;
               if ('draftUpdatedAt' in meta) (existing as any).draftUpdatedAt = (meta as any).draftUpdatedAt;
               pendingMetadataUpdates.set(sessionId, existing);

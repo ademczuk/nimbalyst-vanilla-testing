@@ -583,12 +583,18 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
             // if so, the server already expired it and re-uploading is wasteful.
             const localUpdatedAt = localSession.updatedAt || 0;
             const ttlCutoff = Date.now() - SESSION_TTL_MS;
-            if (localUpdatedAt < ttlCutoff) {
-              continue; // Expired session, skip
+            const ttlExpired = localUpdatedAt < ttlCutoff;
+            if (ttlExpired && !localSession.isArchived) {
+              continue; // Expired and not archived: nothing the other devices need.
             }
-            // Genuinely new session - needs full sync (index + messages)
+            // Push index entry. For TTL-expired but locally archived sessions,
+            // we push without messages so iOS can see the archived flag and stop
+            // showing the session even though its message body is long gone from
+            // the server.
             sessionsNeedingIndexUpdate.push(localSession);
-            sessionsNeedingMessageSync.push(localSession.id);
+            if (!ttlExpired) {
+              sessionsNeedingMessageSync.push(localSession.id);
+            }
           } else {
             // Compare timestamps AND message counts to detect sessions needing sync.
             // The real-time pushChange sends updatedAt=Date.now() after DB write, so
@@ -617,14 +623,23 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
               (localSession.parentSessionId && !serverSession.parentSessionId) ||
               (localSession.provider && !serverSession.provider) ||
               (localSession.model && !serverSession.model) ||
-              (localSession.mode && !serverSession.mode)
+              (localSession.mode && !serverSession.mode) ||
+              // Archive state diverged. updateMetadata intentionally doesn't bump
+              // updated_at (sort stability), so timestamp comparison won't catch
+              // archives. Re-push the index entry without message sync.
+              (Boolean(localSession.isArchived) !== Boolean(serverSession.isArchived))
             ) {
               sessionsNeedingIndexUpdate.push(localSession);
             }
           }
         }
 
-        // logger.main.info(`[SyncManager] Delta sync: ${sessionsNeedingIndexUpdate.length}/${allLocalSessions.length} sessions need update, ${sessionsNeedingMessageSync.length} need message sync (server has ${serverIndex.sessions.length})`);
+        const archiveMismatches = sessionsNeedingIndexUpdate.filter(s => {
+          const server = serverSessionMap.get(s.id);
+          return server && Boolean(s.isArchived) !== Boolean(server.isArchived);
+        }).length;
+        const ttlExpiredArchives = sessionsNeedingIndexUpdate.filter(s => !serverSessionMap.has(s.id) && s.isArchived).length;
+        logger.main.info(`[SyncManager] startup sync: ${sessionsNeedingIndexUpdate.length} need index update (${archiveMismatches} archive mismatches, ${ttlExpiredArchives} ttl-expired archives), ${sessionsNeedingMessageSync.length} need message sync, local=${allLocalSessions.length}, server=${serverIndex.sessions.length}`);
 
         // Sync sessions that need it
         if (sessionsNeedingIndexUpdate.length === 0 && sessionsNeedingMessageSync.length === 0) {
@@ -987,11 +1002,16 @@ export async function triggerIncrementalSync(): Promise<void> {
         // if so, the server already expired it and re-uploading is wasteful.
         const localUpdatedAt = localSession.updatedAt || 0;
         const ttlCutoff = Date.now() - SESSION_TTL_MS;
-        if (localUpdatedAt < ttlCutoff) {
-          continue; // Expired session, skip
+        const ttlExpired = localUpdatedAt < ttlCutoff;
+        if (ttlExpired && !localSession.isArchived) {
+          continue; // Expired and not archived: nothing other devices need.
         }
+        // For TTL-expired but locally archived sessions, push the index entry
+        // without messages so iOS can see the archived flag and hide the row.
         sessionsNeedingIndexUpdate.push(localSession);
-        sessionsNeedingMessageSync.push(localSession.id);
+        if (!ttlExpired) {
+          sessionsNeedingMessageSync.push(localSession.id);
+        }
       } else {
         // Compare timestamps AND message counts to detect sessions that need syncing.
         // Note: The real-time pushChange path sends updatedAt=Date.now() AFTER the DB write,
@@ -1011,6 +1031,12 @@ export async function triggerIncrementalSync(): Promise<void> {
           sessionsNeedingIndexUpdate.push(localSession);
           sessionsNeedingMessageSync.push(localSession.id);
           // logger.main.info(`[SyncManager] Session ${localSession.id} needs sync (messages): local=${localMessageCount} server=${serverMessageCount}`);
+        } else if (Boolean(localSession.isArchived) !== Boolean(serverSession.isArchived)) {
+          // Archive state diverged. updateMetadata doesn't bump updated_at, so the
+          // timestamp comparison above misses it. Push the index entry without
+          // re-uploading messages.
+          sessionsNeedingIndexUpdate.push(localSession);
+          logger.main.info(`[SyncManager] triggered sync: archive mismatch ${localSession.id.slice(0,8)} local=${localSession.isArchived} server=${serverSession.isArchived}`);
         }
       }
     }
