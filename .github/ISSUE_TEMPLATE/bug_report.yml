@@ -1,7 +1,8 @@
 name: Bug report
 description: Something isn't working in Nimbalyst
 title: "[Bug]: "
-labels: ["type:bug", "status:needs-triage"]
+type: Bug
+labels: ["status:needs-triage"]
 body:
   - type: markdown
     attributes:
