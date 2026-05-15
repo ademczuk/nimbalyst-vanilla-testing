@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
+- PGLite worker `init` now allows 120 seconds (was 30s) so the first relaunch after a force-close does not fail with `Request init timed out` while WAL recovery is still in progress. `PGLiteDatabaseWorker.doInitialize` and `recreateWorkerAndReinit` both pass the new `INIT_TIMEOUT_MS` constant; the timeout for normal queries / exec is unchanged. Reported by @shayliraz: a freeze with several concurrent agent sessions caused a forced close, then the next relaunch raised a `Database Initialization Failed` modal with `Request init timed out`, while a second relaunch consistently succeeded - PGLite had simply not finished recovery within the original 30s window. This is the recovery-symptom fix; the underlying freeze with multiple concurrent agent sessions is a separate issue and not addressed here. (#238)
 <!-- Bug fixes go here -->
 
 ### Removed
