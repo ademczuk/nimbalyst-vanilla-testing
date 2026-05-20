@@ -377,6 +377,61 @@ const CreatedView: React.FC<{ data: StructuredCreated }> = ({ data }) => {
   );
 };
 
+// Fields rendered by dedicated UI; everything else falls through to GenericChangeRow
+// so custom tracker types (incident, decision, plan, ...) show their field updates.
+const SPECIAL_CHANGE_KEYS = new Set([
+  'status', 'priority', 'title', 'owner', 'archived', 'progress', 'tags', 'description',
+]);
+
+function formatChangeValue(value: any): string {
+  if (value === null || value === undefined || value === '') return 'none';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (Array.isArray(value)) return value.length === 0 ? 'none' : value.map((v) => String(v)).join(', ');
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value); } catch { return String(value); }
+  }
+  const s = String(value);
+  return s.length > 120 ? s.slice(0, 117) + '...' : s;
+}
+
+function humanizeFieldName(field: string): string {
+  // camelCase / snake_case -> "Title Case With Spaces"
+  return field
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/^./, (c) => c.toUpperCase());
+}
+
+const GenericChangeRow: React.FC<{ field: string; change: { from: any; to: any } }> = ({ field, change }) => (
+  <Row>
+    <Label>{humanizeFieldName(field)}</Label>
+    <span style={{ fontSize: '10px', color: 'var(--nim-text-faint)', textDecoration: 'line-through' }}>
+      {formatChangeValue(change.from)}
+    </span>
+    <Arrow />
+    <span style={{ fontSize: '11px', color: 'var(--nim-text-muted)' }}>
+      {formatChangeValue(change.to)}
+    </span>
+  </Row>
+);
+
+const DescriptionChangeRow: React.FC<{ change: { from: any; to: any } }> = ({ change }) => {
+  const fromLen = typeof change.from === 'string' ? change.from.length : 0;
+  const toLen = typeof change.to === 'string' ? change.to.length : 0;
+  return (
+    <Row>
+      <Label>Description</Label>
+      <span style={{ fontSize: '10px', color: 'var(--nim-text-faint)' }}>
+        {fromLen.toLocaleString()} chars
+      </span>
+      <Arrow />
+      <span style={{ fontSize: '11px', color: 'var(--nim-text-muted)' }}>
+        {toLen.toLocaleString()} chars
+      </span>
+    </Row>
+  );
+};
+
 const UpdatedView: React.FC<{ data: StructuredUpdated }> = ({ data }) => {
   const { changes } = data;
   const changedKeys = Object.keys(changes);
@@ -395,6 +450,8 @@ const UpdatedView: React.FC<{ data: StructuredUpdated }> = ({ data }) => {
       removed: fromTags.filter((t) => !toSet.has(t)),
     };
   }
+
+  const otherChangedKeys = changedKeys.filter((k) => !SPECIAL_CHANGE_KEYS.has(k));
 
   return (
     <WidgetShell
@@ -484,6 +541,10 @@ const UpdatedView: React.FC<{ data: StructuredUpdated }> = ({ data }) => {
           </div>
         </Row>
       )}
+      {changes.description && <DescriptionChangeRow change={changes.description} />}
+      {otherChangedKeys.map((key) => (
+        <GenericChangeRow key={key} field={key} change={changes[key]} />
+      ))}
     </WidgetShell>
   );
 };
