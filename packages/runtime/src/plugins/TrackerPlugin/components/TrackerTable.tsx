@@ -11,7 +11,11 @@ import type {
 } from '../../../core/DocumentService';
 import type { TrackerRecord } from '../../../core/TrackerRecord';
 import { trackerItemsByTypeAtom, trackerDataLoadedAtom } from '../trackerDataAtoms';
-import { EXTENSION_OWNED_KEYS, LEGACY_KEY_TO_TYPE } from '../documentHeader/frontmatterUtils';
+import {
+  EXTENSION_OWNED_KEYS,
+  LEGACY_KEY_TO_TYPE,
+  buildFullDocumentTrackerId,
+} from '../documentHeader/frontmatterUtils';
 import { getRecordTitle, getRecordStatus, getRecordPriority, getFieldByRole, resolveRoleFieldName } from '../trackerRecordAccessors';
 import { globalRegistry, parseDate } from '../models';
 import {usePostHog} from "posthog-js/react";
@@ -427,7 +431,7 @@ export function convertFullDocumentToTrackerItems(metadata: any[], trackerType: 
       }
 
       return {
-        id: trackerStatus.planId || trackerStatus.decisionId || trackerStatus.id || `fm:${trackerType}:${doc.path}`,
+        id: trackerStatus.planId || trackerStatus.decisionId || trackerStatus.id || buildFullDocumentTrackerId(trackerType, doc.path),
         primaryType: trackerType,
         typeTags: [trackerType],
         source: 'frontmatter' as const,

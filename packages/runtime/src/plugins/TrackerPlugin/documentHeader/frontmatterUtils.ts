@@ -88,6 +88,32 @@ export const EXTENSION_OWNED_KEYS: Record<string, string> = {
 };
 
 /**
+ * Canonical public ID for a full-document tracker item backed by a file.
+ * Shared by renderer, main-process services, and MCP-facing code so plan /
+ * decision / other full-document items resolve to the same identifier
+ * everywhere, even if the backing projection row in `tracker_items` uses an
+ * older legacy ID.
+ */
+export function buildFullDocumentTrackerId(trackerType: string, relativePath: string): string {
+  return `fm:${trackerType}:${relativePath}`;
+}
+
+/**
+ * Parse a canonical full-document tracker ID back into its tracker type and
+ * workspace-relative file path.
+ */
+export function parseFullDocumentTrackerId(
+  itemId: string,
+): { trackerType: string; relativePath: string } | null {
+  const match = /^fm:([^:]+):(.+)$/.exec(itemId);
+  if (!match) return null;
+  return {
+    trackerType: match[1],
+    relativePath: match[2],
+  };
+}
+
+/**
  * Detect tracker type and data from frontmatter.
  *
  * Checks generic `trackerStatus` first (the canonical format), then falls

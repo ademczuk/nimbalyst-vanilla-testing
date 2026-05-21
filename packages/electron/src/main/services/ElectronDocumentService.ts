@@ -22,6 +22,8 @@ import {
   removeInlineTrackerItem,
   EXTENSION_OWNED_KEYS,
   LEGACY_KEY_TO_TYPE,
+  buildFullDocumentTrackerId,
+  parseFullDocumentTrackerId,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/documentHeader/frontmatterUtils';
 import { database } from '../database/PGLiteDatabaseWorker';
 import { shouldExcludeDir } from '../utils/fileFilters';
@@ -44,6 +46,60 @@ interface ExistingInlineTrackerRow {
   type: string;
   line_number?: number | null;
   title?: string | null;
+}
+
+interface ResolvedFullDocumentFrontmatter {
+  trackerType: string;
+  trackerData: Record<string, any>;
+}
+
+function resolveFullDocumentFrontmatter(
+  frontmatter: Record<string, any> | undefined,
+): ResolvedFullDocumentFrontmatter | null {
+  if (!frontmatter) return null;
+
+  for (const [extKey, extType] of Object.entries(EXTENSION_OWNED_KEYS)) {
+    if (frontmatter[extKey] && typeof frontmatter[extKey] === 'object') {
+      const extData = frontmatter[extKey] as Record<string, any>;
+      const { [extKey]: _ext, trackerStatus: _ts, ...topLevel } = frontmatter;
+      return {
+        trackerType: extType,
+        trackerData: { ...topLevel, ...extData },
+      };
+    }
+  }
+
+  if (frontmatter.trackerStatus && typeof frontmatter.trackerStatus === 'object') {
+    const trackerStatus = frontmatter.trackerStatus as Record<string, any>;
+    const trackerType = typeof trackerStatus.type === 'string' && trackerStatus.type.trim().length > 0
+      ? trackerStatus.type.trim()
+      : 'plan';
+    const { trackerStatus: _ts, ...topLevel } = frontmatter;
+    return {
+      trackerType,
+      trackerData: { ...trackerStatus, ...topLevel },
+    };
+  }
+
+  for (const [legacyKey, legacyType] of Object.entries(LEGACY_KEY_TO_TYPE)) {
+    if (frontmatter[legacyKey] && typeof frontmatter[legacyKey] === 'object') {
+      const legacyData = frontmatter[legacyKey] as Record<string, any>;
+      const { [legacyKey]: _legacy, trackerStatus: _ts, ...topLevel } = frontmatter;
+      return {
+        trackerType: legacyType,
+        trackerData: { ...legacyData, ...topLevel },
+      };
+    }
+  }
+
+  return null;
+}
+
+export function getCanonicalTrackerItemIdFromRow(row: { id: string; type: string; source?: string | null; source_ref?: string | null }): string {
+  if (row.source === 'frontmatter' && typeof row.source_ref === 'string' && row.source_ref.length > 0) {
+    return buildFullDocumentTrackerId(row.type, row.source_ref);
+  }
+  return row.id;
 }
 
 function normalizeTrackerTitle(title: string | undefined): string {
@@ -931,19 +987,245 @@ export class ElectronDocumentService implements DocumentService {
     }
   }
 
+  private async listFullDocumentTrackerItemsFromMetadata(): Promise<TrackerItem[]> {
+    this.startScanIfNeeded();
+
+    const { globalRegistry } = await import('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel');
+    const items: TrackerItem[] = [];
+
+    for (const metadata of this.metadataCache.values()) {
+      const pathLower = metadata.path.toLowerCase();
+      if (pathLower.includes('/agents/') || pathLower.includes('\\agents\\')) {
+        continue;
+      }
+
+      const resolved = resolveFullDocumentFrontmatter(metadata.frontmatter);
+      if (!resolved) continue;
+
+      const model = globalRegistry.get(resolved.trackerType);
+      if (!model?.modes?.fullDocument) continue;
+
+      const trackerData = resolved.trackerData;
+      const title = (trackerData.title as string)
+        || (metadata.frontmatter.title as string)
+        || metadata.path.split('/').pop()?.replace(/\.md$/, '')
+        || 'Untitled';
+
+      const coreFieldKeys = new Set([
+        'type', 'title', 'status', 'priority', 'owner', 'tags', 'created',
+        'updated', 'dueDate', 'progress', 'description',
+      ]);
+      const customFields: Record<string, any> = {};
+      for (const [key, value] of Object.entries(trackerData)) {
+        if (!coreFieldKeys.has(key) && value !== undefined) {
+          customFields[key] = value;
+        }
+      }
+
+      items.push({
+        id: buildFullDocumentTrackerId(resolved.trackerType, metadata.path),
+        type: resolved.trackerType as TrackerItemType,
+        typeTags: [resolved.trackerType],
+        title,
+        description: trackerData.description || undefined,
+        status: ((trackerData.status || metadata.frontmatter.status || 'to-do') as string).toLowerCase() as TrackerItem['status'],
+        priority: (trackerData.priority || metadata.frontmatter.priority || 'medium') as TrackerItem['priority'],
+        owner: trackerData.owner || undefined,
+        module: metadata.path,
+        lineNumber: 0,
+        workspace: this.workspacePath,
+        tags: Array.isArray(trackerData.tags) ? trackerData.tags : undefined,
+        created: trackerData.created ? String(trackerData.created) : undefined,
+        updated: trackerData.updated ? String(trackerData.updated) : undefined,
+        dueDate: trackerData.dueDate ? String(trackerData.dueDate) : undefined,
+        progress: typeof trackerData.progress === 'number' ? trackerData.progress : undefined,
+        lastIndexed: metadata.lastModified || metadata.lastIndexed || new Date(),
+        archived: false,
+        source: 'frontmatter',
+        sourceRef: metadata.path,
+        customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
+      });
+    }
+
+    return items;
+  }
+
+  private async listMergedTrackerItems(): Promise<TrackerItem[]> {
+    const result = await database.query<any>(
+      `SELECT * FROM tracker_items WHERE workspace = $1 ORDER BY kanban_sort_order ASC NULLS LAST, last_indexed DESC`,
+      [this.workspacePath]
+    );
+    const dbItems = result.rows.map(row => this.rowToTrackerItem(row));
+    const metadataItems = await this.listFullDocumentTrackerItemsFromMetadata();
+
+    const merged = new Map<string, TrackerItem>();
+    for (const item of metadataItems) {
+      merged.set(item.id, item);
+    }
+    for (const item of dbItems) {
+      const existing = merged.get(item.id);
+      if (existing && item.source === 'frontmatter') {
+        merged.set(item.id, {
+          ...item,
+          title: existing.title,
+          description: existing.description,
+          status: existing.status,
+          priority: existing.priority,
+          owner: existing.owner,
+          module: existing.module,
+          tags: existing.tags,
+          created: existing.created,
+          updated: existing.updated,
+          dueDate: existing.dueDate,
+          progress: existing.progress,
+          lastIndexed: existing.lastIndexed,
+          source: existing.source,
+          sourceRef: existing.sourceRef,
+          customFields: {
+            ...(existing.customFields || {}),
+            ...(item.customFields || {}),
+          },
+        });
+      } else {
+        merged.set(item.id, item);
+      }
+    }
+
+    return Array.from(merged.values());
+  }
+
+  private async resolveTrackerRowForPublicId(
+    itemId: string,
+    options?: { createProjectionForFullDocument?: boolean }
+  ): Promise<any | null> {
+    const direct = await database.query<any>(
+      `SELECT * FROM tracker_items WHERE id = $1`,
+      [itemId]
+    );
+    if (direct.rows.length > 0) {
+      return direct.rows[0];
+    }
+
+    const parsed = parseFullDocumentTrackerId(itemId);
+    if (!parsed) return null;
+
+    const bySourceRef = await database.query<any>(
+      `SELECT * FROM tracker_items
+       WHERE workspace = $1 AND source = 'frontmatter' AND source_ref = $2 AND type = $3
+       ORDER BY updated DESC
+       LIMIT 1`,
+      [this.workspacePath, parsed.relativePath, parsed.trackerType]
+    );
+    if (bySourceRef.rows.length > 0) {
+      return bySourceRef.rows[0];
+    }
+
+    if (!options?.createProjectionForFullDocument) {
+      return null;
+    }
+
+    await this.ensureFrontmatterProjectionRow(parsed.relativePath, parsed.trackerType);
+
+    const created = await database.query<any>(
+      `SELECT * FROM tracker_items
+       WHERE workspace = $1 AND source = 'frontmatter' AND source_ref = $2 AND type = $3
+       ORDER BY updated DESC
+       LIMIT 1`,
+      [this.workspacePath, parsed.relativePath, parsed.trackerType]
+    );
+    return created.rows[0] || null;
+  }
+
+  private async ensureFrontmatterProjectionRow(
+    relativePath: string,
+    expectedType?: string,
+  ): Promise<TrackerItem | null> {
+    const fullPath = path.join(this.workspacePath, relativePath);
+
+    let fileContent: string;
+    try {
+      fileContent = await fs.readFile(fullPath, 'utf-8');
+    } catch {
+      return null;
+    }
+
+    const { data: frontmatter } = await extractFrontmatter(fullPath);
+    if (!frontmatter) return null;
+
+    const resolved = resolveFullDocumentFrontmatter(frontmatter);
+    if (!resolved) return null;
+    if (expectedType && resolved.trackerType !== expectedType) return null;
+
+    const title = (resolved.trackerData.title as string)
+      || (frontmatter.title as string)
+      || relativePath.split('/').pop()?.replace(/\.md$/, '')
+      || 'Untitled';
+    const bodyMatch = fileContent.match(/^---\s*\n[\s\S]*?\n---\s*\n([\s\S]*)$/);
+    const markdownBody = bodyMatch ? bodyMatch[1].trim() : '';
+    const canonicalId = buildFullDocumentTrackerId(resolved.trackerType, relativePath);
+
+    const data: Record<string, any> = { title };
+    for (const [key, value] of Object.entries(resolved.trackerData)) {
+      if (key === 'type' || key === 'trackerStatus') continue;
+      if (value !== undefined && value !== null) {
+        data[key] = value;
+      }
+    }
+
+    const existing = await database.query<any>(
+      `SELECT id FROM tracker_items
+       WHERE workspace = $1 AND source = 'frontmatter' AND source_ref = $2 AND type = $3
+       LIMIT 1`,
+      [this.workspacePath, relativePath, resolved.trackerType]
+    );
+
+    if (existing.rows.length > 0 && existing.rows[0].id !== canonicalId) {
+      await database.query(
+        `UPDATE tracker_items
+         SET data = $1, content = $2, source = 'frontmatter', source_ref = $3, document_path = $3, updated = NOW()
+         WHERE id = $4`,
+        [
+          JSON.stringify(data),
+          markdownBody ? JSON.stringify(markdownBody) : null,
+          relativePath,
+          existing.rows[0].id,
+        ]
+      );
+      const result = await database.query<any>(`SELECT * FROM tracker_items WHERE id = $1`, [existing.rows[0].id]);
+      return result.rows.length > 0 ? this.rowToTrackerItem(result.rows[0]) : null;
+    }
+
+    await database.query(
+      `INSERT INTO tracker_items (
+        id, type, data, workspace, document_path, line_number,
+        created, updated, last_indexed, sync_status,
+        content, archived, source, source_ref
+      ) VALUES ($1, $2, $3, $4, $5, 0, NOW(), NOW(), NOW(), 'local', $6, FALSE, 'frontmatter', $5)
+      ON CONFLICT (id) DO UPDATE SET
+        data = tracker_items.data || $3,
+        content = $6,
+        source = 'frontmatter',
+        source_ref = $5,
+        document_path = $5,
+        updated = NOW()`,
+      [
+        canonicalId,
+        resolved.trackerType,
+        JSON.stringify(data),
+        this.workspacePath,
+        relativePath,
+        markdownBody ? JSON.stringify(markdownBody) : null,
+      ]
+    );
+
+    const result = await database.query<any>(`SELECT * FROM tracker_items WHERE id = $1`, [canonicalId]);
+    return result.rows.length > 0 ? this.rowToTrackerItem(result.rows[0]) : null;
+  }
+
   // Tracker Items API methods
   async listTrackerItems(): Promise<TrackerItem[]> {
     try {
-      // console.log(`[DocumentService] listTrackerItems called for workspace: ${this.workspacePath}`);
-      // Returns all items including archived - filtering happens in the UI layer
-      const result = await database.query<any>(
-        `SELECT * FROM tracker_items WHERE workspace = $1 ORDER BY kanban_sort_order ASC NULLS LAST, last_indexed DESC`,
-        [this.workspacePath]
-      );
-      // console.log(`[DocumentService] Query returned ${result.rows.length} tracker items`);
-      const items = result.rows.map(row => this.rowToTrackerItem(row));
-      // console.log(`[DocumentService] Returning ${items.length} tracker items`);
-      return items;
+      return await this.listMergedTrackerItems();
     } catch (error) {
       console.error('[DocumentService] Failed to list tracker items:', error);
       return [];
@@ -952,13 +1234,8 @@ export class ElectronDocumentService implements DocumentService {
 
   async getTrackerItemsByType(type: TrackerItemType): Promise<TrackerItem[]> {
     try {
-      // console.log(`[DocumentService] getTrackerItemsByType(${type}) for workspace: ${this.workspacePath}`);
-      const result = await database.query<any>(
-        `SELECT * FROM tracker_items WHERE workspace = $1 AND type = $2 ORDER BY kanban_sort_order ASC NULLS LAST, last_indexed DESC`,
-        [this.workspacePath, type]
-      );
-      // console.log(`[DocumentService] Query returned ${result.rows.length} items for type ${type}`);
-      return result.rows.map(row => this.rowToTrackerItem(row));
+      const items = await this.listMergedTrackerItems();
+      return items.filter(item => item.type === type);
     } catch (error) {
       console.error('[DocumentService] Failed to get tracker items by type:', error);
       return [];
@@ -967,11 +1244,8 @@ export class ElectronDocumentService implements DocumentService {
 
   async getTrackerItemsByModule(module: string): Promise<TrackerItem[]> {
     try {
-      const result = await database.query<any>(
-        `SELECT * FROM tracker_items WHERE workspace = $1 AND document_path = $2 ORDER BY line_number ASC`,
-        [this.workspacePath, module]
-      );
-      return result.rows.map(row => this.rowToTrackerItem(row));
+      const items = await this.listMergedTrackerItems();
+      return items.filter(item => item.module === module);
     } catch (error) {
       console.error('[DocumentService] Failed to get tracker items by module:', error);
       return [];
@@ -998,7 +1272,7 @@ export class ElectronDocumentService implements DocumentService {
       : [row.type];
 
     return {
-      id: row.id,
+      id: getCanonicalTrackerItemIdFromRow(row),
       issueNumber: row.issue_number ?? undefined,
       issueKey: row.issue_key ?? undefined,
       type: row.type,
@@ -1008,7 +1282,7 @@ export class ElectronDocumentService implements DocumentService {
       status: data.status || row.status, // Fallback to generated column
       priority: data.priority || undefined,
       owner: data.owner || undefined,
-      module: row.document_path, // Use new column name
+      module: row.document_path || ((row.source === 'frontmatter' || row.source === 'import') ? row.source_ref : undefined),
       lineNumber: row.line_number || undefined,
       workspace: row.workspace,
       tags: data.tags || undefined,
@@ -1066,26 +1340,41 @@ export class ElectronDocumentService implements DocumentService {
    * Get a single tracker item by ID, or null if not found.
    */
   async getTrackerItemById(itemId: string): Promise<TrackerItem | null> {
-    const result = await database.query<any>(
-      `SELECT * FROM tracker_items WHERE id = $1`,
-      [itemId]
-    );
-    if (result.rows.length === 0) return null;
-    return this.rowToTrackerItem(result.rows[0]);
+    const merged = await this.listMergedTrackerItems();
+    const found = merged.find(item => item.id === itemId);
+    if (found) return found;
+
+    const row = await this.resolveTrackerRowForPublicId(itemId);
+    return row ? this.rowToTrackerItem(row) : null;
+  }
+
+  /**
+   * Ensure a backing projection row exists for a public tracker ID and return
+   * the projected item. This is primarily used by MCP-facing code so
+   * frontmatter-backed full-document items can participate in mutations that
+   * still need a `tracker_items` row.
+   */
+  async ensureTrackerProjection(itemId: string): Promise<TrackerItem | null> {
+    const row = await this.resolveTrackerRowForPublicId(itemId, {
+      createProjectionForFullDocument: true,
+    });
+    return row ? this.rowToTrackerItem(row) : null;
   }
 
   /**
    * Update the sync_status of a tracker item.
    */
   async updateTrackerItemSyncStatus(itemId: string, syncStatus: string): Promise<void> {
+    const row = await this.resolveTrackerRowForPublicId(itemId);
+    if (!row) return;
     await database.query(
       `UPDATE tracker_items SET sync_status = $1 WHERE id = $2`,
-      [syncStatus, itemId]
+      [syncStatus, row.id]
     );
     // Notify watchers
     const result = await database.query<any>(
       `SELECT * FROM tracker_items WHERE id = $1`,
-      [itemId]
+      [row.id]
     );
     if (result.rows.length > 0) {
       const item = this.rowToTrackerItem(result.rows[0]);
@@ -1104,16 +1393,10 @@ export class ElectronDocumentService implements DocumentService {
    * Merges provided fields into the existing JSONB data column.
    */
   async updateTrackerItem(itemId: string, updates: Record<string, any>): Promise<TrackerItem> {
-    // Read existing item
-    const existing = await database.query<any>(
-      `SELECT * FROM tracker_items WHERE id = $1`,
-      [itemId]
-    );
-    if (existing.rows.length === 0) {
+    const row = await this.resolveTrackerRowForPublicId(itemId, { createProjectionForFullDocument: true });
+    if (!row) {
       throw new Error(`Tracker item not found: ${itemId}`);
     }
-
-    const row = existing.rows[0];
     const data = typeof row.data === 'string' ? JSON.parse(row.data) : (row.data || {});
 
     // Handle typeTags separately -- stored in SQL column, not JSONB
@@ -1123,7 +1406,7 @@ export class ElectronDocumentService implements DocumentService {
       if (!newTypeTags.includes(row.type)) newTypeTags.unshift(row.type);
       await database.query(
         `UPDATE tracker_items SET type_tags = $1 WHERE id = $2`,
-        [newTypeTags, itemId]
+        [newTypeTags, row.id]
       );
     }
 
@@ -1139,12 +1422,12 @@ export class ElectronDocumentService implements DocumentService {
 
     await database.query(
       `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
-      [JSON.stringify(data), itemId]
+      [JSON.stringify(data), row.id]
     );
 
     const result = await database.query<any>(
       `SELECT * FROM tracker_items WHERE id = $1`,
-      [itemId]
+      [row.id]
     );
     const updated = this.rowToTrackerItem(result.rows[0]);
 
@@ -1163,6 +1446,10 @@ export class ElectronDocumentService implements DocumentService {
    * Update the rich content (Lexical editor state) of a tracker item.
    */
   async updateTrackerItemContent(itemId: string, content: any): Promise<void> {
+    const row = await this.resolveTrackerRowForPublicId(itemId, { createProjectionForFullDocument: true });
+    if (!row) {
+      throw new Error(`Tracker item not found: ${itemId}`);
+    }
     const contentJson = content != null ? JSON.stringify(content) : null;
     // Phase 4b: every body save bumps `body_version` and writes a row
     // into `tracker_body_cache` keyed by `(item_id, body_version)`. The
@@ -1181,7 +1468,7 @@ export class ElectronDocumentService implements DocumentService {
              updated = NOW()
        WHERE id = $2
        RETURNING body_version`,
-      [contentJson, itemId]
+      [contentJson, row.id]
     );
     const newBodyVersion = Number(updateResult.rows[0]?.body_version ?? 0);
 
@@ -1193,13 +1480,13 @@ export class ElectronDocumentService implements DocumentService {
         `INSERT INTO tracker_body_cache (item_id, body_version, content, cached_at)
          VALUES ($1, $2, $3, NOW())
          ON CONFLICT (item_id, body_version) DO NOTHING`,
-        [itemId, newBodyVersion, contentJson]
+        [row.id, newBodyVersion, contentJson]
       );
     }
 
     const result = await database.query<any>(
       `SELECT * FROM tracker_items WHERE id = $1`,
-      [itemId]
+      [row.id]
     );
     if (result.rows.length > 0) {
       const item = this.rowToTrackerItem(result.rows[0]);
@@ -1257,10 +1544,12 @@ export class ElectronDocumentService implements DocumentService {
    * evicted by a future pruning policy).
    */
   async getTrackerBodyCacheAtVersion(itemId: string, bodyVersion: number): Promise<any | null> {
+    const row = await this.resolveTrackerRowForPublicId(itemId);
+    if (!row) return null;
     const result = await database.query<{ content: string | null }>(
       `SELECT content FROM tracker_body_cache
         WHERE item_id = $1 AND body_version = $2`,
-      [itemId, bodyVersion]
+      [row.id, bodyVersion]
     );
     const raw = result.rows[0]?.content;
     if (raw === undefined || raw === null) return null;
@@ -1285,13 +1574,15 @@ export class ElectronDocumentService implements DocumentService {
    * (body_version = 0), or the cache row was never written.
    */
   async getTrackerBodyCacheLatest(itemId: string): Promise<{ bodyVersion: number; content: any } | null> {
+    const trackerRow = await this.resolveTrackerRowForPublicId(itemId);
+    if (!trackerRow) return null;
     const result = await database.query<{ body_version: string | number | null; content: string | null }>(
       `SELECT t.body_version, c.content
          FROM tracker_items t
          LEFT JOIN tracker_body_cache c
            ON c.item_id = t.id AND c.body_version = t.body_version
         WHERE t.id = $1`,
-      [itemId]
+      [trackerRow.id]
     );
     const row = result.rows[0];
     if (!row) return null;
@@ -1312,9 +1603,11 @@ export class ElectronDocumentService implements DocumentService {
    * Get the rich content (Lexical editor state) of a tracker item.
    */
   async getTrackerItemContent(itemId: string): Promise<any | null> {
+    const row = await this.resolveTrackerRowForPublicId(itemId);
+    if (!row) return null;
     const result = await database.query<any>(
       `SELECT content FROM tracker_items WHERE id = $1`,
-      [itemId]
+      [row.id]
     );
     if (result.rows.length === 0) return null;
     return result.rows[0].content ?? null;
@@ -1324,38 +1617,36 @@ export class ElectronDocumentService implements DocumentService {
    * Archive or unarchive a tracker item.
    */
   async archiveTrackerItem(itemId: string, archive: boolean): Promise<TrackerItem> {
+    const row = await this.resolveTrackerRowForPublicId(itemId, { createProjectionForFullDocument: true });
+    if (!row) {
+      throw new Error(`Tracker item not found: ${itemId}`);
+    }
+
     // For inline/frontmatter items, write archived state back to the source file
-    const preResult = await database.query<any>(
-      `SELECT source, document_path FROM tracker_items WHERE id = $1`,
-      [itemId]
-    );
-    if (preResult.rows.length > 0) {
-      const { source, document_path: documentPath } = preResult.rows[0];
-      if ((source === 'inline' || source === 'frontmatter') && documentPath) {
-        try {
-          await this.updateTrackerItemInFile(itemId, { archived: archive ? 'true' : null });
-        } catch (err) {
-          // File may be gone -- fall through to DB-only update
-          // console.log(`[DocumentService] Failed to write archived state to file for ${itemId}:`, err);
-        }
+    const documentPath = row.document_path || row.source_ref;
+    if ((row.source === 'inline' || row.source === 'frontmatter') && documentPath) {
+      try {
+        await this.updateTrackerItemInFile(itemId, { archived: archive ? 'true' : null });
+      } catch (err) {
+        // File may be gone -- fall through to DB-only update
       }
     }
 
     if (archive) {
       await database.query(
         `UPDATE tracker_items SET archived = TRUE, archived_at = NOW(), updated = NOW() WHERE id = $1`,
-        [itemId]
+        [row.id]
       );
     } else {
       await database.query(
         `UPDATE tracker_items SET archived = FALSE, archived_at = NULL, updated = NOW() WHERE id = $1`,
-        [itemId]
+        [row.id]
       );
     }
 
     const result = await database.query<any>(
       `SELECT * FROM tracker_items WHERE id = $1`,
-      [itemId]
+      [row.id]
     );
     if (result.rows.length === 0) {
       throw new Error(`Tracker item not found: ${itemId}`);
@@ -1386,18 +1677,17 @@ export class ElectronDocumentService implements DocumentService {
    * Permanently delete a tracker item from the database.
    */
   async deleteTrackerItem(itemId: string): Promise<void> {
+    const row = await this.resolveTrackerRowForPublicId(itemId);
+    const rowId = row?.id || itemId;
+
     // For inline items, remove the line from the source file before deleting from DB
-    const result = await database.query<any>(
-      `SELECT source, document_path FROM tracker_items WHERE id = $1`,
-      [itemId]
-    );
-    if (result.rows.length > 0) {
-      const { source, document_path: documentPath } = result.rows[0];
+    if (row) {
+      const { source, document_path: documentPath } = row;
       if (source === 'inline' && documentPath) {
         const fullPath = path.join(this.workspacePath, documentPath);
         try {
           const fileContent = await fs.readFile(fullPath, 'utf-8');
-          const updated = removeInlineTrackerItem(fileContent, itemId);
+          const updated = removeInlineTrackerItem(fileContent, rowId);
           if (updated !== null) {
             await fs.writeFile(fullPath, updated, 'utf-8');
           }
@@ -1412,13 +1702,13 @@ export class ElectronDocumentService implements DocumentService {
 
     await database.query(
       `DELETE FROM tracker_items WHERE id = $1`,
-      [itemId]
+      [rowId]
     );
 
     // Notify sync server so other clients remove the item too
     if (isTrackerSyncActive(this.workspacePath)) {
       try {
-        await unsyncTrackerItem(itemId, this.workspacePath);
+        await unsyncTrackerItem(rowId, this.workspacePath);
       } catch (syncErr) {
         console.error('[DocumentService] deleteTrackerItem sync failed:', syncErr);
       }
@@ -1438,22 +1728,30 @@ export class ElectronDocumentService implements DocumentService {
    * Handles both frontmatter-based items (YAML) and inline items (#type[...]).
    */
   async updateTrackerItemInFile(itemId: string, updates: Record<string, any>): Promise<TrackerItem> {
-    // Look up the item to find the source file
-    const result = await database.query<any>(
-      `SELECT * FROM tracker_items WHERE id = $1`,
-      [itemId]
-    );
-    if (result.rows.length === 0) {
+    let row = await this.resolveTrackerRowForPublicId(itemId, { createProjectionForFullDocument: false });
+    const parsedFullDocumentId = parseFullDocumentTrackerId(itemId);
+    if (!row && parsedFullDocumentId) {
+      row = {
+        id: itemId,
+        type: parsedFullDocumentId.trackerType,
+        source: 'frontmatter',
+        source_ref: parsedFullDocumentId.relativePath,
+        document_path: parsedFullDocumentId.relativePath,
+        data: {},
+        workspace: this.workspacePath,
+      };
+    }
+    if (!row) {
       throw new Error(`Tracker item not found: ${itemId}`);
     }
-    const row = result.rows[0];
+
     const source = row.source; // 'inline', 'frontmatter', 'import'
     const sourceRef = row.source_ref;
     const documentPath = row.document_path;
     const trackerType = row.type;
 
     // Determine the file path -- inline items use document_path, frontmatter uses source_ref
-    const relativePath = source === 'inline' ? documentPath : sourceRef;
+    const relativePath = source === 'inline' ? documentPath : (sourceRef || documentPath);
     if (!relativePath) {
       throw new Error(`Item ${itemId} has no source file reference`);
     }
@@ -1484,8 +1782,22 @@ export class ElectronDocumentService implements DocumentService {
         }
         updatedContent = result;
       } else {
-        // Frontmatter/import items: update YAML frontmatter
-        updatedContent = updateTrackerInFrontmatter(fileContent, trackerType, updates);
+        const { description, ...frontmatterUpdates } = updates;
+        updatedContent = Object.keys(frontmatterUpdates).length > 0
+          ? updateTrackerInFrontmatter(fileContent, trackerType, frontmatterUpdates)
+          : fileContent;
+        if (description !== undefined) {
+          const normalizedBody = typeof description === 'string'
+            ? description.replace(/\\n/g, '\n')
+            : String(description ?? '');
+          const frontmatterRegex = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/;
+          const frontmatterMatch = updatedContent.match(frontmatterRegex);
+          if (frontmatterMatch) {
+            updatedContent = `${frontmatterMatch[0]}${normalizedBody}${normalizedBody.endsWith('\n') ? '' : '\n'}`;
+          } else {
+            updatedContent = normalizedBody;
+          }
+        }
       }
 
       // Write back
@@ -1496,19 +1808,63 @@ export class ElectronDocumentService implements DocumentService {
     // (the file watcher will re-index later, but this gives instant feedback)
     // Only update the data JSONB column -- top-level columns (status, title, etc.)
     // are generated columns and cannot be SET directly.
-    const existingData = typeof row.data === 'string' ? JSON.parse(row.data) : (row.data || {});
-    const mergedData = { ...existingData, ...updates };
-    await database.query(
-      `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
-      [JSON.stringify(mergedData), itemId]
-    );
+    const resolvedRow = await this.resolveTrackerRowForPublicId(itemId, {
+      createProjectionForFullDocument: source === 'frontmatter' || source === 'import',
+    });
 
-    // Re-read the updated item
-    const updated = await database.query<any>(
-      `SELECT * FROM tracker_items WHERE id = $1`,
-      [itemId]
-    );
-    const item = this.rowToTrackerItem(updated.rows[0]);
+    let item: TrackerItem;
+    if (resolvedRow) {
+      const existingData = typeof resolvedRow.data === 'string' ? JSON.parse(resolvedRow.data) : (resolvedRow.data || {});
+      const mergedData = { ...existingData, ...updates };
+      const normalizedDescription = typeof updates.description === 'string'
+        ? updates.description.replace(/\\n/g, '\n')
+        : undefined;
+      if ((source === 'frontmatter' || source === 'import') && updates.description !== undefined) {
+        delete mergedData.description;
+        const contentJson = normalizedDescription != null ? JSON.stringify(normalizedDescription) : null;
+        const versionResult = await database.query<{ body_version: string | number | null }>(
+          `UPDATE tracker_items
+             SET data = $1,
+                 content = $2,
+                 body_version = COALESCE(body_version, 0) + 1,
+                 updated = NOW()
+           WHERE id = $3
+           RETURNING body_version`,
+          [JSON.stringify(mergedData), contentJson, resolvedRow.id]
+        );
+        const newBodyVersion = Number(versionResult.rows[0]?.body_version ?? 0);
+        if (contentJson !== null && newBodyVersion > 0) {
+          await database.query(
+            `INSERT INTO tracker_body_cache (item_id, body_version, content, cached_at)
+             VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (item_id, body_version) DO NOTHING`,
+            [resolvedRow.id, newBodyVersion, contentJson]
+          );
+        }
+      } else {
+        await database.query(
+          `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
+          [JSON.stringify(mergedData), resolvedRow.id]
+        );
+      }
+
+      const updated = await database.query<any>(
+        `SELECT * FROM tracker_items WHERE id = $1`,
+        [resolvedRow.id]
+      );
+      item = this.rowToTrackerItem(updated.rows[0]);
+    } else {
+      const metadata = this.metadataByPath.get(relativePath);
+      if (!metadata) {
+        throw new Error(`Tracker item ${itemId} was updated in file but could not be reloaded from metadata`);
+      }
+      const synthesized = (await this.listFullDocumentTrackerItemsFromMetadata())
+        .find(candidate => candidate.id === itemId);
+      if (!synthesized) {
+        throw new Error(`Tracker item ${itemId} was updated in file but could not be synthesized`);
+      }
+      item = synthesized;
+    }
 
     // Notify watchers
     const changeEvent: TrackerItemChangeEvent = {
@@ -1608,10 +1964,9 @@ export class ElectronDocumentService implements DocumentService {
       || (frontmatter.title as string)
       || relativePath.split('/').pop()?.replace(/\.md$/, '') || 'Untitled';
 
-    // Generate stable ID from file path
-    const prefix = trackerType.substring(0, 3);
-    const hash = crypto.createHash('md5').update(relativePath).digest('hex').substring(0, 10);
-    const id = `${prefix}_imp_${hash}`;
+    // Generate stable canonical ID from tracker type + file path so UI, MCP,
+    // and file-backed mutation paths all resolve the same logical item.
+    const id = buildFullDocumentTrackerId(trackerType, relativePath);
 
     // Build JSONB data: ALL frontmatter fields go into the data bag generically.
     // No privileged field vocabulary -- the schema determines which fields matter.
@@ -1632,9 +1987,9 @@ export class ElectronDocumentService implements DocumentService {
         id, type, data, workspace, document_path, line_number,
         created, updated, last_indexed, sync_status,
         content, archived, source, source_ref
-      ) VALUES ($1, $2, $3, $4, '', NULL, NOW(), NOW(), NOW(), 'local', $5, FALSE, 'frontmatter', $6)
+      ) VALUES ($1, $2, $3, $4, $6, NULL, NOW(), NOW(), NOW(), 'local', $5, FALSE, 'frontmatter', $6)
       ON CONFLICT (id) DO UPDATE SET
-        data = tracker_items.data || $3, content = $5, source = 'frontmatter', source_ref = $6, updated = NOW()`,
+        data = tracker_items.data || $3, content = $5, source = 'frontmatter', source_ref = $6, document_path = $6, updated = NOW()`,
       [id, trackerType, JSON.stringify(data), this.workspacePath, contentJson, relativePath]
     );
 

@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { TrackerItem } from '@nimbalyst/runtime';
 import { getCurrentIdentity } from '../../services/TrackerIdentityService';
 import {
   deleteWorkspaceTrackerSchema,
@@ -17,6 +18,11 @@ import { isTrackerSyncActive, syncTrackerItem } from '../../services/TrackerSync
 import { applyHeadlessBodyMarkdown } from '../../services/MainBodyDocService';
 import { getWorkspaceState } from '../../utils/store';
 import { getVisibleTrackerLinkedSessions, shouldPersistTrackerLinkedSessions } from '../../../shared/trackerSessionLinks';
+import {
+  buildFullDocumentTrackerId,
+  parseFullDocumentTrackerId,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/documentHeader/frontmatterUtils';
+import type { ElectronDocumentService } from '../../services/ElectronDocumentService';
 
 type McpToolResult = {
   content: Array<{ type: string; text?: string }>;
@@ -45,7 +51,60 @@ async function resolveTrackerRowByReference(
     params
   );
 
-  return result.rows[0] || null;
+  if (result.rows[0]) {
+    return result.rows[0];
+  }
+
+  const parsed = parseFullDocumentTrackerId(reference);
+  if (!parsed) {
+    return null;
+  }
+
+  const frontmatterParams: any[] = [parsed.relativePath, parsed.trackerType];
+  const frontmatterWorkspaceClause = workspacePath ? ` AND workspace = $3` : '';
+  if (workspacePath) frontmatterParams.push(workspacePath);
+  const frontmatterResult = await db.query<any>(
+    `SELECT *
+     FROM tracker_items
+     WHERE source = 'frontmatter'
+       AND source_ref = $1
+       AND type = $2${frontmatterWorkspaceClause}
+     ORDER BY updated DESC
+     LIMIT 1`,
+    frontmatterParams
+  );
+
+  return frontmatterResult.rows[0] || null;
+}
+
+async function getDocumentServiceForWorkspace(
+  workspacePath: string | undefined,
+): Promise<{
+  docService: ElectronDocumentService | undefined;
+  tempDocService: ElectronDocumentService | undefined;
+}> {
+  if (!workspacePath) {
+    return { docService: undefined, tempDocService: undefined };
+  }
+
+  const { documentServices } = await import('../../window/WindowManager');
+  return {
+    docService: documentServices.get(workspacePath),
+    tempDocService: undefined,
+  };
+}
+
+async function resolveTrackerItemFromDocumentService(
+  docService: ElectronDocumentService | undefined,
+  reference: string,
+): Promise<TrackerItem | null> {
+  if (!docService) return null;
+
+  const byId = await docService.getTrackerItemById(reference);
+  if (byId) return byId;
+
+  const allItems = await docService.listTrackerItems();
+  return allItems.find((candidate) => candidate.issueKey === reference) || null;
 }
 
 function buildTrackerSchemaValidationError(
@@ -133,15 +192,17 @@ function appendActivity(
 export async function createBidirectionalLink(
   trackerId: string,
   sessionId: string,
+  options?: { trackerRowId?: string },
 ): Promise<boolean> {
   const { getDatabase } = await import("../../database/initialize");
   const db = getDatabase();
   let changed = false;
+  const trackerRowId = options?.trackerRowId || trackerId;
 
   // 1. Add session to tracker item's linkedSessions only for local trackers.
   const trackerResult = await db.query<any>(
     `SELECT workspace, type, sync_status, data FROM tracker_items WHERE id = $1`,
-    [trackerId]
+    [trackerRowId]
   );
   if (trackerResult.rows.length > 0) {
     const row = trackerResult.rows[0];
@@ -153,7 +214,7 @@ export async function createBidirectionalLink(
         data.linkedSessions = linkedSessions;
         await db.query(
           `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
-          [JSON.stringify(data), trackerId]
+          [JSON.stringify(data), trackerRowId]
         );
         changed = true;
       }
@@ -161,7 +222,7 @@ export async function createBidirectionalLink(
       delete data.linkedSessions;
       await db.query(
         `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
-        [JSON.stringify(data), trackerId]
+        [JSON.stringify(data), trackerRowId]
       );
       changed = true;
     }
@@ -197,15 +258,17 @@ export async function createBidirectionalLink(
 export async function removeBidirectionalLink(
   trackerId: string,
   sessionId: string,
+  options?: { trackerRowId?: string },
 ): Promise<boolean> {
   const { getDatabase } = await import("../../database/initialize");
   const db = getDatabase();
   let changed = false;
+  const trackerRowId = options?.trackerRowId || trackerId;
 
   // 1. Remove session from tracker item's linkedSessions only for local trackers.
   const trackerResult = await db.query<any>(
     `SELECT workspace, type, sync_status, data FROM tracker_items WHERE id = $1`,
-    [trackerId]
+    [trackerRowId]
   );
   if (trackerResult.rows.length > 0) {
     const row = trackerResult.rows[0];
@@ -221,7 +284,7 @@ export async function removeBidirectionalLink(
         }
         await db.query(
           `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
-          [JSON.stringify(data), trackerId]
+          [JSON.stringify(data), trackerRowId]
         );
         changed = true;
       }
@@ -229,7 +292,7 @@ export async function removeBidirectionalLink(
       delete data.linkedSessions;
       await db.query(
         `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
-        [JSON.stringify(data), trackerId]
+        [JSON.stringify(data), trackerRowId]
       );
       changed = true;
     }
@@ -270,7 +333,9 @@ export function rowToTrackerItem(row: any): any {
     ? row.type_tags
     : [row.type];
   const result: any = {
-    id: row.id,
+    id: row.source === 'frontmatter' && row.source_ref
+      ? buildFullDocumentTrackerId(row.type, row.source_ref)
+      : row.id,
     issueNumber: row.issue_number ?? undefined,
     issueKey: row.issue_key ?? undefined,
     type: row.type,
@@ -280,7 +345,7 @@ export function rowToTrackerItem(row: any): any {
     status: data.status || row.status,
     priority: data.priority || undefined,
     owner: data.owner || undefined,
-    module: row.document_path || undefined,
+    module: row.document_path || ((row.source === 'frontmatter' || row.source === 'import') ? row.source_ref : undefined),
     lineNumber: row.line_number || undefined,
     workspace: row.workspace,
     tags: data.tags || undefined,
@@ -815,41 +880,24 @@ export async function handleTrackerList(
   workspacePath: string | undefined
 ): Promise<McpToolResult> {
   try {
-    const { getDatabase } = await import("../../database/initialize");
-    const db = getDatabase();
-
-    const conditions: string[] = [];
-    const params: any[] = [];
-    let paramIdx = 1;
-
-    // Always scope to workspace
-    if (workspacePath) {
-      conditions.push(`workspace = $${paramIdx++}`);
-      params.push(workspacePath);
+    const limit = Math.min(args.limit || 50, 250);
+    const { documentServices } = await import("../../window/WindowManager");
+    let docService = workspacePath ? documentServices.get(workspacePath) : undefined;
+    let tempDocService: { destroy?: () => void } | undefined;
+    if (!docService && workspacePath) {
+      const { ElectronDocumentService } = await import("../../services/ElectronDocumentService");
+      docService = new ElectronDocumentService(workspacePath);
+      tempDocService = docService;
     }
+    const rawItems = docService ? await docService.listTrackerItems() : [];
 
-    // Filter by archived state (default: exclude archived)
-    if (args.archived) {
-      conditions.push(`archived = TRUE`);
-    } else {
-      conditions.push(`(archived = FALSE OR archived IS NULL)`);
-    }
+    const getFieldValue = (item: TrackerItem, field: string): unknown => {
+      if ((item as Record<string, unknown>)[field] !== undefined) {
+        return (item as Record<string, unknown>)[field];
+      }
+      return item.customFields?.[field];
+    };
 
-    // Filter by primary type
-    if (args.type) {
-      conditions.push(`type = $${paramIdx++}`);
-      params.push(args.type);
-    }
-
-    // Filter by type tag (matches any tag in the array, not just primary)
-    if (args.typeTag) {
-      conditions.push(`$${paramIdx++} = ANY(type_tags)`);
-      params.push(args.typeTag);
-    }
-
-    // Resolve role-based field names for filters.
-    // When a type is specified, use the schema to find the actual field name.
-    // When no type is specified, fall back to conventional names.
     const resolveFieldForFilter = (
       role: Parameters<typeof getTrackerRoleField>[1],
       fallback: string,
@@ -860,104 +908,75 @@ export async function handleTrackerList(
       return fallback;
     };
 
-    // Filter by owner/assignee (resolved via schema role)
-    if (args.owner) {
-      const ownerField = resolveFieldForFilter('assignee', 'owner');
-      conditions.push(`data->>'${ownerField}' = $${paramIdx++}`);
-      params.push(args.owner);
-    }
-
-    // Filter by status (resolved via schema role)
-    if (args.status) {
-      const statusField = resolveFieldForFilter('workflowStatus', 'status');
-      conditions.push(`data->>'${statusField}' = $${paramIdx++}`);
-      params.push(args.status);
-    }
-
-    // Filter by priority (resolved via schema role)
-    if (args.priority) {
-      const priorityField = resolveFieldForFilter('priority', 'priority');
-      conditions.push(`data->>'${priorityField}' = $${paramIdx++}`);
-      params.push(args.priority);
-    }
-
-    // Generic field-level where filters
-    if (args.where && Array.isArray(args.where)) {
-      for (const clause of args.where) {
-        if (!clause.field || !clause.op) continue;
-        const fieldPath = `data->>'${clause.field.replace(/'/g, "''")}'`;
-        switch (clause.op) {
-          case '=':
-            conditions.push(`${fieldPath} = $${paramIdx++}`);
-            params.push(String(clause.value));
-            break;
-          case '!=':
-            conditions.push(`(${fieldPath} IS NULL OR ${fieldPath} != $${paramIdx++})`);
-            params.push(String(clause.value));
-            break;
-          case 'contains':
-            conditions.push(`${fieldPath} ILIKE $${paramIdx++}`);
-            params.push(`%${clause.value}%`);
-            break;
-          case 'in':
-            if (Array.isArray(clause.value) && clause.value.length > 0) {
-              const placeholders = clause.value.map(() => `$${paramIdx++}`).join(', ');
-              conditions.push(`${fieldPath} IN (${placeholders})`);
-              params.push(...clause.value.map(String));
-            }
-            break;
-        }
-      }
-    }
-
-    // Search title and description
-    if (args.search) {
-      conditions.push(
-        `(data->>'title' ILIKE $${paramIdx} OR data->>'description' ILIKE $${paramIdx} OR issue_key ILIKE $${paramIdx} OR CAST(issue_number AS TEXT) ILIKE $${paramIdx})`
-      );
-      params.push(`%${args.search}%`);
-      paramIdx++;
-    }
-
-    const limit = Math.min(args.limit || 50, 250);
-    const whereClause =
-      conditions.length > 0
-        ? `WHERE ${conditions.join(" AND ")}`
-        : "";
-
-    const result = await db.query<any>(
-      `SELECT id, issue_number, issue_key, type, type_tags, data, archived, source, source_ref, updated, sync_status
-       FROM tracker_items
-       ${whereClause}
-       ORDER BY updated DESC
-       LIMIT ${limit}`,
-      params
-    );
-
-    const items = result.rows.map((row: any) => {
-      const data =
-        typeof row.data === "string"
-          ? JSON.parse(row.data)
-          : row.data || {};
-      const typeTags: string[] = row.type_tags && row.type_tags.length > 0
-        ? row.type_tags
-        : [row.type];
-      return {
-        id: row.id,
-        issueNumber: row.issue_number ?? undefined,
-        issueKey: row.issue_key ?? undefined,
-        type: row.type,
-        typeTags,
-        title: data.title || "",
-        status: data.status || "",
-        priority: data.priority || "",
-        tags: data.tags || [],
-        archived: row.archived ?? false,
-        source: row.source || "native",
-        syncStatus: row.sync_status || "local",
-        updated: row.updated,
-      };
-    });
+    const items = rawItems
+      .filter((item) => !workspacePath || item.workspace === workspacePath)
+      .filter((item) => args.archived ? item.archived === true : item.archived !== true)
+      .filter((item) => !args.type || item.type === args.type)
+      .filter((item) => !args.typeTag || (item.typeTags || [item.type]).includes(args.typeTag))
+      .filter((item) => {
+        if (!args.owner) return true;
+        const ownerField = resolveFieldForFilter('assignee', 'owner');
+        return String(getFieldValue(item, ownerField) ?? '') === String(args.owner);
+      })
+      .filter((item) => {
+        if (!args.status) return true;
+        const statusField = resolveFieldForFilter('workflowStatus', 'status');
+        return String(getFieldValue(item, statusField) ?? '').toLowerCase() === String(args.status).toLowerCase();
+      })
+      .filter((item) => {
+        if (!args.priority) return true;
+        const priorityField = resolveFieldForFilter('priority', 'priority');
+        return String(getFieldValue(item, priorityField) ?? '').toLowerCase() === String(args.priority).toLowerCase();
+      })
+      .filter((item) => {
+        if (!args.where || !Array.isArray(args.where)) return true;
+        return args.where.every((clause: any) => {
+          if (!clause?.field || !clause?.op) return true;
+          const value = getFieldValue(item, clause.field);
+          switch (clause.op) {
+            case '=':
+              return String(value ?? '') === String(clause.value);
+            case '!=':
+              return String(value ?? '') !== String(clause.value);
+            case 'contains':
+              return String(value ?? '').toLowerCase().includes(String(clause.value ?? '').toLowerCase());
+            case 'in':
+              return Array.isArray(clause.value) ? clause.value.map(String).includes(String(value ?? '')) : true;
+            default:
+              return true;
+          }
+        });
+      })
+      .filter((item) => {
+        if (!args.search) return true;
+        const haystack = [
+          item.issueKey,
+          String(item.issueNumber ?? ''),
+          item.title,
+          item.description,
+          item.module,
+          Array.isArray(item.tags) ? item.tags.join(' ') : '',
+        ].filter(Boolean).join(' ').toLowerCase();
+        return haystack.includes(String(args.search).toLowerCase());
+      })
+      .sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')))
+      .slice(0, limit)
+      .map((item) => ({
+        id: item.id,
+        issueNumber: item.issueNumber ?? undefined,
+        issueKey: item.issueKey ?? undefined,
+        type: item.type,
+        typeTags: item.typeTags && item.typeTags.length > 0 ? item.typeTags : [item.type],
+        title: item.title || '',
+        status: item.status || '',
+        priority: item.priority || '',
+        tags: item.tags || [],
+        archived: item.archived ?? false,
+        source: item.source || 'native',
+        syncStatus: item.syncStatus || 'local',
+        updated: item.updated,
+      }));
+    tempDocService?.destroy?.();
 
     const summary = items
       .map(
@@ -1236,11 +1255,26 @@ export async function handleTrackerGet(
   workspacePath?: string,
 ): Promise<McpToolResult> {
   try {
-    const { getDatabase } = await import("../../database/initialize");
-    const db = getDatabase();
+    const { documentServices } = await import("../../window/WindowManager");
+    let docService = workspacePath ? documentServices.get(workspacePath) : undefined;
+    let tempDocService: { destroy?: () => void } | undefined;
+    if (!docService && workspacePath) {
+      const { ElectronDocumentService } = await import("../../services/ElectronDocumentService");
+      docService = new ElectronDocumentService(workspacePath);
+      tempDocService = docService;
+    }
 
-    const row = await resolveTrackerRowByReference(db, args.id, workspacePath);
-    if (!row) {
+    let item: TrackerItem | null = null;
+    if (docService) {
+      item = await docService.getTrackerItemById(args.id);
+      if (!item && args.id) {
+        const all = await docService.listTrackerItems();
+        item = all.find(candidate => candidate.issueKey === args.id) || null;
+      }
+    }
+
+    if (!item) {
+      tempDocService?.destroy?.();
       return {
         content: [
           {
@@ -1252,77 +1286,69 @@ export async function handleTrackerGet(
       };
     }
 
-    const data =
-      typeof row.data === "string"
-        ? JSON.parse(row.data)
-        : row.data || {};
-
     // Build a readable representation
     const lines: string[] = [];
-    lines.push(`# ${data.title || "Untitled"}`);
+    lines.push(`# ${item.title || "Untitled"}`);
     lines.push("");
-    lines.push(`**Type**: ${row.type}`);
-    if (row.issue_key) lines.push(`**Issue Key**: ${row.issue_key}`);
-    if (data.status) lines.push(`**Status**: ${data.status}`);
-    if (data.priority) lines.push(`**Priority**: ${data.priority}`);
-    if (data.tags?.length)
-      lines.push(`**Tags**: ${data.tags.join(", ")}`);
-    if (data.owner) lines.push(`**Owner**: ${data.owner}`);
-    if (data.dueDate) lines.push(`**Due Date**: ${data.dueDate}`);
-    if (data.progress !== undefined) lines.push(`**Progress**: ${data.progress}%`);
-    if (data.assigneeId) lines.push(`**Assignee**: ${data.assigneeId}`);
-    if (data.reporterId) lines.push(`**Reporter**: ${data.reporterId}`);
-    if (data.labels?.length) lines.push(`**Labels**: ${data.labels.join(", ")}`);
-    if (data.linkedCommitSha) lines.push(`**Linked Commit**: ${data.linkedCommitSha}`);
-    if (row.sync_status) lines.push(`**Sync Status**: ${row.sync_status}`);
-    if (row.archived) lines.push(`**Archived**: yes`);
-    if (row.source && row.source !== "native")
+    lines.push(`**Type**: ${item.type}`);
+    if (item.issueKey) lines.push(`**Issue Key**: ${item.issueKey}`);
+    if (item.status) lines.push(`**Status**: ${item.status}`);
+    if (item.priority) lines.push(`**Priority**: ${item.priority}`);
+    if (item.tags?.length)
+      lines.push(`**Tags**: ${item.tags.join(", ")}`);
+    if (item.owner) lines.push(`**Owner**: ${item.owner}`);
+    if (item.dueDate) lines.push(`**Due Date**: ${item.dueDate}`);
+    if (item.progress !== undefined) lines.push(`**Progress**: ${item.progress}%`);
+    if (item.assigneeId) lines.push(`**Assignee**: ${item.assigneeId}`);
+    if (item.reporterId) lines.push(`**Reporter**: ${item.reporterId}`);
+    if (item.labels?.length) lines.push(`**Labels**: ${item.labels.join(", ")}`);
+    if (item.linkedCommitSha) lines.push(`**Linked Commit**: ${item.linkedCommitSha}`);
+    if (item.syncStatus) lines.push(`**Sync Status**: ${item.syncStatus}`);
+    if (item.archived) lines.push(`**Archived**: yes`);
+    if (item.source && item.source !== "native")
       lines.push(
-        `**Source**: ${row.source}${row.source_ref ? ` (${row.source_ref})` : ""}`
+        `**Source**: ${item.source}${item.sourceRef ? ` (${item.sourceRef})` : ""}`
       );
-    if (data.linkedSessions?.length)
+    if (item.linkedSessions?.length)
       lines.push(
-        `**Linked Sessions**: ${data.linkedSessions.join(", ")}`
+        `**Linked Sessions**: ${item.linkedSessions.join(", ")}`
       );
-    lines.push(`**ID**: ${row.id}`);
-    lines.push(`**Updated**: ${row.updated}`);
+    lines.push(`**ID**: ${item.id}`);
+    lines.push(`**Updated**: ${item.updated}`);
     lines.push("");
 
     // Include content as markdown
-    if (row.content) {
+    if (item.content) {
       const content =
-        typeof row.content === "string"
-          ? row.content
-          : JSON.stringify(row.content);
+        typeof item.content === "string"
+          ? item.content
+          : JSON.stringify(item.content);
       lines.push("---");
       lines.push("");
       lines.push(content);
-    } else if (data.description) {
+    } else if (item.description) {
       lines.push("---");
       lines.push("");
-      lines.push(data.description);
+      lines.push(item.description);
     }
-
-    const typeTags: string[] = row.type_tags && row.type_tags.length > 0
-      ? row.type_tags
-      : [row.type];
 
     const structured = {
       action: "retrieved" as const,
       item: {
-        id: row.id,
-        issueNumber: row.issue_number ?? undefined,
-        issueKey: row.issue_key ?? undefined,
-        type: row.type,
-        typeTags,
-        title: data.title || "Untitled",
-        status: data.status || undefined,
-        priority: data.priority || undefined,
-        tags: data.tags || [],
-        owner: data.owner || undefined,
-        dueDate: data.dueDate || undefined,
+        id: item.id,
+        issueNumber: item.issueNumber ?? undefined,
+        issueKey: item.issueKey ?? undefined,
+        type: item.type,
+        typeTags: item.typeTags && item.typeTags.length > 0 ? item.typeTags : [item.type],
+        title: item.title || "Untitled",
+        status: item.status || undefined,
+        priority: item.priority || undefined,
+        tags: item.tags || [],
+        owner: item.owner || undefined,
+        dueDate: item.dueDate || undefined,
       },
     };
+    tempDocService?.destroy?.();
 
     return {
       content: [
@@ -1629,344 +1655,559 @@ export async function handleTrackerUpdate(
   try {
     const { getDatabase } = await import("../../database/initialize");
     const db = getDatabase();
+    const { docService, tempDocService } = await getDocumentServiceForWorkspace(workspacePath);
 
-    // Read existing item
-    const row = await resolveTrackerRowByReference(db, args.id, workspacePath);
-    if (!row) {
+    try {
+      let item = await resolveTrackerItemFromDocumentService(docService, args.id);
+      let row = await resolveTrackerRowByReference(db, args.id, workspacePath);
+      if (!item && row) {
+        item = rowToTrackerItem(row);
+      }
+      if (!item) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Tracker item not found: ${args.id}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const publicTrackerId = item.id;
+      const isFileBacked = item.source === 'frontmatter' || item.source === 'import';
+      if (isFileBacked && docService) {
+        const projected = await docService.ensureTrackerProjection(publicTrackerId);
+        if (projected) item = projected;
+        row = await resolveTrackerRowByReference(db, publicTrackerId, workspacePath);
+      } else if (!row) {
+        row = await resolveTrackerRowByReference(db, publicTrackerId, workspacePath);
+      }
+
+      if (isFileBacked) {
+        if (!docService) {
+          return {
+            content: [{ type: 'text', text: 'Error: No document service available for file-backed tracker update.' }],
+            isError: true,
+          };
+        }
+        if (args.primaryType !== undefined || args.typeTags !== undefined) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'Error: tracker_update does not yet support changing primaryType or typeTags for file-backed tracker documents.',
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        const rf = (role: string, fallback: string) => getTrackerRoleField(item.type, role as any) ?? fallback;
+        const data = typeof row?.data === 'string' ? JSON.parse(row.data) : (row?.data || {});
+        const titleField = rf('title', 'title');
+        const statusField = rf('workflowStatus', 'status');
+        const priorityField = rf('priority', 'priority');
+        const tagsField = rf('tags', 'tags');
+        const ownerField = rf('assignee', 'owner');
+        const dueDateField = rf('dueDate', 'dueDate');
+        const progressField = rf('progress', 'progress');
+        const reporterField = rf('reporter', 'reporterEmail');
+
+        if (item.title !== undefined) data[titleField] = item.title;
+        if (item.status !== undefined) data[statusField] = item.status;
+        if (item.priority !== undefined) data[priorityField] = item.priority;
+        if (item.tags !== undefined) data[tagsField] = item.tags;
+        if (item.owner !== undefined) data[ownerField] = item.owner;
+        if (item.dueDate !== undefined) data[dueDateField] = item.dueDate;
+        if (item.progress !== undefined) data[progressField] = item.progress;
+        if (item.reporterEmail !== undefined) data[reporterField] = item.reporterEmail;
+        if (item.labels !== undefined) data.labels = item.labels;
+        if (item.linkedCommitSha !== undefined) data.linkedCommitSha = item.linkedCommitSha;
+        if (item.assigneeEmail !== undefined) data.assigneeEmail = item.assigneeEmail;
+        if (item.assigneeId !== undefined) data.assigneeId = item.assigneeId;
+        if (item.reporterId !== undefined) data.reporterId = item.reporterId;
+        if (item.customFields) {
+          Object.assign(data, item.customFields);
+        }
+        data.lastModifiedBy = getCurrentIdentity(workspacePath);
+
+        const changes: Record<string, { from: any; to: any }> = {};
+        const fileUpdates: Record<string, any> = {};
+        if (args.tags !== undefined && !Array.isArray(args.tags)) {
+          args.tags = [];
+        }
+
+        const roleMap: Array<[string, string, string]> = [
+          ['title', 'title', 'title'],
+          ['status', 'workflowStatus', 'status'],
+          ['priority', 'priority', 'priority'],
+          ['tags', 'tags', 'tags'],
+          ['owner', 'assignee', 'owner'],
+          ['dueDate', 'dueDate', 'dueDate'],
+          ['progress', 'progress', 'progress'],
+          ['reporterEmail', 'reporter', 'reporterEmail'],
+        ];
+
+        for (const [argName, role, fallback] of roleMap) {
+          if (args[argName] === undefined) continue;
+          const fieldName = rf(role, fallback);
+          changes[fieldName] = { from: data[fieldName], to: args[argName] };
+          data[fieldName] = args[argName];
+          fileUpdates[fieldName] = args[argName];
+        }
+
+        if (args.assigneeEmail !== undefined) {
+          changes.assigneeEmail = { from: data.assigneeEmail, to: args.assigneeEmail };
+          data.assigneeEmail = args.assigneeEmail;
+          fileUpdates.assigneeEmail = args.assigneeEmail;
+          if (args.owner === undefined) {
+            changes[ownerField] = { from: data[ownerField], to: args.assigneeEmail };
+            data[ownerField] = args.assigneeEmail;
+            fileUpdates[ownerField] = args.assigneeEmail;
+          }
+        }
+        if (args.assigneeId !== undefined) {
+          changes.assigneeId = { from: data.assigneeId, to: args.assigneeId };
+          data.assigneeId = args.assigneeId;
+          fileUpdates.assigneeId = args.assigneeId;
+        }
+        if (args.reporterId !== undefined) {
+          changes.reporterId = { from: data.reporterId, to: args.reporterId };
+          data.reporterId = args.reporterId;
+          fileUpdates.reporterId = args.reporterId;
+        }
+        if (args.description !== undefined) {
+          const normalizedDesc = String(args.description).replace(/\\n/g, '\n');
+          changes.description = { from: undefined, to: normalizedDesc };
+          fileUpdates.description = normalizedDesc;
+        }
+        if (args.labels !== undefined) {
+          changes.labels = { from: data.labels, to: args.labels };
+          data.labels = args.labels;
+          fileUpdates.labels = args.labels;
+        }
+        if (args.linkedCommitSha !== undefined) {
+          changes.linkedCommitSha = { from: data.linkedCommitSha, to: args.linkedCommitSha };
+          data.linkedCommitSha = args.linkedCommitSha;
+          fileUpdates.linkedCommitSha = args.linkedCommitSha;
+        }
+        if (args.archived !== undefined) {
+          changes.archived = { from: row?.archived ?? item.archived ?? false, to: args.archived };
+        }
+
+        if (args.fields && typeof args.fields === 'object') {
+          for (const [key, value] of Object.entries(args.fields)) {
+            if (value === undefined) continue;
+            changes[key] = { from: data[key], to: value };
+            data[key] = value;
+            fileUpdates[key] = value;
+          }
+        }
+        if (args.unsetFields && Array.isArray(args.unsetFields)) {
+          for (const key of args.unsetFields) {
+            if (data[key] === undefined) continue;
+            changes[key] = { from: data[key], to: undefined };
+            delete data[key];
+            fileUpdates[key] = null;
+          }
+        }
+
+        const validationResult = globalRegistry.validate(item.type, data);
+        if (!validationResult.valid) {
+          return buildTrackerSchemaValidationError('tracker_update', item.type, validationResult.errors);
+        }
+
+        const modifierIdentity = getCurrentIdentity(workspacePath);
+        for (const [field, change] of Object.entries(changes)) {
+          const action = field === 'status' ? 'status_changed'
+            : field === 'archived' ? 'archived'
+            : 'updated';
+          appendActivity(data, modifierIdentity, action, {
+            field,
+            oldValue: change.from != null ? String(change.from) : undefined,
+            newValue: change.to != null ? String(change.to) : undefined,
+          });
+        }
+
+        if (Object.keys(fileUpdates).length > 0) {
+          await docService.updateTrackerItemInFile(publicTrackerId, fileUpdates);
+        }
+
+        row = await resolveTrackerRowByReference(db, publicTrackerId, workspacePath);
+        if (row) {
+          await db.query(
+            `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
+            [JSON.stringify(data), row.id]
+          );
+        }
+
+        if (args.archived !== undefined) {
+          await docService.archiveTrackerItem(publicTrackerId, args.archived);
+          row = await resolveTrackerRowByReference(db, publicTrackerId, workspacePath);
+        }
+
+        const refreshedItem =
+          (await resolveTrackerItemFromDocumentService(docService, publicTrackerId)) || item;
+        const storageRowId = row?.id || publicTrackerId;
+
+        if (sessionId) {
+          const linked = await createBidirectionalLink(publicTrackerId, sessionId, {
+            trackerRowId: storageRowId,
+          });
+          if (linked) {
+            const sessionResult = await db.query<any>(
+              `SELECT metadata FROM ai_sessions WHERE id = $1`,
+              [sessionId]
+            );
+            const linkedIds = sessionResult.rows[0]?.metadata?.linkedTrackerItemIds || [];
+            await notifySessionLinkedTrackerChanged(sessionId, linkedIds);
+          }
+        }
+
+        if (row) {
+          await notifyTrackerItemUpdated(workspacePath, row.id);
+        }
+
+        if (row && workspacePath) {
+          const updateModel = globalRegistry.get(refreshedItem.type);
+          const syncPolicy = getEffectiveTrackerSyncPolicy(workspacePath, refreshedItem.type, updateModel?.sync?.mode);
+          if (shouldSyncTrackerPolicy(syncPolicy)) {
+            if (isTrackerSyncActive(workspacePath)) {
+              try {
+                await syncTrackerItem(refreshedItem);
+              } catch (syncError) {
+                console.error('[MCP Server] tracker_update sync failed:', syncError);
+              }
+            } else {
+              await db.query(
+                `UPDATE tracker_items SET sync_status = 'pending' WHERE id = $1`,
+                [row.id]
+              );
+            }
+          }
+        }
+
+        const updateSummaryParts: string[] = [];
+        if (args.title !== undefined) updateSummaryParts.push(`- **Title**: ${args.title}`);
+        if (args.status !== undefined) updateSummaryParts.push(`- **Status**: ${args.status}`);
+        if (args.priority !== undefined) updateSummaryParts.push(`- **Priority**: ${args.priority}`);
+        if (args.archived !== undefined) updateSummaryParts.push(`- **Archived**: ${args.archived}`);
+        if (args.tags !== undefined) updateSummaryParts.push(`- **Tags**: ${args.tags.join(", ")}`);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                structured: {
+                  action: "updated" as const,
+                  id: refreshedItem.id,
+                  issueNumber: refreshedItem.issueNumber ?? undefined,
+                  issueKey: refreshedItem.issueKey ?? undefined,
+                  type: refreshedItem.type,
+                  typeTags: refreshedItem.typeTags && refreshedItem.typeTags.length > 0
+                    ? refreshedItem.typeTags
+                    : [refreshedItem.type],
+                  title: refreshedItem.title || '',
+                  changes,
+                },
+                summary: [
+                  `Updated tracker item ${getTrackerDisplayRef({ id: refreshedItem.id, issueKey: refreshedItem.issueKey ?? undefined })}:`,
+                  ...updateSummaryParts,
+                ].join('\n'),
+              }),
+            },
+          ],
+          isError: false,
+        };
+      }
+
+      if (!row) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Tracker item not found: ${args.id}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const data =
+        typeof row.data === "string"
+          ? JSON.parse(row.data)
+          : row.data || {};
+      data.lastModifiedBy = getCurrentIdentity(workspacePath);
+
+      const rf = (role: string, fallback: string) => getTrackerRoleField(row.type, role as any) ?? fallback;
+      const roleMap: Array<[string, string, string]> = [
+        ['title', 'title', 'title'],
+        ['status', 'workflowStatus', 'status'],
+        ['priority', 'priority', 'priority'],
+        ['tags', 'tags', 'tags'],
+        ['owner', 'assignee', 'owner'],
+        ['dueDate', 'dueDate', 'dueDate'],
+        ['progress', 'progress', 'progress'],
+        ['reporterEmail', 'reporter', 'reporterEmail'],
+      ];
+
+      const changes: Record<string, { from: any; to: any }> = {};
+
+      if (args.tags !== undefined && !Array.isArray(args.tags)) {
+        args.tags = [];
+      }
+
+      for (const [argName, role, fallback] of roleMap) {
+        if (args[argName] !== undefined) {
+          const fieldName = rf(role, fallback);
+          const oldVal = data[fieldName];
+          changes[fieldName] = { from: oldVal, to: args[argName] };
+          data[fieldName] = args[argName];
+        }
+      }
+
+      if (args.assigneeEmail !== undefined) {
+        data.assigneeEmail = args.assigneeEmail;
+        if (args.owner === undefined) {
+          const ownerField = rf('assignee', 'owner');
+          changes[ownerField] = { from: data[ownerField], to: args.assigneeEmail };
+          data[ownerField] = args.assigneeEmail;
+        }
+      }
+      if (args.description !== undefined) {
+        const normalizedDesc = args.description.replace(/\\n/g, '\n');
+        changes.description = { from: data.description, to: normalizedDesc };
+        data.description = normalizedDesc;
+      }
+      if (args.labels !== undefined) { data.labels = args.labels; }
+      if (args.linkedCommitSha !== undefined) { data.linkedCommitSha = args.linkedCommitSha; }
+      if (args.archived !== undefined) {
+        changes.archived = { from: row.archived ?? false, to: args.archived };
+      }
+      if (args.fields && typeof args.fields === 'object') {
+        for (const [key, value] of Object.entries(args.fields)) {
+          if (value === undefined) continue;
+          const oldVal = data[key];
+          if (oldVal !== value) {
+            changes[key] = { from: oldVal, to: value };
+          }
+          data[key] = value;
+        }
+      }
+      if (args.unsetFields && Array.isArray(args.unsetFields)) {
+        for (const key of args.unsetFields) {
+          if (data[key] !== undefined) {
+            changes[key] = { from: data[key], to: undefined };
+            delete data[key];
+          }
+        }
+      }
+
+      const oldType = row.type;
+      let primaryTypeChanged = false;
+      if (typeof args.primaryType === 'string' && args.primaryType !== row.type) {
+        const newType = args.primaryType;
+        if (!globalRegistry.has(newType)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error: unknown tracker type "${newType}". Use tracker_list to see registered types.`,
+              },
+            ],
+          };
+        }
+        changes.type = { from: oldType, to: newType };
+        row.type = newType;
+        primaryTypeChanged = true;
+      }
+
+      const validationResult = globalRegistry.validate(row.type, data);
+      if (!validationResult.valid) {
+        return buildTrackerSchemaValidationError('tracker_update', row.type, validationResult.errors);
+      }
+
+      const modifierIdentity = getCurrentIdentity(workspacePath);
+      for (const [field, change] of Object.entries(changes)) {
+        const action = field === 'status' ? 'status_changed'
+          : field === 'archived' ? 'archived'
+          : field === 'type' ? 'type_changed'
+          : 'updated';
+        appendActivity(data, modifierIdentity, action, {
+          field,
+          oldValue: change.from != null ? String(change.from) : undefined,
+          newValue: change.to != null ? String(change.to) : undefined,
+        });
+      }
+
+      if (primaryTypeChanged) {
+        await db.query(
+          `UPDATE tracker_items SET type = $1 WHERE id = $2`,
+          [row.type, row.id]
+        );
+      }
+
+      if (args.typeTags !== undefined) {
+        const newTypeTags: string[] = [row.type];
+        for (const tag of args.typeTags) {
+          if (!newTypeTags.includes(tag)) newTypeTags.push(tag);
+        }
+        await db.query(
+          `UPDATE tracker_items SET type_tags = $1 WHERE id = $2`,
+          [newTypeTags, row.id]
+        );
+      } else if (primaryTypeChanged) {
+        const existingTags: string[] = Array.isArray((row as any).type_tags)
+          ? ((row as any).type_tags as string[])
+          : [oldType];
+        const preservedSecondary = existingTags.filter(
+          (t) => t !== oldType && t !== row.type
+        );
+        const newTypeTags = [row.type, ...preservedSecondary];
+        await db.query(
+          `UPDATE tracker_items SET type_tags = $1 WHERE id = $2`,
+          [newTypeTags, row.id]
+        );
+      }
+
+      await db.query(
+        `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
+        [JSON.stringify(data), row.id]
+      );
+
+      if (args.description !== undefined) {
+        const normalizedContent = args.description.replace(/\\n/g, '\n');
+        const contentJson = JSON.stringify(normalizedContent);
+        const bumpResult = await db.query<{ body_version: string | number | null }>(
+          `UPDATE tracker_items
+              SET content = $1,
+                  body_version = COALESCE(body_version, 0) + 1
+            WHERE id = $2
+            RETURNING body_version`,
+          [contentJson, row.id]
+        );
+        const newBodyVersion = Number(bumpResult.rows[0]?.body_version ?? 0);
+        if (newBodyVersion > 0) {
+          await db.query(
+            `INSERT INTO tracker_body_cache (item_id, body_version, content, cached_at)
+             VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (item_id, body_version) DO NOTHING`,
+            [row.id, newBodyVersion, contentJson]
+          );
+        }
+
+        if (workspacePath) {
+          try {
+            await applyHeadlessBodyMarkdown(workspacePath, row.id, normalizedContent);
+          } catch (bodyError) {
+            console.error('[MCP Server] tracker_update body Y.Doc seed failed:', bodyError);
+          }
+        }
+      }
+
+      if (args.archived !== undefined) {
+        if (docService) {
+          await docService.archiveTrackerItem(row.id, args.archived);
+        } else {
+          await db.query(
+            `UPDATE tracker_items SET archived = $1, archived_at = $2 WHERE id = $3`,
+            [
+              args.archived,
+              args.archived ? new Date().toISOString() : null,
+              row.id,
+            ]
+          );
+        }
+      }
+
+      if (sessionId) {
+        const linked = await createBidirectionalLink(publicTrackerId, sessionId, {
+          trackerRowId: row.id,
+        });
+        if (linked) {
+          const sessionResult = await db.query<any>(
+            `SELECT metadata FROM ai_sessions WHERE id = $1`,
+            [sessionId]
+          );
+          const linkedIds = sessionResult.rows[0]?.metadata?.linkedTrackerItemIds || [];
+          await notifySessionLinkedTrackerChanged(sessionId, linkedIds);
+        }
+      }
+
+      await notifyTrackerItemUpdated(workspacePath, row.id);
+
+      const refreshedRow = await resolveTrackerRowByReference(db, row.id, workspacePath);
+      const effectiveWorkspacePath = refreshedRow?.workspace || workspacePath;
+      if (refreshedRow && effectiveWorkspacePath) {
+        const updateModel = globalRegistry.get(refreshedRow.type);
+        const syncPolicy = getEffectiveTrackerSyncPolicy(effectiveWorkspacePath, refreshedRow.type, updateModel?.sync?.mode);
+        if (shouldSyncTrackerPolicy(syncPolicy)) {
+          if (isTrackerSyncActive(effectiveWorkspacePath)) {
+            try {
+              await syncTrackerItem(rowToTrackerItem(refreshedRow));
+            } catch (syncError) {
+              console.error('[MCP Server] tracker_update sync failed:', syncError);
+            }
+          } else {
+            await db.query(
+              `UPDATE tracker_items SET sync_status = 'pending' WHERE id = $1`,
+              [row.id]
+            );
+          }
+        }
+      }
+      const postSyncRow = await resolveTrackerRowByReference(db, row.id, workspacePath);
+
+      const updateSummaryParts: string[] = [];
+      if (args.title !== undefined) updateSummaryParts.push(`- **Title**: ${args.title}`);
+      if (args.status !== undefined) updateSummaryParts.push(`- **Status**: ${args.status}`);
+      if (args.priority !== undefined) updateSummaryParts.push(`- **Priority**: ${args.priority}`);
+      if (args.archived !== undefined) updateSummaryParts.push(`- **Archived**: ${args.archived}`);
+      if (args.tags !== undefined) updateSummaryParts.push(`- **Tags**: ${args.tags.join(", ")}`);
+
+      const updatedRow = await db.query<any>(
+        `SELECT type_tags FROM tracker_items WHERE id = $1`,
+        [row.id]
+      );
+      const currentTypeTags: string[] = updatedRow.rows[0]?.type_tags?.length > 0
+        ? updatedRow.rows[0].type_tags
+        : [row.type];
+
+      const structured: Record<string, any> = {
+        action: "updated" as const,
+        id: publicTrackerId,
+        issueNumber: postSyncRow?.issue_number ?? refreshedRow?.issue_number ?? row.issue_number ?? undefined,
+        issueKey: postSyncRow?.issue_key ?? refreshedRow?.issue_key ?? row.issue_key ?? undefined,
+        type: row.type,
+        typeTags: currentTypeTags,
+        title: data[rf('title', 'title')],
+        changes,
+      };
+
+      const summaryLines = [
+        `Updated tracker item ${getTrackerDisplayRef({ id: publicTrackerId, issueKey: postSyncRow?.issue_key ?? refreshedRow?.issue_key ?? row.issue_key ?? undefined })}:`,
+        ...updateSummaryParts,
+      ];
+
       return {
         content: [
           {
             type: "text",
-            text: `Tracker item not found: ${args.id}`,
+            text: JSON.stringify({
+              structured,
+              summary: summaryLines.join("\n"),
+            }),
           },
         ],
-        isError: true,
+        isError: false,
       };
+    } finally {
+      tempDocService?.destroy?.();
     }
-
-    const data =
-      typeof row.data === "string"
-        ? JSON.parse(row.data)
-        : row.data || {};
-
-    // Stamp lastModifiedBy with current identity
-    // getCurrentIdentity imported statically at top of file
-    data.lastModifiedBy = getCurrentIdentity(workspacePath);
-
-    // Description writes go straight to PGLite. Phase 5 routes them through
-    // `updateTrackerItemContent` below so the body-version bump propagates to
-    // peers via the metadata layer. See the block comment near the top of this
-    // file for the full Phase 5 / NIM-436 status.
-
-    // Resolve role-based field names for the item's type
-    const rf = (role: string, fallback: string) => getTrackerRoleField(row.type, role as any) ?? fallback;
-
-    // Map fixed MCP args to role-resolved field names, then merge into data
-    const roleMap: Array<[string, string, string]> = [
-      // [argName, role, fallbackFieldName]
-      ['title', 'title', 'title'],
-      ['status', 'workflowStatus', 'status'],
-      ['priority', 'priority', 'priority'],
-      ['tags', 'tags', 'tags'],
-      ['owner', 'assignee', 'owner'],
-      ['dueDate', 'dueDate', 'dueDate'],
-      ['progress', 'progress', 'progress'],
-      ['reporterEmail', 'reporter', 'reporterEmail'],
-    ];
-
-    const changes: Record<string, { from: any; to: any }> = {};
-
-    if (args.tags !== undefined && !Array.isArray(args.tags)) {
-      args.tags = [];
-    }
-
-    for (const [argName, role, fallback] of roleMap) {
-      if (args[argName] !== undefined) {
-        const fieldName = rf(role, fallback);
-        const oldVal = data[fieldName];
-        changes[fieldName] = { from: oldVal, to: args[argName] };
-        data[fieldName] = args[argName];
-      }
-    }
-
-    // assigneeEmail: write to both the assignee role field and the explicit field
-    if (args.assigneeEmail !== undefined) {
-      data.assigneeEmail = args.assigneeEmail;
-      if (args.owner === undefined) {
-        const ownerField = rf('assignee', 'owner');
-        changes[ownerField] = { from: data[ownerField], to: args.assigneeEmail };
-        data[ownerField] = args.assigneeEmail;
-      }
-    }
-
-    // Non-role fields (system metadata)
-    if (args.description !== undefined) {
-      const normalizedDesc = args.description.replace(/\\n/g, '\n');
-      changes.description = { from: data.description, to: normalizedDesc };
-      data.description = normalizedDesc;
-    }
-    if (args.labels !== undefined) { data.labels = args.labels; }
-    if (args.linkedCommitSha !== undefined) { data.linkedCommitSha = args.linkedCommitSha; }
-
-    // Archived is a top-level DB column, not a JSONB field
-    if (args.archived !== undefined) {
-      changes.archived = { from: row.archived ?? false, to: args.archived };
-    }
-
-    // Merge generic fields bag (overrides role-resolved args above)
-    if (args.fields && typeof args.fields === 'object') {
-      for (const [key, value] of Object.entries(args.fields)) {
-        if (value === undefined) continue;
-        const oldVal = data[key];
-        if (oldVal !== value) {
-          changes[key] = { from: oldVal, to: value };
-        }
-        data[key] = value;
-      }
-    }
-
-    // Remove fields specified in unsetFields
-    if (args.unsetFields && Array.isArray(args.unsetFields)) {
-      for (const key of args.unsetFields) {
-        if (data[key] !== undefined) {
-          changes[key] = { from: data[key], to: undefined };
-          delete data[key];
-        }
-      }
-    }
-
-    // Apply primary-type change before validation so the new type's schema
-    // is what we validate against. Tracker items often start as one type
-    // (idea) and naturally evolve into another (task / bug / plan); the only
-    // existing workaround was archive-and-recreate which loses comments,
-    // attachments, and session links. See #79.
-    const oldType = row.type;
-    let primaryTypeChanged = false;
-    if (typeof args.primaryType === 'string' && args.primaryType !== row.type) {
-      const newType = args.primaryType;
-      if (!globalRegistry.has(newType)) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text' as const,
-              text: `Error: unknown tracker type "${newType}". Use tracker_list to see registered types.`,
-            },
-          ],
-        };
-      }
-      changes.type = { from: oldType, to: newType };
-      row.type = newType;
-      primaryTypeChanged = true;
-    }
-
-    const validationResult = globalRegistry.validate(row.type, data);
-    if (!validationResult.valid) {
-      return buildTrackerSchemaValidationError('tracker_update', row.type, validationResult.errors);
-    }
-
-    // Record activity for each changed field
-    const modifierIdentity = getCurrentIdentity(workspacePath);
-    for (const [field, change] of Object.entries(changes)) {
-      const action = field === 'status' ? 'status_changed'
-        : field === 'archived' ? 'archived'
-        : field === 'type' ? 'type_changed'
-        : 'updated';
-      appendActivity(data, modifierIdentity, action, {
-        field,
-        oldValue: change.from != null ? String(change.from) : undefined,
-        newValue: change.to != null ? String(change.to) : undefined,
-      });
-    }
-
-    // Persist the primary-type change. Done before the type_tags / data
-    // updates so subsequent code (and the type_tags rebuild below) sees the
-    // new row.type.
-    if (primaryTypeChanged) {
-      await db.query(
-        `UPDATE tracker_items SET type = $1 WHERE id = $2`,
-        [row.type, row.id]
-      );
-    }
-
-    // Update type_tags if explicitly provided OR if primaryType changed and
-    // the existing type_tags still contain the OLD primary type (which would
-    // leak it as a secondary tag). The rebuild keeps secondary tags intact
-    // and ensures the new primary type is at the front.
-    if (args.typeTags !== undefined) {
-      // Ensure primary type is always in the array
-      const newTypeTags: string[] = [row.type];
-      for (const tag of args.typeTags) {
-        if (!newTypeTags.includes(tag)) newTypeTags.push(tag);
-      }
-      await db.query(
-        `UPDATE tracker_items SET type_tags = $1 WHERE id = $2`,
-        [newTypeTags, row.id]
-      );
-    } else if (primaryTypeChanged) {
-      // Migrate existing type_tags: remove the old primary type, prepend the
-      // new one, preserve any other secondary tags in the order they were.
-      const existingTags: string[] = Array.isArray((row as any).type_tags)
-        ? ((row as any).type_tags as string[])
-        : [oldType];
-      const preservedSecondary = existingTags.filter(
-        (t) => t !== oldType && t !== row.type
-      );
-      const newTypeTags = [row.type, ...preservedSecondary];
-      await db.query(
-        `UPDATE tracker_items SET type_tags = $1 WHERE id = $2`,
-        [newTypeTags, row.id]
-      );
-    }
-
-    // Update data field
-    await db.query(
-      `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
-      [JSON.stringify(data), row.id]
-    );
-
-    // Update content if description changed. Phase 5: bump body_version and
-    // write the matching tracker_body_cache snapshot, mirroring
-    // ElectronDocumentService.updateTrackerItemContent. The bumped version
-    // travels through the metadata sync envelope (syncTrackerItem below picks
-    // it up from the refreshed row) so cold peers learn the body changed.
-    if (args.description !== undefined) {
-      const normalizedContent = args.description.replace(/\\n/g, '\n');
-      const contentJson = JSON.stringify(normalizedContent);
-      const bumpResult = await db.query<{ body_version: string | number | null }>(
-        `UPDATE tracker_items
-            SET content = $1,
-                body_version = COALESCE(body_version, 0) + 1
-          WHERE id = $2
-          RETURNING body_version`,
-        [contentJson, row.id]
-      );
-      const newBodyVersion = Number(bumpResult.rows[0]?.body_version ?? 0);
-      if (newBodyVersion > 0) {
-        await db.query(
-          `INSERT INTO tracker_body_cache (item_id, body_version, content, cached_at)
-           VALUES ($1, $2, $3, NOW())
-           ON CONFLICT (item_id, body_version) DO NOTHING`,
-          [row.id, newBodyVersion, contentJson]
-        );
-      }
-
-      // Also seed the live DocumentRoom Y.Doc for `fullDocument` types
-      // (incident, plan, decision, ...): the editor panel reads from the
-      // collab body, not from `tracker_items.content`, so a PGLite-only
-      // write leaves the panel blank for every peer until someone opens
-      // the editor and bootstraps it. Mirrors handleTrackerCreate. No-op
-      // for local trackers (resolveConfig returns null without a team).
-      if (workspacePath) {
-        try {
-          await applyHeadlessBodyMarkdown(workspacePath, row.id, normalizedContent);
-        } catch (bodyError) {
-          console.error('[MCP Server] tracker_update body Y.Doc seed failed:', bodyError);
-        }
-      }
-    }
-
-    // Handle archive state -- use document service for file writeback
-    if (args.archived !== undefined) {
-      const { documentServices } = await import("../../window/WindowManager");
-      const docService = workspacePath ? documentServices.get(workspacePath) : undefined;
-      if (docService) {
-        await docService.archiveTrackerItem(row.id, args.archived);
-      } else {
-        // Fallback: DB-only update if no document service available
-        await db.query(
-          `UPDATE tracker_items SET archived = $1, archived_at = $2 WHERE id = $3`,
-          [
-            args.archived,
-            args.archived ? new Date().toISOString() : null,
-            row.id,
-          ]
-        );
-      }
-    }
-
-    // Auto-link session to the updated tracker item
-    if (sessionId) {
-      const linked = await createBidirectionalLink(row.id, sessionId);
-      if (linked) {
-        const sessionResult = await db.query<any>(
-          `SELECT metadata FROM ai_sessions WHERE id = $1`,
-          [sessionId]
-        );
-        const linkedIds = sessionResult.rows[0]?.metadata?.linkedTrackerItemIds || [];
-        await notifySessionLinkedTrackerChanged(sessionId, linkedIds);
-      }
-    }
-
-    // Notify renderer (correct channel + event format)
-    await notifyTrackerItemUpdated(workspacePath, row.id);
-
-    const refreshedRow = await resolveTrackerRowByReference(db, row.id, workspacePath);
-    const effectiveWorkspacePath = refreshedRow?.workspace || workspacePath;
-    if (refreshedRow && effectiveWorkspacePath) {
-      const updateModel = globalRegistry.get(refreshedRow.type);
-      const syncPolicy = getEffectiveTrackerSyncPolicy(effectiveWorkspacePath, refreshedRow.type, updateModel?.sync?.mode);
-      if (shouldSyncTrackerPolicy(syncPolicy)) {
-        if (isTrackerSyncActive(effectiveWorkspacePath)) {
-          try {
-            await syncTrackerItem(rowToTrackerItem(refreshedRow));
-          } catch (syncError) {
-            console.error('[MCP Server] tracker_update sync failed:', syncError);
-          }
-        } else {
-          await db.query(
-            `UPDATE tracker_items SET sync_status = 'pending' WHERE id = $1`,
-            [row.id]
-          );
-        }
-      }
-    }
-    const postSyncRow = await resolveTrackerRowByReference(db, row.id, workspacePath);
-
-    const updateSummaryParts: string[] = [];
-    if (args.title !== undefined) updateSummaryParts.push(`- **Title**: ${args.title}`);
-    if (args.status !== undefined) updateSummaryParts.push(`- **Status**: ${args.status}`);
-    if (args.priority !== undefined) updateSummaryParts.push(`- **Priority**: ${args.priority}`);
-    if (args.archived !== undefined) updateSummaryParts.push(`- **Archived**: ${args.archived}`);
-    if (args.tags !== undefined) updateSummaryParts.push(`- **Tags**: ${args.tags.join(", ")}`);
-
-    // Re-read type_tags after potential update
-    const updatedRow = await db.query<any>(
-      `SELECT type_tags FROM tracker_items WHERE id = $1`,
-      [row.id]
-    );
-    const currentTypeTags: string[] = updatedRow.rows[0]?.type_tags?.length > 0
-      ? updatedRow.rows[0].type_tags
-      : [row.type];
-
-    const structured: Record<string, any> = {
-      action: "updated" as const,
-      id: row.id,
-      issueNumber: postSyncRow?.issue_number ?? refreshedRow?.issue_number ?? row.issue_number ?? undefined,
-      issueKey: postSyncRow?.issue_key ?? refreshedRow?.issue_key ?? row.issue_key ?? undefined,
-      type: row.type,
-      typeTags: currentTypeTags,
-      title: data[rf('title', 'title')],
-      changes,
-    };
-
-    const summaryLines = [
-      `Updated tracker item ${getTrackerDisplayRef({ id: row.id, issueKey: postSyncRow?.issue_key ?? refreshedRow?.issue_key ?? row.issue_key ?? undefined })}:`,
-      ...updateSummaryParts,
-    ];
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            structured,
-            summary: summaryLines.join("\n"),
-          }),
-        },
-      ],
-      isError: false,
-    };
   } catch (error) {
     console.error("[MCP Server] tracker_update failed:", error);
     return {
@@ -2011,86 +2252,99 @@ export async function handleTrackerLinkSession(
 
     const { getDatabase } = await import("../../database/initialize");
     const db = getDatabase();
+    const { docService, tempDocService } = await getDocumentServiceForWorkspace(workspacePath);
 
-    // Verify tracker item exists
-    const existing = await resolveTrackerRowByReference(db, args.trackerId, workspacePath);
-    if (!existing) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Tracker item not found: ${args.trackerId}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    // When the caller specified an explicit sessionId, verify it exists so we
-    // fail loudly instead of silently no-op'ing the session-side write.
-    if (typeof args.sessionId === "string" && args.sessionId.length > 0) {
-      const sessionExists = await db.query<any>(
-        `SELECT 1 FROM ai_sessions WHERE id = $1`,
-        [targetSessionId]
+    try {
+      let item = await resolveTrackerItemFromDocumentService(docService, args.trackerId);
+      if (item && (item.source === 'frontmatter' || item.source === 'import') && docService) {
+        const projected = await docService.ensureTrackerProjection(item.id);
+        if (projected) item = projected;
+      }
+      const existing = await resolveTrackerRowByReference(
+        db,
+        item?.id || args.trackerId,
+        workspacePath,
       );
-      if (sessionExists.rows.length === 0) {
+      if (!item && existing) {
+        item = rowToTrackerItem(existing);
+      }
+      if (!item || !existing) {
         return {
           content: [
             {
               type: "text",
-              text: `Session not found: ${targetSessionId}`,
+              text: `Tracker item not found: ${args.trackerId}`,
             },
           ],
           isError: true,
         };
       }
+
+      if (typeof args.sessionId === "string" && args.sessionId.length > 0) {
+        const sessionExists = await db.query<any>(
+          `SELECT 1 FROM ai_sessions WHERE id = $1`,
+          [targetSessionId]
+        );
+        if (sessionExists.rows.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Session not found: ${targetSessionId}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      await createBidirectionalLink(item.id, targetSessionId, {
+        trackerRowId: existing.id,
+      });
+
+      const trackerResult = await db.query<any>(
+        `SELECT data FROM tracker_items WHERE id = $1`,
+        [existing.id]
+      );
+      const trackerData = typeof trackerResult.rows[0]?.data === "string"
+        ? JSON.parse(trackerResult.rows[0].data)
+        : trackerResult.rows[0]?.data || {};
+      const linkedSessions: string[] = trackerData.linkedSessions || [];
+
+      await notifyTrackerItemUpdated(workspacePath, existing.id);
+      const sessionResult = await db.query<any>(
+        `SELECT metadata FROM ai_sessions WHERE id = $1`,
+        [targetSessionId]
+      );
+      const linkedIds = sessionResult.rows[0]?.metadata?.linkedTrackerItemIds || [];
+      await notifySessionLinkedTrackerChanged(targetSessionId, linkedIds);
+
+      const structured = {
+        action: "linked" as const,
+        trackerId: item.id,
+        issueNumber: item.issueNumber ?? existing.issue_number ?? undefined,
+        issueKey: item.issueKey ?? existing.issue_key ?? undefined,
+        type: item.type || existing.type || "",
+        title: item.title || trackerData.title || "",
+        linkedCount: linkedSessions.length,
+        sessionId: targetSessionId,
+      };
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              structured,
+              summary: `Linked session ${targetSessionId} to tracker item ${getTrackerDisplayRef({ id: item.id, issueKey: item.issueKey ?? undefined })}. Total linked sessions: ${linkedSessions.length}`,
+            }),
+          },
+        ],
+        isError: false,
+      };
+    } finally {
+      tempDocService?.destroy?.();
     }
-
-    // Create bidirectional link
-    await createBidirectionalLink(existing.id, targetSessionId);
-
-    // Get updated counts for the response
-    const trackerResult = await db.query<any>(
-      `SELECT data FROM tracker_items WHERE id = $1`,
-      [existing.id]
-    );
-    const trackerData = typeof trackerResult.rows[0]?.data === "string"
-      ? JSON.parse(trackerResult.rows[0].data)
-      : trackerResult.rows[0]?.data || {};
-    const linkedSessions: string[] = trackerData.linkedSessions || [];
-
-    // Notify renderer of both changes (correct channel + event format)
-    await notifyTrackerItemUpdated(workspacePath, existing.id);
-    const sessionResult = await db.query<any>(
-      `SELECT metadata FROM ai_sessions WHERE id = $1`,
-      [targetSessionId]
-    );
-    const linkedIds = sessionResult.rows[0]?.metadata?.linkedTrackerItemIds || [];
-    await notifySessionLinkedTrackerChanged(targetSessionId, linkedIds);
-
-    const structured = {
-      action: "linked" as const,
-      trackerId: existing.id,
-      issueNumber: existing.issue_number ?? undefined,
-      issueKey: existing.issue_key ?? undefined,
-      type: existing.type || "",
-      title: trackerData.title || "",
-      linkedCount: linkedSessions.length,
-      sessionId: targetSessionId,
-    };
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            structured,
-            summary: `Linked session ${targetSessionId} to tracker item ${getTrackerDisplayRef({ id: existing.id, issueKey: existing.issue_key ?? undefined })}. Total linked sessions: ${linkedSessions.length}`,
-          }),
-        },
-      ],
-      isError: false,
-    };
   } catch (error) {
     console.error(
       "[MCP Server] tracker_link_session failed:",
@@ -2133,70 +2387,89 @@ export async function handleTrackerUnlinkSession(
 
     const { getDatabase } = await import("../../database/initialize");
     const db = getDatabase();
+    const { docService, tempDocService } = await getDocumentServiceForWorkspace(workspacePath);
 
-    const existing = await resolveTrackerRowByReference(db, args.trackerId, workspacePath);
-    if (!existing) {
+    try {
+      let item = await resolveTrackerItemFromDocumentService(docService, args.trackerId);
+      if (item && (item.source === 'frontmatter' || item.source === 'import') && docService) {
+        const projected = await docService.ensureTrackerProjection(item.id);
+        if (projected) item = projected;
+      }
+      const existing = await resolveTrackerRowByReference(
+        db,
+        item?.id || args.trackerId,
+        workspacePath,
+      );
+      if (!item && existing) {
+        item = rowToTrackerItem(existing);
+      }
+      if (!item || !existing) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Tracker item not found: ${args.trackerId}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const removed = await removeBidirectionalLink(item.id, targetSessionId, {
+        trackerRowId: existing.id,
+      });
+
+      const trackerResult = await db.query<any>(
+        `SELECT data FROM tracker_items WHERE id = $1`,
+        [existing.id]
+      );
+      const trackerData = typeof trackerResult.rows[0]?.data === "string"
+        ? JSON.parse(trackerResult.rows[0].data)
+        : trackerResult.rows[0]?.data || {};
+      const linkedSessions: string[] = trackerData.linkedSessions || [];
+
+      await notifyTrackerItemUpdated(workspacePath, existing.id);
+      const sessionResult = await db.query<any>(
+        `SELECT metadata FROM ai_sessions WHERE id = $1`,
+        [targetSessionId]
+      );
+      if (sessionResult.rows.length > 0) {
+        const linkedIds = sessionResult.rows[0]?.metadata?.linkedTrackerItemIds || [];
+        await notifySessionLinkedTrackerChanged(targetSessionId, linkedIds);
+      }
+
+      const structured = {
+        action: "unlinked" as const,
+        trackerId: item.id,
+        issueNumber: item.issueNumber ?? existing.issue_number ?? undefined,
+        issueKey: item.issueKey ?? existing.issue_key ?? undefined,
+        type: item.type || existing.type || "",
+        title: item.title || trackerData.title || "",
+        linkedCount: linkedSessions.length,
+        sessionId: targetSessionId,
+        removed,
+      };
+
+      const displayRef = getTrackerDisplayRef({ id: item.id, issueKey: item.issueKey ?? undefined });
+      const summary = removed
+        ? `Unlinked session ${targetSessionId} from tracker item ${displayRef}. Total linked sessions: ${linkedSessions.length}`
+        : `Session ${targetSessionId} was not linked to tracker item ${displayRef}. Total linked sessions: ${linkedSessions.length}`;
+
       return {
         content: [
           {
             type: "text",
-            text: `Tracker item not found: ${args.trackerId}`,
+            text: JSON.stringify({
+              structured,
+              summary,
+            }),
           },
         ],
-        isError: true,
+        isError: false,
       };
+    } finally {
+      tempDocService?.destroy?.();
     }
-
-    const removed = await removeBidirectionalLink(existing.id, targetSessionId);
-
-    const trackerResult = await db.query<any>(
-      `SELECT data FROM tracker_items WHERE id = $1`,
-      [existing.id]
-    );
-    const trackerData = typeof trackerResult.rows[0]?.data === "string"
-      ? JSON.parse(trackerResult.rows[0].data)
-      : trackerResult.rows[0]?.data || {};
-    const linkedSessions: string[] = trackerData.linkedSessions || [];
-
-    await notifyTrackerItemUpdated(workspacePath, existing.id);
-    const sessionResult = await db.query<any>(
-      `SELECT metadata FROM ai_sessions WHERE id = $1`,
-      [targetSessionId]
-    );
-    if (sessionResult.rows.length > 0) {
-      const linkedIds = sessionResult.rows[0]?.metadata?.linkedTrackerItemIds || [];
-      await notifySessionLinkedTrackerChanged(targetSessionId, linkedIds);
-    }
-
-    const structured = {
-      action: "unlinked" as const,
-      trackerId: existing.id,
-      issueNumber: existing.issue_number ?? undefined,
-      issueKey: existing.issue_key ?? undefined,
-      type: existing.type || "",
-      title: trackerData.title || "",
-      linkedCount: linkedSessions.length,
-      sessionId: targetSessionId,
-      removed,
-    };
-
-    const displayRef = getTrackerDisplayRef({ id: existing.id, issueKey: existing.issue_key ?? undefined });
-    const summary = removed
-      ? `Unlinked session ${targetSessionId} from tracker item ${displayRef}. Total linked sessions: ${linkedSessions.length}`
-      : `Session ${targetSessionId} was not linked to tracker item ${displayRef}. Total linked sessions: ${linkedSessions.length}`;
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            structured,
-            summary,
-          }),
-        },
-      ],
-      isError: false,
-    };
   } catch (error) {
     console.error(
       "[MCP Server] tracker_unlink_session failed:",
