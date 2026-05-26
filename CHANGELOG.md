@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Re-uploading a local source into a shared markdown document now waits for the collab write to be acknowledged before tearing down the headless sync client.
 <!-- Bug fixes go here -->
 - Codex session-naming reminder no longer leaks into the chat transcript; its turn output is tagged so the transcript hides it. (#420)
+- Excalidraw "import mermaid" now registers the rendered diagram image, so it no longer shows as a broken thumbnail. (#428)
 - Codex sessions now append actionable guidance when `~/.codex/config.toml` has a url-based MCP server the bundled Codex rejects, instead of an opaque config-load failure. (#424)
 
 ### Removed
