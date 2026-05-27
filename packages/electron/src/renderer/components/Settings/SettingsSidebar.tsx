@@ -18,6 +18,7 @@ export type SettingsCategory =
   | 'sync'
   | 'themes'
   | 'advanced'
+  | 'database'
   | 'agent-features'
   | 'beta-features'
   | 'mcp-servers'
@@ -101,6 +102,11 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
           id: 'advanced',
           name: 'Advanced',
           icon: <MaterialSymbol icon="settings" size={16} />,
+        },
+        {
+          id: 'database',
+          name: 'Database',
+          icon: <MaterialSymbol icon="database" size={16} />,
         },
         {
           id: 'voice-mode',

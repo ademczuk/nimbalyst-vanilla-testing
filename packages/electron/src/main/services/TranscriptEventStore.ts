@@ -17,6 +17,13 @@ type TranscriptEventStoreType = ITranscriptEventStore;
 
 type PGliteLike = {
   query<T = any>(sql: string, params?: any[]): Promise<{ rows: T[] }>;
+  searchTranscriptEvents?(
+    query: string,
+    opts?: {
+      limit?: number;
+      sessionIds?: string[];
+    },
+  ): Promise<Array<Record<string, unknown>>>;
 };
 
 type EnsureReadyFn = () => Promise<void>;
@@ -59,7 +66,8 @@ function rowToEvent(row: TranscriptEventRow): TranscriptEvent {
     searchableText: row.searchable_text,
     payload: payload as Record<string, unknown>,
     parentEventId: row.parent_event_id != null ? Number(row.parent_event_id) : null,
-    searchable: row.searchable,
+    // SQLite stores BOOLEAN as INTEGER 0/1; PG returns native booleans.
+    searchable: typeof row.searchable === 'number' ? row.searchable !== 0 : !!row.searchable,
     subagentId: row.subagent_id,
     provider: row.provider,
     providerToolCallId: row.provider_tool_call_id,
@@ -130,9 +138,25 @@ export function createTranscriptEventStore(
     async mergeEventPayload(id, partialPayload): Promise<void> {
       await ensureReady();
 
+      const { rows } = await db.query<{ payload: Record<string, unknown> | string | null }>(
+        `SELECT payload FROM ai_transcript_events WHERE id = $1`,
+        [id],
+      );
+      const existingPayload = rows[0]?.payload;
+      let normalizedPayload: Record<string, unknown> = {};
+      if (typeof existingPayload === 'string') {
+        try {
+          normalizedPayload = JSON.parse(existingPayload);
+        } catch {
+          normalizedPayload = {};
+        }
+      } else if (existingPayload && typeof existingPayload === 'object') {
+        normalizedPayload = existingPayload;
+      }
+
       await db.query(
-        `UPDATE ai_transcript_events SET payload = payload || $1::jsonb WHERE id = $2`,
-        [JSON.stringify(partialPayload), id],
+        `UPDATE ai_transcript_events SET payload = $1 WHERE id = $2`,
+        [JSON.stringify({ ...normalizedPayload, ...partialPayload }), id],
       );
     },
 
@@ -301,30 +325,39 @@ export function createTranscriptEventStore(
 
       const limit = options?.limit ?? 100;
 
-      let sql: string;
-      let params: any[];
-
-      if (options?.sessionIds && options.sessionIds.length > 0) {
-        const placeholders = options.sessionIds.map((_, i) => `$${i + 3}`).join(', ');
-        sql = `SELECT ${SELECT_COLS}
-          FROM ai_transcript_events
-          WHERE searchable = TRUE
-            AND to_tsvector('english', COALESCE(searchable_text, '')) @@ plainto_tsquery('english', $1)
-            AND session_id IN (${placeholders})
-          ORDER BY ts_rank_cd(to_tsvector('english', COALESCE(searchable_text, '')), plainto_tsquery('english', $1)) DESC
-          LIMIT $2`;
-        params = [query, limit, ...options.sessionIds];
+      const sqliteRows = await db.searchTranscriptEvents?.(query, {
+        limit,
+        sessionIds: options?.sessionIds,
+      });
+      let rows: TranscriptEventRow[];
+      if (sqliteRows) {
+        rows = sqliteRows as unknown as TranscriptEventRow[];
       } else {
-        sql = `SELECT ${SELECT_COLS}
-          FROM ai_transcript_events
-          WHERE searchable = TRUE
-            AND to_tsvector('english', COALESCE(searchable_text, '')) @@ plainto_tsquery('english', $1)
-          ORDER BY ts_rank_cd(to_tsvector('english', COALESCE(searchable_text, '')), plainto_tsquery('english', $1)) DESC
-          LIMIT $2`;
-        params = [query, limit];
-      }
+        let sql: string;
+        let params: any[];
 
-      const { rows } = await db.query<TranscriptEventRow>(sql, params);
+        if (options?.sessionIds && options.sessionIds.length > 0) {
+          const placeholders = options.sessionIds.map((_, i) => `$${i + 3}`).join(', ');
+          sql = `SELECT ${SELECT_COLS}
+            FROM ai_transcript_events
+            WHERE searchable = TRUE
+              AND to_tsvector('english', COALESCE(searchable_text, '')) @@ plainto_tsquery('english', $1)
+              AND session_id IN (${placeholders})
+            ORDER BY ts_rank_cd(to_tsvector('english', COALESCE(searchable_text, '')), plainto_tsquery('english', $1)) DESC
+            LIMIT $2`;
+          params = [query, limit, ...options.sessionIds];
+        } else {
+          sql = `SELECT ${SELECT_COLS}
+            FROM ai_transcript_events
+            WHERE searchable = TRUE
+              AND to_tsvector('english', COALESCE(searchable_text, '')) @@ plainto_tsquery('english', $1)
+            ORDER BY ts_rank_cd(to_tsvector('english', COALESCE(searchable_text, '')), plainto_tsquery('english', $1)) DESC
+            LIMIT $2`;
+          params = [query, limit];
+        }
+
+        rows = (await db.query<TranscriptEventRow>(sql, params)).rows;
+      }
       return rows.map((row) => ({
         event: rowToEvent(row),
         sessionId: row.session_id,

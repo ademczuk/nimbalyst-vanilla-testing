@@ -21,7 +21,7 @@
  *   projection via `applyRemoteItem` after bootstrap, which is correct.
  */
 
-import type { PGLiteDatabaseWorker } from '../../database/PGLiteDatabaseWorker';
+import type { AppDatabase } from '../../database/PGLiteDatabaseWorker';
 import type {
   EncryptedTrackerItemEnvelope,
   SyncId,
@@ -112,7 +112,7 @@ interface PGLiteTrackerTransactionRow {
 
 export class TrackerPGLiteStore implements TrackerPersistence {
   constructor(
-    private readonly db: PGLiteDatabaseWorker,
+    private readonly db: AppDatabase,
     private readonly workspacePath: string,
   ) {}
 

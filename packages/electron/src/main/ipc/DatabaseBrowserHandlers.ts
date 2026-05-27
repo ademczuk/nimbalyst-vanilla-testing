@@ -178,7 +178,7 @@ export function registerDatabaseBrowserHandlers() {
             const backupService = database.getBackupService();
             let backupStatus = null;
             if (backupService) {
-                backupStatus = backupService.getBackupStatus();
+                backupStatus = backupService.getBackupStatus?.() ?? null;
             }
 
             // Get WAL stats. PGLite runs Postgres in --single mode with no background

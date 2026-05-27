@@ -80,6 +80,8 @@ import { registerShareHandlers } from './ipc/ShareHandlers';
 import { MCPConfigService } from './services/MCPConfigService';
 import { setMcpConfigServiceGetter } from './mcpConfigServiceRef';
 import { registerDatabaseBrowserHandlers } from './ipc/DatabaseBrowserHandlers';
+import { registerDatabaseBrowserSqliteHandlers } from './ipc/DatabaseBrowserSqliteHandlers';
+import { registerMigrationHandlers } from './ipc/MigrationHandlers';
 import { registerTerminalHandlers, shutdownTerminalHandlers } from './ipc/TerminalHandlers';
 import { AIService } from './services/ai/AIService';
 import { detectFileWorkspace, suggestWorkspaceForFile, getAdditionalDirectoriesForWorkspace } from './utils/workspaceDetection';
@@ -1383,7 +1385,18 @@ app.whenReady().then(async () => {
     registerMCPConfigHandlers();
     registerOpenCodeConfigHandlers();
     registerClaudeCodePluginHandlers();
-    registerDatabaseBrowserHandlers();
+    const activeSqlite = database.getActiveSQLiteDatabase();
+    if (database.getEngine() === 'sqlite' && activeSqlite) {
+        const userDataPath = process.env.NIMBALYST_USER_DATA_PATH || app.getPath('userData');
+        registerDatabaseBrowserSqliteHandlers({
+            sqlite: activeSqlite,
+            backupService: database.getBackupService() as any,
+            sqliteFilePath: join(userDataPath, 'sqlite-db', 'nimbalyst.sqlite'),
+        });
+    } else {
+        registerDatabaseBrowserHandlers();
+    }
+    registerMigrationHandlers();
     registerTerminalHandlers();
     registerExportHandlers();
     registerShareHandlers();
@@ -2872,7 +2885,7 @@ app.on('before-quit', async (event) => {
             const backupService = db.getBackupService();
             if (backupService) {
                 try {
-                    await backupService.cleanupOldCorruptedBackups();
+                    await backupService.cleanupOldCorruptedBackups?.();
                     console.log('[QUIT] Old corrupted backups cleaned up');
                     if (canWriteLogs && debugLog) {
                         try { fs.appendFileSync(debugLog, '[QUIT] Old backups cleaned up\n'); } catch (e) {}

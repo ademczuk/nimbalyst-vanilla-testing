@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Alpha SQLite storage backend behind an opt-in Settings → Database migration. Dry-run reports row counts and integrity against your live PGLite without touching it; the real migration preserves PGLite at `pglite-db.migrated-<ts>/` for rollback. WriteCoordinator batches writes through a single lane and chunks slow ops on a background lane; FTS5 mirrors back agent-message and transcript-event search; Database Browser gains a Performance tab.
 - Worktree git panel now has a Manual/Smart commit toggle and "Commit with AI" button, matching the non-worktree experience.
 - Contextual tips: small bottom-left cards that suggest tracker mode, worktree sessions, the keyboard-shortcuts dialog, and theme exploration based on local feature usage.
 - Tip body now renders basic markdown (paragraphs, bullets, bold).

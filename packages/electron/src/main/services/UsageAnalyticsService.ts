@@ -3,7 +3,7 @@
  * Provides aggregated statistics for AI usage and document editing patterns
  */
 
-import type { PGLiteDatabaseWorker } from '../database/PGLiteDatabaseWorker';
+import type { AppDatabase } from '../database/PGLiteDatabaseWorker';
 
 export interface TokenUsageStats {
   totalInputTokens: number;
@@ -52,7 +52,7 @@ export interface DocumentEditStats {
 }
 
 export class UsageAnalyticsService {
-  constructor(private db: PGLiteDatabaseWorker) {}
+  constructor(private db: AppDatabase) {}
 
   private readonly SESSION_TOKEN_USAGE_CTE = `
     WITH session_token_usage AS (
@@ -354,63 +354,73 @@ export class UsageAnalyticsService {
     metric: 'sessions' | 'messages' | 'edits' = 'messages',
     timezoneOffsetMinutes: number = 0
   ): Promise<ActivityHeatmapData[]> {
-    let query: string;
-    const params: any[] = [];
+    // Fetch raw timestamps and bucket them in JS. SQL-level
+    // EXTRACT(... FROM ts + INTERVAL 'N minutes') has no portable form
+    // (PG INTERVAL arithmetic vs SQLite strftime modifiers diverge once
+    // you nest EXTRACT around the offset), so we compute the offset
+    // bucket in JS where the math is identical on both backends.
+    //
+    // getTimezoneOffset() returns positive for west of UTC; we negate so
+    // positive offsetMinutes = "shift forward to local."
+    const offsetMs = -timezoneOffsetMinutes * 60_000;
 
-    // Convert timezone offset to interval format for PostgreSQL
-    // Note: getTimezoneOffset() returns positive for west of UTC, so we negate it
-    const offsetMinutes = -timezoneOffsetMinutes;
+    let timestamps: number[];
 
     if (metric === 'messages') {
-      // Count AI messages sent (only user messages, not AI responses)
       const whereClause = workspaceId
         ? `WHERE session_id IN (SELECT id FROM ai_sessions WHERE workspace_id = $1) AND direction = 'input'`
         : `WHERE direction = 'input'`;
-      if (workspaceId) params.push(workspaceId);
-
-      query = `SELECT
-        EXTRACT(HOUR FROM ai_agent_messages.created_at + INTERVAL '${offsetMinutes} minutes') as hour_of_day,
-        EXTRACT(DOW FROM ai_agent_messages.created_at + INTERVAL '${offsetMinutes} minutes') as day_of_week,
-        COUNT(*) as activity_count
-      FROM ai_agent_messages
-      ${whereClause}
-      GROUP BY hour_of_day, day_of_week
-      ORDER BY day_of_week, hour_of_day`;
+      const params: any[] = workspaceId ? [workspaceId] : [];
+      const result = await this.db.query<{ created_at: unknown }>(
+        `SELECT created_at FROM ai_agent_messages ${whereClause}`,
+        params
+      );
+      timestamps = result.rows.map((row) => toEpochMs(row.created_at));
     } else if (metric === 'edits') {
-      // Count document saves (document_history uses timestamp BIGINT, not created_at)
       const whereClause = workspaceId ? `WHERE workspace_id = $1` : '';
-      if (workspaceId) params.push(workspaceId);
-
-      query = `SELECT
-        EXTRACT(HOUR FROM to_timestamp(timestamp / 1000.0) + INTERVAL '${offsetMinutes} minutes') as hour_of_day,
-        EXTRACT(DOW FROM to_timestamp(timestamp / 1000.0) + INTERVAL '${offsetMinutes} minutes') as day_of_week,
-        COUNT(*) as activity_count
-      FROM document_history
-      ${whereClause}
-      GROUP BY hour_of_day, day_of_week
-      ORDER BY day_of_week, hour_of_day`;
+      const params: any[] = workspaceId ? [workspaceId] : [];
+      const result = await this.db.query<{ timestamp: number | string | bigint }>(
+        `SELECT timestamp FROM document_history ${whereClause}`,
+        params
+      );
+      timestamps = result.rows.map((row) => Number(row.timestamp));
     } else {
-      // Count AI sessions created
       const whereClause = workspaceId ? `WHERE workspace_id = $1` : '';
-      if (workspaceId) params.push(workspaceId);
-
-      query = `SELECT
-        EXTRACT(HOUR FROM created_at + INTERVAL '${offsetMinutes} minutes') as hour_of_day,
-        EXTRACT(DOW FROM created_at + INTERVAL '${offsetMinutes} minutes') as day_of_week,
-        COUNT(*) as activity_count
-      FROM ai_sessions
-      ${whereClause}
-      GROUP BY hour_of_day, day_of_week
-      ORDER BY day_of_week, hour_of_day`;
+      const params: any[] = workspaceId ? [workspaceId] : [];
+      const result = await this.db.query<{ created_at: unknown }>(
+        `SELECT created_at FROM ai_sessions ${whereClause}`,
+        params
+      );
+      timestamps = result.rows.map((row) => toEpochMs(row.created_at));
     }
 
-    const result = await this.db.query(query, params);
+    const buckets = new Map<string, number>();
+    for (const ms of timestamps) {
+      if (!Number.isFinite(ms)) continue;
+      const shifted = new Date(ms + offsetMs);
+      // Pull UTC fields off the shifted Date so we get the local hour/dow
+      // without any further timezone conversion.
+      const hour = shifted.getUTCHours();
+      const dow = shifted.getUTCDay();
+      const key = `${dow}:${hour}`;
+      buckets.set(key, (buckets.get(key) ?? 0) + 1);
+    }
 
-    return result.rows.map((row: any) => ({
-      hourOfDay: parseInt(row.hour_of_day),
-      dayOfWeek: parseInt(row.day_of_week),
-      activityCount: parseInt(row.activity_count) || 0,
-    }));
+    const out: ActivityHeatmapData[] = [];
+    for (const [key, count] of buckets) {
+      const [dowStr, hourStr] = key.split(':');
+      out.push({
+        dayOfWeek: Number(dowStr),
+        hourOfDay: Number(hourStr),
+        activityCount: count,
+      });
+    }
+    out.sort((a, b) =>
+      a.dayOfWeek !== b.dayOfWeek
+        ? a.dayOfWeek - b.dayOfWeek
+        : a.hourOfDay - b.hourOfDay
+    );
+    return out;
   }
 
   /**
@@ -482,4 +492,17 @@ export class UsageAnalyticsService {
       editCount: parseInt(row.edit_count) || 0,
     }));
   }
+}
+
+/**
+ * Coerce a TIMESTAMPTZ column value to epoch milliseconds.
+ * PGLite returns Date instances; SQLite returns ISO strings.
+ */
+function toEpochMs(raw: unknown): number {
+  if (raw == null) return NaN;
+  if (raw instanceof Date) return raw.getTime();
+  if (typeof raw === 'number') return raw;
+  if (typeof raw === 'string') return new Date(raw).getTime();
+  if (typeof raw === 'bigint') return Number(raw);
+  return NaN;
 }

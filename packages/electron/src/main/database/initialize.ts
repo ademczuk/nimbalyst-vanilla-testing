@@ -4,21 +4,27 @@
  */
 
 import { app } from 'electron';
+import * as fs from 'fs';
 import path from 'path';
-import { database } from './PGLiteDatabaseWorker';
+import { database, legacyPgliteDatabase } from './PGLiteDatabaseWorker';
+import { resolveBackend } from './sqlite/BackendSelector';
+import { SQLiteDatabase } from './sqlite/SQLiteDatabase';
 import { logger } from '../utils/logger';
+import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import type { SessionStore } from '@nimbalyst/runtime';
 import { repositoryManager } from '../services/RepositoryManager';
 import { DatabaseBackupService } from '../services/database/DatabaseBackupService';
+import { SQLiteBackupService } from '../services/database/SQLiteBackupService';
 import { checkWorktreeArchiveConsistency, createWorktreeStore } from '../services/WorktreeStore';
 import { archiveProgressManager } from '../services/ArchiveProgressManager';
 import { GitWorktreeService } from '../services/GitWorktreeService';
 import { timeStartupPhase } from '../utils/startupTiming';
 
 // Backup service instance
-let backupService: DatabaseBackupService | null = null;
+let backupService: DatabaseBackupService | SQLiteBackupService | null = null;
 let periodicBackupTimer: NodeJS.Timeout | null = null;
 const BACKUP_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+let sqliteDatabase: SQLiteDatabase | null = null;
 
 /**
  * Initialize the database system
@@ -28,7 +34,7 @@ export async function initializeDatabase(): Promise<SessionStore> {
   if (repositoryManager.isInitialized()) {
     return repositoryManager.getSessionStore();
   }
-  logger.main.info('[Database] Initializing PGLite database system...');
+  logger.main.info('[Database] Initializing database system...');
 
   try {
     // Get database path
@@ -39,17 +45,64 @@ export async function initializeDatabase(): Promise<SessionStore> {
       || app.getPath('userData');
     const dbPath = path.join(userDataPath, 'pglite-db');
 
-    // Initialize backup service
-    backupService = new DatabaseBackupService(dbPath, database);
-    await timeStartupPhase('BackupService.initialize', () => backupService!.initialize());
-    logger.main.info('[Database] Backup service initialized');
+    // Resolve which storage backend should be active. The selector reads
+    // <userData>/database-backend.json if present, otherwise infers from disk:
+    //   - pglite-db/ exists  -> stay on PGLite (no flag written)
+    //   - fresh install      -> SQLite (set by the migration flow)
+    // For now the boot path always opens PGLite; the actual switchover is
+    // a follow-up step in the migration plan (see service-layer audit).
+    const backendChoice = resolveBackend({ userDataPath });
+    logger.main.info(
+      `[Database] Backend selector resolved to '${backendChoice.backend}' (reason: ${backendChoice.reason})`,
+    );
 
-    // Set backup service on database instance
-    database.setBackupService(backupService);
+    // Heartbeat: when SQLite is active but a preserved `pglite-db.migrated-*`
+    // directory still exists, surface it so we can decide when to retire the
+    // PGLite reader code. Per the plan, the rollback window stays open until
+    // fleet telemetry shows < 1% of installs carry this directory.
+    try {
+      const migratedPresent = fs
+        .readdirSync(userDataPath)
+        .some((d) => d.startsWith('pglite-db.migrated-'));
+      if (migratedPresent) {
+        AnalyticsService.getInstance().sendEvent('pglite_legacy_dir_present', {
+          active_backend: backendChoice.backend,
+        });
+      }
+    } catch (heartbeatErr) {
+      logger.main.warn('[Database] legacy-dir heartbeat failed', heartbeatErr);
+    }
 
-    // Initialize PGLite database
-    await timeStartupPhase('PGLite.initialize', () => database.initialize());
-    logger.main.info('[Database] PGLite initialized successfully');
+    if (backendChoice.backend === 'sqlite') {
+      const sqliteDir = path.join(userDataPath, 'sqlite-db');
+      const schemaDir = path.resolve(__dirname, 'sqlite', 'schemas');
+      sqliteDatabase = new SQLiteDatabase({
+        dbDir: sqliteDir,
+        schemaDir,
+        log: (level, msg, meta) => logger.main[level](msg, meta),
+      });
+      backupService = new SQLiteBackupService({
+        sqliteDir,
+        backupDir: path.join(userDataPath, 'sqlite-db.backups'),
+        sqlite: sqliteDatabase,
+      });
+      await timeStartupPhase('SQLiteBackupService.initialize', () => backupService!.initialize());
+      sqliteDatabase.setBackupService(backupService);
+      database.useDatabase(sqliteDatabase, 'sqlite');
+      await timeStartupPhase('SQLite.initialize', () => database.initialize());
+      logger.main.info('[Database] SQLite initialized successfully');
+    } else {
+      backupService = new DatabaseBackupService(dbPath, legacyPgliteDatabase);
+      await timeStartupPhase('BackupService.initialize', () => backupService!.initialize());
+      legacyPgliteDatabase.setBackupService(backupService);
+      database.useDatabase(legacyPgliteDatabase, 'pglite');
+      await timeStartupPhase('PGLite.initialize', () => database.initialize());
+      logger.main.info('[Database] PGLite initialized successfully');
+    }
+
+    logger.main.info('[Database] Backup service initialized', {
+      backend: backendChoice.backend,
+    });
 
     // Initialize all repositories
     await timeStartupPhase('RepositoryManager.initialize', () => repositoryManager.initialize());
