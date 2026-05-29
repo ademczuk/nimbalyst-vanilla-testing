@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Sessions resumed from queued prompts now stay marked running until the continuation actually finishes, so the session dashboard and background-task UI no longer flip to idle mid-turn.
 - Embedded calc sheets and other inline custom editors no longer immediately lose focus after the second click used to enter the embedded editor.
 - Agent transcript no longer collapses `$7M ... $40M`-style currency text into LaTeX. (#462)
 - Markdown-led transcript file change cards no longer append sibling embedded editor previews like Excalidraw beneath the markdown diff.
