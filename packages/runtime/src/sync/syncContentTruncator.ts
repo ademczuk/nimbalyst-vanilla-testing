@@ -32,12 +32,43 @@ const MAX_SYNC_MESSAGE_BYTES = 16 * 1024;
 const LOG_EVERY_N_MESSAGES = 25;
 const LOG_INTERVAL_MS = 30_000;
 
+const CODEX_APP_SERVER_TRANSIENT_EVENT_TYPES = new Set([
+  'item/agentMessage/delta',
+  'item/commandExecution/outputDelta',
+  'thread/tokenUsage/updated',
+  'account/rateLimits/updated',
+  'thread/status/changed',
+  'mcpServer/startupStatus/updated',
+  'turn/started',
+  'turn/completed',
+  'turn/diff/updated',
+  'skills/changed',
+]);
+
 export interface PerMessageTruncationStats {
   bytesBefore: number;
   bytesAfter: number;
   blocksTruncated: number;
   elidedBytes: number;
   largestBlockElidedBytes: number;
+}
+
+export function shouldSyncMessageForSessionRoom(
+  source: string,
+  metadata?: Record<string, unknown> | null,
+): boolean {
+  if (!(source.startsWith('openai-codex') || source.startsWith('opencode'))) {
+    return true;
+  }
+
+  const transport = typeof metadata?.transport === 'string' ? metadata.transport : '';
+  const eventType = typeof metadata?.eventType === 'string' ? metadata.eventType : '';
+
+  if (transport !== 'app-server') {
+    return true;
+  }
+
+  return !CODEX_APP_SERVER_TRANSIENT_EVENT_TYPES.has(eventType);
 }
 
 interface PerSourceStats {

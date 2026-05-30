@@ -17,7 +17,7 @@
  */
 
 import type { AgentMessage } from '../ai/server/types';
-import { truncateContentForSync } from './syncContentTruncator';
+import { shouldSyncMessageForSessionRoom, truncateContentForSync } from './syncContentTruncator';
 import type {
   SyncConfig,
   SyncStatus,
@@ -2357,6 +2357,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
           // Send each message
           for (const message of messages) {
+            if (!shouldSyncMessageForSessionRoom(message.source, message.metadata)) {
+              continue;
+            }
             const encrypted = await encryptMessage(message, config.encryptionKey!);
             const clientMsg: ClientMessage = { type: 'appendMessage', message: encrypted };
             ws.send(JSON.stringify(clientMsg));
@@ -2854,6 +2857,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         case 'message_added': {
           if (!session?.encryptionKey) {
             console.warn('[CollabV3] Cannot push message - no encryption key or session room not connected');
+            return;
+          }
+          if (!shouldSyncMessageForSessionRoom(change.message.source, change.message.metadata)) {
             return;
           }
           try {

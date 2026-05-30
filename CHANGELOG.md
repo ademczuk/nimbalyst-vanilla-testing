@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Mobile sync no longer wastes per-session storage on transient Codex app-server delta and diff-update events, preventing noisy sessions from tripping the 10 MB SessionRoom cap too early.
 - Codex app-server transcripts no longer duplicate commit proposal widgets or final messages when repeated item/turn notifications arrive.
 - SQLite migration now reconciles final PGLite writes before cutover, rollback works after SQLite is active, voice-mode session resume no longer depends on PG-only interval SQL, and SQLite-backed analytics no longer hit PostgreSQL-only queries.
 - Sessions resumed from queued prompts now stay marked running until the continuation actually finishes, so the session dashboard and background-task UI no longer flip to idle mid-turn.

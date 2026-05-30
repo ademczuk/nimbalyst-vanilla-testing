@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { truncateContentForSync } from '../syncContentTruncator';
+import { shouldSyncMessageForSessionRoom, truncateContentForSync } from '../syncContentTruncator';
 
 describe('truncateContentForSync', () => {
   it('caps oversized unknown-provider messages at a small opaque marker', () => {
@@ -30,5 +30,37 @@ describe('truncateContentForSync', () => {
 
     expect(result.stats.bytesAfter).toBeLessThanOrEqual(16 * 1024);
     expect(result.stats.blocksTruncated).toBeGreaterThan(1);
+  });
+
+  it('skips transient Codex app-server delta events from session-room sync', () => {
+    expect(
+      shouldSyncMessageForSessionRoom('openai-codex', {
+        transport: 'app-server',
+        eventType: 'item/agentMessage/delta',
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldSyncMessageForSessionRoom('openai-codex', {
+        transport: 'app-server',
+        eventType: 'turn/diff/updated',
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps completed Codex app-server events syncable', () => {
+    expect(
+      shouldSyncMessageForSessionRoom('openai-codex', {
+        transport: 'app-server',
+        eventType: 'item/completed',
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldSyncMessageForSessionRoom('openai-codex', {
+        transport: 'app-server',
+        eventType: 'item/started',
+      }),
+    ).toBe(true);
   });
 });
