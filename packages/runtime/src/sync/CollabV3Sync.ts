@@ -562,13 +562,16 @@ function buildClientMetadataFromRaw(
   return result;
 }
 
-const INDEX_CLIENT_METADATA_ONLY_KEYS = new Set([
-  'currentContext',
-  'hasPendingPrompt',
-  'isExecuting',
-  'lastReadAt',
-  'phase',
-  'tags',
+// Why: the lightweight `indexClientMetadataPatch` wire message added in
+// v0.63.0 (commit fe78de08f) is not understood by the Cloudflare collab
+// server or the iOS client. Any field whose value drives cross-device UI
+// (spinner, pending prompt, context usage, phase, tags, unread badges)
+// MUST go through the full `indexUpdate` path that those receivers already
+// handle. Only fields that have no cross-device UI consumer today are safe
+// to ride the patch fast-path. Widening this set without first shipping
+// `indexClientMetadataPatchBroadcast` on the server + iOS will silently
+// break mobile again -- see CollabV3Sync.routing.test.ts.
+const INDEX_CLIENT_METADATA_PATCH_SAFE_KEYS = new Set([
   'draftInput',
   'draftUpdatedAt',
   'hasBeenNamed',
@@ -577,19 +580,14 @@ const INDEX_CLIENT_METADATA_ONLY_KEYS = new Set([
 
 function isIndexClientMetadataOnlyUpdate(metadata: Partial<SyncedSessionMetadata>): boolean {
   const keys = Object.keys(metadata);
-  const hasPatchField =
-    'currentContext' in metadata ||
-    'hasPendingPrompt' in metadata ||
-    'isExecuting' in metadata ||
-    'lastReadAt' in metadata ||
-    'phase' in metadata ||
-    'tags' in metadata ||
-    'draftInput' in metadata ||
-    'draftUpdatedAt' in metadata ||
-    'hasBeenNamed' in metadata;
-
-  return hasPatchField && keys.every((key) => INDEX_CLIENT_METADATA_ONLY_KEYS.has(key));
+  if (keys.length === 0) return false;
+  return keys.every((key) => INDEX_CLIENT_METADATA_PATCH_SAFE_KEYS.has(key));
 }
+
+// Test-only re-export. The predicate is the load-bearing protection against
+// the v0.63.0 mobile-spins-forever regression; the suite in
+// `__tests__/CollabV3Sync.routing.test.ts` pins its classification.
+export { isIndexClientMetadataOnlyUpdate as isIndexClientMetadataOnlyUpdateForTest };
 
 function buildClientMetadataFromCacheEntry(entry: Pick<
   CachedSessionIndex,
