@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
-<!-- Bug fixes go here -->
+- Commit proposal widget no longer reverts to "pending" after a successful commit when a later duplicate response carries an error.
 
 ### Removed
 <!-- Removed features go here -->
