@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Multi-minute main-process beachball when AI sessions edit markdown files containing inline base64-encoded images. Tracker-item regex no longer backtracks catastrophically on long lines.
+- Tool calls (Read, Bash, Edit, commit proposal, etc.) no longer get stuck rendering "running" when multiple AI sessions are open at once.
+- Workstream parent sessions now bubble to the top of the left pane when a child session has new activity.
+- Interactive widgets (AskUserQuestion, ExitPlanMode, GitCommitProposal) render correctly when called via their MCP-prefixed tool names.
 
 ### Removed
 <!-- Removed features go here -->

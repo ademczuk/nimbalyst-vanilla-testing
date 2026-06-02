@@ -19,7 +19,37 @@ import {
   sessionHasPendingInteractivePromptAtom,
   sessionProcessingAtom,
   sessionPendingPromptsAtom,
+  sessionRegistryAtom,
+  sessionLastActivityAtom,
+  type SessionMeta,
 } from '../atoms/sessions';
+import {
+  globalSessionTurnActivityAtom,
+} from '../atoms/sessionActivity';
+
+function seedRegistry(entries: Array<Partial<SessionMeta> & { id: string }>): void {
+  const map = new Map(store.get(sessionRegistryAtom));
+  const now = Date.now();
+  for (const e of entries) {
+    map.set(e.id, {
+      id: e.id,
+      title: e.title ?? e.id,
+      provider: e.provider ?? 'claude',
+      sessionType: (e.sessionType ?? 'session') as SessionMeta['sessionType'],
+      workspaceId: e.workspaceId ?? '/ws/test-project',
+      worktreeId: e.worktreeId ?? null,
+      parentSessionId: e.parentSessionId ?? null,
+      childCount: e.childCount ?? 0,
+      uncommittedCount: e.uncommittedCount ?? 0,
+      createdAt: e.createdAt ?? now,
+      updatedAt: e.updatedAt ?? now,
+      messageCount: e.messageCount ?? 0,
+      isArchived: e.isArchived ?? false,
+      isPinned: e.isPinned ?? false,
+    } as SessionMeta);
+  }
+  store.set(sessionRegistryAtom, map);
+}
 
 type EventHandler = (...args: any[]) => void;
 
@@ -292,5 +322,80 @@ describe('regression: streaming after a pending prompt', () => {
 
     // Pending must remain true so SessionListItem keeps the warning icon.
     expect(store.get(sessionHasPendingInteractivePromptAtom(sid))).toBe(true);
+  });
+});
+
+// Regression coverage for the user-reported bug on 2026-06-01: workstream
+// parents stayed several rows down the TODAY group even though a child session
+// had just received a new message. `workspaceSessionTurnActivityAtom` keys the
+// sort by sessionId; before the fix the listener only bumped the activity
+// timestamp for the child, never for its parent, so SessionHistory continued
+// to sort the parent by its stale registry `updatedAt`.
+describe('workstream sort: child activity bubbles to parent', () => {
+  it('session:started for a child bumps the parent workstream\'s turn activity', () => {
+    const parentId = uniqueSessionId('ws-parent');
+    const childId = uniqueSessionId('ws-child');
+    seedRegistry([
+      { id: parentId, sessionType: 'workstream', childCount: 1 },
+      { id: childId, parentSessionId: parentId },
+    ]);
+
+    const handler = handlers.get('ai-session-state:event');
+    handler!({
+      type: 'session:started',
+      sessionId: childId,
+      workspacePath: WS,
+      timestamp: 5_000,
+    });
+
+    const turnsForWs = store.get(globalSessionTurnActivityAtom).get(WS);
+    expect(turnsForWs?.get(childId)).toBe(5_000);
+    expect(turnsForWs?.get(parentId)).toBe(5_000);
+  });
+
+  it('ai:message-logged for a child bumps the parent workstream\'s turn activity', () => {
+    const parentId = uniqueSessionId('ws-parent-msg');
+    const childId = uniqueSessionId('ws-child-msg');
+    seedRegistry([
+      { id: parentId, sessionType: 'workstream', childCount: 1 },
+      { id: childId, parentSessionId: parentId },
+    ]);
+
+    const before = Date.now();
+    handlers.get('ai:message-logged')!({
+      sessionId: childId,
+      direction: 'output',
+      workspacePath: WS,
+    });
+
+    const parentLive = store.get(sessionLastActivityAtom(parentId));
+    const childLive = store.get(sessionLastActivityAtom(childId));
+    expect(childLive).toBeGreaterThanOrEqual(before);
+    expect(parentLive).toBeGreaterThanOrEqual(before);
+
+    const turnsForWs = store.get(globalSessionTurnActivityAtom).get(WS);
+    // ai:message-logged feeds the relative-time label via sessionLastActivityAtom
+    // AND the sort via turn activity for the parent, otherwise the parent never
+    // bubbles during ongoing streaming until a terminal lifecycle event.
+    expect(turnsForWs?.get(parentId)).toBeGreaterThanOrEqual(before);
+  });
+
+  it('session:completed for a child bumps the parent workstream\'s turn activity', () => {
+    const parentId = uniqueSessionId('ws-parent-done');
+    const childId = uniqueSessionId('ws-child-done');
+    seedRegistry([
+      { id: parentId, sessionType: 'workstream', childCount: 1 },
+      { id: childId, parentSessionId: parentId },
+    ]);
+
+    handlers.get('ai-session-state:event')!({
+      type: 'session:completed',
+      sessionId: childId,
+      workspacePath: WS,
+      timestamp: 9_000,
+    });
+
+    const turnsForWs = store.get(globalSessionTurnActivityAtom).get(WS);
+    expect(turnsForWs?.get(parentId)).toBe(9_000);
   });
 });
