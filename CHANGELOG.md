@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
-<!-- Bug fixes go here -->
+- Multi-minute main-process beachball when AI sessions edit markdown files containing inline base64-encoded images. Tracker-item regex no longer backtracks catastrophically on long lines.
 
 ### Removed
 <!-- Removed features go here -->
