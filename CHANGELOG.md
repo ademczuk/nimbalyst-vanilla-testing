@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 <!-- Changes to existing functionality go here -->
 - Default Claude model bumped from `claude-opus-4-7` to `claude-opus-4-8`. Existing sessions keep their configured model; only new sessions and "reset to default" pick up 4.8. (#473)
+- Bumped `@openai/codex-sdk` from 0.130.0 to 0.136.0; updated the binary path resolver for the new `vendor/<triple>/bin/codex` and `codex-path/` layout.
 
 ### Fixed
 <!-- Bug fixes go here -->
