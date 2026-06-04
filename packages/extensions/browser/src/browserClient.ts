@@ -31,6 +31,52 @@ interface IpcResponse<T = unknown> {
   imageBase64?: string;
   mimeType?: string;
   data?: T;
+  result?: unknown;
+  info?: unknown;
+  sessionIds?: string[];
+  path?: string;
+}
+
+export interface BrowserCreateOptions {
+  partition?: string;
+  /** Create an agent-owned session in the shared off-screen host window. */
+  headless?: boolean;
+  viewport?: { width: number; height: number };
+}
+
+/** Target for click/type/scroll: a CSS selector or a getPageInfo index. */
+export interface BrowserTarget {
+  selector?: string;
+  index?: number;
+}
+
+/**
+ * Virtual-path prefix for fileless browser tabs. A tab path looks like
+ * `virtual://com.nimbalyst.browser/<tabId>?title=…&url=…`. The host's
+ * CustomEditorRegistry routes this prefix to BrowserSessionEditor (declared in
+ * the manifest as `virtual://com.nimbalyst.browser/*`), and the path is what
+ * persists across restart — so the URL travels in the path.
+ */
+export const BROWSER_VIRTUAL_PREFIX = 'virtual://com.nimbalyst.browser/';
+
+/** Parse a fileless browser tab path back into its parts. */
+export function parseVirtualBrowserPath(path: string): {
+  tabId: string;
+  sessionId: string;
+  url: string;
+  title: string;
+} {
+  const rest = path.slice(BROWSER_VIRTUAL_PREFIX.length);
+  const q = rest.indexOf('?');
+  const tabId = q >= 0 ? rest.slice(0, q) : rest;
+  const params = new URLSearchParams(q >= 0 ? rest.slice(q + 1) : '');
+  return {
+    tabId,
+    // Stable session id derived from the tab id so restore reuses one session.
+    sessionId: `browser-virtual:${tabId}`,
+    url: params.get('url') || 'about:blank',
+    title: params.get('title') || 'New Tab',
+  };
 }
 
 function getApi(): { invoke: (ch: string, ...args: unknown[]) => Promise<unknown>; on: (ch: string, cb: (...args: unknown[]) => void) => () => void } {
@@ -59,13 +105,72 @@ async function callIpc<T = unknown>(channel: string, payload: unknown): Promise<
 export async function createBrowserSession(
   sessionId: string,
   url: string,
-  partition?: string,
+  options?: BrowserCreateOptions,
 ): Promise<BrowserNavigationState> {
-  const res = await callIpc('browser-session:create', { sessionId, url, partition });
+  const res = await callIpc('browser-session:create', {
+    sessionId,
+    url,
+    partition: options?.partition,
+    headless: options?.headless,
+    viewport: options?.viewport,
+  });
   if (!res.success || !res.state) {
     throw new Error(res.error || 'Failed to create browser session');
   }
   return res.state;
+}
+
+export async function listBrowserSessions(): Promise<string[]> {
+  const res = await callIpc('browser-session:list-sessions', {});
+  return res.sessionIds ?? [];
+}
+
+export async function evaluateInBrowserSession(sessionId: string, script: string): Promise<unknown> {
+  const res = await callIpc('browser-session:evaluate', { sessionId, script });
+  if (!res.success) throw new Error(res.error || 'evaluate failed');
+  return res.result;
+}
+
+export async function getBrowserPageInfo(sessionId: string): Promise<unknown> {
+  const res = await callIpc('browser-session:get-page-info', { sessionId });
+  if (!res.success) throw new Error(res.error || 'get-page-info failed');
+  return res.info;
+}
+
+export async function clickInBrowserSession(
+  sessionId: string,
+  target: BrowserTarget & { x?: number; y?: number },
+): Promise<void> {
+  const res = await callIpc('browser-session:click', { sessionId, ...target });
+  if (!res.success) throw new Error(res.error || 'click failed');
+}
+
+export async function typeInBrowserSession(
+  sessionId: string,
+  args: BrowserTarget & { text: string; clear?: boolean },
+): Promise<void> {
+  const res = await callIpc('browser-session:type', { sessionId, ...args });
+  if (!res.success) throw new Error(res.error || 'type failed');
+}
+
+export async function scrollBrowserSession(
+  sessionId: string,
+  args: BrowserTarget & { dx?: number; dy?: number },
+): Promise<void> {
+  const res = await callIpc('browser-session:scroll', { sessionId, ...args });
+  if (!res.success) throw new Error(res.error || 'scroll failed');
+}
+
+export async function screenshotBrowserSessionToFile(
+  sessionId: string,
+  workspacePath: string,
+  label?: string,
+): Promise<string> {
+  const res = await callIpc('browser-session:screenshot-to-file', { sessionId, workspacePath, label });
+  if (!res.success || !res.path) {
+    throw new Error(res.error || 'screenshot-to-file failed');
+  }
+  return res.path;
 }
 
 export async function destroyBrowserSession(sessionId: string): Promise<void> {

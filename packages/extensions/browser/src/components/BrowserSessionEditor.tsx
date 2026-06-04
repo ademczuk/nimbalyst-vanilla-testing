@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import type { EditorHostProps } from '@nimbalyst/extension-sdk';
 import { useEditorLifecycle } from '@nimbalyst/extension-sdk';
 import {
+  BROWSER_VIRTUAL_PREFIX,
   createBrowserSession,
   destroyBrowserSession,
   getOrCreateSessionIdForHost,
   goBackBrowserSession,
   goForwardBrowserSession,
   navigateBrowserSession,
+  parseVirtualBrowserPath,
   reloadBrowserSession,
   subscribeToExternalNav,
   subscribeToStateChanges,
@@ -60,15 +62,46 @@ function serializeDocument(doc: BrowserSessionDocument): string {
  * survives restart).
  */
 export function BrowserSessionEditor({ host }: EditorHostProps): JSX.Element {
-  const docRef = useRef<BrowserSessionDocument>({ version: 1, url: 'about:blank' });
+  // Fileless ("virtual://com.nimbalyst.browser/…") tabs carry their URL in the
+  // path; .browser.json tabs load it from file content. For virtual tabs we also
+  // mirror the *live* URL into extension storage so restore reopens the last
+  // page rather than the one the tab was first opened with.
+  const isVirtual = host.filePath.startsWith(BROWSER_VIRTUAL_PREFIX);
+  const virtualRef = useRef(isVirtual ? parseVirtualBrowserPath(host.filePath) : null);
+  const urlStorageKey = virtualRef.current ? `vbrowser-url:${virtualRef.current.tabId}` : '';
+
+  const initialVirtualUrl = (() => {
+    if (!virtualRef.current) return 'about:blank';
+    const saved = host.storage?.get?.<string>(urlStorageKey);
+    return (typeof saved === 'string' && saved) || virtualRef.current.url;
+  })();
+
+  const docRef = useRef<BrowserSessionDocument>({ version: 1, url: initialVirtualUrl });
   const [navState, setNavState] = useState<BrowserNavigationState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [docLoaded, setDocLoaded] = useState(false);
+  // Virtual tabs have their URL ready synchronously; file tabs wait for load.
+  const [docLoaded, setDocLoaded] = useState(isVirtual);
 
-  const sessionIdRef = useRef<string>(getOrCreateSessionIdForHost(host, host.filePath));
+  const sessionIdRef = useRef<string>(
+    virtualRef.current
+      ? virtualRef.current.sessionId
+      : getOrCreateSessionIdForHost(host, host.filePath),
+  );
+
+  // Expose this editor's session to editor-scoped AI tools (browser.click,
+  // browser.navigate, etc.) so the agent can drive the tab the user has open.
+  useEffect(() => {
+    host.registerEditorAPI?.({ getSessionId: () => sessionIdRef.current });
+    return (): void => host.registerEditorAPI?.(null);
+  }, [host]);
 
   const { markDirty } = useEditorLifecycle<BrowserSessionDocument>(host, {
     applyContent: (doc) => {
+      // Virtual tabs derive their URL from the path/storage, not file content.
+      if (isVirtual) {
+        setDocLoaded(true);
+        return;
+      }
       docRef.current = doc;
       setDocLoaded(true);
     },
@@ -95,6 +128,10 @@ export function BrowserSessionEditor({ host }: EditorHostProps): JSX.Element {
 
     const unsubscribe = subscribeToStateChanges(sessionId, (state) => {
       setNavState(state);
+      // Mirror the live URL so a restored virtual tab reopens the last page.
+      if (virtualRef.current && state.url && state.url !== 'about:blank') {
+        void host.storage?.set?.(urlStorageKey, state.url);
+      }
     });
     const unsubscribeExternal = subscribeToExternalNav(sessionId, (url) => {
       const electronAPI = (window as unknown as { electronAPI?: { invoke: (ch: string, ...args: unknown[]) => Promise<unknown> } }).electronAPI;
@@ -139,7 +176,9 @@ export function BrowserSessionEditor({ host }: EditorHostProps): JSX.Element {
         state={navState}
         onNavigate={(url): void => {
           docRef.current = { ...docRef.current, url };
-          markDirty();
+          // Virtual tabs don't persist to a file, so don't flag them dirty;
+          // their URL is mirrored to storage via the state-change subscription.
+          if (!isVirtual) markDirty();
           void navigateBrowserSession(sessionIdRef.current, url).catch((err) => {
             setError(String(err?.message ?? err));
           });
@@ -158,6 +197,7 @@ export function BrowserSessionEditor({ host }: EditorHostProps): JSX.Element {
             ? (): void => host.toggleSourceMode?.()
             : undefined
         }
+        autoFocusUrl={isVirtual && initialVirtualUrl === 'about:blank'}
       />
       <BrowserSurface sessionId={sessionIdRef.current} visible={docLoaded} />
     </div>

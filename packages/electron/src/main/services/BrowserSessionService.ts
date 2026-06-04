@@ -40,7 +40,23 @@ export interface BrowserSessionInitOptions {
    * Falls back to the in-memory `'preview'` partition if omitted.
    */
   partition?: string;
+  /**
+   * Agent-owned headless session. When true the view is never attached to a
+   * visible window; offscreen rendering keeps the page painting so navigation,
+   * `capturePage()`, and DOM interaction still work. Used by AI tools that
+   * drive a browser without the user opening an editor tab.
+   */
+  headless?: boolean;
+  /**
+   * Logical viewport for a headless session, in CSS pixels. Defaults to a
+   * desktop preset. Ignored for attached (editor-backed) sessions, whose size
+   * is driven by the editor placeholder's bounds.
+   */
+  viewport?: { width: number; height: number };
 }
+
+/** Default headless viewport when the caller doesn't specify one. */
+const DEFAULT_HEADLESS_VIEWPORT = { width: 1280, height: 800 };
 
 export interface BrowserSessionBounds {
   /** CSS pixels, relative to the host window's content area. */
@@ -68,6 +84,8 @@ interface SessionEntry {
   hostWindow: BrowserWindow | null;
   bounds: BrowserSessionBounds | null;
   state: BrowserNavigationState;
+  /** Agent-owned session parked in the shared off-screen host window. */
+  headless: boolean;
 }
 
 /**
@@ -137,6 +155,15 @@ export class BrowserSessionService extends EventEmitter {
    */
   private windowCloseListeners = new Map<number, Set<string>>();
 
+  /**
+   * Shared host window for headless (agent-owned) sessions. Created lazily on
+   * the first headless session and positioned far off-screen but *shown* so
+   * Chromium actually composits the child views (a hidden/`show:false` window
+   * suspends painting, which empties capturePage()). Torn down when the last
+   * headless session goes away.
+   */
+  private headlessHostWindow: BrowserWindow | null = null;
+
   private constructor() {
     super();
   }
@@ -194,6 +221,7 @@ export class BrowserSessionService extends EventEmitter {
 
     const partitionName = resolveBrowserPartitionName(opts.partition);
     const ses = electronSession.fromPartition(partitionName);
+    const headless = opts.headless === true;
 
     const view = new WebContentsView({
       webPreferences: {
@@ -213,6 +241,7 @@ export class BrowserSessionService extends EventEmitter {
       view,
       hostWindow: null,
       bounds: null,
+      headless,
       state: {
         sessionId: opts.sessionId,
         url: opts.url,
@@ -225,6 +254,17 @@ export class BrowserSessionService extends EventEmitter {
     this.sessions.set(opts.sessionId, entry);
 
     this.wireWebContentsEvents(entry);
+
+    if (headless) {
+      // A WebContentsView only paints while attached to a rendering window;
+      // capturePage() returns an empty buffer otherwise (WebContentsView
+      // ignores the `offscreen` webPreference). Park headless views in a shared
+      // off-screen host window so navigation, screenshots, and input all work
+      // without the user ever seeing the surface.
+      const vp = opts.viewport ?? DEFAULT_HEADLESS_VIEWPORT;
+      const host = this.getOrCreateHeadlessHostWindow(vp);
+      this.attachToWindow(opts.sessionId, host, { x: 0, y: 0, width: vp.width, height: vp.height });
+    }
 
     // Kick off the initial load. We intentionally do not await -- the renderer
     // will see navigation events via the state-changed signal.
@@ -269,6 +309,7 @@ export class BrowserSessionService extends EventEmitter {
     }
 
     this.sessions.delete(sessionId);
+    this.maybeTeardownHeadlessHost();
     logger.main.info(`[BrowserSessionService] Destroyed session ${sessionId}`);
   }
 
@@ -372,12 +413,231 @@ export class BrowserSessionService extends EventEmitter {
 
   public async captureScreenshot(sessionId: string): Promise<Buffer> {
     const entry = this.requireEntry(sessionId);
-    // capturePage() captures the WebContentsView's current viewport.
+    // Both attached and headless views render into a window (headless ones into
+    // the shared off-screen host window), so capturePage() grabs live pixels.
     const nativeImage = await entry.view.webContents.capturePage();
     return nativeImage.toPNG();
   }
 
+  // ============ INTERACTION (agentic control) ============
+
+  /**
+   * Run arbitrary JavaScript in the page and return its (serializable) result.
+   * `userGesture: true` lets the script do gesture-gated things like focus().
+   * This is the powerful, trust-the-agent primitive; the page is whatever the
+   * session navigated to, still subject to the URL allow-list.
+   */
+  public async evaluate(sessionId: string, script: string): Promise<unknown> {
+    const entry = this.requireEntry(sessionId);
+    return await entry.view.webContents.executeJavaScript(script, true);
+  }
+
+  /**
+   * Snapshot of the page for an agent: url, title, a truncated text dump, and an
+   * indexed list of interactive elements. Each interactive element is tagged
+   * in-page with `data-nim-idx` so a follow-up `click({ index })` can target it
+   * without the agent needing CSS selectors.
+   */
+  public async getPageInfo(sessionId: string): Promise<unknown> {
+    const entry = this.requireEntry(sessionId);
+    const script = `(() => {
+      const sel = 'a[href], button, input, textarea, select, [role=button], [role=link], [onclick], [contenteditable=""], [contenteditable="true"]';
+      const isVisible = (el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return false;
+        const s = getComputedStyle(el);
+        return s.visibility !== 'hidden' && s.display !== 'none';
+      };
+      const els = [...document.querySelectorAll(sel)].filter(isVisible);
+      const interactive = els.slice(0, 200).map((el, i) => {
+        el.setAttribute('data-nim-idx', String(i));
+        const r = el.getBoundingClientRect();
+        return {
+          index: i,
+          tag: el.tagName.toLowerCase(),
+          type: el.getAttribute('type') || undefined,
+          role: el.getAttribute('role') || undefined,
+          text: (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim().slice(0, 120),
+          href: el.getAttribute('href') || undefined,
+          rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+        };
+      });
+      return {
+        url: location.href,
+        title: document.title,
+        text: (document.body ? document.body.innerText : '').trim().slice(0, 5000),
+        interactive,
+        truncated: els.length > 200,
+      };
+    })()`;
+    return await entry.view.webContents.executeJavaScript(script, true);
+  }
+
+  /**
+   * Resolve an interaction target to a viewport point in CSS pixels, scrolling
+   * it into view first. Accepts a CSS selector or a `data-nim-idx` index from a
+   * prior getPageInfo(). Returns null if the element can't be found.
+   */
+  private async resolveTargetPoint(
+    entry: SessionEntry,
+    target: { selector?: string; index?: number },
+  ): Promise<{ x: number; y: number } | null> {
+    const locator =
+      typeof target.index === 'number'
+        ? `document.querySelector('[data-nim-idx="' + ${JSON.stringify(String(target.index))} + '"]')`
+        : `document.querySelector(${JSON.stringify(target.selector ?? '')})`;
+    const script = `(() => {
+      const el = ${locator};
+      if (!el) return null;
+      el.scrollIntoView({ block: 'center', inline: 'center' });
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`;
+    const point = (await entry.view.webContents.executeJavaScript(script, true)) as
+      | { x: number; y: number }
+      | null;
+    return point;
+  }
+
+  /**
+   * Click via real Chromium input events so framework handlers fire. Target can
+   * be a selector, a getPageInfo index, or explicit CSS-pixel coordinates.
+   */
+  public async click(
+    sessionId: string,
+    target: { selector?: string; index?: number; x?: number; y?: number },
+  ): Promise<void> {
+    const entry = this.requireEntry(sessionId);
+    let point: { x: number; y: number } | null;
+    if (typeof target.x === 'number' && typeof target.y === 'number') {
+      point = { x: target.x, y: target.y };
+    } else {
+      point = await this.resolveTargetPoint(entry, target);
+    }
+    if (!point) {
+      throw new Error('Click target not found');
+    }
+    const wc = entry.view.webContents;
+    const x = Math.round(point.x);
+    const y = Math.round(point.y);
+    wc.sendInputEvent({ type: 'mouseMove', x, y });
+    wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+    wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+  }
+
+  /**
+   * Type text into an element. Focuses the target (selector or index), optionally
+   * clears it, then sends real character events so controlled inputs (React et al)
+   * see genuine input. If no target is given, types into whatever has focus.
+   */
+  public async type(
+    sessionId: string,
+    args: { selector?: string; index?: number; text: string; clear?: boolean },
+  ): Promise<void> {
+    const entry = this.requireEntry(sessionId);
+    const wc = entry.view.webContents;
+
+    if (args.selector !== undefined || typeof args.index === 'number') {
+      const locator =
+        typeof args.index === 'number'
+          ? `document.querySelector('[data-nim-idx="' + ${JSON.stringify(String(args.index))} + '"]')`
+          : `document.querySelector(${JSON.stringify(args.selector ?? '')})`;
+      const focused = (await wc.executeJavaScript(
+        `(() => { const el = ${locator}; if (!el) return false; el.focus(); ${
+          args.clear ? "if ('value' in el) el.value = ''; else el.textContent = '';" : ''
+        } return true; })()`,
+        true,
+      )) as boolean;
+      if (!focused) {
+        throw new Error('Type target not found');
+      }
+    } else if (args.clear) {
+      // Clear the currently-focused field via select-all + delete.
+      wc.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: ['control', 'meta'] });
+      wc.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: ['control', 'meta'] });
+      wc.sendInputEvent({ type: 'keyDown', keyCode: 'Delete' });
+      wc.sendInputEvent({ type: 'keyUp', keyCode: 'Delete' });
+    }
+
+    for (const ch of args.text) {
+      wc.sendInputEvent({ type: 'char', keyCode: ch });
+    }
+  }
+
+  /** Scroll the page (or a selector's container) by a delta or to an element. */
+  public async scroll(
+    sessionId: string,
+    args: { selector?: string; index?: number; dx?: number; dy?: number },
+  ): Promise<void> {
+    const entry = this.requireEntry(sessionId);
+    if (args.selector !== undefined || typeof args.index === 'number') {
+      await this.resolveTargetPoint(entry, args); // scrollIntoView side effect
+      return;
+    }
+    const dx = Number(args.dx) || 0;
+    const dy = Number(args.dy) || 0;
+    await entry.view.webContents.executeJavaScript(
+      `window.scrollBy(${dx}, ${dy}); true;`,
+      true,
+    );
+  }
+
   // ============ INTERNAL ============
+
+  /**
+   * Lazily create the shared off-screen host window for headless sessions.
+   * Sized to fit the largest requested viewport and parked off all displays.
+   */
+  private getOrCreateHeadlessHostWindow(viewport: { width: number; height: number }): BrowserWindow {
+    if (this.headlessHostWindow && !this.headlessHostWindow.isDestroyed()) {
+      // Grow the host if a later session needs a bigger viewport.
+      const [w, h] = this.headlessHostWindow.getContentSize();
+      if (viewport.width > w || viewport.height > h) {
+        this.headlessHostWindow.setContentSize(
+          Math.max(w, viewport.width),
+          Math.max(h, viewport.height),
+        );
+      }
+      return this.headlessHostWindow;
+    }
+
+    const win = new BrowserWindow({
+      width: viewport.width,
+      height: viewport.height,
+      // Far off any real display so the user never sees it.
+      x: -32000,
+      y: -32000,
+      show: false,
+      focusable: false,
+      skipTaskbar: true,
+      // Frameless keeps the OS from clamping the title bar onto a visible
+      // display, which would otherwise drag the window into view.
+      frame: false,
+    });
+    // showInactive() forces compositing (so child views paint) without stealing
+    // focus from the user's real window.
+    win.showInactive();
+    win.setContentSize(viewport.width, viewport.height);
+
+    win.once('closed', () => {
+      if (this.headlessHostWindow === win) this.headlessHostWindow = null;
+    });
+
+    this.headlessHostWindow = win;
+    logger.main.info('[BrowserSessionService] Created off-screen headless host window');
+    return win;
+  }
+
+  /** Destroy the headless host window once no headless sessions remain. */
+  private maybeTeardownHeadlessHost(): void {
+    if (!this.headlessHostWindow) return;
+    const stillHeadless = [...this.sessions.values()].some((e) => e.headless);
+    if (stillHeadless) return;
+    if (!this.headlessHostWindow.isDestroyed()) {
+      this.headlessHostWindow.destroy();
+    }
+    this.headlessHostWindow = null;
+  }
 
   private requireEntry(sessionId: string): SessionEntry {
     const entry = this.sessions.get(sessionId);

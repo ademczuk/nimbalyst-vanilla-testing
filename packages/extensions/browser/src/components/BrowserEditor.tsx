@@ -36,6 +36,13 @@ export function BrowserEditor({ host }: EditorHostProps): JSX.Element {
   const sessionIdRef = useRef<string>(getOrCreateSessionIdForHost(host, host.filePath));
   const sessionReadyRef = useRef(false);
 
+  // Expose this editor's session to editor-scoped AI tools so the agent can
+  // drive the HTML preview the user has open.
+  useEffect(() => {
+    host.registerEditorAPI?.({ getSessionId: () => sessionIdRef.current });
+    return (): void => host.registerEditorAPI?.(null);
+  }, [host]);
+
   // useEditorLifecycle wires theme + load lifecycle. We do not need to "apply"
   // the loaded text -- the BrowserSurface renders the rendered page directly,
   // and reload-on-file-change is what triggers a re-render.

@@ -43,17 +43,44 @@
         "supportsSourceMode": true,
         "supportsDiffMode": false,
         "showDocumentHeader": false
+      },
+      {
+        "filePatterns": ["virtual://com.nimbalyst.browser/*"],
+        "displayName": "Browser",
+        "component": "BrowserSessionEditor",
+        "priority": 20,
+        "supportsSourceMode": false,
+        "supportsDiffMode": false,
+        "showDocumentHeader": false
       }
+    ],
+    "aiTools": [
+      "browser.open_session",
+      "browser.open_local_preview",
+      "browser.list_sessions",
+      "browser.close_session",
+      "browser.navigate",
+      "browser.reload",
+      "browser.go_back",
+      "browser.go_forward",
+      "browser.get_page_info",
+      "browser.click",
+      "browser.type",
+      "browser.scroll",
+      "browser.evaluate",
+      "browser.screenshot"
     ],
     "fileIcons": {
       "*.browser.json": "public"
     },
     "newFileMenu": [
       {
-        "extension": ".browser.json",
-        "displayName": "Browser Session",
+        "extension": "browser-tab",
+        "displayName": "Browser Tab",
         "icon": "public",
-        "defaultContent": "{\n  \"version\": 1,\n  \"mode\": \"url\",\n  \"title\": \"New Browser Session\",\n  \"url\": \"https://example.com\",\n  \"viewportPreset\": \"desktop\"\n}\n"
+        "action": "openVirtualTab",
+        "virtualScheme": "virtual://com.nimbalyst.browser/",
+        "defaultContent": ""
       }
     ]
   }

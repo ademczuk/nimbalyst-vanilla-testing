@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { BrowserNavigationState } from '../browserClient';
 
 interface BrowserToolbarProps {
@@ -10,7 +10,13 @@ interface BrowserToolbarProps {
   onToggleSourceMode?: () => void;
   /** Optional fixed display URL when the URL bar should not be editable (.html previews). */
   pinnedUrlLabel?: string;
+  /** Focus the URL bar on mount (used for a fresh blank tab). */
+  autoFocusUrl?: boolean;
 }
+
+// about:blank is an empty page; show an empty URL bar rather than the literal.
+const displayUrl = (url: string | undefined): string =>
+  url && url !== 'about:blank' ? url : '';
 
 export function BrowserToolbar({
   state,
@@ -20,16 +26,39 @@ export function BrowserToolbar({
   onReload,
   onToggleSourceMode,
   pinnedUrlLabel,
+  autoFocusUrl,
 }: BrowserToolbarProps): JSX.Element {
   // Local input keeps the URL bar editable without fighting the broadcast
   // state updates. We seed it from state and sync on remote navigation.
-  const [draft, setDraft] = useState<string>(state?.url ?? '');
+  const [draft, setDraft] = useState<string>(displayUrl(state?.url));
   const [focused, setFocused] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (focused) return;
-    setDraft(state?.url ?? '');
+    setDraft(displayUrl(state?.url));
   }, [state?.url, focused]);
+
+  // Land in the URL bar for a fresh blank tab so the user can just type. The
+  // editor mounts hidden (focus is a no-op until it's shown), so retry a few
+  // times until the input is actually visible/focusable, then stop.
+  useEffect(() => {
+    if (!autoFocusUrl || pinnedUrlLabel !== undefined) return;
+    let tries = 0;
+    const id = setInterval(() => {
+      const el = inputRef.current;
+      tries += 1;
+      if (el && el.offsetParent !== null) {
+        el.focus();
+        clearInterval(id);
+      } else if (tries > 20) {
+        clearInterval(id);
+      }
+    }, 50);
+    return () => clearInterval(id);
+    // Only on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const submit = (): void => {
     const value = draft.trim();
@@ -109,6 +138,7 @@ export function BrowserToolbar({
         </span>
       ) : (
         <input
+          ref={inputRef}
           className="nim-browser-url-input"
           type="text"
           value={draft}
