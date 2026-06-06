@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.64.5] - 2026-06-06
+
+
+### Added
 - Internal scaffolding for the upcoming PR review panel: detects whether the `gh` CLI is installed and authenticated, with an onboarding banner that guides install/login without ever storing a GitHub token. (#307)
 - PR review cache schema (`pull_requests`, `pull_request_files`, `pull_request_commits`, `pull_request_checks`) and `worktrees.pr_*` linkage columns, plus a typed `PullRequestsStore` and `WorktreeStore.linkPullRequest` / `findByPullRequest` helpers. (#307)
 - `GhApiService` and IPC channels (`pr:list`, `pr:get`, `pr:files`, `pr:file-contents`, `pr:commits`, `pr:checks`, `pr:conversation`, `pr:refresh`, `pr:detect-remote`) that fetch GitHub data via `gh api` and persist normalized rows to the cache. (#307)
@@ -32,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New Browser Tab command in the File menu (Cmd+Shift+B) opens a browser virtual tab in files mode.
 - Quick Open's Sessions tab can now search message contents (Shift+Tab or the in-input button), not just titles.
 - Inline comments on shared documents: select text to add a comment, reply in threads with @-mentions, and resolve threads, all synced in realtime across collaborators.
+- Native browser tabs for HTML preview, plus browser tools that let agents open and drive browser sessions.
+- Expanded extension release and share-viewer support.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -55,6 +72,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restored diff application in headless mode (tests and server-side diffing), which had started throwing on `getRootElement` after the chat-box focus fix.
 - Browser extension toolbar and URL bar now use the active theme's colors instead of rendering with a white URL box in dark mode.
 - Multi-Project: manually running an automation now creates its session in the active rail project instead of always landing in the startup project. (#544)
+- Automation sessions now land in the active Multi-Project rail project, not the first project. (#557)
+- OpenCode slash command autocomplete now works.
+- Local markdown links open correctly, preserving authored hrefs and resolving relative paths from the current document.
+- Session image viewers can copy images, and transcript images are now zoomable and shown uncropped. (#580)
+- Generated Codex workflows preserve their command arguments.
+- LM Studio sessions use the actually-loaded model ID instead of a hardcoded "local-model". (#143)
+- Shared calc sheets now render with Monaco.
+- New workspaces default to the Documents folder on Windows.
+- Claude Agent Opus 4.8 model aliases are normalized so explicit opus-4-8 IDs are accepted without falling back to Sonnet.
+- Transcript browser screenshots now persist across reloads.
+- The Multi-Project rail is preserved on reload.
+- Broken markdown embed commands are now hidden.
+- The keep-awake tip only shows when it is actually eligible.
 
 ### Removed
 <!-- Removed features go here -->
