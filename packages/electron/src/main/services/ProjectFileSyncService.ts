@@ -218,17 +218,43 @@ export class ProjectFileSyncService {
       );
 
       // Update local state
-      const projectState = this.projectStates.get(encryptedProjectId);
-      if (projectState) {
-        projectState.set(syncId, {
-          syncId,
-          contentHash: this.sha256(content),
-          lastSyncedMtime: Math.floor(stat.mtimeMs),
-        });
+      let projectState = this.projectStates.get(encryptedProjectId);
+      if (!projectState) {
+        projectState = new Map();
+        this.projectStates.set(encryptedProjectId, projectState);
       }
+      projectState.set(syncId, {
+        syncId,
+        contentHash: this.sha256(content),
+        lastSyncedMtime: Math.floor(stat.mtimeMs),
+      });
+
+      // Register newly-created files in the file map so remote deletes/updates
+      // from mobile can be applied to the right local path. The map is only
+      // seeded at startup (buildManifest), so files created after the sweep
+      // would otherwise be invisible to round-trip handling.
+      const cache = (this as any)._fileMapCache?.get(encryptedProjectId) as
+        | { fileMap: Map<string, string>; workspacePath: string }
+        | undefined;
+      cache?.fileMap.set(syncId, filePath);
     } catch (err) {
       logger.main.error(`[ProjectFileSync] Failed to push file save:`, err);
     }
+  }
+
+  /**
+   * Push a locally created/saved file to the server immediately, without
+   * waiting for the OS file watcher. Used when the app itself creates a
+   * document (e.g. the createDocument AI tool) so a newly created doc syncs
+   * to mobile right away instead of depending on a best-effort watcher event.
+   *
+   * Suppresses the subsequent watcher echo so the file is not pushed twice.
+   */
+  async pushLocalFileNow(filePath: string, workspacePath: string, encryptedProjectId: string): Promise<void> {
+    await this.handleFileSaved(filePath, workspacePath, encryptedProjectId);
+    // handleFileSaved already ran the push; suppress the watcher's later
+    // add/change echo for this path so we don't re-send identical content.
+    this.suppressFileWatcherEcho(filePath);
   }
 
   /**
