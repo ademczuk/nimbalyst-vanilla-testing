@@ -392,7 +392,16 @@ export class MetaAgentService {
       parentModel
       || normalizeStoredChildModelIdentifier(null, getDefaultAIModel())
       || 'claude-code:opus';
-    const explicitModel = normalizeStoredChildModelIdentifier(args.provider ?? parentProvider, args.model ?? null);
+    // For an explicit model, the model's own "provider:" prefix is
+    // authoritative (e.g. a claude-code parent launching an
+    // "openai-codex:gpt-5.5" action). Only fall back to the parent's provider
+    // for a bare, prefix-less variant; passing the parent provider for a
+    // self-describing identifier wrongly trips the claude-code mismatch guard.
+    const explicitModelProvider =
+      args.provider
+      ?? (args.model?.includes(':') ? ModelIdentifier.tryParse(args.model)?.provider ?? null : null)
+      ?? parentProvider;
+    const explicitModel = normalizeStoredChildModelIdentifier(explicitModelProvider, args.model ?? null);
     const model = explicitModel || defaultModel;
     const parsed = ModelIdentifier.tryParse(model);
     const provider = (args.provider || parsed?.provider || parentProvider || 'claude-code') as AIProviderType;

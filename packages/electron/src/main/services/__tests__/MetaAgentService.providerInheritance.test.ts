@@ -86,6 +86,12 @@ const GEMINI_PARENT = {
   model: 'antigravity-gemini-agent:gemini-flash-3.5',
 };
 
+const CLAUDE_PARENT = {
+  id: 'parent-claude-session',
+  provider: 'claude-code',
+  model: 'claude-code:opus',
+};
+
 describe('MetaAgentService child-spawn provider inheritance', () => {
   beforeEach(() => {
     vi.mocked(AISessionsRepository.create).mockReset();
@@ -126,6 +132,23 @@ describe('MetaAgentService child-spawn provider inheritance', () => {
     const created = vi.mocked(AISessionsRepository.create).mock.calls[0][0] as any;
     expect(created.provider).toBe('openai-codex');
     expect(created.model).toBe('openai-codex:gpt-5.4');
+  });
+
+  it('lets a claude-code parent launch an explicit openai-codex child without tripping the claude-code guard', async () => {
+    const service = MetaAgentService.getInstance();
+    (service as any).aiService = { queuePromptForSession: vi.fn() };
+    vi.mocked(AISessionsRepository.get).mockResolvedValue(CLAUDE_PARENT as any);
+
+    // The "Implement in Codex" action: a claude-code originating session
+    // launches a child with an explicit "openai-codex:gpt-5.5" model. The
+    // model's own prefix must win over the parent's claude-code provider.
+    await (service as any).createChildSessionInternal('parent-claude-session', '/workspace/path', {
+      model: 'openai-codex:gpt-5.5',
+    });
+
+    const created = vi.mocked(AISessionsRepository.create).mock.calls[0][0] as any;
+    expect(created.provider).toBe('openai-codex');
+    expect(created.model).toBe('openai-codex:gpt-5.5');
   });
 
   it('normalizes explicit claude-code opus-4-8 aliases before persisting the child session', async () => {
