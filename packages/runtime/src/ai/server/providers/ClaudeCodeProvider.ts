@@ -94,6 +94,7 @@ import {
 } from './claudeCode/toolAuthorization';
 import { ClaudeCodeDeps } from './claudeCode/dependencyInjection';
 import { buildSdkOptions, type PromptStreamController } from './claudeCode/sdkOptionsBuilder';
+import { resolveEffectiveSessionMode } from './claudeCode/resolveEffectiveSessionMode';
 import {
   isBunRuntimeSpawnCrash,
   collectSpawnCrashDiagnostics,
@@ -419,7 +420,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   public static setImageCompressor(compressor: ((buffer: Buffer, mimeType: string, options?: { targetSizeBytes?: number }) => Promise<{ buffer: Buffer; mimeType: string; wasCompressed: boolean }>) | null): void { ClaudeCodeDeps.setImageCompressor(compressor); }
   public static setClaudeSettingsPatternSaver(saver: ((workspacePath: string, pattern: string) => Promise<void>) | null): void { ClaudeCodeDeps.setClaudeSettingsPatternSaver(saver); }
   public static setClaudeSettingsPatternChecker(checker: ((workspacePath: string, pattern: string) => Promise<boolean>) | null): void { ClaudeCodeDeps.setClaudeSettingsPatternChecker(checker); }
-  public static setTrustChecker(checker: ((workspacePath: string) => { trusted: boolean; mode: 'ask' | 'allow-all' | 'bypass-all' | null }) | null): void { BaseAgentProvider.setTrustChecker(checker); }
+  public static setTrustChecker(checker: ((workspacePath: string) => { trusted: boolean; mode: 'ask' | 'allow-all' | 'bypass-all' | null; allowAllUsesClassifier?: boolean }) | null): void { BaseAgentProvider.setTrustChecker(checker); }
   public static setExtensionFileTypesLoader(loader: (() => Set<string>) | null): void { ClaudeCodeDeps.setExtensionFileTypesLoader(loader); }
 
   private static scheduleWakeupHandler: ((request: ScheduleWakeupRequest) => Promise<void>) | null = null;
@@ -480,17 +481,16 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     this.currentMode = (documentContext as any)?.mode || 'agent';
 
     // Trust-level upgrade: when workspace permission is "Allow All" (internal
-    // mode 'bypass-all') and session mode is 'agent', transparently upgrade to
-    // 'auto' so the SDK classifier handles permissions instead of Nimbalyst
-    // bypassing everything. This matches CLI auto-mode behaviour and adds a
-    // safety layer on top of the previous blanket bypass. Plan mode is never
-    // upgraded — it always uses the SDK's native read-only enforcement.
+    // mode 'bypass-all') and session mode is 'agent', the session is upgraded
+    // to 'auto' so the SDK classifier handles permissions instead of Nimbalyst
+    // bypassing everything. This is now OPT-IN per workspace (issue #628): by
+    // default "Allow All" means literal allow-all and no upgrade happens. Plan
+    // mode is never upgraded — it always uses the SDK's native read-only
+    // enforcement.
     const pathForTrustUpgrade = (documentContext as any)?.permissionsPath || workspacePath;
     if (this.currentMode === 'agent' && pathForTrustUpgrade && BaseAgentProvider.trustChecker) {
       const trustStatus = BaseAgentProvider.trustChecker(pathForTrustUpgrade);
-      if (trustStatus.trusted && trustStatus.mode === 'bypass-all') {
-        this.currentMode = 'auto';
-      }
+      this.currentMode = resolveEffectiveSessionMode(this.currentMode, trustStatus);
     }
 
     // Threshold for large text attachments that should be written to /tmp instead of sent inline

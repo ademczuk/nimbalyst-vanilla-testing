@@ -1811,7 +1811,11 @@ app.whenReady().then(async () => {
     // checker receives the parent project path, not the worktree path.
     const trustChecker = (workspacePath: string) => {
       const mode = permissionService.getPermissionMode(workspacePath);
-      return { trusted: mode !== null, mode };
+      return {
+        trusted: mode !== null,
+        mode,
+        allowAllUsesClassifier: permissionService.getAllowAllUsesClassifier(workspacePath),
+      };
     };
 
     if (process.env.NODE_ENV === 'development') {

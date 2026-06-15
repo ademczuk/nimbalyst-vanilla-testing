@@ -1600,6 +1600,8 @@ export interface WorkspacePermissionsState {
   allowedPatterns: PatternRule[];
   additionalDirectories: AdditionalDirectory[];
   allowedUrlPatterns: AllowedUrlPattern[];
+  /** Issue #628: opt-in classifier for "Allow All" workspaces. */
+  allowAllUsesClassifier: boolean;
   loading: boolean;
   error: string | null;
 }
@@ -1612,6 +1614,7 @@ const defaultWorkspacePermissionsState: WorkspacePermissionsState = {
   allowedPatterns: [],
   additionalDirectories: [],
   allowedUrlPatterns: [],
+  allowAllUsesClassifier: false,
   loading: true,
   error: null,
 };
@@ -1656,6 +1659,7 @@ export async function loadWorkspacePermissions(workspacePath: string): Promise<W
         allowedPatterns: result.allowedPatterns || [],
         additionalDirectories: result.additionalDirectories || [],
         allowedUrlPatterns: result.allowedUrlPatterns || [],
+        allowAllUsesClassifier: result.allowAllUsesClassifier === true,
         loading: false,
         error: null,
       };

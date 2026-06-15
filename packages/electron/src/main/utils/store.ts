@@ -372,6 +372,12 @@ export type AgentPermissionMode = 'ask' | 'allow-all' | 'bypass-all' | null;
 export interface AgentPermissions {
   /** Permission mode: null=untrusted, 'ask'=smart permissions, 'allow-all'=auto-approve edits, 'bypass-all'=auto-approve everything */
   permissionMode: AgentPermissionMode;
+  /**
+   * Opt-in (issue #628): when true, "Allow All" (bypass-all) routes agent-mode
+   * Claude Code sessions through the SDK auto-mode classifier instead of
+   * bypassing every operation. Undefined/false = literal allow-all.
+   */
+  allowAllUsesClassifier?: boolean;
 }
 
 export interface AgenticCodingWindowState {
@@ -1826,7 +1832,14 @@ export function getAgentPermissions(workspacePath: string): AgentPermissions | u
 
 export function saveAgentPermissions(workspacePath: string, permissions: AgentPermissions): void {
   updateWorkspaceState(workspacePath, (state) => {
-    state.agentPermissions = { permissionMode: permissions.permissionMode };
+    state.agentPermissions = {
+      permissionMode: permissions.permissionMode,
+      // Preserve the "Allow All" classifier opt-in (issue #628). Without this the
+      // field is dropped on every save and the toggle never sticks.
+      ...(permissions.allowAllUsesClassifier !== undefined && {
+        allowAllUsesClassifier: permissions.allowAllUsesClassifier,
+      }),
+    };
   });
 }
 
@@ -1837,7 +1850,14 @@ export function isWorkspaceTrusted(workspacePath: string): boolean {
 
 export function setWorkspaceTrusted(workspacePath: string, trusted: boolean, mode: 'ask' | 'allow-all' | 'bypass-all' = 'ask'): void {
   updateWorkspaceState(workspacePath, (state) => {
-    state.agentPermissions = { permissionMode: trusted ? mode : null };
+    const existing = state.agentPermissions;
+    state.agentPermissions = {
+      permissionMode: trusted ? mode : null,
+      // Preserve the "Allow All" classifier opt-in across trust toggles (issue #628).
+      ...(existing?.allowAllUsesClassifier !== undefined && {
+        allowAllUsesClassifier: existing.allowAllUsesClassifier,
+      }),
+    };
   });
 }
 
