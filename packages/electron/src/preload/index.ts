@@ -1625,6 +1625,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       cols?: number;
       rows?: number;
     }) => ipcRenderer.invoke('claude-cli:ensure-session', payload),
+    // Whether the genuine `claude` CLI is installed (NIM-852). The transcript
+    // checks this for a claude-code-cli session to show an install notice and
+    // skip the spawn, rather than producing a cryptic `command not found`.
+    isClaudeCliInstalled: (): Promise<boolean> =>
+      ipcRenderer.invoke('claude-cli:is-installed'),
     // Submit a claude-code-cli prompt (NIM-806) — composes the PTY line (prompt +
     // inline attachment paths), writes it to the terminal, and logs the clean
     // typed prompt (+ attachment chips) as the transcript user row in the main

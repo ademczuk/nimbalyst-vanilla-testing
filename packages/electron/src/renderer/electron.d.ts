@@ -805,7 +805,8 @@ interface ElectronAPI {
 
     // PTY operations
     initialize: (terminalId: string, options: { workspacePath: string; cwd?: string; cols?: number; rows?: number }) => Promise<{ success: boolean; alreadyActive?: boolean; error?: string }>;
-    ensureClaudeCliSession: (payload: { sessionId: string; workspacePath: string; cwd?: string; model?: string; resumeSessionId?: string; cols?: number; rows?: number }) => Promise<{ success: boolean; alreadyActive?: boolean; error?: string }>;
+    ensureClaudeCliSession: (payload: { sessionId: string; workspacePath: string; cwd?: string; model?: string; resumeSessionId?: string; cols?: number; rows?: number }) => Promise<{ success: boolean; alreadyActive?: boolean; error?: string; claudeNotInstalled?: boolean }>;
+    isClaudeCliInstalled: () => Promise<boolean>;
     submitClaudeCliPrompt: (payload: { sessionId: string; workspacePath: string; prompt: string; attachments?: unknown[]; documentContext?: unknown }) => Promise<{ success: boolean }>;
     setClaudeCliModel: (sessionId: string, model: string) => Promise<{ success: boolean; cliArg: string }>;
     interruptClaudeCli: (sessionId: string) => Promise<{ success: boolean; resolvedAfter?: 'first-interrupt' | 'second-interrupt' | 'sigint' | 'unresolved' }>;

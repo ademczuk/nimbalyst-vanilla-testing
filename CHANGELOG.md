@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
+- Claude Code CLI sessions now show an install link when the Claude Code CLI isn't installed, instead of a cryptic terminal error.
 - Stop the AskUserQuestion widget from crashing when a question is missing its options.
 
 ### Removed

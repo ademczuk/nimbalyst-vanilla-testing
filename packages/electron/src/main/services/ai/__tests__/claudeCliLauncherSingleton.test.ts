@@ -6,7 +6,8 @@ describe('claudeCliLauncherSingleton', () => {
     vi.clearAllMocks();
   });
 
-  async function loadHarness() {
+  async function loadHarness(opts?: { claudeInstalled?: boolean }) {
+    const claudeInstalled = opts?.claudeInstalled ?? true;
     const manager = {
       isTerminalActive: vi.fn(() => false),
     };
@@ -34,6 +35,7 @@ describe('claudeCliLauncherSingleton', () => {
     }));
     vi.doMock('../claudeExecutableResolver', () => ({
       resolveClaudeExecutablePath: () => '/usr/local/bin/claude',
+      isClaudeExecutableInstalled: () => claudeInstalled,
     }));
     vi.doMock('../claudeCliPermissionHookPath', () => ({
       resolveClaudePermissionHookScriptPath: () => undefined,
@@ -96,5 +98,19 @@ describe('claudeCliLauncherSingleton', () => {
     onExit?.(7);
 
     expect(h.stateManager.endSession).toHaveBeenCalledWith('session-1');
+  }, 20000);
+
+  it('short-circuits without launching when claude is not installed (NIM-852)', async () => {
+    const h = await loadHarness({ claudeInstalled: false });
+
+    const result = await h.ensureClaudeCliSession({ sessionId: 'session-1', workspacePath: '/work' });
+
+    expect(result).toEqual({
+      success: false,
+      claudeNotInstalled: true,
+      error: 'Claude Code CLI is not installed',
+    });
+    expect(h.stateManager.startSession).not.toHaveBeenCalled();
+    expect(h.launch).not.toHaveBeenCalled();
   }, 20000);
 });

@@ -23,7 +23,7 @@ import { getTerminalSessionManager } from '../TerminalSessionManager';
 import { getEnhancedPath, getShellEnvironment } from '../CLIManager';
 import { ClaudeCliSessionLauncher } from './ClaudeCliSessionLauncher';
 import { HooklessAgentFileWatcher } from './HooklessAgentFileWatcher';
-import { resolveClaudeExecutablePath } from './claudeExecutableResolver';
+import { resolveClaudeExecutablePath, isClaudeExecutableInstalled } from './claudeExecutableResolver';
 import { resolveClaudeCliSupportsPluginDir } from './claudeCliPluginSupport';
 import { getAgentWorkflowService } from '../AgentWorkflowService';
 import { workspacePathToDir } from '../AttachmentService';
@@ -82,6 +82,20 @@ export const ClaudeCliLauncherConfig = {
  */
 function resolveClaudeExecutable(): string {
   return resolveClaudeExecutablePath({
+    homedir: os.homedir(),
+    pathExists: existsSync,
+    enhancedPath: getEnhancedPath(),
+  });
+}
+
+/**
+ * Whether the genuine `claude` CLI is installed anywhere we could spawn it
+ * (NIM-852). The renderer checks this (via `claude-cli:is-installed`) to show an
+ * install notice instead of spawning a bare `claude` that yields a cryptic
+ * `command not found`. `ensureClaudeCliSession` also short-circuits on it.
+ */
+export function isClaudeCliInstalled(): boolean {
+  return isClaudeExecutableInstalled({
     homedir: os.homedir(),
     pathExists: existsSync,
     enhancedPath: getEnhancedPath(),
@@ -194,6 +208,8 @@ export interface EnsureClaudeCliSessionResult {
   success: boolean;
   alreadyActive?: boolean;
   error?: string;
+  /** NIM-852: the `claude` CLI isn't installed, so we never spawned. */
+  claudeNotInstalled?: boolean;
 }
 
 const launchInFlight = new Map<string, Promise<EnsureClaudeCliSessionResult>>();
@@ -221,6 +237,17 @@ export async function ensureClaudeCliSession(
   const manager = getTerminalSessionManager();
   if (manager.isTerminalActive(input.sessionId)) {
     return { success: true, alreadyActive: true };
+  }
+
+  // NIM-852: don't spawn a bare `claude` when it isn't installed — that yields a
+  // cryptic `command not found` and strands the session as "running". The
+  // renderer shows an install notice; this is the defense-in-depth short-circuit.
+  if (!isClaudeCliInstalled()) {
+    return {
+      success: false,
+      claudeNotInstalled: true,
+      error: 'Claude Code CLI is not installed',
+    };
   }
 
   const existingLaunch = launchInFlight.get(input.sessionId);
