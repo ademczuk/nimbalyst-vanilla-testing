@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/session-cleanup` command (Planning extension) tidies your Sessions board: it proposes phase corrections and "mark complete" candidates for your approval, and flags old sessions to archive.
 
 ### Changed
-<!-- Changes to existing functionality go here -->
+- Contextual tips now fill empty AI sessions immediately and on every empty session, instead of after a delay and only once per app launch.
 
 ### Fixed
 - "Commit with AI" in a worktree now proposes all uncommitted changes in the worktree, not just the current session's edits.

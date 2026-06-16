@@ -8,7 +8,8 @@
  * Lifecycle:
  *  - On mount, it only registers that an inline tip surface exists.
  *  - TipProvider decides whether an eligible tip should be activated.
- *  - Dismiss / action clear the active tip; Next is explicit user browsing.
+ *  - Action clears the active tip; Next is explicit user browsing. Tips are
+ *    not dismissible -- the empty-session surface always offers a tip.
  *
  * Footer controls:
  *  - "Next" cycles forward.
@@ -25,7 +26,7 @@ import { useAtom, useSetAtom } from 'jotai';
 import { usePostHog } from 'posthog-js/react';
 import { TipCard } from './TipCard';
 import { tips } from './definitions';
-import { markTipCompleted, markTipDismissed, recordTipShown } from './TipService';
+import { markTipCompleted, recordTipShown } from './TipService';
 import { activeTipIdAtom, emptyTranscriptVisibleCountAtom } from './atoms';
 import { AllTipsDialog } from './AllTipsDialog';
 
@@ -96,17 +97,6 @@ export function InlineTipDisplay({ onInsertPrompt }: InlineTipDisplayProps = {})
     },
     [activeTip, posthog, setActiveTipId]
   );
-
-  const dismissTip = useCallback(() => {
-    if (!activeTip) return;
-    posthog?.capture('tip_dismissed', {
-      tip_id: activeTip.id,
-      tip_name: activeTip.name,
-      surface: 'inline_empty_transcript',
-    });
-    markTipDismissed(activeTip.id, activeTip.version);
-    setActiveTipId(null);
-  }, [activeTip, posthog, setActiveTipId]);
 
   const handleAction = useCallback(() => {
     const action = activeTip?.content.action;
@@ -184,7 +174,6 @@ export function InlineTipDisplay({ onInsertPrompt }: InlineTipDisplayProps = {})
     <>
       <TipCard
         tip={displayTip ?? activeTip}
-        onDismiss={dismissTip}
         onAction={handleAction}
         onSecondaryAction={activeTip.content.secondaryAction ? handleSecondaryAction : undefined}
         variant="inline"
