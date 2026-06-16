@@ -125,10 +125,13 @@ import { registerClaudeUsageHandlers } from './ipc/ClaudeUsageHandlers';
 import { claudeUsageService } from './services/ClaudeUsageService';
 import { registerCodexUsageHandlers } from './ipc/CodexUsageHandlers';
 import { codexUsageService } from './services/CodexUsageService';
+import { registerGeminiUsageHandlers } from './ipc/GeminiUsageHandlers';
+import { geminiUsageService } from './services/GeminiUsageService';
 import { codexAuthService } from './services/CodexAuthService';
 import { registerExtensionHandlers, getClaudePluginPaths, initializeExtensionFileTypes } from './ipc/ExtensionHandlers';
 import { registerExtensionPermissionHandlers } from './ipc/ExtensionPermissionHandlers';
 import { registerTrackerImporterHandlers } from './ipc/TrackerImporterHandlers';
+import { installExtensionAgentBridge } from './extensions/extensionAgentBridge';
 import { getAgentWorkflowService } from './services/AgentWorkflowService';
 import { queueMarketplaceInstallRequest, registerExtensionMarketplaceHandlers, runExtensionAutoUpdate } from './ipc/ExtensionMarketplaceHandlers';
 import { getRegisteredExtensions } from './extensions/RegisteredFileTypes';
@@ -1394,6 +1397,8 @@ app.whenReady().then(async () => {
     claudeUsageService.initialize();
     registerCodexUsageHandlers();
     codexUsageService.initialize();
+    registerGeminiUsageHandlers();
+    geminiUsageService.initialize();
     registerPermissionHandlers();
     registerGitStatusHandlers();
     registerGitHandlers();
@@ -1921,6 +1926,28 @@ app.whenReady().then(async () => {
     registerTrackerImporterHandlers();
     registerExtensionMarketplaceHandlers();
     registerOffscreenEditorHandlers();
+
+    // Phase 4: install the extension-agent bridge so the runtime-side
+    // `ExtensionAgentProvider` wrapper can route to PrivilegedExtensionHost.
+    // Workspace resolution prefers the focused window's active workspace;
+    // falls back to any window with one open. Returns null if no window has
+    // a workspace path -- the bridge surfaces this as a `no-workspace` error.
+    installExtensionAgentBridge({
+      resolveActiveWorkspacePath: () => {
+        const { BrowserWindow } = require('electron') as typeof import('electron');
+        const focused = BrowserWindow.getFocusedWindow();
+        if (focused) {
+          const state = windowStates.get(focused.id);
+          const path = resolveActiveWorkspacePath(state);
+          if (path) return path;
+        }
+        for (const state of windowStates.values()) {
+          const path = resolveActiveWorkspacePath(state);
+          if (path) return path;
+        }
+        return null;
+      },
+    });
 
     // Initialize extension file types (must happen before file operations)
     markStart('extension-file-types');
@@ -2524,26 +2551,25 @@ app.on('before-quit', async (event) => {
             cancelId: 1
         });
 
-        if (response.response === 0) {
-            // User clicked "Quit Anyway" - proceed with quit
-            console.log('[QUIT] User confirmed quit with active AI session');
-            analytics.sendEvent('quit_confirmation_result', {
-                result: 'quit_anyway'
-            });
-            // Set isAppQuitting before calling app.quit() to prevent re-showing dialog
-            isAppQuitting = true;
-            app.quit();
-        } else {
-            // User cancelled
+        if (response.response !== 0) {
+            // User cancelled - stay running.
             console.log('[QUIT] User cancelled quit due to active AI session');
             analytics.sendEvent('quit_confirmation_result', {
                 result: 'cancelled'
             });
             return;
         }
-        // If user confirmed quit, app.quit() was called above and before-quit will fire again
-        // with isAppQuitting=true, so we return here to avoid duplicate cleanup
-        return;
+
+        // User clicked "Quit Anyway". Fall through to the graceful cleanup block
+        // below (event.preventDefault was already called above) so the database
+        // is checkpointed, closed, and its lock released. The old code called
+        // app.quit() and returned here, which skipped cleanup on BOTH passes (the
+        // second before-quit short-circuits on isAppQuitting), leaking
+        // nimbalyst-db.pid and forcing the next launch onto stale-lock detection.
+        console.log('[QUIT] User confirmed quit with active AI session');
+        analytics.sendEvent('quit_confirmation_result', {
+            result: 'quit_anyway'
+        });
     }
 
     // Prevent default to do async cleanup

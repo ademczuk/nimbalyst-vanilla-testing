@@ -38,7 +38,16 @@ async function getCanonicalWorkspacePathForSession(sessionId: string): Promise<s
       [sessionId]
     );
     const workspacePath = rows[0]?.workspace_id ?? null;
-    sessionWorkspaceCache.set(sessionId, workspacePath);
+    // Only cache a RESOLVED (non-null) path. A null here usually means the
+    // session row was not committed yet when the first event fired (common for
+    // meta-agent child sessions created mid-run). Caching null would PERMANENTLY
+    // drop every later event for this session, because the workspace filter
+    // never matches null -- which pinned child spinners on "Thinking..." forever
+    // and left the meta-agent's aggregate stuck. Leaving null uncached lets the
+    // next event re-resolve once the row is committed.
+    if (workspacePath !== null) {
+      sessionWorkspaceCache.set(sessionId, workspacePath);
+    }
     return workspacePath;
   } catch (error) {
     console.error('[SessionStateHandlers] Failed to resolve canonical workspace path:', error);
@@ -159,8 +168,25 @@ export async function registerSessionStateHandlers() {
                 break;
               }
             }
+            const isTerminal =
+              stateEvent.type === 'session:completed' ||
+              stateEvent.type === 'session:error' ||
+              stateEvent.type === 'session:interrupted';
             if (!matched) {
-              return;
+              // A workspace-filter miss on a NON-terminal event is dropped as
+              // before (those drive workspace-scoped state and need a real path).
+              // But a TERMINAL event is forwarded anyway: the renderer's terminal
+              // clear is keyed only by sessionId (workspace-agnostic), so
+              // over-delivering it is harmless, while dropping it pins the
+              // session's spinner (and a parent meta-agent header) on "Thinking..."
+              // - common for a worktree-resident meta-agent child whose canonical
+              // workspace_id has not committed or does not match this window.
+              if (!isTerminal) return;
+              console.warn(
+                `[SessionStateHandlers] forwarding unmatched terminal ${stateEvent.type} for session ` +
+                `${stateEvent.sessionId} (sessionWorkspacePath=${sessionWorkspacePath ?? 'null'}, ` +
+                `eventWorkspacePath=${stateEvent.workspacePath ?? 'null'}) to avoid a stuck spinner`,
+              );
             }
           }
 

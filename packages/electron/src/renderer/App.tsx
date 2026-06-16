@@ -102,6 +102,7 @@ import { initClaudeUsageListeners } from './store/listeners/claudeUsageListeners
 import { initClaudeCliTerminalListeners } from './store/listeners/claudeCliTerminalListeners';
 import { initWindowFocusListeners } from './store/listeners/windowFocusListeners';
 import { initCodexUsageListeners } from './store/listeners/codexUsageListeners';
+import { initGeminiUsageListeners } from './store/listeners/geminiUsageListeners';
 import { initFileChangeListeners } from './store/listeners/fileChangeListeners';
 import { initMcpListeners } from './store/listeners/mcpListeners';
 import { initMenuCommandListeners } from './store/listeners/menuCommandListeners';
@@ -294,6 +295,11 @@ export default function App() {
     initOpenProjects();
     initWorkspaceStatePruner();
 
+    // Extension-contributed agent provider ids are registered with
+    // ModelIdentifier by initializeExtensionAgentProviderSync() (wired in
+    // registerExtensionSystem), which re-syncs on every extension load /
+    // re-scan / unload rather than only at startup.
+
     const cleanupActionPrompts = initActionPromptListeners();
     const cleanupAiCommands = initAiCommandListeners();
     const cleanupAppCommands = initAppCommandListeners();
@@ -301,6 +307,7 @@ export default function App() {
     const cleanupClaudeCliTerminal = initClaudeCliTerminalListeners();
     const cleanupWindowFocus = initWindowFocusListeners();
     const cleanupCodex = initCodexUsageListeners();
+    const cleanupGemini = initGeminiUsageListeners();
     const cleanupFileChange = initFileChangeListeners();
     const cleanupMcp = initMcpListeners();
     const cleanupMenuCommand = initMenuCommandListeners();
@@ -328,6 +335,7 @@ export default function App() {
       cleanupClaudeCliTerminal?.();
       cleanupWindowFocus?.();
       cleanupCodex?.();
+      cleanupGemini?.();
       cleanupFileChange?.();
       cleanupMcp?.();
       cleanupMenuCommand?.();
