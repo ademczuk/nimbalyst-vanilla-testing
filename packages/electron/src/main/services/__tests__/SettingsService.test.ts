@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import envPaths from 'env-paths';
 
 // Mock electron BEFORE importing the service, so `new Store({ name: 'ai-settings' })`
 // resolves to a writable temp dir and BrowserWindow.getAllWindows() is empty.
@@ -42,14 +43,13 @@ vi.mock('../../utils/logger', () => ({
 // Where electron-store writes when app.getPath is unavailable. Tests run
 // against the bundled `electron-store` module imported via `require('electron')`,
 // which vitest's vi.mock for ES imports doesn't intercept; electron-store
-// then falls back to Conf's default location. We clean it between tests so
-// state never leaks across runs (and the user's real Nimbalyst config is
-// never touched).
+// then falls back to Conf's default location. Compute that location with
+// `env-paths` (the same library electron-store uses) so it is correct on every
+// platform -- a hardcoded macOS path made existsSync false on Linux CI and let
+// state leak across tests there. We clean it between tests so state never leaks
+// across runs (and the user's real Nimbalyst config is never touched).
 const STORE_FALLBACK = path.join(
-  os.homedir(),
-  'Library',
-  'Preferences',
-  'electron-store-nodejs',
+  envPaths('electron-store', { suffix: 'nodejs' }).config,
   'ai-settings.json',
 );
 
