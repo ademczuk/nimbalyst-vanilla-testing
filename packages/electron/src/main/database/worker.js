@@ -2336,6 +2336,27 @@ class PGLiteWorker {
       throw error;
     }
 
+    // Migration: durable last-synced baseline for personal docs sync (System A).
+    // Lets the write-time conflict guard detect locally-diverged files across an
+    // app restart, so an older server snapshot can never clobber newer local
+    // content (NIM-853, Layer 3).
+    try {
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS project_file_sync_baseline (
+          project_id TEXT NOT NULL,
+          sync_id TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          last_synced_mtime BIGINT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL,
+          PRIMARY KEY (project_id, sync_id)
+        );
+      `);
+      console.log('[PGLite Worker] project_file_sync_baseline table created successfully');
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to create project_file_sync_baseline table:', error);
+      throw error;
+    }
+
     // Migration: Ensure ai_tool_call_file_edits FK points to ai_agent_messages (not ai_transcript_events).
     // A previous buggy migration may have re-pointed it to ai_transcript_events.
     //
