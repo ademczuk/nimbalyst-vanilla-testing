@@ -3,8 +3,8 @@ import { OpenCodeProvider } from '../OpenCodeProvider';
 import { EventEmitter } from 'events';
 
 // Mock child_process.spawn to avoid actually launching opencode
-vi.mock('child_process', () => ({
-  spawn: vi.fn(() => {
+vi.mock('child_process', () => {
+  const spawn = vi.fn(() => {
     const proc = new EventEmitter() as any;
     proc.kill = vi.fn();
     proc.stdin = null;
@@ -12,12 +12,13 @@ vi.mock('child_process', () => ({
     proc.stderr = new EventEmitter();
     proc.pid = 12345;
     return proc;
-  }),
-}));
+  });
+  return { spawn, default: { spawn } };
+});
 
 // Mock net.createServer for port finding
-vi.mock('net', () => ({
-  createServer: vi.fn(() => {
+vi.mock('net', () => {
+  const createServer = vi.fn(() => {
     const server = new EventEmitter() as any;
     server.listen = vi.fn((_port: number, _host: string, cb: () => void) => {
       server.address = () => ({ port: 19999 });
@@ -25,8 +26,9 @@ vi.mock('net', () => ({
     });
     server.close = vi.fn((cb: () => void) => cb());
     return server;
-  }),
-}));
+  });
+  return { createServer, default: { createServer } };
+});
 
 // Mock fetch for server health check
 const mockFetch = vi.fn(async () => ({ ok: true }));
