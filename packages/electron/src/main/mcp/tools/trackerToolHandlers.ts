@@ -1490,6 +1490,17 @@ export async function handleTrackerGet(
       lines.push(
         `**Linked Sessions**: ${item.linkedSessions.join(", ")}`
       );
+    // Schema-defined custom fields (e.g. github-pr's prNumber/author/branches)
+    // live in customFields, not on the known-field whitelist above. Render them
+    // so cold readers see them in the summary as well as the structured payload.
+    if (item.customFields && Object.keys(item.customFields).length > 0) {
+      for (const [key, value] of Object.entries(item.customFields)) {
+        if (value === undefined || value === null) continue;
+        const rendered =
+          typeof value === "object" ? JSON.stringify(value) : String(value);
+        lines.push(`**${key}**: ${rendered}`);
+      }
+    }
     lines.push(`**ID**: ${item.id}`);
     lines.push(`**Updated**: ${item.updated}`);
     lines.push("");
@@ -1523,6 +1534,12 @@ export async function handleTrackerGet(
         tags: item.tags || [],
         owner: item.owner || undefined,
         dueDate: item.dueDate || undefined,
+        // Surface schema-defined custom fields (e.g. github-pr's prNumber) that
+        // are otherwise dropped by the known-field whitelist above.
+        customFields:
+          item.customFields && Object.keys(item.customFields).length > 0
+            ? item.customFields
+            : undefined,
       },
     };
     tempDocService?.destroy?.();
