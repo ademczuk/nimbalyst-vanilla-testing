@@ -1,0 +1,115 @@
+name: provider-smoke
+
+# Tier 2: real AI-provider integration smoke test.
+# Drives nimbalyst's live provider classes (ProviderFactory) against the real
+# Claude and OpenAI APIs, proving each provider can complete a tool-using turn.
+# Reuses upstream's own gated integration tests, so it adds NO test code here.
+#
+# Safe by default: with no API-key secrets set, the job skips and stays green.
+# Add repo secrets ANTHROPIC_API_KEY and/or OPENAI_API_KEY to enable real runs.
+# See .github/TESTING_PIPELINE.md for setup, cost notes, and the Gemini/E2E roadmap.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '23 9 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - name: Check for provider secrets
+        id: guard
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No provider API keys configured. Add repo secrets ANTHROPIC_API_KEY and/or OPENAI_API_KEY to enable real provider tests. Skipping (green)."
+          fi
+
+      - name: Checkout
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Filter AI-related changes
+        if: steps.guard.outputs.run == 'true'
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            ai:
+              - 'packages/runtime/**'
+              - 'packages/electron/**'
+
+      - name: Decide whether to run providers
+        if: steps.guard.outputs.run == 'true'
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" != "push" ] || [ "${{ steps.changes.outputs.ai }}" = "true" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            echo "Sync push did not touch packages/runtime or packages/electron; skipping provider calls. Nightly and manual runs always run."
+          fi
+
+      - name: Setup Node
+        if: steps.decide.outputs.go == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        if: steps.decide.outputs.go == 'true'
+        run: npm ci
+
+      - name: Build extension-sdk
+        if: steps.decide.outputs.go == 'true'
+        run: npm run build --prefix packages/extension-sdk
+
+      - name: Claude provider smoke
+        if: steps.decide.outputs.go == 'true' && env.ANTHROPIC_API_KEY != ''
+        id: claude
+        continue-on-error: true
+        env:
+          RUN_AI_PROVIDER_TESTS: 'true'
+        run: npx vitest run packages/runtime/src/ai/providers/__tests__/ClaudeProvider.test.ts -t applyDiff
+
+      - name: OpenAI provider smoke
+        if: steps.decide.outputs.go == 'true' && env.OPENAI_API_KEY != ''
+        id: openai
+        continue-on-error: true
+        env:
+          RUN_OPENAI_INTEGRATION: '1'
+        run: npx vitest run packages/runtime/src/ai/providers/__tests__/OpenAIProvider.test.ts -t applyDiff
+
+      - name: Report
+        if: steps.decide.outputs.go == 'true'
+        run: |
+          claude="${{ steps.claude.outcome }}"
+          openai="${{ steps.openai.outcome }}"
+          echo "Claude smoke: ${claude:-skipped}"
+          echo "OpenAI smoke: ${openai:-skipped}"
+          if [ "$claude" = "failure" ] || [ "$openai" = "failure" ]; then
+            echo "::error::A provider smoke test failed. The provider may be broken in this build, or the API key/quota is invalid."
+            exit 1
+          fi
+          if [ "$claude" != "success" ] && [ "$openai" != "success" ]; then
+            echo "::warning::Keys are present but no provider test ran to success. Check the secret values."
+          fi
+          echo "Provider smoke complete."
