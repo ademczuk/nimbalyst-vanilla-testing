@@ -115,15 +115,15 @@ describe('TeamSync doc-index title server-managed migration read path', () => {
     const sent: any[] = [];
     (provider as any).send = (msg: any) => {
       sent.push(msg);
-      // Simulate the server: on the verification re-sync, report the
-      // re-registered doc as server-plaintext (empty iv) => persisted.
-      if (msg.type === 'teamSync') {
-        void (provider as any).handleTeamSyncResponse({
-          type: 'teamSyncResponse',
-          team: { metadata: null, members: [], documents: [
+      // Simulate the server: on the verification re-sync (docIndexSync), report
+      // the re-registered doc as server-plaintext (empty iv) => persisted.
+      if (msg.type === 'docIndexSync') {
+        void (provider as any).handleDocIndexSyncResponse({
+          type: 'docIndexSyncResponse',
+          documents: [
             encEntry('plain-1', 'Already Plain', ''),
             encEntry('legacy-1', 'Notes/Recovered', ''), // now plaintext on the server
-          ], keyEnvelope: null },
+          ],
         });
       }
     };
@@ -160,12 +160,12 @@ describe('TeamSync doc-index title server-managed migration read path', () => {
       sent.push(msg);
       // Simulate the server REJECTING the write (rotation lock): the re-sync
       // still reports the row as legacy ciphertext (non-empty iv).
-      if (msg.type === 'teamSync') {
-        void (provider as any).handleTeamSyncResponse({
-          type: 'teamSyncResponse',
-          team: { metadata: null, members: [], documents: [
+      if (msg.type === 'docIndexSync') {
+        void (provider as any).handleDocIndexSyncResponse({
+          type: 'docIndexSyncResponse',
+          documents: [
             encEntry('legacy-1', legacy.encryptedTitle, legacy.titleIv),
-          ], keyEnvelope: null },
+          ],
         });
       }
     };

@@ -433,10 +433,6 @@ export class TeamSyncProvider {
   private async handleTeamSyncResponse(msg: TeamSyncResponseMessage): Promise<void> {
     const server: ServerTeamState = msg.team;
 
-    // NIM-910: hand the RAW server entries to any backfill-verification waiter
-    // before we decrypt, so it can inspect actual server state (titleIv).
-    this.notifyResyncWaiters(server.documents);
-
     // Decrypt document titles
     const documents = await this.decryptDocuments(server.documents);
 
@@ -463,6 +459,13 @@ export class TeamSyncProvider {
 
     // Replay any doc index mutations that were queued while disconnected
     this.replayPendingDocIndexMessages();
+
+    // NIM-910: `teamSync` returns doc-index titles RAW (the server does not
+    // decrypt DEK rows on that path), so server-managed plaintext titles arrive
+    // as undecryptable ciphertext and render as locked. Immediately request the
+    // decrypting `docIndexSync` path, whose response is authoritative for the
+    // document list and overwrites the raw one.
+    this.send({ type: 'docIndexSync' });
 
     // NIM-906: self-heal any PRE-MIGRATION ciphertext titles we could recover.
     this.maybeAutoBackfillLegacyTitles();
@@ -797,7 +800,10 @@ export class TeamSyncProvider {
       const waiter = (docs: EncryptedDocIndexEntry[]) => done(docs);
       this.resyncWaiters.push(waiter);
       setTimeout(() => done(null), timeoutMs);
-      this.send({ type: 'teamSync' });
+      // Use the DECRYPTING path: a persisted backfill comes back as plaintext
+      // with an empty iv here (teamSync returns raw DEK ciphertext and can't
+      // confirm persistence).
+      this.send({ type: 'docIndexSync' });
     });
   }
 
