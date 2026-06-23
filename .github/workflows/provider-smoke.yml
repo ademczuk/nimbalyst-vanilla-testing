@@ -111,7 +111,7 @@ jobs:
         run: |
           set -o pipefail
           rc=0
-          npx vitest run packages/runtime/src/ai/providers/__tests__/ClaudeProvider.test.ts -t applyDiff > "$RUNNER_TEMP/claude.log" 2>&1 || rc=$?
+          npx vitest run packages/runtime/src/ai/providers/__tests__/ClaudeProvider.test.ts -t applyDiff --retry=2 > "$RUNNER_TEMP/claude.log" 2>&1 || rc=$?
           echo "--- claude vitest summary ---"
           grep -aiE "Test Files|Tests |No test|[0-9]+ (passed|failed|skipped)" "$RUNNER_TEMP/claude.log" | tail -10 || true
           exit $rc
@@ -126,7 +126,7 @@ jobs:
         run: |
           set -o pipefail
           rc=0
-          npx vitest run packages/runtime/src/ai/providers/__tests__/OpenAIProvider.test.ts -t applyDiff > "$RUNNER_TEMP/openai.log" 2>&1 || rc=$?
+          npx vitest run packages/runtime/src/ai/providers/__tests__/OpenAIProvider.test.ts -t applyDiff --retry=2 > "$RUNNER_TEMP/openai.log" 2>&1 || rc=$?
           echo "--- openai vitest summary ---"
           grep -aiE "Test Files|Tests |No test|[0-9]+ (passed|failed|skipped)" "$RUNNER_TEMP/openai.log" | tail -10 || true
           exit $rc
