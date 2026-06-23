@@ -1,0 +1,51 @@
+name: upstream-sync
+
+# Auto-mirror nimbalyst/nimbalyst main into this repo.
+# Runs hourly and on manual dispatch. Whenever upstream merges a PR into main,
+# the next run fast-forwards (merges) those commits into this repo's main.
+#
+# Pushes with a PAT (UPSTREAM_SYNC_PAT) instead of the default GITHUB_TOKEN
+# because GITHUB_TOKEN is not allowed to push changes to .github/workflows/*
+# (which happens whenever upstream edits one of its own workflow files).
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mirror (main)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_PAT }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "upstream-sync-bot"
+          git config user.email "upstream-sync-bot@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/nimbalyst/nimbalyst.git
+          git fetch upstream main --tags --prune --no-recurse-submodules
+
+      - name: Merge upstream/main
+        run: |
+          git merge --no-edit upstream/main
+
+      - name: Push main and tags
+        run: |
+          git push origin HEAD:main
+          git push origin --tags
