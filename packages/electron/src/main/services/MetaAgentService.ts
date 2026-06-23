@@ -496,27 +496,47 @@ export class MetaAgentService {
       worktreePath = worktree.path;
     }
 
-    // Backstop: cap the TOTAL number of children a single parent can ever spawn.
-    // Without this, a feedback loop can create unbounded children. The prior
-    // in-flight-only count (status running / waiting_for_input) did NOT bound
-    // SEQUENTIAL re-spawning: a completion-wakeup re-drives the parent, a weak
-    // model spawns another child, the child settles in milliseconds, so the
-    // in-flight count stays ~0 and the cap never fires. Counting ALL children
-    // ever created by this parent (regardless of status, non-archived) bounds
-    // that runaway. A normal 3-child spawn is unaffected. Mirrors the
-    // created_by_session_id query in getSpawnedSessions.
-    const TOTAL_SPAWN_CAP = 6;
-    const { rows: totalRows } = await databaseWorker.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM ai_sessions
+    // Two independent gates on how many children a parent can spawn:
+    //
+    //   1. MAX_IN_FLIGHT — the controllable "max parallel" limit. Counts only
+    //      children currently active (status running / waiting_for_input). Once
+    //      a child finishes, it frees a slot, so a parent can spawn an unbounded
+    //      TOTAL number of children over its lifetime as long as it doesn't
+    //      exceed this many at once. This is the intended behavior.
+    //
+    //   2. LIFETIME_BACKSTOP — a much higher non-controllable ceiling on ALL
+    //      children ever created (regardless of status, non-archived). An
+    //      in-flight count alone does NOT bound SEQUENTIAL re-spawn runaways: a
+    //      completion-wakeup re-drives the parent, a weak model spawns another
+    //      child, the child settles in milliseconds, so the in-flight count
+    //      stays ~0 and never fires. This backstop catches that pathological
+    //      loop without imposing a low lifetime cap on normal use. Mirrors the
+    //      created_by_session_id query in getSpawnedSessions.
+    const MAX_IN_FLIGHT = 4;
+    const LIFETIME_BACKSTOP = 50;
+    // Use SUM(CASE ...) rather than COUNT(*) FILTER (...) so the aggregate is
+    // portable across both PGLite and better-sqlite3 (see DATABASE.md).
+    const { rows: gateRows } = await databaseWorker.query<{ in_flight: string; total: string }>(
+      `SELECT
+         SUM(CASE WHEN status IN ('running', 'waiting_for_input') THEN 1 ELSE 0 END)::text AS in_flight,
+         COUNT(*)::text AS total
+       FROM ai_sessions
        WHERE workspace_id = $1
          AND created_by_session_id = $2
          AND (is_archived = FALSE OR is_archived IS NULL)`,
       [workspaceId, metaSessionId]
     );
-    const totalCount = Number(totalRows[0]?.count ?? '0');
-    if (totalCount >= TOTAL_SPAWN_CAP) {
+    const inFlightCount = Number(gateRows[0]?.in_flight ?? '0');
+    const totalCount = Number(gateRows[0]?.total ?? '0');
+    if (inFlightCount >= MAX_IN_FLIGHT) {
       throw new Error(
-        `Meta-agent spawn cap reached (${TOTAL_SPAWN_CAP} total children spawned by this parent); refusing to spawn more`
+        `Too many child sessions running at once (${inFlightCount}/${MAX_IN_FLIGHT} in flight). ` +
+        `Wait for a spawned session to finish before spawning more.`
+      );
+    }
+    if (totalCount >= LIFETIME_BACKSTOP) {
+      throw new Error(
+        `Meta-agent lifetime spawn backstop reached (${LIFETIME_BACKSTOP} total children spawned by this parent); refusing to spawn more`
       );
     }
 

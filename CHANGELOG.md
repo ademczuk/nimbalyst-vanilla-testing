@@ -9,12 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-<<<<<<< feature/custom-completion-sounds
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.66.2] - 2026-06-22
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+- Desktop release builds now bundle the application correctly (0.66.0 and 0.66.1 failed to package).
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.66.1] - 2026-06-22
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+- Updated the bundled Electron runtime to 41.8.0 (security fixes).
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.66.0] - 2026-06-22
+
+
+### Added
 - Custom completion sounds — pick your own audio file (MP3, WAV, OGG, M4A, AAC, FLAC) to play when an agent finishes a turn.
-=======
 <!-- New features go here -->
 - iOS: create a Meta Agent from the session create menu (alpha-gated to mirror the desktop `meta-agent` feature flag, synced to mobile).
 - New Gemini (Antigravity) marketplace extension, usable as an AI chat and meta-agent provider, with a usage indicator chip. (#558)
+- New RTL Support extension: auto-detects right-to-left languages (Arabic, Hebrew, Persian, etc.) and renders the transcript and input correctly, with a settings panel and toggle shortcut. (#638)
+- Real-time team document collaboration (alpha): share documents across editor types and edit them together live.
+- Org and project management (alpha): move a project between orgs and merge orgs with guided wizards, plus org-scoped settings.
 - `/session-cleanup` command (Planning extension) tidies your Sessions board: it proposes phase corrections and "mark complete" candidates for your approval, and flags old sessions to archive.
 - `nim`, a companion CLI for trackers: list, create, update, comment on, archive, and import tracker items from the terminal — through a running Nimbalyst, or directly against the database when the app is closed.
 - Link tracker items to one another with relationship fields: typeahead pills in the table and detail panel, plus automatic "Linked from" backlinks.
@@ -23,11 +69,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Edit and delete your own tracker comments.
 - Share individual plans (and other full-document trackers) with your team: the shared copy keeps its status, lifecycle, and body in sync — including changes made offline — and unsharing removes it for everyone, while unshared items stay private.
 - Control whether AI agents can use your trackers per project, with an "AI Agent Access" toggle in tracker settings.
+- Android app variant with email/magic-link sign-in, push notifications, deep links, and pairing QR scanner. (#663)
 
 ### Changed
 - Contextual tips now fill empty AI sessions immediately and on every empty session, instead of after a delay and only once per app launch.
 
 ### Fixed
+- Sign-in now completes on Linux AppImage builds — the `nimbalyst://` URL handler is registered at startup so the OAuth browser callback reopens the app correctly.
+- Startup is fast again after restart: a transcript maintenance pass that could stall the app for tens of seconds on large histories is now deferred until after the first window loads.
+- AI tools for custom editors (diagrams, CAD, etc.) no longer revert a change the agent just wrote to a file that isn't open in a tab.
+- The Themes, Shared Links, and Database settings panels now open instead of snapping back to the first agent provider.
+- A session can now spawn child sessions again after several have finished — the limit is on how many run at once, not a lifetime total.
+- The welcome dialog no longer re-appears on a slow or busy startup after you've already completed onboarding.
 - Restarting the app no longer occasionally loses your open project windows and drops you back on the Workspace Manager.
 - The Claude Code context indicator now updates throughout a turn instead of only at the end, and no longer bounces when sub-agents run.
 - Personal docs sync no longer overwrites newer local edits (or an open editor's unsaved changes) with an older synced copy.
@@ -45,6 +98,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI agents reading a tracker item now see its custom fields (such as a GitHub PR's number and author), which were previously omitted from the item's details.
 - Tracker types shared via team sync now persist across restarts (including synced overrides of built-in types), and synced tracker items no longer silently fail to save on some databases.
 - A session no longer gets stuck showing "awaiting user input" when an interactive prompt is abandoned (e.g. you send a new message instead of answering it).
+- Mode-switch keyboard shortcuts now work while a fullscreen extension panel is open — they exit the panel first.
 
 ### Removed
 <!-- Removed features go here -->
@@ -75,7 +129,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
->>>>>>> main
 
 ### Changed
 <!-- Changes to existing functionality go here -->
