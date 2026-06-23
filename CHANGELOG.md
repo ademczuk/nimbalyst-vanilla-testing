@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 <!-- Removed features go here -->
 
+## [0.66.4] - 2026-06-23
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+- Shared document titles no longer show "Encrypted document (key unavailable)" when the server can decrypt them.
+
+### Removed
+<!-- Removed features go here -->
+
 ## [0.66.3] - 2026-06-23
 
 
