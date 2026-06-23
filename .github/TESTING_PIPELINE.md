@@ -14,6 +14,8 @@ This repo is an auto-synced public mirror of `nimbalyst/nimbalyst` (see `.github
 
 `pr-test.yml` tests open pull requests on upstream BEFORE they merge. It lists open PRs, fetches each PR head (`refs/pull/N/head`), and runs the same unit tests + typecheck per PR, producing a per-PR red/green. This is most useful for fork PRs whose CI upstream has not approved or run yet (GitHub holds first-time-contributor fork workflows for maintainer approval).
 
+Note: upstream's own `ci.yml` already runs unit + typecheck on PRs to main, so for an approved PR this tier overlaps it. Its net-new value is the unapproved-fork-PR gap, a consolidated dashboard, and being the demonstrable artifact to propose upstream.
+
 Runs daily and on demand:
 
 ```
@@ -33,9 +35,11 @@ SECURITY: PR code comes from forks and is untrusted, and these steps execute it 
 A failing provider test is classified, not blindly failed:
 
 - pass: the real provider call completed the tool flow.
-- infra: the provider was unreachable (no credit, quota, rate limit, auth, or outage). Treated as NEUTRAL, the job stays green with a warning. A billing or outage problem never reads as a nimbalyst regression.
+- infra: the provider was unreachable (no credit, quota, rate limit, auth, outage) or a non-code setup failure. Treated as NEUTRAL, the job stays green with a warning. A billing or outage problem never reads as a nimbalyst regression.
 - regression: the provider misbehaved inside nimbalyst's code. The job goes RED.
 - missing: a tracked upstream test was renamed or removed. The job goes RED so the smoke target gets fixed.
+
+The classifier matches textual signatures and HTTP/status-prefixed codes only, never bare numbers (a bare "500" would collide with the test's own `maxTokens: 500`, and "429" with a "1429ms" duration, which could hide a real regression as neutral). Ambiguous failures bias to RED.
 
 Safe by default: with no keys set, the job skips and stays green. Keys are scoped to only the two provider steps, never `npm ci` or the build. Real calls happen on AI-path syncs, nightly, and on manual dispatch.
 
@@ -55,6 +59,28 @@ Put provider API keys in GitHub Secrets. Do not reuse your Claude Code / Codex /
 - Subscription OAuth tokens are built for interactive refresh. They expire and do not refresh cleanly in a headless runner.
 
 Also note: a Claude Pro/Max subscription does not fund the developer API. API access needs separately purchased prepaid credit at console.anthropic.com under Plans & Billing. The smoke uses cheap models (`claude-sonnet-4-6`, `gpt-4o-mini`); runner minutes are free on public repos. This does not change the app rule that nimbalyst must never read API keys from environment variables; that rule is about the product runtime, and test code legitimately reads keys from the CI env and passes them in explicitly.
+
+## Testing provider integration BEFORE merge (run locally, not in CI)
+
+The Tier 2 smoke runs only on `main` after merge. Provider tests on an open PR are deliberately NOT a CI job here, by design. Running an open PR's provider test in CI means executing untrusted fork code with your real billing keys in the runner, and the risk is not only an npm postinstall: the provider test imports the PR's own runtime code, which runs with the keys in scope, so `npm ci --ignore-scripts` does not make it safe.
+
+To check a PR's provider integration before merge, run it locally on a PR you have reviewed (use a low-limit or throwaway key, and set the key as an env var rather than inline so it stays out of shell history):
+
+```
+# requires an 'upstream' remote pointing at nimbalyst/nimbalyst
+git fetch upstream pull/<N>/head && git checkout FETCH_HEAD
+npm ci && npm run build --prefix packages/extension-sdk
+
+export ANTHROPIC_API_KEY=...   # low-limit key
+RUN_AI_PROVIDER_TESTS=true npx vitest run \
+  packages/runtime/src/ai/providers/__tests__/ClaudeProvider.test.ts -t applyDiff
+
+export OPENAI_API_KEY=...
+RUN_OPENAI_INTEGRATION=1 npx vitest run \
+  packages/runtime/src/ai/providers/__tests__/OpenAIProvider.test.ts -t applyDiff
+```
+
+If provider-on-PR ever has to live in CI, it must be gated hard: a GitHub Environment with a required reviewer, short-lived scoped credentials instead of a standing key, and an egress-restricted ephemeral runner. That is heavier than this mirror needs.
 
 ### Gemini, Codex, and Copilot
 
