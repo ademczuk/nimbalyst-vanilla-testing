@@ -1,13 +1,21 @@
 name: provider-smoke
 
-# Tier 2: real AI-provider integration smoke test.
+# Tier 2: real AI-provider integration smoke test (Claude + OpenAI).
 # Drives nimbalyst's live provider classes (ProviderFactory) against the real
-# Claude and OpenAI APIs, proving each provider can complete a tool-using turn.
-# Reuses upstream's own gated integration tests, so it adds NO test code here.
+# APIs, proving each provider can complete a tool-using turn. Reuses upstream's
+# own gated integration tests, so it adds NO test code here.
+#
+# Classification of a failing provider test:
+#   pass       real provider call completed the tool flow
+#   infra      provider unreachable (no credit, quota, rate limit, auth, outage)
+#              or a non-code setup failure (native prebuild fetch) -> NEUTRAL, green
+#   regression the provider misbehaved inside nimbalyst's code -> RED
+#   missing    the tracked upstream test was renamed/removed -> RED (loud)
+# A billing or outage issue never reads as a nimbalyst regression.
 #
 # Safe by default: with no API-key secrets set, the job skips and stays green.
-# Add repo secrets ANTHROPIC_API_KEY and/or OPENAI_API_KEY to enable real runs.
-# See .github/TESTING_PIPELINE.md for setup, cost notes, and the Gemini/E2E roadmap.
+# Keys are scoped to ONLY the two provider steps, never npm ci / build.
+# See .github/TESTING_PIPELINE.md for setup and the Gemini/Codex/E2E roadmap.
 
 on:
   push:
@@ -27,18 +35,24 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
-      - name: Check for provider secrets
+      - name: Detect provider secrets
         id: guard
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          if [ -n "$ANTHROPIC_API_KEY" ] || [ -n "$OPENAI_API_KEY" ]; then
+          set -euo pipefail
+          a=false; o=false
+          if [ -n "${ANTHROPIC_API_KEY:-}" ]; then a=true; fi
+          if [ -n "${OPENAI_API_KEY:-}" ]; then o=true; fi
+          echo "has_anthropic=$a" >> "$GITHUB_OUTPUT"
+          echo "has_openai=$o" >> "$GITHUB_OUTPUT"
+          if [ "$a" = true ] || [ "$o" = true ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "No provider API keys configured. Add repo secrets ANTHROPIC_API_KEY and/or OPENAI_API_KEY to enable real provider tests. Skipping (green)."
+            echo "No provider API keys configured. Add repo secrets ANTHROPIC_API_KEY and/or OPENAI_API_KEY to enable. Skipping (green)."
           fi
 
       - name: Checkout
@@ -48,7 +62,7 @@ jobs:
           fetch-depth: 2
 
       - name: Filter AI-related changes
-        if: steps.guard.outputs.run == 'true'
+        if: steps.guard.outputs.run == 'true' && github.event_name == 'push'
         id: changes
         uses: dorny/paths-filter@v3
         with:
@@ -61,6 +75,7 @@ jobs:
         if: steps.guard.outputs.run == 'true'
         id: decide
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" != "push" ] || [ "${{ steps.changes.outputs.ai }}" = "true" ]; then
             echo "go=true" >> "$GITHUB_OUTPUT"
           else
@@ -80,36 +95,96 @@ jobs:
 
       - name: Build extension-sdk
         if: steps.decide.outputs.go == 'true'
-        run: npm run build --prefix packages/extension-sdk
+        working-directory: packages/extension-sdk
+        run: npm run build
 
       - name: Claude provider smoke
-        if: steps.decide.outputs.go == 'true' && env.ANTHROPIC_API_KEY != ''
+        if: steps.decide.outputs.go == 'true' && steps.guard.outputs.has_anthropic == 'true'
         id: claude
         continue-on-error: true
         env:
           RUN_AI_PROVIDER_TESTS: 'true'
-        run: npx vitest run packages/runtime/src/ai/providers/__tests__/ClaudeProvider.test.ts -t applyDiff
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -o pipefail
+          rc=0
+          npx vitest run packages/runtime/src/ai/providers/__tests__/ClaudeProvider.test.ts -t applyDiff > "$RUNNER_TEMP/claude.log" 2>&1 || rc=$?
+          echo "--- claude vitest summary ---"
+          grep -aiE "Test Files|Tests |No test|[0-9]+ (passed|failed|skipped)" "$RUNNER_TEMP/claude.log" | tail -10 || true
+          exit $rc
 
       - name: OpenAI provider smoke
-        if: steps.decide.outputs.go == 'true' && env.OPENAI_API_KEY != ''
+        if: steps.decide.outputs.go == 'true' && steps.guard.outputs.has_openai == 'true'
         id: openai
         continue-on-error: true
         env:
           RUN_OPENAI_INTEGRATION: '1'
-        run: npx vitest run packages/runtime/src/ai/providers/__tests__/OpenAIProvider.test.ts -t applyDiff
-
-      - name: Report
-        if: steps.decide.outputs.go == 'true'
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          claude="${{ steps.claude.outcome }}"
-          openai="${{ steps.openai.outcome }}"
-          echo "Claude smoke: ${claude:-skipped}"
-          echo "OpenAI smoke: ${openai:-skipped}"
-          if [ "$claude" = "failure" ] || [ "$openai" = "failure" ]; then
-            echo "::error::A provider smoke test failed. The provider may be broken in this build, or the API key/quota is invalid."
+          set -o pipefail
+          rc=0
+          npx vitest run packages/runtime/src/ai/providers/__tests__/OpenAIProvider.test.ts -t applyDiff > "$RUNNER_TEMP/openai.log" 2>&1 || rc=$?
+          echo "--- openai vitest summary ---"
+          grep -aiE "Test Files|Tests |No test|[0-9]+ (passed|failed|skipped)" "$RUNNER_TEMP/openai.log" | tail -10 || true
+          exit $rc
+
+      - name: Classify and report
+        if: steps.decide.outputs.go == 'true'
+        env:
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+          OPENAI_OUTCOME: ${{ steps.openai.outcome }}
+        run: |
+          set -uo pipefail
+          # Infrastructure / provider-side signatures -> NEUTRAL (not a code regression).
+          # Numeric HTTP codes are word-boundary anchored so a duration like "1429ms" never matches.
+          INFRA='credit balance is too low|insufficient_quota|exceeded your current quota|rate.?limit|rate_limit_error|overloaded|overloaded_error|service unavailable|internal server error|\b(429|500|502|503|529)\b|authentication_error|invalid x-api-key|permission_error|ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|getaddrinfo|fetch failed|prebuild|node-gyp'
+          AUTH='authentication_error|invalid x-api-key|permission_error|credit balance is too low|insufficient_quota|exceeded your current quota'
+
+          classify() {
+            local outcome="$1" log="$2"
+            if [ "$outcome" = "success" ]; then echo "pass"; return; fi
+            if [ "$outcome" != "failure" ] || [ ! -s "$log" ]; then echo "skipped"; return; fi
+            if grep -qiE "No test files found|No test found|No tests found" "$log"; then echo "missing"; return; fi
+            if grep -qiE "$INFRA" "$log"; then echo "infra"; return; fi
+            echo "regression"
+          }
+
+          c=$(classify "${CLAUDE_OUTCOME:-skipped}" "$RUNNER_TEMP/claude.log")
+          o=$(classify "${OPENAI_OUTCOME:-skipped}" "$RUNNER_TEMP/openai.log")
+
+          {
+            echo "## Provider smoke results"
+            echo ""
+            echo "| Provider | Result |"
+            echo "| --- | --- |"
+            echo "| Claude (claude-sonnet-4-6) | $c |"
+            echo "| OpenAI (gpt-4o-mini) | $o |"
+            echo ""
+            echo "pass: real provider call completed the tool flow. infra: provider unreachable (credit, quota, rate limit, auth, outage) - neutral. regression: the provider misbehaved inside nimbalyst's code. missing: the tracked upstream test was renamed or removed. skipped: no key for that provider."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Claude: $c"
+          echo "OpenAI: $o"
+
+          red=0; warn=0; miss=0
+          for r in "$c" "$o"; do
+            [ "$r" = "regression" ] && red=1
+            [ "$r" = "infra" ] && warn=1
+            [ "$r" = "missing" ] && miss=1
+          done
+
+          if grep -qiE "$AUTH" "$RUNNER_TEMP/claude.log" 2>/dev/null || grep -qiE "$AUTH" "$RUNNER_TEMP/openai.log" 2>/dev/null; then
+            echo "::warning::A provider key looks unfunded or invalid (credit, quota, or auth). Top up or rotate the secret. Neutral, not a code regression."
+          elif [ "$warn" = 1 ]; then
+            echo "::warning::A provider was unreachable (rate limit or outage). Treated as neutral, not a regression."
+          fi
+
+          if [ "$miss" = 1 ]; then
+            echo "::error::Provider smoke target missing - a tracked upstream test was renamed or removed. Update the smoke target."
             exit 1
           fi
-          if [ "$claude" != "success" ] && [ "$openai" != "success" ]; then
-            echo "::warning::Keys are present but no provider test ran to success. Check the secret values."
+          if [ "$red" = 1 ]; then
+            echo "::error::A provider smoke test failed in a way that indicates a real regression in nimbalyst."
+            exit 1
           fi
-          echo "Provider smoke complete."
+          echo "Provider smoke OK (no regressions)."

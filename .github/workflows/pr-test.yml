@@ -1,0 +1,161 @@
+name: pr-test
+
+# Tier 1 health checks against OPEN pull requests on the upstream repo
+# (nimbalyst/nimbalyst), BEFORE they merge. For each open PR it fetches the PR
+# head from upstream and runs the same unit tests + typecheck that upstream CI
+# runs, giving a per-PR red/green dashboard. This is most useful for fork PRs
+# whose CI upstream has not approved or run yet (GitHub holds first-time
+# contributor fork workflows for maintainer approval).
+#
+# SECURITY: PR code comes from forks and is untrusted, and the test/build steps
+# below deliberately execute it (npm ci lifecycle scripts, vitest, tsc). This
+# workflow uses NO secrets and a read-only token, and the token is scoped only
+# to the fetch step, so untrusted code can never read a secret or a writable
+# token. The only residual is compute/network abuse, bounded by schedule-only
+# triggers (never auto-on-open), max-parallel, and a per-job timeout. Provider
+# integration tests (which need secrets) run only on main, post-merge, in
+# provider-smoke.yml. Do not add secrets to this workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Single PR number to test (blank = all open PRs)'
+        required: false
+        type: string
+      limit:
+        description: 'Max PRs to test when testing all'
+        required: false
+        default: '8'
+        type: string
+  schedule:
+    - cron: '41 7 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UPSTREAM: nimbalyst/nimbalyst
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+      count: ${{ steps.list.outputs.count }}
+    steps:
+      - name: List open upstream PRs
+        id: list
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_PR: ${{ github.event.inputs.pr }}
+          INPUT_LIMIT: ${{ github.event.inputs.limit }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_PR:-}" ]; then
+            arr=$(gh pr view "$INPUT_PR" -R "$UPSTREAM" --json number,title \
+                  | jq -c '[{number}]')
+          else
+            limit="${INPUT_LIMIT:-8}"
+            arr=$(gh pr list -R "$UPSTREAM" --state open --limit "$limit" \
+                  --json number,title,isDraft \
+                  | jq -c '[ .[] | select(.isDraft | not) | {number} ]')
+          fi
+          n=$(echo "$arr" | jq 'length')
+          echo "count=$n" >> "$GITHUB_OUTPUT"
+          echo "matrix={\"include\":$arr}" >> "$GITHUB_OUTPUT"
+          echo "Discovered $n open PR(s) to test."
+          echo "$arr"
+
+  test:
+    needs: discover
+    if: needs.discover.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    name: "PR #${{ matrix.number }}"
+    steps:
+      - name: Fetch upstream PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ matrix.number }}
+        run: |
+          set -euo pipefail
+          git init -q .
+          git config advice.detachedHead false
+          git remote add upstream "https://github.com/${UPSTREAM}.git"
+          git fetch -q --depth 1 upstream "refs/pull/${PR_NUMBER}/head"
+          git checkout -q FETCH_HEAD
+          echo "PR #${PR_NUMBER} @ $(git rev-parse --short HEAD)"
+
+      # No npm cache here on purpose: this job runs untrusted fork code, so we
+      # avoid sharing a mutable cache surface across runs.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension-sdk
+        working-directory: packages/extension-sdk
+        run: npm run build
+
+      - name: Unit tests
+        run: npm run test:unit -- --run
+
+      - name: Public extension SDK smoke checks
+        run: npm run extension-sdk:check-public --if-present
+
+      - name: Build runtime
+        working-directory: packages/runtime
+        run: npm run build
+
+      - name: Typecheck
+        env:
+          PR_NUMBER: ${{ matrix.number }}
+        run: |
+          set -uo pipefail
+          fail=0
+          for dir in \
+            packages/electron \
+            packages/runtime \
+            packages/extension-sdk \
+            packages/extensions/pdf-viewer \
+            packages/extensions/extension-dev-kit \
+            packages/extensions/datamodellm \
+            packages/extensions/csv-spreadsheet; do
+            if [ -f "$dir/tsconfig.json" ]; then
+              echo "::group::tsc $dir"
+              ( cd "$dir" && npx --no-install tsc --noEmit ) || fail=1
+              echo "::endgroup::"
+            fi
+          done
+          if [ "$fail" != 0 ]; then
+            echo "::error::Typecheck failed for PR #${PR_NUMBER}"
+            exit 1
+          fi
+
+  summary:
+    needs: [discover, test]
+    if: always() && needs.discover.result == 'success' && needs.discover.outputs.count != '0'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize
+        run: |
+          {
+            echo "## PR test results"
+            echo ""
+            echo "Tested ${{ needs.discover.outputs.count }} open upstream PR(s). Matrix result: ${{ needs.test.result }}."
+            echo "See each 'PR #<n>' job above for its individual red/green."
+          } >> "$GITHUB_STEP_SUMMARY"
