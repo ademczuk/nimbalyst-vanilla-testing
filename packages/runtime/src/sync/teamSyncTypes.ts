@@ -87,6 +87,22 @@ export interface TeamSyncConfig {
   encryptionKey?: CryptoKey;
 
   /**
+   * NIM-906/910: retained legacy org keys, used ONLY in `server-managed` mode to
+   * read PRE-MIGRATION doc-index titles. Titles registered before the team
+   * flipped to server-managed are still AES ciphertext — the TeamRoom passes
+   * them through unchanged with their original (non-empty) iv, since the server
+   * never held the zero-knowledge org key and so cannot re-key them.
+   *
+   * This is an ARRAY because the org key may have been ROTATED while the team
+   * was still legacy-e2e, so different titles can be encrypted under different
+   * org-key EPOCHS (current + archived). We try each candidate key until one
+   * decrypts; only when ALL fail do we surface the row as `decryptFailed`
+   * (locked) instead of raw base64. A client holding the right epoch can also
+   * re-register the recovered title as plaintext via `backfillLegacyTitles()`.
+   */
+  legacyOrgKeys?: CryptoKey[];
+
+  /**
    * Fingerprint of the current org key (`SHA-256(rawKey).slice(0,32)`),
    * attached to every doc-index write so the server can enforce key-epoch
    * alignment during rotation. May be `null` while the host adapter is

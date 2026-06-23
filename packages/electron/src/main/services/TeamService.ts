@@ -1338,6 +1338,71 @@ export async function autoWrapForNewMembers(orgId: string): Promise<void> {
   }
 }
 
+/**
+ * NIM-913: repair stranded members by FORCE re-wrapping the CURRENT org key for
+ * EVERY active member, overwriting any stale envelope.
+ *
+ * Unlike `autoWrapForNewMembers` (which only wraps members with NO envelope),
+ * this re-wraps members who already have an envelope but on the WRONG epoch —
+ * the exact case left behind when a key rotation's per-member re-wrap failed for
+ * someone, stranding them on the old key so they can't decrypt current-epoch
+ * data (e.g. shared doc-index titles).
+ *
+ * Must run from a device that HOLDS THE CURRENT key: it is gated on the local
+ * key matching the server's current fingerprint (wrapping a stale key for
+ * everyone would spread split-brain encryption), and `upload-envelope` is
+ * admin-gated server-side. The server upserts envelopes, so this safely
+ * overwrites. Returns per-member outcome counts.
+ */
+export async function rewrapOrgKeyForAllMembers(
+  orgId: string,
+): Promise<{ rewrapped: number; skipped: number; failed: string[] }> {
+  const localFp = getOrgKeyFingerprint(orgId);
+  if (!localFp) throw new Error('No local org key — open the workspace as a member who holds the team key.');
+
+  const orgJwt = await getOrgScopedJwt(orgId);
+
+  // Gate: only redistribute if OUR key is the server's current epoch. Otherwise
+  // we'd overwrite everyone's good envelopes with a stale key.
+  const fpResp = await fetchTeamApi(`/api/teams/${orgId}/org-key-fingerprint`, 'GET', undefined, orgId) as { fingerprint: string | null };
+  if (fpResp.fingerprint && fpResp.fingerprint !== localFp) {
+    throw new Error(
+      `This device holds a stale team key (${localFp.slice(0, 8)}…), not the current one (${fpResp.fingerprint.slice(0, 8)}…). ` +
+      'Run the repair from the admin device that performed the key rotation.',
+    );
+  }
+
+  const { members } = await listMembers(orgId);
+  const activeMembers = members.filter(m => m.status !== 'pending');
+
+  logger.main.info('[TeamService] NIM-913 re-wrap: redistributing current org key to', activeMembers.length, 'active member(s)');
+
+  let rewrapped = 0;
+  let skipped = 0;
+  const failed: string[] = [];
+  for (const member of activeMembers) {
+    try {
+      const memberPubKey = await fetchMemberPublicKey(member.memberId, orgJwt);
+      const memberFingerprint = await fingerprintIdentityKey(memberPubKey);
+      const trustStatus = getMemberTrustStatus(orgId, member.memberId, memberFingerprint);
+      if (trustStatus === 'fingerprint-changed') {
+        logger.main.warn('[TeamService] NIM-913 re-wrap: skipping', member.email || member.memberId, '-- identity key changed; manual re-verification required');
+        skipped += 1;
+        continue;
+      }
+      const envelope = await wrapOrgKeyForMember(orgId, memberPubKey);
+      await uploadEnvelope(orgId, member.memberId, envelope, orgJwt);
+      if (trustStatus === 'unverified') markMemberVerified(orgId, member.memberId, memberFingerprint);
+      rewrapped += 1;
+    } catch (err) {
+      logger.main.warn('[TeamService] NIM-913 re-wrap failed for member:', member.memberId, err);
+      failed.push(member.email || member.memberId);
+    }
+  }
+  logger.main.info('[TeamService] NIM-913 re-wrap complete: rewrapped', rewrapped, 'skipped', skipped, 'failed', failed.length);
+  return { rewrapped, skipped, failed };
+}
+
 // ============================================================================
 // IPC Handler Registration
 // ============================================================================
@@ -1739,6 +1804,19 @@ export function registerTeamHandlers(): void {
     try {
       await autoWrapForNewMembers(orgId);
       return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // NIM-913: admin repair — force re-wrap the current org key for ALL active
+  // members, fixing members stranded on a stale epoch by a failed rotation
+  // re-wrap. Must be run from a device holding the current key (gated inside).
+  safeHandle('team:rewrap-all-member-keys', async (_event, orgId: string) => {
+    if (!isAuthenticated()) return { success: false, error: 'Not authenticated' };
+    try {
+      const result = await rewrapOrgKeyForAllMembers(orgId);
+      return { success: true, ...result };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }

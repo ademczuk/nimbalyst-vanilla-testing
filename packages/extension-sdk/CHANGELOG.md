@@ -16,7 +16,7 @@ The SDK is versioned independently of the Nimbalyst app. Each release declares i
 
 ### Added
 
-- `ExtensionAITool.readOnly?: boolean` — declares an editor-scoped tool as read-only so the host skips the post-run save flush. Prevents a hidden editor (mounted to serve a tool against a file that isn't open) from overwriting an out-of-band write with a stale buffer. Default (unset) is treated as mutating, so existing tools are unaffected.
+- `ExtensionAITool.access` declares whether a tool uses filesystem, editor-read, or editor-write access; `readOnly` remains as a compatibility alias.
 
 ## [0.2.0]
 

@@ -576,9 +576,38 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
     return tracker?.sync?.mode || 'local';
   }, [item?.primaryType]);
 
+  // Whether THIS item is shared with the team. For `shared`-mode types every
+  // item is always shared; for `hybrid` it's per-item, driven by the `share`
+  // flag (surfaced under customFields by rowToTrackerItem). Legacy items that
+  // were pushed to the room before the explicit flag existed (sync_status
+  // 'synced'/'pending') count as shared so they keep collaborating.
+  const isItemShared = useMemo(() => {
+    if (!item) return false;
+    if (syncMode === 'shared') return true;
+    if (syncMode === 'local') return false;
+    // Custom fields (including the `share` flag) are merged into `fields` on
+    // the TrackerRecord.
+    const f: any = item.fields ?? {};
+    const share = f.share && typeof f.share === 'object' ? f.share : null;
+    // An EXPLICIT flag is authoritative -- trust it immediately (so an unshare
+    // reads as local even before the room state propagates).
+    const hasExplicit =
+      f.shared === true ||
+      (share && (share.status === 'team' || share.status === 'private' || share.body === 'team' || share.body === 'private'));
+    if (hasExplicit) {
+      return f.shared === true || share?.status === 'team' || share?.body === 'team';
+    }
+    // No explicit flag: a legacy item already pushed to the room (sync_status
+    // 'synced'/'pending') counts as shared so it keeps collaborating.
+    return item.syncStatus === 'synced' || item.syncStatus === 'pending';
+  }, [item, syncMode]);
+
   const contentMode = useMemo(() => {
     if (!item || !isNativeItem(item)) return 'file-backed' as const;
     if (syncMode === 'local') return 'local-pglite' as const;
+    // Hybrid trackers are per-item: an unshared hybrid item edits locally and
+    // never connects its body room. (Sharing flips this to collaborative.)
+    if (syncMode === 'hybrid' && !isItemShared) return 'local-pglite' as const;
     // Shared/hybrid trackers need a team for collaborative editing. Without
     // one, content is purely local. While the team check is still pending
     // (`teamOrgId === undefined`) stay in collaborative mode so the loading
@@ -586,7 +615,57 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
     // clobbered if a team is then discovered.
     if (teamOrgId === null) return 'local-pglite' as const;
     return 'collaborative' as const;
-  }, [item, syncMode, teamOrgId]);
+  }, [item, syncMode, teamOrgId, isItemShared]);
+
+  // The per-item "Share with team" toggle is offered only for hybrid native
+  // items in a workspace that has a team. `shared` types are always shared (no
+  // choice) and `local` types never sync.
+  // Native items + file-backed plans/decisions (frontmatter/import) can be
+  // shared. Inline trackers (#bug[...]) are always local -- promote them first.
+  const canToggleShare = Boolean(
+    item &&
+    editable &&
+    (isNativeItem(item) || item.source === 'frontmatter' || item.source === 'import') &&
+    syncMode === 'hybrid' &&
+    typeof teamOrgId === 'string'
+  );
+  // File-backed plans/decisions can be UNSHARED safely (the row re-projects from
+  // the file as local). Native items cannot yet: the sync engine's unshare path
+  // deletes the local row, so unsharing a native item would lose it. So a
+  // shared native item's toggle is locked (share is one-way until the engine
+  // gains a "remove from room, keep local" primitive).
+  const isFileBacked = Boolean(item && (item.source === 'frontmatter' || item.source === 'import'));
+  const unshareLocked = isItemShared && !isFileBacked;
+  const [sharePending, setSharePending] = useState(false);
+  const handleToggleShare = useCallback(async () => {
+    if (!item || sharePending) return;
+    const next = !isItemShared;
+    // Guard: never attempt to unshare a native item (would delete it).
+    if (!next && !(item.source === 'frontmatter' || item.source === 'import')) return;
+    setSharePending(true);
+    try {
+      const res = await window.electronAPI.documentService.setTrackerItemShared({
+        itemId: item.id,
+        shared: next,
+      });
+      if (!res?.success) throw new Error(res?.error || 'Share toggle failed');
+      errorNotificationService.showInfo(
+        next ? 'Shared with team' : 'Made local',
+        next
+          ? 'This item is now in your team’s shared tracker.'
+          : 'This item is now local-only and was removed from the team tracker.',
+        { duration: 3000 }
+      );
+    } catch (err) {
+      console.error('[TrackerItemDetail] Failed to toggle share:', err);
+      errorNotificationService.showError(
+        'Share failed',
+        err instanceof Error ? err.message : String(err)
+      );
+    } finally {
+      setSharePending(false);
+    }
+  }, [item, isItemShared, sharePending]);
 
   // Collaborative content editing for team-synced items. Dormant unless the
   // workspace actually has a team -- see useTrackerContentCollab for the
@@ -606,6 +685,7 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
     syncMode,
     teamMemberCount: teamMembers.length,
     teamOrgId,
+    itemShared: isItemShared,
   });
 
   // Track whether the collab provider has ever reached 'connected' for this
@@ -1156,6 +1236,32 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
           })()}
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {canToggleShare && (
+            <button
+              className={`flex items-center gap-1 px-2 py-1 rounded text-[12px] font-medium ${
+                isItemShared
+                  ? 'bg-[var(--nim-primary)]/15 text-[var(--nim-primary)] hover:bg-[var(--nim-primary)]/25'
+                  : 'text-nim-muted hover:bg-nim-tertiary'
+              } disabled:opacity-50`}
+              onClick={handleToggleShare}
+              disabled={sharePending || unshareLocked}
+              title={
+                unshareLocked
+                  ? 'Shared with your team. Unsharing native items from the UI isn’t supported yet.'
+                  : isItemShared
+                    ? 'Shared with your team — click to make this item local-only'
+                    : 'Share this item with your team so they can review it'
+              }
+              data-testid="tracker-share-toggle"
+              aria-pressed={isItemShared}
+            >
+              <MaterialSymbol
+                icon={sharePending ? 'hourglass_empty' : isItemShared ? 'group' : 'group_add'}
+                size={16}
+              />
+              <span>{isItemShared ? 'Shared' : 'Share'}</span>
+            </button>
+          )}
           {teamOrgId && (
             <button
               className="p-1 rounded hover:bg-nim-tertiary text-nim-muted"

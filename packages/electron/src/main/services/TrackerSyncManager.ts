@@ -432,10 +432,13 @@ export async function reinitializeTrackerSync(workspacePath: string): Promise<vo
  *      runs in plaintext pass-through, and the on-connect backfill re-uploads
  *      the marked items; `pushPendingSchemas` re-uploads the marked schemas.
  *
- * NOTE (documents): shared documents/doc-index titles re-seed on the same
- * reconnect (TeamSync re-registers titles on the next title write; a Yjs doc
- * re-compacts as plaintext when its client next elects). A future enhancement
- * can force an explicit document re-seed; tracker data is the priority path.
+ * NOTE (documents): doc-index TITLES self-heal (NIM-906) — on the next
+ * server-managed reconnect, a client holding the legacy org key decrypts the
+ * pre-migration ciphertext titles and re-registers them as plaintext, so the
+ * server re-keys them under the DEK and broadcasts clean titles to the team.
+ * Document BODIES re-compact as plaintext when their Yjs client next elects.
+ * The migrating caller must hold the legacy org key (enforced above) so this
+ * healing can actually happen.
  *
  * Returns the orgId and how many items were marked for re-push. Requires the
  * caller to be a team admin (enforced by the server REST gate).
@@ -457,14 +460,29 @@ export async function migrateTeamToServerManaged(
   const db = getDatabase();
   if (!db) throw new Error('Database not available');
 
-  const docRows = await db.query<{ n: number | string }>(
-    `SELECT COUNT(*) AS n FROM collab_local_origins WHERE org_id = $1`,
-    [orgId],
-  );
-  const linkedDocCount = Number(docRows.rows[0]?.n ?? 0);
-  if (linkedDocCount > 0) {
+  // NIM-906: doc-index TITLES and document BODIES written before the flip stay
+  // AES-ciphertext on the server (it never held the zero-knowledge org key, so
+  // it cannot re-key them). Only a client that still holds the legacy org key
+  // can recover the plaintext and re-register it (TeamSync self-heals titles;
+  // bodies re-compact as plaintext on next elect). So the precondition for a
+  // CLEAN cutover is that THIS migrating client holds the legacy org key —
+  // not that no docs are linked (the old guard blocked on linked docs yet did
+  // nothing to guarantee the data could actually be healed, and silently left
+  // the index as ciphertext when an admin migrated from a device that had no
+  // local bindings).
+  let legacyKey = await getOrgKey(orgId);
+  if (!legacyKey) {
+    try {
+      legacyKey = await fetchAndUnwrapOrgKey(orgId, await getOrgScopedJwt(orgId));
+    } catch {
+      // fall through to the guard below
+    }
+  }
+  if (!legacyKey) {
     throw new Error(
-      `Cannot update encryption yet: ${linkedDocCount} linked shared document${linkedDocCount === 1 ? '' : 's'} still need document migration support.`,
+      'Cannot update encryption: this device does not have the team’s current encryption key, ' +
+      'so existing shared documents could not be re-encrypted. Migrate from a device that has ' +
+      'been an active member of this team (or ask an admin to re-share keys), then retry.',
     );
   }
 

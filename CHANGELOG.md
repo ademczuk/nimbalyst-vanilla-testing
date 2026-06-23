@@ -20,6 +20,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 <!-- Removed features go here -->
 
+## [0.66.3] - 2026-06-23
+
+
+### Added
+<!-- New features go here -->
+- Share a plan with your team straight from the tracker — a Share toggle in the tracker item view publishes the plan to the team's shared tracker.
+- Team admins can re-share the current encryption key with all members from Settings → Security & encryption, fixing teammates who saw "Encrypted document (key unavailable)".
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- Extension AI tools (such as OpenSCAD and Replicad) no longer revert your recent file edits by saving stale editor content over them.
+- Shared document names no longer show as scrambled text after a team turns on managed encryption, and are recovered even when the team's encryption key was rotated.
+
+### Removed
+<!-- Removed features go here -->
+
 ## [0.66.2] - 2026-06-22
 
 

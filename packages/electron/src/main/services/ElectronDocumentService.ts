@@ -29,6 +29,7 @@ import {
   updateTrackerInFrontmatter,
   updateInlineTrackerItem,
   removeInlineTrackerItem,
+  setShareInFrontmatter,
   EXTENSION_OWNED_KEYS,
   LEGACY_KEY_TO_TYPE,
   buildFullDocumentTrackerId,
@@ -1379,6 +1380,14 @@ export class ElectronDocumentService implements DocumentService {
       const fmShared = (resolved.trackerData as Record<string, any>).shared;
       if (fmShare !== undefined) nextData.share = fmShare; else delete nextData.share;
       if (fmShared !== undefined) nextData.shared = fmShared; else delete nextData.shared;
+      // The sync round-trip nests the flag under `customFields.share`, and
+      // isTrackerItemShared lets the nested value win. Mirror the file's intent
+      // there too, so removing `share` from frontmatter actually unshares (the
+      // file is the source of truth for a frontmatter-backed item).
+      if (nextData.customFields && typeof nextData.customFields === 'object') {
+        if (fmShare !== undefined) nextData.customFields.share = fmShare;
+        else delete nextData.customFields.share;
+      }
 
       // Detect a share-flag flip (NIM-876). A pure share toggle has no tracked-field
       // change, so it must still force a write + reconcile.
@@ -1496,13 +1505,20 @@ export class ElectronDocumentService implements DocumentService {
           );
         }
       } else if (isTrackerSyncActive(workspace)) {
-        // Unshare (live): remove from the team room and reset the local row.
-        // Clearing `sync_id` ensures the backfill won't re-process it.
-        await unsyncTrackerItem(item.id, workspace);
+        // Unshare (live): reset the local row FIRST so the unshare always lands
+        // locally even if the room delete is slow/erroring, then remove from the
+        // team room best-effort. Clearing `sync_id` keeps the backfill from
+        // re-processing it.
+        // console.log('[DocumentService] reconcile UNSHARE(live) resetting row', rowId);
         await database.query(
           `UPDATE tracker_items SET sync_status = 'local', sync_id = NULL WHERE id = $1`,
           [rowId],
         );
+        try {
+          await unsyncTrackerItem(item.id, workspace);
+        } catch (unsyncErr) {
+          console.error('[DocumentService] reconcile unsync (room delete) failed; local row already reset:', unsyncErr);
+        }
       } else {
         // Unshare (offline): `unsyncTrackerItem` would no-op with no engine, so
         // resetting straight to 'local' (NIM-880) stranded the deletion -- the
@@ -1804,6 +1820,197 @@ export class ElectronDocumentService implements DocumentService {
     this.trackerItemWatchers.forEach(callback => callback(changeEvent));
 
     return updated;
+  }
+
+  /**
+   * Flip a tracker item's team-share flag from the UI — the per-item "Share
+   * with team" toggle for `hybrid` trackers (e.g. plans). Writes the canonical
+   * `share` flag into the item's data and reconciles the team TrackerRoom:
+   * sharing pushes the item (its body rides the `tracker-content/<id>` room the
+   * open detail editor seeds once it becomes collaborative); unsharing tombstones
+   * it from the room and resets the local row to `local`.
+   *
+   * Native DB items only. File-backed (frontmatter) plans carry their share flag
+   * in the markdown and are reconciled by `reconcileFrontmatterShare` on save.
+   */
+  async setTrackerItemShared(itemId: string, shared: boolean): Promise<TrackerItem> {
+    const row = await this.resolveTrackerRowForPublicId(itemId, { createProjectionForFullDocument: true });
+    if (!row) {
+      throw new Error(`Tracker item not found: ${itemId}`);
+    }
+    const shareFlag = shared
+      ? { status: 'team', body: 'team' }
+      : { status: 'private', body: 'private' };
+
+    // File-backed plans/decisions (`fm:<type>:<path>`) carry their canonical
+    // share flag in the markdown frontmatter. Write ONLY the top-level `share`
+    // key (via setShareInFrontmatter) so the plan extension's own frontmatter
+    // block is left untouched -- updateTrackerItemInFile would migrate the
+    // legacy `planStatus:` block and reshuffle the file.
+    //
+    // Reconcile the room push EXPLICITLY here rather than rely on the
+    // file-change rescan: we also write the flag to the DB row below, so by the
+    // time the rescan runs captureFrontmatterTrackerTransition sees no change
+    // and skips its reconcile. reconcileFrontmatterShare pushes the item (and
+    // seeds its file body) on share, or tombstones it on unshare.
+    if ((row.source === 'frontmatter' || row.source === 'import') && (row.source_ref || row.document_path)) {
+      const relativePath = row.source_ref || row.document_path;
+      const fullPath = path.join(this.workspacePath, relativePath);
+      try {
+        const content = await fs.readFile(fullPath, 'utf-8');
+        const updatedContent = setShareInFrontmatter(content, shared ? shareFlag : null);
+        await fs.writeFile(fullPath, updatedContent, 'utf-8');
+      } catch (err) {
+        throw new Error(`Failed to write share flag to ${relativePath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Mirror the flag into the DB row so the UI + reconcile see it at once.
+      // Deliberately do NOT bump the row's `updated` column -- sharing is not a
+      // content edit and must not advance the plan's "updated" timestamp.
+      //
+      // Clear/set BOTH the top-level `share` and the nested `customFields.share`:
+      // the sync round-trip stores the flag nested, and isTrackerItemShared makes
+      // the nested value win -- so an unshare that only cleared the top level
+      // would leave a stale nested `team` flag and the item would re-sync.
+      const fmData = typeof row.data === 'string' ? JSON.parse(row.data) : (row.data || {});
+      if (shared) {
+        fmData.share = shareFlag;
+        fmData.customFields = {
+          ...(fmData.customFields && typeof fmData.customFields === 'object' ? fmData.customFields : {}),
+          share: shareFlag,
+        };
+      } else {
+        delete fmData.share;
+        if (fmData.customFields && typeof fmData.customFields === 'object') {
+          delete fmData.customFields.share;
+        }
+      }
+      fmData.shared = false;
+      await database.query(
+        `UPDATE tracker_items SET data = $1 WHERE id = $2`,
+        [JSON.stringify(fmData), row.id],
+      );
+      const fmResult = await database.query<any>(`SELECT * FROM tracker_items WHERE id = $1`, [row.id]);
+      const fmItem = this.rowToTrackerItem(fmResult.rows[0]);
+
+      await this.reconcileFrontmatterShare(fmItem, row.id, relativePath, shared);
+
+      // Re-read so the emitted item reflects the final sync_status.
+      const finalResult = await database.query<any>(`SELECT * FROM tracker_items WHERE id = $1`, [row.id]);
+      const finalItem = this.rowToTrackerItem(finalResult.rows[0]);
+      this.trackerItemWatchers.forEach(callback => callback({
+        added: [], updated: [finalItem], removed: [], timestamp: new Date(),
+      }));
+      return finalItem;
+    }
+
+    // Native (DB-backed) item. Unsharing a native item is BLOCKED for now: the
+    // sync engine has no "remove from room, keep local" primitive -- unsync goes
+    // through engine.deleteItem, which tombstones the local row too. A file-backed
+    // plan re-projects from its file, but a native item would be permanently
+    // deleted. Until a real unshare primitive lands, refuse native unshare so the
+    // UI/data can't lose an item. (Native SHARE is fine.)
+    if (!shared) {
+      throw new Error(
+        'Unsharing a native tracker item is not supported yet (it would delete the item). ' +
+        'Only file-backed plans/decisions can be unshared from the UI.',
+      );
+    }
+
+    const data = typeof row.data === 'string' ? JSON.parse(row.data) : (row.data || {});
+
+    // Write the flag in BOTH storage shapes. The sync round-trip stores custom
+    // fields nested under `data.customFields`, and `extractItemCustomFields`
+    // makes the nested value WIN over the top-level one -- so writing only the
+    // top level would leave a stale nested `team` flag on unshare and the item
+    // would still read as shared. Keep both consistent.
+    data.share = shareFlag;
+    data.customFields = {
+      ...(data.customFields && typeof data.customFields === 'object' ? data.customFields : {}),
+      share: shareFlag,
+    };
+    data.shared = false; // drop any legacy boolean flag
+    data.lastModifiedBy = getCurrentIdentity(row.workspace);
+
+    await database.query(
+      `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
+      [JSON.stringify(data), row.id],
+    );
+
+    // Read back for the reconcile (it needs the share flag for the policy gate).
+    let result = await database.query<any>(`SELECT * FROM tracker_items WHERE id = $1`, [row.id]);
+    let item = this.rowToTrackerItem(result.rows[0]);
+
+    await this.reconcileItemShare(item, row.id, shared);
+
+    // Re-read AFTER reconcile so the emitted item carries the final sync_status
+    // (synced/pending on share, local on unshare) -- otherwise the renderer's
+    // "is this item shared" check would lag a beat behind on the room state.
+    result = await database.query<any>(`SELECT * FROM tracker_items WHERE id = $1`, [row.id]);
+    item = this.rowToTrackerItem(result.rows[0]);
+    this.trackerItemWatchers.forEach(callback => callback({
+      added: [],
+      updated: [item],
+      removed: [],
+      timestamp: new Date(),
+    }));
+
+    return item;
+  }
+
+  /**
+   * Push or remove a native tracker item from the team TrackerRoom when its
+   * per-item `share` flag flips. Mirrors `reconcileFrontmatterShare` minus the
+   * file-body seed (a native item's body is seeded by the live collaborative
+   * editor that mounts once the item becomes shared).
+   *
+   *   - share + sync live    -> syncTrackerItem (push to room)
+   *   - share + offline      -> mark pending (reconnect backfill pushes it)
+   *   - unshare + sync live  -> unsyncTrackerItem + reset row to local
+   *   - unshare + offline    -> mark pending (reconnect backfill tombstones it)
+   */
+  private async reconcileItemShare(item: TrackerItem, rowId: string, nowShared: boolean): Promise<void> {
+    const workspace = item.workspace || this.workspacePath;
+    try {
+      if (nowShared) {
+        const policy = getEffectiveTrackerSyncPolicy(workspace, item.type);
+        // Respect the type policy: a `local` type never shares even if flagged.
+        if (!shouldSyncTrackerItem(policy, item)) return;
+        if (isTrackerSyncActive(workspace)) {
+          await syncTrackerItem(item);
+        } else {
+          await database.query(
+            `UPDATE tracker_items SET sync_status = 'pending' WHERE id = $1`,
+            [rowId],
+          );
+        }
+      } else if (isTrackerSyncActive(workspace)) {
+        // Unshare (live): reset the local row FIRST so the unshare always lands
+        // locally even if the room delete is slow/erroring, then remove from the
+        // team room best-effort. Clearing `sync_id` keeps the backfill from
+        // re-processing it.
+        // console.log('[DocumentService] reconcile UNSHARE(live) resetting row', rowId);
+        await database.query(
+          `UPDATE tracker_items SET sync_status = 'local', sync_id = NULL WHERE id = $1`,
+          [rowId],
+        );
+        try {
+          await unsyncTrackerItem(item.id, workspace);
+        } catch (unsyncErr) {
+          console.error('[DocumentService] reconcile unsync (room delete) failed; local row already reset:', unsyncErr);
+        }
+      } else {
+        // Unshare (offline): mark pending so the reconnect backfill sees a
+        // previously-shared (sync_id set) but now-unflagged item and issues the
+        // room tombstone (NIM-880).
+        await database.query(
+          `UPDATE tracker_items SET sync_status = 'pending' WHERE id = $1`,
+          [rowId],
+        );
+      }
+    } catch (err) {
+      console.error('[DocumentService] reconcileItemShare failed:', err);
+    }
   }
 
   /**
@@ -3394,6 +3601,20 @@ export function setupDocumentServiceHandlers(resolver: DocumentServiceResolver) 
       return { success: true, item };
     } catch (error) {
       console.error('[DocumentService] update-tracker-item failed:', error);
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // Per-item "Share with team" toggle for hybrid trackers (e.g. plans).
+  safeHandle('document-service:set-tracker-item-shared', async (event, payload: {
+    itemId: string;
+    shared: boolean;
+  }) => {
+    try {
+      const item = await requireDocumentService(event).setTrackerItemShared(payload.itemId, payload.shared);
+      return { success: true, item };
+    } catch (error) {
+      console.error('[DocumentService] set-tracker-item-shared failed:', error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   });

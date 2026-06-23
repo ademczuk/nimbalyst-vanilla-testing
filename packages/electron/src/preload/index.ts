@@ -766,6 +766,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       updates: Record<string, any>;
       syncMode?: string;
     }) => ipcRenderer.invoke('document-service:update-tracker-item', payload) as Promise<{ success: boolean; item?: any; error?: string }>,
+    setTrackerItemShared: (payload: {
+      itemId: string;
+      shared: boolean;
+    }) => ipcRenderer.invoke('document-service:set-tracker-item-shared', payload) as Promise<{ success: boolean; item?: any; error?: string }>,
     updateTrackerItemContent: (payload: {
       itemId: string;
       content: any;
@@ -1392,6 +1396,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     reshareKey: (orgId: string, memberId: string) => ipcRenderer.invoke('team:reshare-key', orgId, memberId),
     refreshMyKey: (orgId: string) => ipcRenderer.invoke('team:refresh-my-key', orgId),
     autoWrapNewMembers: (orgId: string) => ipcRenderer.invoke('team:auto-wrap-new-members', orgId),
+    // NIM-913: admin repair — force re-wrap the current org key for all members.
+    rewrapAllMemberKeys: (orgId: string) => ipcRenderer.invoke('team:rewrap-all-member-keys', orgId),
   },
 
   // Epic H1: org / project access model. `canAccess` is the single client-side

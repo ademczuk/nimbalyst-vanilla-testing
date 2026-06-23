@@ -41,6 +41,27 @@ export function SecurityEncryptionSection({ orgId, workspacePath, isAdmin }: Pro
   const [mode, setMode] = useState<KeyCustodyMode | null>(null);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [repairState, setRepairState] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
+  const [repairMsg, setRepairMsg] = useState<string | null>(null);
+
+  // NIM-913: force re-wrap the current org key for every member, repairing
+  // anyone stranded on a stale key epoch (e.g. a failed rotation re-wrap) so
+  // they can decrypt current-epoch data again. Must run from a device holding
+  // the current team key; the main process enforces that and reports back.
+  const runRepair = useCallback(async () => {
+    setRepairState('running');
+    setRepairMsg(null);
+    try {
+      const res = await (window as any).electronAPI?.team?.rewrapAllMemberKeys?.(orgId);
+      if (!res?.success) throw new Error(res?.error || 'Repair failed');
+      setRepairState('done');
+      const failedNote = res.failed?.length ? ` (${res.failed.length} could not be reached)` : '';
+      setRepairMsg(`Re-distributed the team key to ${res.rewrapped} member${res.rewrapped === 1 ? '' : 's'}${failedNote}. Affected members should reopen the workspace.`);
+    } catch (err) {
+      setRepairState('error');
+      setRepairMsg(err instanceof Error ? err.message : String(err));
+    }
+  }, [orgId]);
 
   const refreshMode = useCallback(async () => {
     try {
@@ -131,6 +152,35 @@ export function SecurityEncryptionSection({ orgId, workspacePath, isAdmin }: Pro
         </p>
       )}
 
+      {/* NIM-913: admin repair for members stranded on a stale key epoch. */}
+      {!loading && isAdmin && (
+        <div className="mt-3 pt-3 border-t border-[var(--nim-border)]">
+          <div className="flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="text-[12.5px] font-medium text-[var(--nim-text)]">Repair member keys</div>
+              <p className="m-0 mt-0.5 text-[11.5px] text-[var(--nim-text-muted)] leading-snug">
+                Re-share the current team key with every member. Fixes teammates seeing
+                &ldquo;Encrypted document (key unavailable)&rdquo;. Run this from a device that can read the team&apos;s shared content.
+              </p>
+            </div>
+            <button
+              type="button"
+              data-testid="repair-member-keys-button"
+              disabled={repairState === 'running'}
+              onClick={() => { void runRepair(); }}
+              className="shrink-0 px-3 py-1.5 rounded-md text-[12.5px] font-semibold bg-[var(--nim-bg-tertiary)] text-[var(--nim-text)] border border-[var(--nim-border)] hover:bg-[var(--nim-bg-hover)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {repairState === 'running' ? 'Repairing…' : 'Repair member keys'}
+            </button>
+          </div>
+          {repairMsg && (
+            <p className={`m-0 mt-2 text-[11.5px] leading-snug ${repairState === 'error' ? 'text-[var(--nim-error)]' : 'text-[var(--nim-success)]'}`}>
+              {repairMsg}
+            </p>
+          )}
+        </div>
+      )}
+
       {modalOpen && (
         <MigrationModal
           orgId={orgId}
@@ -182,6 +232,19 @@ function MigrationModal({
         throw new Error(res?.error || 'Migration failed');
       }
       setItemsMarked(typeof res.itemsMarked === 'number' ? res.itemsMarked : null);
+
+      // NIM-906: reconnect the doc-index provider in server-managed mode so it
+      // picks up the legacy org key and self-heals pre-migration ciphertext
+      // titles (re-registering them as plaintext) right after the cutover,
+      // rather than leaving the shared-document list as base64 garbage.
+      try {
+        const { destroyTeamSync, initSharedDocuments } = await import('../../../store/atoms/collabDocuments');
+        destroyTeamSync(workspacePath);
+        await initSharedDocuments(workspacePath);
+      } catch (reconnectErr) {
+        console.warn('[H2Migration] post-migration doc-index reconnect failed:', reconnectErr);
+      }
+
       setState('done');
       onMigrated();
     } catch (err) {

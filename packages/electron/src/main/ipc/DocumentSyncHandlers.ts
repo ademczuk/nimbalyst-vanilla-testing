@@ -14,7 +14,7 @@ import { logger } from '../utils/logger';
 import { getCollabSyncWsUrl, getCollabSyncHttpUrl } from '../utils/collabSyncUrl';
 import { isAuthenticated, getStytchUserId, getUserEmail, getAuthState, getPersonalOrgId, getPersonalSessionJwt, refreshPersonalSession } from '../services/StytchAuthService';
 import { findTeamForWorkspace, getOrgScopedJwt } from '../services/TeamService';
-import { getOrgKey, getOrgKeyFingerprint, getOrCreateIdentityKeyPair, uploadIdentityKeyToOrg, fetchAndUnwrapOrgKey, clearOrgKey, fetchTeamKeyStatus } from '../services/OrgKeyService';
+import { getOrgKey, getOrgKeyFingerprint, getOrCreateIdentityKeyPair, uploadIdentityKeyToOrg, fetchAndUnwrapOrgKey, clearOrgKey, fetchTeamKeyStatus, getArchivedOrgKeys } from '../services/OrgKeyService';
 import { getWorkspaceState, updateWorkspaceState } from '../utils/store';
 import { getPersonalDocSyncConfig, isSyncEnabled } from '../services/SyncManager';
 import { resolveCollabDocumentType } from './collabDocumentTypeResolver';
@@ -799,6 +799,12 @@ export function registerDocumentSyncHandlers(): void {
 
     let orgKeyBase64 = '';
     let orgKeyFingerprint: string | null = null;
+    // NIM-906/910: legacy org keys for reading PRE-MIGRATION doc-index TITLE
+    // rows in server-managed mode (titles written before the flip are still AES
+    // ciphertext, passed through by the server with their original iv). The org
+    // key may have ROTATED while the team was legacy-e2e, so titles can be under
+    // different epochs — we pass ALL candidate epochs (current + archived).
+    const legacyOrgKeysBase64: string[] = [];
     if (!serverManaged) {
       let encryptionKey = await getOrgKey(orgId);
       if (!encryptionKey) {
@@ -821,6 +827,39 @@ export function registerDocumentSyncHandlers(): void {
       orgKeyFingerprint = (await getOrgKeyFingerprint(orgId)) ?? null;
     } else {
       logger.main.info('[DocumentSyncHandlers] index for', orgId, 'is server-managed; skipping ECDH org-key unwrap');
+      // NIM-906/910: gather EVERY candidate legacy org-key epoch so the renderer
+      // can read (and self-heal) pre-migration ciphertext titles, even when the
+      // org key was rotated and titles span epochs. If none are available, those
+      // titles surface as locked entries rather than raw base64 -- never a crash.
+      const seen = new Set<string>();
+      const pushKey = async (key: CryptoKey | null | undefined) => {
+        if (!key) return;
+        const raw = Buffer.from(await crypto.subtle.exportKey('raw', key)).toString('base64');
+        if (!seen.has(raw)) { seen.add(raw); legacyOrgKeysBase64.push(raw); }
+      };
+      const pushRaw = (rawBase64: string) => {
+        if (rawBase64 && !seen.has(rawBase64)) { seen.add(rawBase64); legacyOrgKeysBase64.push(rawBase64); }
+      };
+      try {
+        // Refresh to the CURRENT org key from the server (the cached one may be a
+        // stale epoch that predates a rotation -- the bug behind NIM-910).
+        try {
+          const orgJwt = await getOrgScopedJwt(orgId);
+          await getOrCreateIdentityKeyPair();
+          await pushKey(await fetchAndUnwrapOrgKey(orgId, orgJwt));
+        } catch (fetchErr) {
+          logger.main.info('[DocumentSyncHandlers] could not refresh current org key for index:', fetchErr);
+        }
+        // Cached current key (may differ from the freshly fetched one).
+        await pushKey(await getOrgKey(orgId));
+        // All archived epochs from prior rotations.
+        for (const archived of getArchivedOrgKeys(orgId)) {
+          pushRaw(archived.rawKeyBase64);
+        }
+      } catch (err) {
+        logger.main.info('[DocumentSyncHandlers] no legacy org keys for server-managed index (pre-migration titles may show as locked):', err);
+      }
+      logger.main.info('[DocumentSyncHandlers] index server-managed legacy key epochs available:', legacyOrgKeysBase64.length);
     }
     const serverUrl = getCollabSyncWsUrl();
 
@@ -837,6 +876,9 @@ export function registerDocumentSyncHandlers(): void {
         teamProjectId: team.teamProjectId ?? null,
         keyCustody: serverManaged ? 'server-managed' : 'legacy-e2e',
         orgKeyBase64,
+        // NIM-906/910: every candidate legacy org-key epoch (current + archived),
+        // present only in server-managed mode; empty when none are recoverable.
+        legacyOrgKeysBase64,
         orgKeyFingerprint,
         serverUrl,
         userId,

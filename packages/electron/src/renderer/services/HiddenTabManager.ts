@@ -332,6 +332,7 @@ class HiddenTabManager {
     // out-of-band write and thereby mask a divergence.
     let isDirty = false;
     let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingFlushResolvers: Array<() => void> = [];
     let lastKnownContent: string | null = null;
 
     // Subscribers
@@ -393,28 +394,40 @@ class HiddenTabManager {
     // read disk fresh; if it diverged from our baseline an external write landed
     // and we reload instead of overwriting. Only when disk still matches our
     // baseline do we let the editor persist its (genuinely mutated) content.
-    const conflictAwareFlush = () => {
+    const conflictAwareFlush = (): Promise<void> => {
       if (autoSaveTimer) clearTimeout(autoSaveTimer);
-      // Small debounce to batch rapid consecutive changes (e.g., add_elements batches)
-      autoSaveTimer = setTimeout(async () => {
-        const diskContent = await readDiskContent();
-        if (diskContent !== null && lastKnownContent !== null && diskContent !== lastKnownContent) {
-          // External write landed since we loaded -- do not clobber it; reload.
-          lastKnownContent = diskContent;
-          for (const cb of fileChangeCallbacks) {
-            try { cb(diskContent); } catch (err) { console.warn(`${LOG_PREFIX} reload callback failed`, err); }
+      return new Promise((resolve) => {
+        pendingFlushResolvers.push(resolve);
+        // Small debounce to batch rapid consecutive changes (e.g., add_elements batches)
+        autoSaveTimer = setTimeout(async () => {
+          try {
+            const diskContent = await readDiskContent();
+            if (diskContent !== null && lastKnownContent !== null && diskContent !== lastKnownContent) {
+              // External write landed since we loaded -- do not clobber it; reload.
+              lastKnownContent = diskContent;
+              for (const cb of fileChangeCallbacks) {
+                try { cb(diskContent); } catch (err) { console.warn(`${LOG_PREFIX} reload callback failed`, err); }
+              }
+              return;
+            }
+            // Only persist when the editor actually has pending edits. A read-only
+            // tool leaves the editor clean; flushing its (possibly mid-reload)
+            // buffer would be a needless and potentially clobbering write. This is
+            // the extension-agnostic safety net behind the `readOnly` tool flag.
+            if (!isDirty) return;
+            for (const cb of saveRequestCallbacks) {
+              try { await cb(); } catch (err) { console.warn(`${LOG_PREFIX} save request failed`, err); }
+            }
+          } finally {
+            const resolvers = pendingFlushResolvers;
+            pendingFlushResolvers = [];
+            autoSaveTimer = null;
+            for (const pendingResolve of resolvers) {
+              pendingResolve();
+            }
           }
-          return;
-        }
-        // Only persist when the editor actually has pending edits. A read-only
-        // tool leaves the editor clean; flushing its (possibly mid-reload)
-        // buffer would be a needless and potentially clobbering write. This is
-        // the extension-agnostic safety net behind the `readOnly` tool flag.
-        if (!isDirty) return;
-        for (const cb of saveRequestCallbacks) {
-          try { await cb(); } catch (err) { console.warn(`${LOG_PREFIX} save request failed`, err); }
-        }
-      }, 100);
+        }, 100);
+      });
     };
 
     const host: EditorHost = {
