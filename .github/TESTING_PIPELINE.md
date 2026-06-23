@@ -1,66 +1,74 @@
 # Testing pipeline
 
-This repo is an auto-synced public mirror of `nimbalyst/nimbalyst` (see `.github/workflows/upstream-sync.yml`). On top of the mirror it runs a tiered test pipeline, so every merged upstream PR gets checked here. Results are shareable with the nimbalyst dev team and can later be proposed back upstream.
+This repo is an auto-synced public mirror of `nimbalyst/nimbalyst` (see `.github/workflows/upstream-sync.yml`). On top of the mirror it runs a tiered test pipeline so upstream code gets checked here, both on `main` after each sync and on open PRs before they merge. Results are shareable with the nimbalyst dev team and can later be proposed back upstream.
 
 ## How a sync triggers the tests
 
-`upstream-sync` pushes merged upstream commits to `main` using a Personal Access Token. A PAT push (unlike the default `GITHUB_TOKEN`) triggers downstream workflows, so the tiers below fire automatically after each hourly sync. No extra glue is needed.
+`upstream-sync` pushes merged upstream commits to `main` using a Personal Access Token. A PAT push (unlike the default `GITHUB_TOKEN`) triggers downstream workflows, so the `main`-tier tests fire automatically after each hourly sync.
 
-## Tier 1: health checks (no secrets, free)
+## Tier 1: health checks on main (no secrets, free)
 
-`ci.yml` is upstream's own workflow, re-enabled on this mirror. On ubuntu it runs:
+`ci.yml` is upstream's own workflow, re-enabled here. On ubuntu it runs unit tests (vitest), the TypeScript typecheck across electron / runtime / extension-sdk and four extensions, and the iOS transcript-bundle build smoke. No secrets, free on public repos. Fast red/green on every sync.
 
-- unit tests (vitest)
-- TypeScript typecheck (`tsc --noEmit`) across electron, runtime, extension-sdk and four extensions
-- the iOS transcript-bundle build smoke
+## Tier 1b: health checks on open PRs (no secrets)
 
-No secrets, free on public repos. This is the fast red/green on every sync.
+`pr-test.yml` tests open pull requests on upstream BEFORE they merge. It lists open PRs, fetches each PR head (`refs/pull/N/head`), and runs the same unit tests + typecheck per PR, producing a per-PR red/green. This is most useful for fork PRs whose CI upstream has not approved or run yet (GitHub holds first-time-contributor fork workflows for maintainer approval).
 
-## Tier 2: provider integration smoke (your API keys)
+Runs daily and on demand:
 
-`provider-smoke.yml` drives nimbalyst's live provider classes through `ProviderFactory` against the real Claude and OpenAI APIs, proving each provider can complete a tool-using turn (the `applyDiff` edit flow). It reuses upstream's own gated integration tests, so it adds no test code to the mirror.
+```
+# test all open PRs (default limit 8)
+gh workflow run pr-test.yml -R ademczuk/nimbalyst-vanilla-testing
 
-Safe by default: with no keys set, the job skips and stays green. It only spends on real API calls when you add keys AND the synced change touched `packages/runtime` or `packages/electron` (or you run it nightly / manually).
+# test a single PR
+gh workflow run pr-test.yml -R ademczuk/nimbalyst-vanilla-testing -f pr=669
+```
 
-### Enable it (the one thing you need to do)
+SECURITY: PR code comes from forks and is untrusted, and these steps execute it (npm ci scripts, vitest, tsc). The workflow carries NO secrets and a read-only token scoped to the fetch step only, so untrusted code can never read a key. It runs on schedule and manual dispatch only, never automatically when a PR opens.
 
-Add API keys as repo secrets:
+## Tier 2: provider integration smoke on main (your API keys)
+
+`provider-smoke.yml` drives nimbalyst's live provider classes through `ProviderFactory` against the real Claude and OpenAI APIs, proving each provider can complete a tool-using turn (the `applyDiff` edit flow). It reuses upstream's own gated integration tests, so it adds no test code.
+
+A failing provider test is classified, not blindly failed:
+
+- pass: the real provider call completed the tool flow.
+- infra: the provider was unreachable (no credit, quota, rate limit, auth, or outage). Treated as NEUTRAL, the job stays green with a warning. A billing or outage problem never reads as a nimbalyst regression.
+- regression: the provider misbehaved inside nimbalyst's code. The job goes RED.
+- missing: a tracked upstream test was renamed or removed. The job goes RED so the smoke target gets fixed.
+
+Safe by default: with no keys set, the job skips and stays green. Keys are scoped to only the two provider steps, never `npm ci` or the build. Real calls happen on AI-path syncs, nightly, and on manual dispatch.
+
+### Enable it
 
 ```
 gh secret set ANTHROPIC_API_KEY -R ademczuk/nimbalyst-vanilla-testing
 gh secret set OPENAI_API_KEY    -R ademczuk/nimbalyst-vanilla-testing
-```
-
-Then run it once to confirm:
-
-```
 gh workflow run provider-smoke.yml -R ademczuk/nimbalyst-vanilla-testing
 ```
 
 ### Use API keys, not your CLI subscription logins
 
-Put provider API keys in GitHub Secrets. Do not try to reuse your Claude Code / Codex / Gemini OAuth subscription logins in CI:
+Put provider API keys in GitHub Secrets. Do not reuse your Claude Code / Codex / Gemini OAuth subscription logins in CI:
 
 - Anthropic restricts Pro/Max OAuth credentials to Claude Code and claude.ai. Using them in another tool, and a CI harness is another tool, breaks the Consumer Terms.
-- Subscription OAuth tokens are built for interactive refresh. They expire and do not refresh cleanly in a headless runner, so the pipeline would flake on token death instead of on real regressions.
+- Subscription OAuth tokens are built for interactive refresh. They expire and do not refresh cleanly in a headless runner.
 
-API keys cost a few cents per run, runner minutes are free on public repos, and the smoke uses cheap models (`claude-sonnet-4-6`, `gpt-4o-mini`).
+Also note: a Claude Pro/Max subscription does not fund the developer API. API access needs separately purchased prepaid credit at console.anthropic.com under Plans & Billing. The smoke uses cheap models (`claude-sonnet-4-6`, `gpt-4o-mini`); runner minutes are free on public repos. This does not change the app rule that nimbalyst must never read API keys from environment variables; that rule is about the product runtime, and test code legitimately reads keys from the CI env and passes them in explicitly.
 
-This does not change the app rule that nimbalyst must never read API keys from environment variables. That rule is about the product runtime. Test code legitimately reads keys from the CI env and passes them into the provider explicitly.
+### Gemini, Codex, and Copilot
 
-### Gemini
+These three are not API-key providers, so they cannot ride the Tier 2 smoke:
 
-There is no first-class Gemini provider in nimbalyst today. Gemini is reachable only through the OpenCode CLI, or the gemini-antigravity extension (which uses your local `~/.gemini` OAuth and a spawned language server). So Gemini cannot ride this simple API-key smoke. Covering it needs a heavier, host-provisioned test (see roadmap).
+- Gemini: no first-class provider; reachable only through the OpenCode CLI or the gemini-antigravity extension (your local `~/.gemini` OAuth and a spawned language server).
+- Codex (`openai-codex`): Codex CLI login.
+- Copilot (`copilot-cli`): GitHub Copilot CLI login (`copilot --acp --stdio`), tied to your Copilot subscription, no API key.
+
+Covering them means the Tier 3 E2E path: install and authenticate each CLI inside the runner and drive the real Electron app (like upstream's `RUN_REAL_CODEX` spec).
 
 ## Roadmap: Tier 3, end-to-end (Playwright + Electron)
 
-Upstream ships Playwright E2E specs, including a real-Codex spec gated by `RUN_REAL_CODEX=1`, that launch the actual Electron app. Running these in CI needs:
-
-- `ubuntu-22.04` (the 24.04 default breaks Electron's sandbox), `xvfb` for a virtual display, and a CI-only `--no-sandbox` launch flag in `packages/electron/e2e/helpers.ts`
-- the Vite dev server on port 5273 started in the background
-- `workers: 1` (PGLite allows a single connection)
-
-This is the full "install and use the product" tier. It needs a small code change to the Electron launch args, so it is a follow-up rather than part of this first cut.
+Upstream ships Playwright E2E specs (including a real-Codex spec gated by `RUN_REAL_CODEX=1`) that launch the actual Electron app. Running these in CI needs `ubuntu-22.04` (the 24.04 default breaks Electron's sandbox), `xvfb` for a virtual display, a CI-only `--no-sandbox` launch flag in `packages/electron/e2e/helpers.ts`, the Vite dev server on port 5273 started in the background, and `workers: 1` (PGLite allows a single connection). This is the full "install and use the product" tier and the path that covers the CLI-subscription agents above. It needs a small code change to the launch args, so it is a follow-up.
 
 ## Proposing this upstream
 
@@ -73,6 +81,7 @@ When the pipeline is proven here, it can go to nimbalyst as a PR with no code co
 ## Workflow status on this mirror
 
 - `upstream-sync` - enabled (hourly mirror)
-- `ci.yml` - enabled (Tier 1)
-- `provider-smoke.yml` - enabled (Tier 2, skips until you add keys)
+- `ci.yml` - enabled (Tier 1, main health)
+- `pr-test.yml` - enabled (Tier 1b, open-PR health)
+- `provider-smoke.yml` - enabled (Tier 2, provider integration; skips until keys are set)
 - `electron-build.yml`, `internal-build.yml`, `ios-transcript-tests.yml`, `publish-extension-sdk.yml` - disabled (need org signing/publish secrets, or burn macOS minutes)
