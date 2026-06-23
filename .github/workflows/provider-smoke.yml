@@ -11,7 +11,10 @@ name: provider-smoke
 #              or a non-code setup failure (native prebuild fetch) -> NEUTRAL, green
 #   regression the provider misbehaved inside nimbalyst's code -> RED
 #   missing    the tracked upstream test was renamed/removed -> RED (loud)
-# A billing or outage issue never reads as a nimbalyst regression.
+# Bias: ambiguous failures classify as regression (RED). A billing or outage
+# issue never reads as a nimbalyst regression, but a real regression is never
+# hidden as neutral. Infra signatures are textual or HTTP/status-prefixed only,
+# never bare numbers (a bare "500" collides with the test's own maxTokens: 500).
 #
 # Safe by default: with no API-key secrets set, the job skips and stays green.
 # Keys are scoped to ONLY the two provider steps, never npm ci / build.
@@ -136,8 +139,10 @@ jobs:
         run: |
           set -uo pipefail
           # Infrastructure / provider-side signatures -> NEUTRAL (not a code regression).
-          # Numeric HTTP codes are word-boundary anchored so a duration like "1429ms" never matches.
-          INFRA='credit balance is too low|insufficient_quota|exceeded your current quota|rate.?limit|rate_limit_error|overloaded|overloaded_error|service unavailable|internal server error|\b(429|500|502|503|529)\b|authentication_error|invalid x-api-key|permission_error|ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|getaddrinfo|fetch failed|prebuild|node-gyp'
+          # Textual phrases plus HTTP/status-prefixed codes only. NEVER bare numbers:
+          # a bare "500"/"429" would match this test's own "maxTokens: 500" or a
+          # duration like "1429ms" and could hide a real regression as neutral.
+          INFRA='credit balance is too low|insufficient_quota|exceeded your current quota|rate.?limit|rate_limit_error|overloaded|overloaded_error|service unavailable|internal server error|bad gateway|gateway timeout|http.?(429|5[0-9][0-9])|status.?(429|5[0-9][0-9])|authentication_error|invalid x-api-key|permission_error|ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|getaddrinfo|fetch failed|prebuild|node-gyp'
           AUTH='authentication_error|invalid x-api-key|permission_error|credit balance is too low|insufficient_quota|exceeded your current quota'
 
           classify() {
