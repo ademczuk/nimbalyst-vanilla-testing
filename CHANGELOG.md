@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Code sessions store and sync far less redundant data (no more full original-file copies on every edit), shrinking the local database and mobile transfers.
 
 ### Fixed
+- AI session status no longer stays stuck on "running" in the mobile app after a turn finishes on desktop.
 - Stop prompting to run the Gemini backend at startup; it now starts only when you actually use Gemini.
 - Remove a stray "[Full message elided...]" bubble that appeared in the mobile transcript but not on desktop.
 
