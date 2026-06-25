@@ -16,7 +16,7 @@ import { $getRoot } from 'lexical';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import type { FieldDefinition } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
-import { getRecordTitle, getRecordStatus, getRecordPriority, getRecordField, isSameIdentity } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
+import { getRecordTitle, getRecordStatus, getRecordPriority, getRecordField, isSameIdentity, isItemSharedWithTeam } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import type { TrackerIdentity } from '@nimbalyst/runtime';
 import { TrackerFieldEditor, type TeamMemberOption } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/TrackerFieldEditor';
 import type { RelationshipCandidate } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/RelationshipFieldEditor';
@@ -583,24 +583,9 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
   // 'synced'/'pending') count as shared so they keep collaborating.
   const isItemShared = useMemo(() => {
     if (!item) return false;
-    if (syncMode === 'shared') return true;
-    if (syncMode === 'local') return false;
-    // Custom fields (including the `share` flag) are merged into `fields` on
-    // the TrackerRecord.
-    const f: any = item.fields ?? {};
-    const share = f.share && typeof f.share === 'object' ? f.share : null;
-    // An EXPLICIT flag is authoritative -- trust it immediately (so an unshare
-    // reads as local even before the room state propagates).
-    const hasExplicit =
-      f.shared === true ||
-      (share && (share.status === 'team' || share.status === 'private' || share.body === 'team' || share.body === 'private'));
-    if (hasExplicit) {
-      return f.shared === true || share?.status === 'team' || share?.body === 'team';
-    }
-    // No explicit flag: a legacy item already pushed to the room (sync_status
-    // 'synced'/'pending') counts as shared so it keeps collaborating.
-    return item.syncStatus === 'synced' || item.syncStatus === 'pending';
-  }, [item, syncMode]);
+    // Single source of truth shared with the tracker table's "Shared" column.
+    return isItemSharedWithTeam(item);
+  }, [item]);
 
   const contentMode = useMemo(() => {
     if (!item || !isNativeItem(item)) return 'file-backed' as const;
