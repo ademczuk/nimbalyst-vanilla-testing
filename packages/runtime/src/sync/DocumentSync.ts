@@ -158,6 +158,10 @@ export class DocumentSyncProvider {
   private status: DocumentSyncStatus = 'disconnected';
   private lastSeq = 0;
   private synced = false;
+  // Last-writer attribution from the server (who/when last edited the content).
+  // Populated from docSyncResponse; used by the overwrite confirm before a push.
+  private lastWriterUserId: string | null = null;
+  private lastUpdatedAt: number | null = null;
   private updateObserverDispose: (() => void) | null = null;
   private awarenessStates: Map<string, AwarenessState> = new Map();
   private awarenessTimestamps: Map<string, number> = new Map();
@@ -184,6 +188,13 @@ export class DocumentSyncProvider {
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private suppressReconnect = false;
+  /**
+   * NIM-949: set when the server rejected the ws upgrade with an auth-style
+   * status (proxy forwards a close reason of `auth-rejected:<status>`). The next
+   * connect() then requests a freshly-exchanged JWT instead of replaying the
+   * cached (wrong-org / expired) token that just got rejected.
+   */
+  private forceJwtRefreshNextConnect = false;
   private queuedPendingUpdate: Uint8Array | null = null;
   private inflightPendingUpdate: Uint8Array | null = null;
   private pendingPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -251,7 +262,9 @@ export class DocumentSyncProvider {
       if (this.config.buildUrl) {
         url = this.config.buildUrl(roomId);
       } else {
-        const jwt = await this.config.getJwt();
+        const forceRefresh = this.forceJwtRefreshNextConnect;
+        this.forceJwtRefreshNextConnect = false;
+        const jwt = await this.config.getJwt(forceRefresh ? { forceRefresh: true } : undefined);
         url = appendSyncClientParams(`${serverUrl}/sync/${roomId}?token=${encodeURIComponent(jwt)}`);
       }
     } catch (err) {
@@ -295,6 +308,12 @@ export class DocumentSyncProvider {
       // clobber the new socket.
       if (this.ws !== ws) return;
       console.log('[DocumentSync] WebSocket closed, code:', event.code, 'reason:', event.reason);
+      // NIM-949: the proxy encodes an auth-style upgrade rejection as
+      // `auth-rejected:<status>`. Force a fresh JWT exchange on the next attempt
+      // so we don't re-present the same rejected (wrong-org / expired) token.
+      if (typeof event.reason === 'string' && event.reason.startsWith('auth-rejected')) {
+        this.forceJwtRefreshNextConnect = true;
+      }
       this.handleDisconnect();
     });
 
@@ -349,6 +368,20 @@ export class DocumentSyncProvider {
   /** Get the Y.Doc managed by this provider. */
   getYDoc(): Y.Doc {
     return this.ydoc;
+  }
+
+  /**
+   * The room-authed userId of whoever last applied a content update, or null if
+   * the doc has no updates yet / the server hasn't reported it. Populated from
+   * the server's docSyncResponse. Reflects the last *content* edit.
+   */
+  getLastWriterUserId(): string | null {
+    return this.lastWriterUserId;
+  }
+
+  /** When the last content update was applied (server clock, ms), or null. */
+  getLastUpdatedAt(): number | null {
+    return this.lastUpdatedAt;
   }
 
   /** Check if connected and synced. */
@@ -732,6 +765,15 @@ export class DocumentSyncProvider {
   }
 
   private async handleSyncResponse(msg: DocSyncResponseMessage): Promise<void> {
+    // Capture last-writer attribution (sent on every sync response; the value
+    // reflects the latest content update, so it's stable across pagination).
+    if (msg.lastWriterUserId !== undefined) {
+      this.lastWriterUserId = msg.lastWriterUserId;
+    }
+    if (msg.lastUpdatedAt !== undefined) {
+      this.lastUpdatedAt = msg.lastUpdatedAt;
+    }
+
     // Apply snapshot if present (covers the entire doc state up to replacesUpTo).
     // If the snapshot can't be decrypted (stale key epoch, corruption), skip it
     // and continue with the incremental updates -- a single broken payload

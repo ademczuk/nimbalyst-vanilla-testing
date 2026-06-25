@@ -2138,6 +2138,9 @@ export default function App() {
         onToggleAgentCollapsed={() => {
           toggleAgentCollapsed();
         }}
+        onToggleCollabCollapsed={() => {
+          collabModeRef.current?.toggleSidebarCollapsed();
+        }}
       />
 
       {/* Right: Main content area + Bottom Panel */}

@@ -14,6 +14,7 @@ import { logger } from '../utils/logger';
 import { getCollabSyncWsUrl, getCollabSyncHttpUrl } from '../utils/collabSyncUrl';
 import { isAuthenticated, getStytchUserId, getUserEmail, getAuthState, getPersonalOrgId, getPersonalSessionJwt, refreshPersonalSession } from '../services/StytchAuthService';
 import { findTeamForWorkspace, getOrgScopedJwt } from '../services/TeamService';
+import { getOrgIdFromJwt, getJwtExp } from '../services/jwtOrg';
 import { getOrgKey, getOrgKeyFingerprint, getOrCreateIdentityKeyPair, uploadIdentityKeyToOrg, fetchAndUnwrapOrgKey, clearOrgKey, fetchTeamKeyStatus, getArchivedOrgKeys } from '../services/OrgKeyService';
 import { getWorkspaceState, updateWorkspaceState } from '../utils/store';
 import { getPersonalDocSyncConfig, isSyncEnabled } from '../services/SyncManager';
@@ -665,9 +666,11 @@ export function registerDocumentSyncHandlers(): void {
    * Get a fresh org-scoped JWT for an org.
    * Called by the renderer's getJwt() callback during WebSocket reconnects.
    */
-  safeHandle('document-sync:get-jwt', async (_event, payload: { orgId: string }) => {
+  safeHandle('document-sync:get-jwt', async (_event, payload: { orgId: string; forceRefresh?: boolean }) => {
     try {
-      const jwt = await getOrgScopedJwt(payload.orgId);
+      // NIM-949: forceRefresh bypasses the org-JWT cache so a reconnect after an
+      // auth-style rejection re-exchanges instead of replaying a rejected token.
+      const jwt = await getOrgScopedJwt(payload.orgId, undefined, payload.forceRefresh);
       return { success: true, jwt };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
@@ -704,6 +707,24 @@ export function registerDocumentSyncHandlers(): void {
       }
     }
 
+    // NIM-949: decode the room org + the presented token so a rejected upgrade
+    // (HTTP 400) reports *why* instead of just "Unexpected server response: 400".
+    let roomOrgId: string | null = null;
+    let tokenOrgId: string | null = null;
+    let tokenExp: number | null = null;
+    try {
+      const parsed = new URL(payload.url);
+      const roomMatch = parsed.pathname.match(/org:([^:]+):doc:/);
+      roomOrgId = roomMatch ? roomMatch[1] : null;
+      const token = parsed.searchParams.get('token');
+      if (token) {
+        tokenOrgId = getOrgIdFromJwt(token);
+        tokenExp = getJwtExp(token);
+      }
+    } catch {
+      // best-effort diagnostics only
+    }
+
     try {
       const ws = new WebSocket(payload.url);
       proxiedWebSockets.set(wsId, ws);
@@ -717,6 +738,36 @@ export function registerDocumentSyncHandlers(): void {
         // Forward as string (our protocol is JSON text)
         const msg = typeof data === 'string' ? data : data.toString();
         safeSend({ wsId, type: 'message', data: msg });
+      });
+
+      // NIM-949: the server rejected the upgrade with a non-101 status (e.g. 400
+      // for a wrong-org / expired token). The `ws` 'error' event only carries
+      // "Unexpected server response: <status>"; read the body here, log the auth
+      // context, and forward the status so the client can force a fresh JWT.
+      ws.on('unexpected-response', (_req, res) => {
+        const status = res.statusCode ?? 0;
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          const body = Buffer.concat(chunks).toString().slice(0, 512);
+          const orgMismatch = !!roomOrgId && !!tokenOrgId && roomOrgId !== tokenOrgId;
+          logger.main.warn('[DocumentSyncHandlers] WS proxy upgrade rejected', {
+            wsId,
+            status,
+            roomOrgId,
+            tokenOrgId,
+            tokenExp,
+            orgMismatch,
+            expired: tokenExp ? tokenExp * 1000 < Date.now() : null,
+            body,
+          });
+          safeSend({ wsId, type: 'unexpected-response', status, roomOrgId, tokenOrgId });
+          // Surface as a close so the client's reconnect path runs. The reason
+          // encodes the auth status so DocumentSync can force a JWT refresh.
+          safeSend({ wsId, type: 'close', code: 1006, reason: `auth-rejected:${status}` });
+          proxiedWebSockets.delete(wsId);
+          try { ws.terminate(); } catch { /* already closed */ }
+        });
       });
 
       ws.on('close', (code: number, reason: Buffer) => {

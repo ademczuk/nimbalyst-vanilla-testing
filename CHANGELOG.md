@@ -15,10 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Search box on the Installed Extensions settings pane to filter the list.
 - Optional "Shared" column in the tracker table shows whether each item is shared with the team or local-only.
 - Database Browser maintenance action to reclaim space used by old Claude Code sessions, with an optional compaction step.
+- Copy a shareable link to a team shared document from the editor header.
 
 ### Changed
 - Claude Code sessions store and sync far less redundant data (no more full original-file copies on every edit), shrinking the local database and mobile transfers.
 - Updating a tracker item no longer links it to the current AI session unless you ask, so sessions stop accumulating items the agent merely touched.
+- Collab mode's document tree and AI chat panels can now be collapsed, and the layout is remembered per workspace.
 
 ### Fixed
 - AI session status no longer stays stuck on "running" in the mobile app after a turn finishes on desktop.
@@ -28,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tracker type counts no longer briefly flash "0" while tracker data is still loading.
 - Reopened secondary projects now scope the tracker list to the correct project instead of the startup project's items.
 - Fixed tracker field corruption on the SQLite backend caused by merging JSON updates.
+- Shared documents no longer get stuck on a blank "Offline – unsynced changes" editor when a session token was scoped to the wrong org.
 
 ### Removed
 <!-- Removed features go here -->

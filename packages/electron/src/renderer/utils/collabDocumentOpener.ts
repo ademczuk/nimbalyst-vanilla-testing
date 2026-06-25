@@ -37,7 +37,7 @@ export interface CollabDocumentConfig {
    */
   legacyDocumentKey?: CryptoKey;
   serverUrl: string;
-  getJwt: () => Promise<string>;
+  getJwt: (opts?: { forceRefresh?: boolean }) => Promise<string>;
   /** Optional extra query appended to revision-history HTTP requests. */
   urlExtraQuery?: string;
   userId: string;
@@ -373,8 +373,8 @@ export async function resolveCollabConfigForUri(
       userEmail,
       pendingUpdateBase64,
       createWebSocket: hasWsProxy ? createProxiedWebSocket : undefined,
-      getJwt: async () => {
-        const jwtResult = await window.electronAPI.documentSync.getJwt(orgId);
+      getJwt: async (opts) => {
+        const jwtResult = await window.electronAPI.documentSync.getJwt(orgId, opts?.forceRefresh);
         if (!jwtResult.success || !jwtResult.jwt) {
           throw new Error(`Failed to get JWT: ${jwtResult.error}`);
         }
@@ -469,8 +469,8 @@ export async function openCollabDocumentViaIPC(options: {
     initialContent: options.initialContent,
     pendingUpdateBase64,
     createWebSocket: hasWsProxy ? createProxiedWebSocket : undefined,
-    getJwt: async () => {
-      const jwtResult = await window.electronAPI.documentSync.getJwt(orgId);
+    getJwt: async (opts) => {
+      const jwtResult = await window.electronAPI.documentSync.getJwt(orgId, opts?.forceRefresh);
       if (!jwtResult.success || !jwtResult.jwt) {
         throw new Error(`Failed to get JWT: ${jwtResult.error}`);
       }

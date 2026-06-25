@@ -208,6 +208,35 @@ const CollabStatusBar: React.FC<{
 };
 
 // ---------------------------------------------------------------------------
+// Hydration gate overlay (NIM-949)
+//
+// Shared docs (especially server-only ones with no local file backing) must not
+// present a blank, EDITABLE surface before the room hydrates -- typing into an
+// unloaded doc is how a transient auth/connection blip became real lost work.
+// Until first hydration we cover the editor with a non-interactive overlay that
+// blocks pointer input and shows a loading/reconnecting state. Subscribes to the
+// status atom directly so its text stays live without re-rendering the editor.
+// ---------------------------------------------------------------------------
+
+const CollabHydrationOverlay: React.FC<{ filePath: string }> = ({ filePath }) => {
+  const status = useAtomValue(collabConnectionStatusAtom(filePath));
+  const reconnecting = status === 'error' || status === 'disconnected' || status === 'offline-unsynced';
+  return (
+    <div
+      className="collab-hydration-overlay absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 text-nim-muted"
+      style={{ background: 'var(--nim-bg)', cursor: 'progress' }}
+      // Block all pointer interaction with the un-hydrated editor beneath.
+      onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+    >
+      <span className="material-symbols-outlined animate-spin" style={{ fontSize: '20px' }}>progress_activity</span>
+      <span className="text-sm">
+        {reconnecting ? 'Reconnecting to server…' : 'Loading from server…'}
+      </span>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -365,6 +394,9 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
   // mount MarkdownEditor, then never again.
   const providerReadyRef = useRef(false);
   const [, forceUpdate] = React.useReducer(x => x + 1, 0);
+  // NIM-949: flips false->true the first time the room hydrates (status reaches
+  // 'connected'/'replaying'). Drives the hydration-gate overlay. One-time flip.
+  const [hasHydrated, setHasHydrated] = useState(false);
 
   // Create the DocumentSyncProvider and CollabLexicalProvider on mount.
   // IMPORTANT: We do NOT call connect() here. CollaborationPlugin calls
@@ -400,6 +432,13 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         console.log('[CollaborativeTabEditor] Status change:', status);
         // Write to Jotai atom -- only CollabStatusBar re-renders
         store.set(collabConnectionStatusAtom(filePath), status);
+        // NIM-949: the room has hydrated once it reaches a synced state. From
+        // then on the editor is safe to interact with even if it later goes
+        // offline-unsynced (we now hold the content). setState bails out on the
+        // repeat 'connected' values, so this re-renders the editor only once.
+        if (status === 'connected' || status === 'replaying') {
+          setHasHydrated(true);
+        }
         if (isActiveRef.current && window.electronAPI?.setDocumentEdited) {
           window.electronAPI.setDocumentEdited(hasCollabUnsyncedChanges(status));
         }
@@ -924,7 +963,12 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
       />
 
       {/* Editor area */}
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        {/* NIM-949: gate editing until the room hydrates, so a server-only doc
+            never presents a blank editable surface during a connection/auth blip. */}
+        {providerReadyRef.current && !hasHydrated && (
+          <CollabHydrationOverlay filePath={filePath} />
+        )}
         {!providerReadyRef.current ? (
           <div className="flex items-center justify-center h-full text-nim-muted">
             Connecting to document...

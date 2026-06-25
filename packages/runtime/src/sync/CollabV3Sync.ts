@@ -1445,6 +1445,18 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
     // Decrypt and emit messages as remote changes
     if (session.encryptionKey && response.messages.length > 0) {
+      // Collapse per-message decrypt failures into one summary. A burst here
+      // means the server holds messages written under a PRIOR personal-key
+      // seed epoch (keychain reset / reinstall / an unpaired device): the seed
+      // is a local random 32 bytes (CredentialService) and the key is
+      // PBKDF2(seed, 'nimbalyst:'+personalUserId) -- a different seed/user can't
+      // authenticate them (AES-GCM OperationError). Unrecoverable without the
+      // old seed. Record sessionId + createdAt range so the affected session and
+      // epoch boundary are identifiable instead of 45 anonymous error lines.
+      let decryptFailures = 0;
+      let oldestFailedAt: number | null = null;
+      let newestFailedAt: number | null = null;
+      let firstFailedId = '';
       for (const encrypted of response.messages) {
         try {
           const decrypted = await decryptMessage(encrypted, session.encryptionKey);
@@ -1453,9 +1465,22 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           session.changeListeners.forEach((cb) =>
             cb({ type: 'message_added', message: decrypted })
           );
-        } catch (err) {
-          console.error('[CollabV3] Failed to decrypt message:', err);
+        } catch {
+          if (decryptFailures === 0) firstFailedId = encrypted.id;
+          decryptFailures++;
+          const at = new Date(encrypted.createdAt).getTime();
+          if (!Number.isNaN(at)) {
+            if (oldestFailedAt === null || at < oldestFailedAt) oldestFailedAt = at;
+            if (newestFailedAt === null || at > newestFailedAt) newestFailedAt = at;
+          }
         }
+      }
+      if (decryptFailures > 0) {
+        console.warn(
+          `[CollabV3] ${decryptFailures}/${response.messages.length} messages undecryptable for session ${sessionId} ` +
+          `(prior personal-key seed epoch; unrecoverable). firstId=${firstFailedId} ` +
+          `createdAt=${oldestFailedAt ? new Date(oldestFailedAt).toISOString() : '?'}..${newestFailedAt ? new Date(newestFailedAt).toISOString() : '?'}`,
+        );
       }
     }
 

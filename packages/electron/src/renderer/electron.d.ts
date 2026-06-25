@@ -131,7 +131,24 @@ interface PullRequestListFilters {
   search?: string;
 }
 
+interface SemanticSearchResult {
+  refType: string;
+  refId: string;
+  sourceClass: string;
+  sourcePath: string;
+  title: string;
+  snippet: string;
+  score: number;
+  signals: { dense: boolean; sparse: boolean };
+}
+
 interface ElectronAPI {
+  // Global semantic search (nimbalyst-memory). Empty/false when memory is off.
+  semanticSearch: {
+    isAvailable: (workspacePath: string) => Promise<boolean>;
+    query: (workspacePath: string, query: string, k?: number) => Promise<SemanticSearchResult[]>;
+  };
+
   // File menu callbacks
   onFileNew: (callback: () => void) => () => void;
   onFileNewInWorkspace: (callback: () => void) => () => void;
@@ -1023,6 +1040,8 @@ interface ElectronAPI {
         resolvedPath: string | null;
       } | null;
       migration?: { okCount: number; failedCount: number };
+      lastEditorId?: string | null;
+      lastEditedAt?: number | null;
     }>;
     findLocalOriginLink: (workspacePath: string, sourceFilePath: string) => Promise<{
       success: boolean;
@@ -1047,7 +1066,7 @@ interface ElectronAPI {
       } | null;
       error?: string;
     }>;
-    getJwt: (orgId: string) => Promise<{
+    getJwt: (orgId: string, forceRefresh?: boolean) => Promise<{
       success: boolean;
       jwt?: string;
       error?: string;

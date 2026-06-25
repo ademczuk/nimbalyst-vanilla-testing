@@ -38,8 +38,12 @@ export interface DocumentSyncConfig {
   /** WebSocket server URL (e.g., wss://sync.nimbalyst.com) */
   serverUrl: string;
 
-  /** Function to get fresh JWT for WebSocket auth */
-  getJwt: () => Promise<string>;
+  /**
+   * Function to get a fresh JWT for WebSocket auth.
+   * `forceRefresh` (NIM-949) bypasses any cached org-scoped token so a reconnect
+   * after an auth-style rejection (HTTP 400 wrong-org/expired) re-exchanges.
+   */
+  getJwt: (opts?: { forceRefresh?: boolean }) => Promise<string>;
 
   /** B2B organization ID */
   orgId: string;
