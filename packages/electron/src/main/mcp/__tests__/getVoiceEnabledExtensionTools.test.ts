@@ -5,6 +5,15 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('electron', () => ({ BrowserWindow: { fromId: vi.fn(() => null) } }));
 vi.mock('../../window/WindowManager', () => ({ findWindowByWorkspace: vi.fn(() => null) }));
 
+// The unknown-workspace path dynamically imports the database init + worktree
+// store for worktree resolution. Stub them so the test does not load the whole
+// (slow, native-binding) DB module graph -- otherwise it flakes on the 5s
+// default timeout under parallel load.
+vi.mock('../../database/initialize', () => ({ getDatabase: () => ({}) }));
+vi.mock('../../services/WorktreeStore', () => ({
+  createWorktreeStore: () => ({ getByPath: async () => null }),
+}));
+
 import {
   registerExtensionTools,
   getVoiceEnabledExtensionTools,

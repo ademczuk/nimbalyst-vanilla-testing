@@ -257,6 +257,8 @@ describe('createTrackerItem sync status policy', () => {
 
     mockQuery.mockResolvedValueOnce({ rows: [{ min_key: null }] }); // kanbanSortOrder MIN query
     mockQuery.mockResolvedValueOnce({ rows: [] }); // INSERT
+    mockQuery.mockResolvedValueOnce({ rows: [{ max_num: null }] }); // issue-key MAX query
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // issue-key UPDATE
     mockQuery.mockResolvedValueOnce({ rows: [makeTrackerRow({ id: 'bug-local', sync_status: 'local' })] }); // SELECT
 
     await service.createTrackerItem({
@@ -268,8 +270,9 @@ describe('createTrackerItem sync status policy', () => {
       workspace: WORKSPACE,
     });
 
-    // INSERT query is now the second call (index 1) after kanbanSortOrder
-    expect(mockQuery.mock.calls[1]?.[1]?.[4]).toBe('local');
+    // INSERT is the second query (index 1) after kanbanSortOrder; sync_status
+    // is the 6th INSERT param ($6) -- after id, type, type_tags, data, workspace.
+    expect(mockQuery.mock.calls[1]?.[1]?.[5]).toBe('local');
   });
 
   it('stores pending sync_status for shared policy items', async () => {
@@ -282,6 +285,8 @@ describe('createTrackerItem sync status policy', () => {
 
     mockQuery.mockResolvedValueOnce({ rows: [{ min_key: null }] }); // kanbanSortOrder MIN query
     mockQuery.mockResolvedValueOnce({ rows: [] }); // INSERT
+    mockQuery.mockResolvedValueOnce({ rows: [{ max_num: null }] }); // issue-key MAX query
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // issue-key UPDATE
     mockQuery.mockResolvedValueOnce({ rows: [makeTrackerRow({ id: 'bug-shared', sync_status: 'pending' })] }); // SELECT
 
     await service.createTrackerItem({
@@ -293,8 +298,9 @@ describe('createTrackerItem sync status policy', () => {
       workspace: WORKSPACE,
     });
 
-    // INSERT query is now the second call (index 1) after kanbanSortOrder
-    expect(mockQuery.mock.calls[1]?.[1]?.[4]).toBe('pending');
+    // INSERT is the second query (index 1) after kanbanSortOrder; sync_status
+    // is the 6th INSERT param ($6) -- after id, type, type_tags, data, workspace.
+    expect(mockQuery.mock.calls[1]?.[1]?.[5]).toBe('pending');
   });
 });
 
