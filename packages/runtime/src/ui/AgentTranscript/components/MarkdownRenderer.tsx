@@ -9,6 +9,8 @@ import {
 } from '../contributions';
 import { escapeCurrencyDollars } from '../utils/escapeCurrencyDollars';
 import { rehypeAutolinkFilePaths } from '../markdown/rehypeAutolinkFilePaths';
+import { TrackerReferenceChip } from '../../../plugins/TrackerLinkPlugin';
+import { TRACKER_REFERENCE_URN_SCHEME } from '../../../plugins/TrackerLinkPlugin/TrackerReferenceNode';
 
 // Inject MarkdownRenderer styles once (for syntax highlighting, scrollbar, and overflow wrapper)
 const injectMarkdownRendererStyles = () => {
@@ -292,6 +294,17 @@ function isAbsoluteFilePath(filePath: string): boolean {
 }
 
 /**
+ * Returns the tracker reference key for a `nimbalyst://<key>` href, or null.
+ */
+export function parseTrackerReferenceHref(href?: string): string | null {
+  if (!href) return null;
+  const trimmed = href.trim();
+  if (!trimmed.startsWith(TRACKER_REFERENCE_URN_SCHEME)) return null;
+  const key = trimmed.slice(TRACKER_REFERENCE_URN_SCHEME.length);
+  return key.length > 0 ? key : null;
+}
+
+/**
  * Resolve href to an openable local file path when it looks like a filesystem link.
  * Returns null for non-file/external links.
  */
@@ -572,6 +585,12 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           ),
           // Links
           a: ({ href, children, node }: any) => {
+            // Tracker reference links (`nimbalyst://NIM-123`) render as a live
+            // status chip instead of an anchor.
+            const trackerKey = parseTrackerReferenceHref(href);
+            if (trackerKey) {
+              return <TrackerReferenceChip referenceKey={trackerKey} />;
+            }
             // Paths wrapped by `rehypeAutolinkFilePaths` carry a marker with the
             // raw match (possibly with a :line:col suffix). They may be
             // workspace-relative, which the markdown-href resolver rejects, so

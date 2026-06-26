@@ -33,6 +33,7 @@ import type {
   DocUpdateAckMessage,
 } from './documentSyncTypes';
 import { appendSyncClientParams } from './syncClientInfo';
+import { encodeDocumentRoomId, isValidCollabDocumentId } from './collabDocumentId';
 
 // ============================================================================
 // Base64 / Encryption Utilities
@@ -158,6 +159,10 @@ export class DocumentSyncProvider {
   private status: DocumentSyncStatus = 'disconnected';
   private lastSeq = 0;
   private synced = false;
+  // Last-writer attribution from the server (who/when last edited the content).
+  // Populated from docSyncResponse; used by the overwrite confirm before a push.
+  private lastWriterUserId: string | null = null;
+  private lastUpdatedAt: number | null = null;
   private updateObserverDispose: (() => void) | null = null;
   private awarenessStates: Map<string, AwarenessState> = new Map();
   private awarenessTimestamps: Map<string, number> = new Map();
@@ -184,6 +189,13 @@ export class DocumentSyncProvider {
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private suppressReconnect = false;
+  /**
+   * NIM-949: set when the server rejected the ws upgrade with an auth-style
+   * status (proxy forwards a close reason of `auth-rejected:<status>`). The next
+   * connect() then requests a freshly-exchanged JWT instead of replaying the
+   * cached (wrong-org / expired) token that just got rejected.
+   */
+  private forceJwtRefreshNextConnect = false;
   private queuedPendingUpdate: Uint8Array | null = null;
   private inflightPendingUpdate: Uint8Array | null = null;
   private pendingPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -244,14 +256,27 @@ export class DocumentSyncProvider {
     this.setStatus('connecting');
 
     const { serverUrl, orgId, documentId } = this.config;
-    const roomId = `org:${orgId}:doc:${documentId}`;
+
+    // The documentId goes into the URL path. UUID/hex ids are already URL-safe;
+    // legacy filename-shaped ids (spaces, '%', '.') are not, so we URL-encode
+    // the segment -- the server decodes it back before addressing the DO. Warn
+    // once so legacy ids stay visible without blocking the connection.
+    if (!isValidCollabDocumentId(documentId)) {
+      console.warn(
+        `[DocumentSync] documentId ${JSON.stringify(documentId)} is not a plain ` +
+          'URL-safe id (likely a legacy filename); connecting with it URL-encoded.'
+      );
+    }
+    const roomId = encodeDocumentRoomId(orgId, documentId);
 
     let url: string;
     try {
       if (this.config.buildUrl) {
         url = this.config.buildUrl(roomId);
       } else {
-        const jwt = await this.config.getJwt();
+        const forceRefresh = this.forceJwtRefreshNextConnect;
+        this.forceJwtRefreshNextConnect = false;
+        const jwt = await this.config.getJwt(forceRefresh ? { forceRefresh: true } : undefined);
         url = appendSyncClientParams(`${serverUrl}/sync/${roomId}?token=${encodeURIComponent(jwt)}`);
       }
     } catch (err) {
@@ -295,6 +320,12 @@ export class DocumentSyncProvider {
       // clobber the new socket.
       if (this.ws !== ws) return;
       console.log('[DocumentSync] WebSocket closed, code:', event.code, 'reason:', event.reason);
+      // NIM-949: the proxy encodes an auth-style upgrade rejection as
+      // `auth-rejected:<status>`. Force a fresh JWT exchange on the next attempt
+      // so we don't re-present the same rejected (wrong-org / expired) token.
+      if (typeof event.reason === 'string' && event.reason.startsWith('auth-rejected')) {
+        this.forceJwtRefreshNextConnect = true;
+      }
       this.handleDisconnect();
     });
 
@@ -349,6 +380,20 @@ export class DocumentSyncProvider {
   /** Get the Y.Doc managed by this provider. */
   getYDoc(): Y.Doc {
     return this.ydoc;
+  }
+
+  /**
+   * The room-authed userId of whoever last applied a content update, or null if
+   * the doc has no updates yet / the server hasn't reported it. Populated from
+   * the server's docSyncResponse. Reflects the last *content* edit.
+   */
+  getLastWriterUserId(): string | null {
+    return this.lastWriterUserId;
+  }
+
+  /** When the last content update was applied (server clock, ms), or null. */
+  getLastUpdatedAt(): number | null {
+    return this.lastUpdatedAt;
   }
 
   /** Check if connected and synced. */
@@ -421,6 +466,20 @@ export class DocumentSyncProvider {
   }
 
   /**
+   * Ordered candidate keys for decrypting a legacy-e2e (non-empty-iv) row in
+   * server-managed mode. Tries the multi-epoch list first (NIM-959), then the
+   * singular legacy key, then the document key as a last resort. Duplicates are
+   * harmless (a wrong key just throws and we move on), so no dedup is needed.
+   */
+  private get legacyCandidateKeys(): CryptoKey[] {
+    const keys: CryptoKey[] = [];
+    if (this.config.legacyDocumentKeys) keys.push(...this.config.legacyDocumentKeys);
+    if (this.config.legacyDocumentKey) keys.push(this.config.legacyDocumentKey);
+    if (this.config.documentKey) keys.push(this.config.documentKey);
+    return keys;
+  }
+
+  /**
    * Encrypt bytes for the wire. Legacy: AES-256-GCM with the document key.
    * Server-managed: pass-through (base64 raw bytes, empty-string iv sentinel) —
    * the server encrypts at rest with the team DEK.
@@ -449,14 +508,27 @@ export class DocumentSyncProvider {
       if (!iv) {
         return base64ToUint8Array(encrypted);
       }
-      // Non-empty iv => legacy ciphertext that survived the migration. Decrypt
-      // with the legacy org key if we have it; otherwise surface as an error so
-      // the per-payload catch skips just this row (rather than blanking the doc).
-      const legacyKey = this.config.legacyDocumentKey ?? this.config.documentKey;
-      if (!legacyKey) {
+      // Non-empty iv => legacy ciphertext that survived the migration. The row
+      // may have been written under any past org-key epoch (the team could have
+      // rotated while still legacy-e2e), so try EVERY candidate epoch in turn --
+      // current cached key, the singular legacy key, and all archived epochs --
+      // until one AES-decrypts. If none match, surface an error so the per-
+      // payload catch skips just this row rather than blanking the doc (NIM-959).
+      const legacyKeys = this.legacyCandidateKeys;
+      if (legacyKeys.length === 0) {
         throw new Error('legacy-e2e row in server-managed doc but no legacy org key available');
       }
-      return decryptBinary(encrypted, iv, legacyKey);
+      let lastErr: unknown;
+      for (const key of legacyKeys) {
+        try {
+          return await decryptBinary(encrypted, iv, key);
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      throw lastErr instanceof Error
+        ? lastErr
+        : new Error('legacy-e2e row did not match any candidate org-key epoch');
     }
     return decryptBinary(encrypted, iv, this.config.documentKey!);
   }
@@ -732,6 +804,15 @@ export class DocumentSyncProvider {
   }
 
   private async handleSyncResponse(msg: DocSyncResponseMessage): Promise<void> {
+    // Capture last-writer attribution (sent on every sync response; the value
+    // reflects the latest content update, so it's stable across pagination).
+    if (msg.lastWriterUserId !== undefined) {
+      this.lastWriterUserId = msg.lastWriterUserId;
+    }
+    if (msg.lastUpdatedAt !== undefined) {
+      this.lastUpdatedAt = msg.lastUpdatedAt;
+    }
+
     // Apply snapshot if present (covers the entire doc state up to replacesUpTo).
     // If the snapshot can't be decrypted (stale key epoch, corruption), skip it
     // and continue with the incremental updates -- a single broken payload

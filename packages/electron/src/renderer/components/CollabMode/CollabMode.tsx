@@ -39,6 +39,7 @@ export interface CollabModeRef {
   closeActiveTab: () => void;
   reopenLastClosedTab: () => Promise<void>;
   getActiveDocumentPath: () => string | null;
+  toggleSidebarCollapsed: () => void;
 }
 
 export const CollabMode = forwardRef<CollabModeRef, CollabModeProps>(function CollabMode({
@@ -91,6 +92,8 @@ const COLLAB_CHAT_DEFAULT = 350;
 interface CollabLayout {
   sidebarWidth: number;
   chatWidth: number;
+  sidebarCollapsed: boolean;
+  chatCollapsed: boolean;
 }
 
 let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -116,9 +119,16 @@ async function loadCollabLayout(workspacePath: string): Promise<CollabLayout> {
     return {
       sidebarWidth: state?.collabLayout?.sidebarWidth ?? COLLAB_SIDEBAR_DEFAULT,
       chatWidth: state?.collabLayout?.chatWidth ?? COLLAB_CHAT_DEFAULT,
+      sidebarCollapsed: state?.collabLayout?.sidebarCollapsed ?? false,
+      chatCollapsed: state?.collabLayout?.chatCollapsed ?? false,
     };
   } catch {
-    return { sidebarWidth: COLLAB_SIDEBAR_DEFAULT, chatWidth: COLLAB_CHAT_DEFAULT };
+    return {
+      sidebarWidth: COLLAB_SIDEBAR_DEFAULT,
+      chatWidth: COLLAB_CHAT_DEFAULT,
+      sidebarCollapsed: false,
+      chatCollapsed: false,
+    };
   }
 }
 
@@ -136,9 +146,11 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
   const sharedDocuments = useAtomValue(sharedDocumentsAtom);
   const [restored, setRestored] = useState(false);
 
-  // --- Resizable panel state ---
+  // --- Resizable / collapsible panel state ---
   const [sidebarWidth, setSidebarWidth] = useState(COLLAB_SIDEBAR_DEFAULT);
   const [chatWidth, setChatWidth] = useState(COLLAB_CHAT_DEFAULT);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
 
   // Refs for sidebar resize drag (avoids re-renders during drag)
   const sidebarDragRef = useRef({ isDragging: false, startX: 0, startWidth: 0 });
@@ -225,6 +237,8 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
       if (cancelled) return;
       setSidebarWidth(layout.sidebarWidth);
       setChatWidth(layout.chatWidth);
+      setSidebarCollapsed(layout.sidebarCollapsed);
+      setChatCollapsed(layout.chatCollapsed);
     });
     return () => { cancelled = true; };
   }, [workspacePath]);
@@ -250,20 +264,37 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
       document.removeEventListener('mouseup', handleMouseUp);
       // Persist after drag ends
       setSidebarWidth((w) => {
-        persistCollabLayout(workspacePath, { sidebarWidth: w, chatWidth });
+        persistCollabLayout(workspacePath, { sidebarWidth: w, chatWidth, sidebarCollapsed, chatCollapsed });
         return w;
       });
     };
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  }, [sidebarWidth, chatWidth, workspacePath]);
+  }, [sidebarWidth, chatWidth, sidebarCollapsed, chatCollapsed, workspacePath]);
 
   // --- Chat sidebar resize handler (via ChatSidebar's onWidthChange) ---
   const handleChatWidthChange = useCallback((newWidth: number) => {
     setChatWidth(newWidth);
-    persistCollabLayout(workspacePath, { sidebarWidth, chatWidth: newWidth });
-  }, [workspacePath, sidebarWidth]);
+    persistCollabLayout(workspacePath, { sidebarWidth, chatWidth: newWidth, sidebarCollapsed, chatCollapsed });
+  }, [workspacePath, sidebarWidth, sidebarCollapsed, chatCollapsed]);
+
+  // --- Collapse toggles (left document tree + right chat panel) ---
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      persistCollabLayout(workspacePath, { sidebarWidth, chatWidth, sidebarCollapsed: next, chatCollapsed });
+      return next;
+    });
+  }, [workspacePath, sidebarWidth, chatWidth, chatCollapsed]);
+
+  const toggleChatCollapsed = useCallback(() => {
+    setChatCollapsed((prev) => {
+      const next = !prev;
+      persistCollabLayout(workspacePath, { sidebarWidth, chatWidth, sidebarCollapsed, chatCollapsed: next });
+      return next;
+    });
+  }, [workspacePath, sidebarWidth, chatWidth, sidebarCollapsed]);
 
   const handleDocumentSelect = useCallback(async (doc: SharedDocument, initialContent?: string) => {
     // Check if already open as a tab
@@ -448,28 +479,34 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
       const activeTab = tabs.find((tab) => tab.id === activeTabId);
       return activeTab?.filePath ?? null;
     },
-  }), [activeTabId, tabs, tabsActions]);
+    toggleSidebarCollapsed,
+  }), [activeTabId, tabs, tabsActions, toggleSidebarCollapsed]);
 
   const hasTabs = tabs.length > 0;
 
   return (
     <div className="collab-mode flex-1 flex flex-row overflow-hidden min-h-0">
-      {/* Left: Document sidebar (resizable) */}
-      <div style={{ width: sidebarWidth, minWidth: COLLAB_SIDEBAR_MIN, maxWidth: COLLAB_SIDEBAR_MAX }} className="shrink-0">
-        <CollabSidebar
-          workspacePath={workspacePath}
-          onDocumentSelect={handleDocumentSelect}
-          activeDocumentId={activeCollabDocumentId}
-        />
-      </div>
+      {/* Left: Document sidebar (resizable; hidden when collapsed via the
+          Shared Docs nav-gutter icon, matching Files/Agent modes) */}
+      {!sidebarCollapsed && (
+        <>
+          <div style={{ width: sidebarWidth, minWidth: COLLAB_SIDEBAR_MIN, maxWidth: COLLAB_SIDEBAR_MAX }} className="shrink-0">
+            <CollabSidebar
+              workspacePath={workspacePath}
+              onDocumentSelect={handleDocumentSelect}
+              activeDocumentId={activeCollabDocumentId}
+            />
+          </div>
 
-      {/* Left resize handle */}
-      <div
-        onMouseDown={handleSidebarMouseDown}
-        className="w-1 cursor-col-resize shrink-0 relative z-10 bg-nim-secondary"
-      >
-        <div className="w-0.5 h-full mx-auto bg-nim-border transition-colors duration-200 hover:bg-nim-accent" />
-      </div>
+          {/* Left resize handle */}
+          <div
+            onMouseDown={handleSidebarMouseDown}
+            className="w-1 cursor-col-resize shrink-0 relative z-10 bg-nim-secondary"
+          >
+            <div className="w-0.5 h-full mx-auto bg-nim-border transition-colors duration-200 hover:bg-nim-accent" />
+          </div>
+        </>
+      )}
 
       {/* Center: Tabs + editor */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
@@ -478,8 +515,11 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
             onTabClose={handleTabClose}
             onNewTab={() => {}}
             isActive={isActive}
+            onToggleAIChat={toggleChatCollapsed}
+            isAIChatCollapsed={chatCollapsed}
           >
             <TabContent
+              workspaceId={workspacePath}
               onTabClose={handleTabClose}
               onGetContentReady={handleGetContentReady}
             />
@@ -498,11 +538,13 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
         )}
       </div>
 
-      {/* Right: AI Chat sidebar (resizable via ChatSidebar built-in handle) */}
+      {/* Right: AI Chat sidebar (resizable via ChatSidebar built-in handle, collapsible) */}
       {hasTabs && (
         <ChatSidebar
           workspacePath={workspacePath}
           isActive={isActive}
+          isCollapsed={chatCollapsed}
+          onToggleCollapse={toggleChatCollapsed}
           getDocumentContext={getDocumentContext}
           onFileOpen={async (filePath) => onFileOpen(filePath)}
           width={chatWidth}

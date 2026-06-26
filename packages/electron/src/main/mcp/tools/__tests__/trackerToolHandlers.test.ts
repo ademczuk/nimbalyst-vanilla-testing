@@ -874,6 +874,32 @@ describe('handleTrackerUpdate description / collab body', () => {
     ]);
   });
 
+  it('seeds the body when description arrives via the fields bag (NIM-438)', async () => {
+    setupUpdateQueueWithDescription();
+
+    const result = await handleTrackerUpdate(
+      { id: 'NIM-1', fields: { description: 'body via fields bag' } },
+      '/tmp/ws',
+    );
+
+    expect(result.isError).toBe(false);
+
+    const updateContentSql = mockQuery.mock.calls.find(
+      (c) => /UPDATE tracker_items[\s\S]+SET content[\s\S]+body_version/.test(String(c[0])),
+    );
+    expect(updateContentSql).toBeDefined();
+
+    const cacheInsert = mockQuery.mock.calls.find(
+      (c) => /INSERT INTO tracker_body_cache/.test(String(c[0])),
+    );
+    expect(cacheInsert).toBeDefined();
+    expect(cacheInsert![1]).toEqual([
+      'bug_target',
+      1,
+      JSON.stringify('body via fields bag'),
+    ]);
+  });
+
   // The "refuse description writes when body is collaborative" tests (NIM-436)
   // were removed as part of phase 1 of the tracker-sync rewrite
   // (design/Collaboration/tracker-sync-redesign.md). With phase 5 the body
@@ -1031,5 +1057,51 @@ describe('session metadata parsing on SQLite (NIM-829)', () => {
     expect(updateCall).toBeTruthy();
     const written = JSON.parse(updateCall![1]![0] as string);
     expect(written.linkedTrackerItemIds).toEqual(['bug_b']);
+  });
+});
+
+// NIM-879: tracker_create made session-linking opt-in (NIM-408), but
+// tracker_update was left auto-linking the ambient session on every field
+// change, re-polluting sessions with unrelated items. Linking on update must
+// now require an explicit linkSession: true.
+describe('handleTrackerUpdate session linking (NIM-879)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDocumentServices.clear();
+    mockGlobalRegistry.validate.mockReturnValue({ valid: true, errors: [] });
+    vi.mocked(getEffectiveTrackerSyncPolicy).mockReturnValue({ mode: 'local', scope: 'project' });
+    vi.mocked(shouldSyncTrackerItem).mockReturnValue(false);
+    vi.mocked(isTrackerSyncActive).mockReturnValue(false);
+  });
+
+  it('does NOT link the ambient session on a status update when linkSession is omitted', async () => {
+    // Catch-all: every read returns a consistent native row so the handler walks
+    // its update path without us hand-counting each query.
+    mockQuery.mockResolvedValue({ rows: [makeRow({ id: 'bug_target', workspace: '/tmp/ws', source: 'native', document_path: '' })] });
+
+    const result = await handleTrackerUpdate(
+      { id: 'NIM-1', status: 'in-progress' },
+      '/tmp/ws',
+      'session_abc',
+    );
+
+    expect(result.isError).toBe(false);
+    const sqls = mockQuery.mock.calls.map((c) => String(c[0]));
+    expect(sqls.some((s) => s.includes('UPDATE ai_sessions'))).toBe(false);
+    expect(sqls.some((s) => s.includes('SELECT metadata FROM ai_sessions'))).toBe(false);
+  });
+
+  it('links the ambient session on update when linkSession: true', async () => {
+    mockQuery.mockResolvedValue({ rows: [makeRow({ id: 'bug_target', workspace: '/tmp/ws', source: 'native', document_path: '', metadata: '{}', data: '{}' })] });
+
+    const result = await handleTrackerUpdate(
+      { id: 'NIM-1', status: 'in-progress', linkSession: true },
+      '/tmp/ws',
+      'session_abc',
+    );
+
+    expect(result.isError).toBe(false);
+    const sqls = mockQuery.mock.calls.map((c) => String(c[0]));
+    expect(sqls.some((s) => s.includes('UPDATE ai_sessions'))).toBe(true);
   });
 });

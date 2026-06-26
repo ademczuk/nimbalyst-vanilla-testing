@@ -49,6 +49,7 @@ import {
 } from './TrackerPolicyService';
 import { computeFrontmatterTrackerTransition } from './tracker/frontmatterTrackerTransition';
 import { applyHeadlessBodyMarkdown } from './MainBodyDocService';
+import { getWorkspaceState } from '../utils/store';
 
 export interface ParsedInlineTrackerCandidate extends Omit<TrackerItem, 'id'> {
   id?: string;
@@ -2730,15 +2731,23 @@ export class ElectronDocumentService implements DocumentService {
     // Per-item decision (NIM-876): hybrid types only sync flagged items.
     const syncStatus = getInitialTrackerSyncStatus(syncPolicy, data);
 
+    // NIM-454: persist the tracker-type tag on the row so the item reliably
+    // appears in its type view and syncs correctly, instead of relying on a
+    // read-time fallback. Mirrors the MCP create path (typeTags always includes
+    // the primary type). The DB layer maps a JS array to TEXT[] on PGLite / a
+    // JSON string on better-sqlite3.
+    const typeTags: string[] = [payload.type];
+
     await database.query(
       `INSERT INTO tracker_items (
-        id, type, data, workspace, document_path, line_number,
+        id, type, type_tags, data, workspace, document_path, line_number,
         created, updated, last_indexed, sync_status,
         content, archived, source, source_ref
-      ) VALUES ($1, $2, $3, $4, '', NULL, NOW(), NOW(), NOW(), $5, $6, FALSE, $7, $8)`,
+      ) VALUES ($1, $2, $3, $4, $5, '', NULL, NOW(), NOW(), NOW(), $6, $7, FALSE, $8, $9)`,
       [
         payload.id,
         payload.type,
+        typeTags,
         JSON.stringify(data),
         payload.workspace,
         syncStatus,
@@ -2747,6 +2756,26 @@ export class ElectronDocumentService implements DocumentService {
         payload.sourceRef || null,
       ]
     );
+
+    // NIM-363: allocate a NIM-### issue key for items created through the
+    // native/UI path (quick-add) the same way the MCP create path does, so
+    // every type -- including ideas -- gets a key. Without this, manual creates
+    // had no issue key while MCP creates did.
+    try {
+      const prefix = getWorkspaceState(payload.workspace).issueKeyPrefix || 'NIM';
+      const maxResult = await database.query<{ max_num: number | null }>(
+        `SELECT MAX(issue_number) as max_num FROM tracker_items WHERE workspace = $1`,
+        [payload.workspace]
+      );
+      const nextNum = (maxResult.rows[0]?.max_num ?? 0) + 1;
+      const issueKey = `${prefix}-${nextNum}`;
+      await database.query(
+        `UPDATE tracker_items SET issue_number = $1, issue_key = $2 WHERE id = $3`,
+        [nextNum, issueKey, payload.id]
+      );
+    } catch (issueKeyError) {
+      console.error('[DocumentService] Local issue key allocation failed:', issueKeyError);
+    }
 
     const result = await database.query<any>(
       `SELECT * FROM tracker_items WHERE id = $1`,
@@ -2957,41 +2986,47 @@ export class ElectronDocumentService implements DocumentService {
         );
       }
 
-      // Upsert new/updated items
-      // console.log(`[DocumentService] Upserting ${items.length} tracker items to database`);
-      for (const item of items) {
-        // Build JSONB data object
-        const data = {
-          title: item.title,
-          description: item.description,
-          status: item.status,
-          priority: item.priority,
-          owner: item.owner,
-          tags: item.tags || [],
-          dueDate: item.dueDate,
-          created: item.created,
-          updated: item.updated
-        };
-
-        const isArchived = item.archived === true;
-
-        // console.log(`[DocumentService] Inserting tracker item: ${item.id} (${item.type})`);
-        // Only set archived on INSERT (new items default to false).
-        // On UPDATE: only set archived=true if the file explicitly says so.
-        // Never reset archived to false from re-indexing -- the DB is the authority
-        // for archive state when the file doesn't have an archived prop.
-        // On conflict: merge file-derived fields INTO existing JSONB (preserves
-        // system metadata like authorIdentity, createdByAgent, linkedSessions,
-        // activity, comments that the indexer doesn't know about).
-        const result = await database.query(
-          `INSERT INTO tracker_items (
-            id, type, data, workspace, document_path, line_number, created, updated, last_indexed, archived, archived_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
-          ON CONFLICT (id) DO UPDATE SET
-            type = $2, data = tracker_items.data || $3, workspace = $4, document_path = $5, line_number = $6, updated = NOW(), last_indexed = $7,
-            archived = CASE WHEN $8 = TRUE THEN TRUE ELSE tracker_items.archived END,
-            archived_at = CASE WHEN $8 = TRUE THEN $9 ELSE tracker_items.archived_at END`,
-          [
+      // Upsert new/updated items.
+      //
+      // NIM-875: a cold open treats every markdown file as changed and used to
+      // run one awaited INSERT ... ON CONFLICT per tracker item in a sequential
+      // loop. On a tracker-heavy project that serial N+1 flooded the single DB
+      // worker and starved the session-list query, hanging the window. Batch
+      // each file's items into a single multi-row upsert (chunked to stay under
+      // the SQLite bound-variable limit) so one file is one round-trip.
+      //
+      // Only set archived on INSERT (new items default to false). On UPDATE:
+      // only set archived=true if the file explicitly says so. Never reset
+      // archived to false from re-indexing -- the DB is the authority for
+      // archive state when the file doesn't have an archived prop. On conflict:
+      // merge file-derived fields INTO existing JSONB (preserves system metadata
+      // like authorIdentity, createdByAgent, linkedSessions, activity, comments
+      // that the indexer doesn't know about).
+      const COLS_PER_ROW = 9; // params per row; NOW(), NOW() are inlined
+      const UPSERT_CHUNK = 100; // 900 bound vars/chunk, safely under SQLite's limit
+      for (let offset = 0; offset < items.length; offset += UPSERT_CHUNK) {
+        const chunk = items.slice(offset, offset + UPSERT_CHUNK);
+        const valuesClauses: string[] = [];
+        const params: any[] = [];
+        for (let i = 0; i < chunk.length; i++) {
+          const item = chunk[i];
+          const data = {
+            title: item.title,
+            description: item.description,
+            status: item.status,
+            priority: item.priority,
+            owner: item.owner,
+            tags: item.tags || [],
+            dueDate: item.dueDate,
+            created: item.created,
+            updated: item.updated
+          };
+          const isArchived = item.archived === true;
+          const b = i * COLS_PER_ROW;
+          valuesClauses.push(
+            `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, NOW(), NOW(), $${b + 7}, $${b + 8}, $${b + 9})`
+          );
+          params.push(
             item.id,
             item.type,
             JSON.stringify(data),
@@ -3001,9 +3036,24 @@ export class ElectronDocumentService implements DocumentService {
             item.lastIndexed,
             isArchived,
             isArchived ? new Date().toISOString() : null
-          ]
+          );
+        }
+        await database.query(
+          `INSERT INTO tracker_items (
+            id, type, data, workspace, document_path, line_number, created, updated, last_indexed, archived, archived_at
+          ) VALUES ${valuesClauses.join(', ')}
+          ON CONFLICT (id) DO UPDATE SET
+            type = EXCLUDED.type,
+            data = tracker_items.data || EXCLUDED.data,
+            workspace = EXCLUDED.workspace,
+            document_path = EXCLUDED.document_path,
+            line_number = EXCLUDED.line_number,
+            updated = NOW(),
+            last_indexed = EXCLUDED.last_indexed,
+            archived = CASE WHEN EXCLUDED.archived = TRUE THEN TRUE ELSE tracker_items.archived END,
+            archived_at = CASE WHEN EXCLUDED.archived = TRUE THEN EXCLUDED.archived_at ELSE tracker_items.archived_at END`,
+          params
         );
-        // console.log(`[DocumentService] Insert result:`, result);
       }
 
       // Notify watchers if there are changes.

@@ -708,6 +708,11 @@ export const trackerToolSchemas = [
           type: "string",
           description: "The tracker item ID or issue key to update",
         },
+        linkSession: {
+          type: "boolean",
+          description:
+            "If true, link the current AI session to this item as part of the update. Defaults to false -- updating an item does NOT auto-link the session.",
+        },
         title: {
           type: "string",
           description: "New title",
@@ -1916,6 +1921,23 @@ export async function handleTrackerUpdate(
   sessionId?: string | undefined
 ): Promise<McpToolResult> {
   try {
+    // NIM-438: a description delivered via the generic fields bag
+    // (fields.description) must update the canonical visible body the same way
+    // a top-level `description` does. The body-seed path keys off
+    // args.description, so hoist fields.description up to the top level (and
+    // drop it from the bag to avoid a redundant data.description write) before
+    // any field processing runs.
+    if (
+      args &&
+      args.fields &&
+      typeof args.fields === 'object' &&
+      args.fields.description !== undefined &&
+      args.description === undefined
+    ) {
+      args.description = args.fields.description;
+      delete args.fields.description;
+    }
+
     const { getDatabase } = await import("../../database/initialize");
     const db = getDatabase();
     // Make custom (.nimbalyst/trackers/*.yaml) types visible so primaryType
@@ -2118,7 +2140,10 @@ export async function handleTrackerUpdate(
           (await resolveTrackerItemFromDocumentService(docService, publicTrackerId)) || item;
         const storageRowId = row?.id || publicTrackerId;
 
-        if (sessionId) {
+        // NIM-879: linking is opt-in on update, matching tracker_create (NIM-408).
+        // Without this gate, every status/field update silently linked the ambient
+        // session, polluting sessions with unrelated items the agent merely touched.
+        if (sessionId && args.linkSession === true) {
           const linked = await createBidirectionalLink(publicTrackerId, sessionId, {
             trackerRowId: storageRowId,
           });
@@ -2400,7 +2425,8 @@ export async function handleTrackerUpdate(
         }
       }
 
-      if (sessionId) {
+      // NIM-879: linking is opt-in on update, matching tracker_create (NIM-408).
+      if (sessionId && args.linkSession === true) {
         const linked = await createBidirectionalLink(publicTrackerId, sessionId, {
           trackerRowId: row.id,
         });

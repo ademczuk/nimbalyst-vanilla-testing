@@ -9,13 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-<!-- New features go here -->
+- Reference a tracker item from any document or AI chat: type `#` to pick an existing item and insert a live chip showing its current status and title (filter by type with `bug:`, search by key or title), with a one-click way to turn a legacy inline tracker into a real tracked item. The AI now links tracker items as clickable chips too.
+- New Nimbalyst Memory extension: indexes your project notes and surfaces relevant facts to the AI and voice agent for grounded answers.
+- Global semantic search in Quick Open (Cmd+Shift+O): find any tracker or document by meaning, with an option to include past AI sessions; available when the Nimbalyst Memory extension is enabled.
+- Extensions can now contribute tools and session context to the voice agent.
+- Ask the voice agent to open a past AI session by topic (e.g. "open the most recent session working on the collaborative document system"); it finds sessions by what they worked on, not just their title, when the Nimbalyst Memory extension is enabled.
+- Search box on the Installed Extensions settings pane to filter the list.
+- Optional "Shared" column in the tracker table shows whether each item is shared with the team or local-only.
+- Database Browser maintenance action to reclaim space used by old Claude Code sessions, with an optional compaction step.
+- Copy a shareable link to a team shared document from the editor header.
+- Share and co-edit more document types in real time, including spreadsheets and code files, not just markdown.
 
 ### Changed
-<!-- Changes to existing functionality go here -->
+- Claude Code sessions store and sync far less redundant data (no more full original-file copies on every edit), shrinking the local database and mobile transfers.
+- Updating a tracker item no longer links it to the current AI session unless you ask, so sessions stop accumulating items the agent merely touched.
+- Collab mode's document tree and AI chat panels can now be collapsed, and the layout is remembered per workspace.
 
 ### Fixed
-<!-- Bug fixes go here -->
+- AI session status no longer stays stuck on "running" in the mobile app after a turn finishes on desktop.
+- Stop prompting to run the Gemini backend at startup; it now starts only when you actually use Gemini.
+- Remove a stray "[Full message elided...]" bubble that appeared in the mobile transcript but not on desktop.
+- Tracker item detail no longer gets stuck on "Connecting…" when the team lookup hangs; it falls back to local mode.
+- Tracker type counts no longer briefly flash "0" while tracker data is still loading.
+- Reopened secondary projects now scope the tracker list to the correct project instead of the startup project's items.
+- Fixed tracker field corruption on the SQLite backend caused by merging JSON updates.
+- Shared documents no longer get stuck on a blank "Offline – unsynced changes" editor when a session token was scoped to the wrong org.
+- Shared document bodies written before a team's encryption-key rotation now decrypt and load instead of opening blank.
+- Shared documents whose name contains spaces or other special characters now open instead of failing to sync.
+- Committing no longer triggers a burst of slow database queries that briefly hitched the app.
+- Excalidraw drawings shared with the team no longer open blank or render with a light canvas in dark mode.
 
 ### Removed
 <!-- Removed features go here -->

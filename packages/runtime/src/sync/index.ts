@@ -72,6 +72,11 @@ export {
 } from './DocumentSync';
 
 export {
+  isValidCollabDocumentId,
+  encodeDocumentRoomId,
+} from './collabDocumentId';
+
+export {
   CollabLexicalProvider,
 } from './CollabLexicalProvider';
 

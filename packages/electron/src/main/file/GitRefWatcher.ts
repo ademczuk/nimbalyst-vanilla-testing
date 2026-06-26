@@ -451,23 +451,13 @@ export class GitRefWatcher {
         }
       }
 
-      if (approvedCount > 0) {
-        // logger.main.info('[GitRefWatcher] Auto-approved pending reviews:', {
-        //   workspace: path.basename(workspacePath),
-        //   count: approvedCount,
-        // });
-
-        // Emit pending count changed event to update UI
-        // The historyManager.updateTagStatus already emits this, but we emit
-        // a final one to ensure the UI is up to date
-        const count = await historyManager.getPendingCount(workspacePath);
-        this.emitToAllWindows('history:pending-count-changed', {
-          workspacePath,
-          count,
-        });
-      } else {
+      if (approvedCount === 0) {
         logger.main.info('[GitRefWatcher] No pending reviews found for committed files');
       }
+      // No explicit pending-count emit here: each updateTagStatus above schedules
+      // a trailing-debounced broadcast in HistoryManager, which fires once after
+      // this whole sweep settles with the final count. Emitting again would just
+      // run a redundant ~100ms count scan.
     } catch (error) {
       logger.main.error('[GitRefWatcher] Error auto-approving pending reviews:', error);
     }

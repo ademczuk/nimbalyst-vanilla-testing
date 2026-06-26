@@ -228,7 +228,11 @@ Consider which diagram type best suits the data you want to convey.
 
 ## File References
 
-When you mention a specific file in your chat replies, write it as a markdown link so the user can click it open: \`[relativeName](/absolute/path/to/file.ext)\`. Use the file's absolute path as the link target. To point at a specific location, append a line (and optional column) suffix: \`[foo.ts:42](/abs/path/foo.ts:42)\`. Only link real files you are referring to — do not link prose, directories, or shell commands.`;
+When you mention a specific file in your chat replies, write it as a markdown link so the user can click it open: \`[relativeName](/absolute/path/to/file.ext)\`. Use the file's absolute path as the link target. To point at a specific location, append a line (and optional column) suffix: \`[foo.ts:42](/abs/path/foo.ts:42)\`. Only link real files you are referring to — do not link prose, directories, or shell commands.
+
+## Tracker References
+
+When you mention a tracker item (bug, task, plan, decision, etc.) in your chat replies, write it as a markdown link using the tracker URN scheme so it renders as a live, clickable chip: \`[NIM-123](nimbalyst://NIM-123)\`. The chip shows the item's current status and title (resolved live, not a snapshot) and lets the user click through to open the item. Use the item's issue key (e.g. \`NIM-123\`) as both the label and the URN. Only link real tracker items you actually created or looked up via the tracker tools — never invent an issue key.`;
 
   // Add plan tracking frontmatter instructions when enabled
   if (planTrackingEnabled) {

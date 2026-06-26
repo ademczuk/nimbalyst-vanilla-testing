@@ -133,6 +133,7 @@ import {
   addOpenProjectAtom as addOpenProjectAction,
 } from './store/atoms/openProjects';
 import { registerDocumentLinkPlugin } from './plugins/registerDocumentLinkPlugin';
+import { registerTrackerLinkPlugin } from './plugins/registerTrackerLinkPlugin';
 import { registerAIChatPlugin } from './plugins/registerAIChatPlugin';
 import { registerTrackerPlugin } from './plugins/registerTrackerPlugin';
 import { registerSearchReplacePlugin } from './plugins/registerSearchReplacePlugin';
@@ -232,6 +233,7 @@ const LOG_CONFIG = {
 let pluginsRegistered = false;
 if (!pluginsRegistered) {
   registerDocumentLinkPlugin();
+  registerTrackerLinkPlugin();
   registerTrackerPlugin(null); // Load built-in trackers now, custom trackers loaded in AppLayout
   registerAIChatPlugin();
   registerSearchReplacePlugin(); // Search/replace bar in fixed tab header
@@ -1494,6 +1496,50 @@ export default function App() {
     return () => window.removeEventListener('nimbalyst:navigate-tracker-item', handleNavigateTrackerItem);
   }, [setActiveMode]);
 
+  // Host hook for converting a legacy inline tracker embed into a real tracked
+  // item. The runtime TrackerPlugin (platform-agnostic) calls this to create
+  // the canonical item, then replaces the inline node with a reference chip.
+  // Mirrors the quick-add creation path in TrackerMainView.
+  useEffect(() => {
+    if (!workspacePath) {
+      delete (window as any).__nimbalystCreateTrackerItem;
+      return;
+    }
+    (window as any).__nimbalystCreateTrackerItem = async (item: {
+      type: string;
+      title: string;
+      status?: string;
+      priority?: string;
+      description?: string;
+      owner?: string;
+      tags?: string[];
+    }): Promise<{ id: string; issueKey?: string } | null> => {
+      try {
+        const prefix = (item.type || 'itm').substring(0, 3);
+        const id = `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).substring(2, 8)}`;
+        const result = await window.electronAPI.documentService.createTrackerItem({
+          id,
+          type: item.type,
+          title: item.title || `New ${item.type}`,
+          status: item.status || 'to-do',
+          priority: item.priority || 'medium',
+          description: item.description,
+          owner: item.owner,
+          tags: item.tags,
+          workspace: workspacePath,
+        });
+        if (!result.success || !result.item) return null;
+        return { id: result.item.id ?? id, issueKey: result.item.issueKey };
+      } catch (error) {
+        console.error('[App] Convert inline tracker -> create failed:', error);
+        return null;
+      }
+    };
+    return () => {
+      delete (window as any).__nimbalystCreateTrackerItem;
+    };
+  }, [workspacePath]);
+
   // Listen for open-ai-session events (from rebase/merge conflict resolution)
   useEffect(() => {
     const handleOpenAiSession = async (event: CustomEvent<{ sessionId: string; workspacePath: string; draftInput?: string }>) => {
@@ -2091,6 +2137,9 @@ export default function App() {
         }}
         onToggleAgentCollapsed={() => {
           toggleAgentCollapsed();
+        }}
+        onToggleCollabCollapsed={() => {
+          collabModeRef.current?.toggleSidebarCollapsed();
         }}
       />
 

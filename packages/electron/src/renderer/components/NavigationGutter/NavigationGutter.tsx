@@ -65,6 +65,8 @@ interface NavigationGutterProps {
   onToggleFilesCollapsed?: () => void;
   /** Callback to toggle Agent mode session history collapsed state */
   onToggleAgentCollapsed?: () => void;
+  /** Callback to toggle Collab mode (Shared Docs) sidebar collapsed state */
+  onToggleCollabCollapsed?: () => void;
   /** Currently active extension bottom panel ID */
   activeExtensionBottomPanel?: string | null;
   /** Callback when an extension bottom panel is toggled */
@@ -96,6 +98,7 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
   onExtensionPanelChange,
   onToggleFilesCollapsed,
   onToggleAgentCollapsed,
+  onToggleCollabCollapsed,
   activeExtensionBottomPanel,
   onExtensionBottomPanelChange,
 }) => {
@@ -424,7 +427,15 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
                   onClick={() => {
                     // Clear any active fullscreen extension panel when switching to a content mode
                     onExtensionPanelChange?.(null);
-                    handleButtonClick(button);
+                    if (contentMode === button.contentMode && !activeExtensionPanel) {
+                      // Already on this mode - toggle collapse
+                      if (button.contentMode === 'collab') {
+                        onToggleCollabCollapsed?.();
+                      }
+                    } else {
+                      // Switch modes
+                      handleButtonClick(button);
+                    }
                   }}
                   aria-pressed={contentMode === button.contentMode && !activeExtensionPanel}
                   data-mode={button.contentMode || button.id}

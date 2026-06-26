@@ -69,6 +69,7 @@ import {
   applyToolResultToToolCall,
   isSearchableAssistantChunk,
   isTransientClaudeCodeChunk,
+  slimClaudeCodeChunkForStorage,
 } from './claudeCode/toolChunkUtils';
 import {
   INTERNAL_MCP_TOOLS,
@@ -907,9 +908,13 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           // reacted to them, and the persistent reparse path (ClaudeCodeRawParser)
           // ignores them, so persisting just inflates ai_agent_messages + sync churn.
           if (sessionId && !isTransientClaudeCodeChunk(chunk)) {
+            // Drop dead-weight fields (tool_use_result.originalFile/patch/etc and
+            // thinking signatures) before persisting -- ~60% of the claude-code raw
+            // log otherwise, and no consumer reads them. Slims a clone; the live
+            // dispatch loop below still uses the untouched `chunk`.
             const rawChunkJson = typeof chunk === 'string'
               ? JSON.stringify({ type: 'text', content: chunk })
-              : JSON.stringify(chunk);
+              : JSON.stringify(slimClaudeCodeChunkForStorage(chunk));
             // Non-string chunks from SDK have a uuid field we can use for deduplication
             const providerMessageId = typeof chunk !== 'string' ? chunk.uuid : undefined;
 
