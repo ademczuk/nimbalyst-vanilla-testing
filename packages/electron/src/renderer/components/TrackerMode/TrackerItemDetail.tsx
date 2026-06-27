@@ -1330,9 +1330,112 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+        {/* Linked Sessions -- kept at the top so they're visible without scrolling */}
+        {(linkedSessions.length > 0 || onLaunchSession || canLinkExistingSession || isLinkingExistingSession) && (
+          <div className="tracker-sessions-section">
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[11px] font-medium text-nim-muted uppercase tracking-[0.5px]">
+                Sessions{linkedSessions.length > 0 ? ` (${linkedSessions.length})` : ''}
+              </label>
+              <div className="flex items-center gap-1">
+                {canLinkExistingSession && (
+                  <button
+                    className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded text-nim-muted hover:text-nim hover:bg-nim-tertiary transition-colors"
+                    onClick={() => {
+                      setLinkSessionError(null);
+                      setSessionSearchQuery('');
+                      void refreshSessionList();
+                      setIsLinkingExistingSession((prev) => !prev);
+                    }}
+                    title="Link an existing AI session to this item"
+                  >
+                    <MaterialSymbol icon="link" size={14} />
+                    {isLinkingExistingSession ? 'Cancel' : 'Link Existing'}
+                  </button>
+                )}
+                {onLaunchSession && (
+                  <button
+                    className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded text-nim-muted hover:text-nim hover:bg-nim-tertiary transition-colors"
+                    onClick={() => onLaunchSession(item.id)}
+                    title="Launch a new AI session for this item"
+                  >
+                    <MaterialSymbol icon="add" size={14} />
+                    Launch Session
+                  </button>
+                )}
+              </div>
+            </div>
+            {isLinkingExistingSession && (
+              <div className="tracker-session-linker mb-2 rounded border border-nim bg-nim-tertiary p-2">
+                <input
+                  className="w-full rounded border border-nim bg-nim px-2 py-1.5 text-xs text-nim outline-none focus:border-nim-focus"
+                  type="text"
+                  value={sessionSearchQuery}
+                  onChange={(e) => setSessionSearchQuery(e.target.value)}
+                  placeholder={`Search ${availableSessions.length} existing session${availableSessions.length === 1 ? '' : 's'}`}
+                />
+                <div className="mt-2 space-y-1">
+                  {filteredAvailableSessions.length > 0 ? (
+                    filteredAvailableSessions.map((session) => (
+                      <button
+                        key={session.id}
+                        className="tracker-session-linker-option w-full rounded px-2 py-1.5 text-left hover:bg-nim-hover transition-colors disabled:opacity-60"
+                        onClick={() => handleLinkExistingSession(session.id)}
+                        disabled={linkingSessionId !== null}
+                        title={`Link session: ${session.title || 'Untitled session'}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <ProviderIcon provider={session.provider || 'claude'} size={14} />
+                          <span className="flex-1 truncate text-xs text-nim">
+                            {session.title || 'Untitled session'}
+                          </span>
+                          <span className="shrink-0 text-[10px] text-nim-faint">
+                            {linkingSessionId === session.id ? 'Linking...' : getRelativeTimeString(session.updatedAt)}
+                          </span>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="m-0 text-[11px] text-nim-faint">
+                      {availableSessions.length === 0
+                        ? 'No unlinked sessions available.'
+                        : 'No sessions match that search.'}
+                    </p>
+                  )}
+                </div>
+                {linkSessionError && (
+                  <p className="mt-2 mb-0 text-[11px] text-nim-error">{linkSessionError}</p>
+                )}
+              </div>
+            )}
+            {linkedSessions.length > 0 ? (
+              <div className="space-y-1">
+                {linkedSessions.map((session) => (
+                  <button
+                    key={session.id}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-nim-tertiary transition-colors group"
+                    onClick={() => onSwitchToAgentMode?.(session.id)}
+                    title={`Open session: ${session.title}`}
+                  >
+                    <ProviderIcon provider={session.provider || 'claude'} size={14} />
+                    <span className="flex-1 text-xs text-nim truncate">
+                      {session.title || 'Untitled session'}
+                    </span>
+                    <span className="text-[10px] text-nim-faint shrink-0">
+                      {getRelativeTimeString(session.updatedAt)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-nim-faint m-0">No linked sessions</p>
+            )}
+          </div>
+        )}
+
         {/* Primary fields grid (status, priority, owner) */}
         {primaryFields.length > 0 && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 pt-1 border-t border-nim">
             {primaryFields.map((field) => (
               <div key={field.name}>
                 {editable ? (
@@ -1470,109 +1573,6 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
             <p className="text-sm text-nim-faint m-0">No content</p>
           )}
         </div>
-
-        {/* Linked Sessions */}
-        {(linkedSessions.length > 0 || onLaunchSession || canLinkExistingSession || isLinkingExistingSession) && (
-          <div className="pt-1 border-t border-nim">
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] font-medium text-nim-muted uppercase tracking-[0.5px]">
-                Sessions{linkedSessions.length > 0 ? ` (${linkedSessions.length})` : ''}
-              </label>
-              <div className="flex items-center gap-1">
-                {canLinkExistingSession && (
-                  <button
-                    className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded text-nim-muted hover:text-nim hover:bg-nim-tertiary transition-colors"
-                    onClick={() => {
-                      setLinkSessionError(null);
-                      setSessionSearchQuery('');
-                      void refreshSessionList();
-                      setIsLinkingExistingSession((prev) => !prev);
-                    }}
-                    title="Link an existing AI session to this item"
-                  >
-                    <MaterialSymbol icon="link" size={14} />
-                    {isLinkingExistingSession ? 'Cancel' : 'Link Existing'}
-                  </button>
-                )}
-                {onLaunchSession && (
-                  <button
-                    className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded text-nim-muted hover:text-nim hover:bg-nim-tertiary transition-colors"
-                    onClick={() => onLaunchSession(item.id)}
-                    title="Launch a new AI session for this item"
-                  >
-                    <MaterialSymbol icon="add" size={14} />
-                    Launch Session
-                  </button>
-                )}
-              </div>
-            </div>
-            {isLinkingExistingSession && (
-              <div className="tracker-session-linker mb-2 rounded border border-nim bg-nim-tertiary p-2">
-                <input
-                  className="w-full rounded border border-nim bg-nim px-2 py-1.5 text-xs text-nim outline-none focus:border-nim-focus"
-                  type="text"
-                  value={sessionSearchQuery}
-                  onChange={(e) => setSessionSearchQuery(e.target.value)}
-                  placeholder={`Search ${availableSessions.length} existing session${availableSessions.length === 1 ? '' : 's'}`}
-                />
-                <div className="mt-2 space-y-1">
-                  {filteredAvailableSessions.length > 0 ? (
-                    filteredAvailableSessions.map((session) => (
-                      <button
-                        key={session.id}
-                        className="tracker-session-linker-option w-full rounded px-2 py-1.5 text-left hover:bg-nim-hover transition-colors disabled:opacity-60"
-                        onClick={() => handleLinkExistingSession(session.id)}
-                        disabled={linkingSessionId !== null}
-                        title={`Link session: ${session.title || 'Untitled session'}`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <ProviderIcon provider={session.provider || 'claude'} size={14} />
-                          <span className="flex-1 truncate text-xs text-nim">
-                            {session.title || 'Untitled session'}
-                          </span>
-                          <span className="shrink-0 text-[10px] text-nim-faint">
-                            {linkingSessionId === session.id ? 'Linking...' : getRelativeTimeString(session.updatedAt)}
-                          </span>
-                        </div>
-                      </button>
-                    ))
-                  ) : (
-                    <p className="m-0 text-[11px] text-nim-faint">
-                      {availableSessions.length === 0
-                        ? 'No unlinked sessions available.'
-                        : 'No sessions match that search.'}
-                    </p>
-                  )}
-                </div>
-                {linkSessionError && (
-                  <p className="mt-2 mb-0 text-[11px] text-nim-error">{linkSessionError}</p>
-                )}
-              </div>
-            )}
-            {linkedSessions.length > 0 ? (
-              <div className="space-y-1">
-                {linkedSessions.map((session) => (
-                  <button
-                    key={session.id}
-                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-nim-tertiary transition-colors group"
-                    onClick={() => onSwitchToAgentMode?.(session.id)}
-                    title={`Open session: ${session.title}`}
-                  >
-                    <ProviderIcon provider={session.provider || 'claude'} size={14} />
-                    <span className="flex-1 text-xs text-nim truncate">
-                      {session.title || 'Untitled session'}
-                    </span>
-                    <span className="text-[10px] text-nim-faint shrink-0">
-                      {getRelativeTimeString(session.updatedAt)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="text-[11px] text-nim-faint m-0">No linked sessions</p>
-            )}
-          </div>
-        )}
 
         {/* Linked Commits */}
         {item.system.linkedCommits && item.system.linkedCommits.length > 0 && (
