@@ -17,7 +17,7 @@ import {
 import { logger } from '../utils/logger';
 import { getDatabase } from '../database/initialize';
 import { createWorktreeStore } from './WorktreeStore';
-import { resolveProjectPath, isWorktreePath, findNearestAncestor } from '../utils/workspaceDetection';
+import { resolveProjectPath, isWorktreePath, findNearestAncestor, findProjectRoot } from '../utils/workspaceDetection';
 
 type PermissionMode = 'ask' | 'allow-all' | 'bypass-all';
 
@@ -56,8 +56,13 @@ export async function resolveWorkspacePathForPermissions(workspacePath: string):
 
   // Step 2: subfolder cascade - inherit settings from the nearest ancestor that
   // has an explicit permission mode (the project the user trusted), matching the
-  // sync read-path resolution. No trusted ancestor -> use the resolved path.
-  return findNearestAncestor(resolved, (dir) => getAgentPermissions(dir)?.permissionMode != null) ?? resolved;
+  // sync read-path resolution. Bounded to the enclosing git project so a distinct
+  // repo nested under a trusted parent directory does not inherit its trust.
+  const boundary = findProjectRoot(resolved) ?? resolved;
+  return (
+    findNearestAncestor(resolved, (dir) => getAgentPermissions(dir)?.permissionMode != null, boundary) ??
+    resolved
+  );
 }
 
 /**
@@ -65,7 +70,11 @@ export async function resolveWorkspacePathForPermissions(workspacePath: string):
  *
  * 1. Map a worktree (including nested/branch-style names) to its parent project.
  * 2. Walk up to the nearest ancestor that has an explicit permission mode, so a
- *    subfolder inherits the project's trust the same way a worktree does.
+ *    subfolder inherits the project's trust the same way a worktree does. The
+ *    walk is bounded to the enclosing git project (findProjectRoot): a distinct
+ *    project nested under a trusted parent directory (e.g. a freshly-cloned repo
+ *    under a once-trusted `~/code`) must NOT inherit that trust, or it would
+ *    silently skip the trust prompt.
  *
  * Falls back to the worktree-resolved path when no trusted ancestor exists
  * (preserving today's "untrusted -> prompt" behavior for brand-new projects).
@@ -75,9 +84,14 @@ export async function resolveWorkspacePathForPermissions(workspacePath: string):
  */
 function resolvePermissionReadPath(workspacePath: string): string {
   const projectPath = resolveProjectPath(workspacePath);
+  // Upper-bound the trust walk at the enclosing git repo root. When the path is
+  // not inside any git repo, fall back to the project path itself (no cascade)
+  // rather than climbing into an unrelated trusted ancestor.
+  const boundary = findProjectRoot(projectPath) ?? projectPath;
   const trustedAncestor = findNearestAncestor(
     projectPath,
     (dir) => getAgentPermissions(dir)?.permissionMode != null,
+    boundary,
   );
   return trustedAncestor ?? projectPath;
 }

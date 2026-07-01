@@ -114,16 +114,21 @@ export function isWorktreePath(workspacePath: string): boolean {
 
 /**
  * Walk up the directory tree from `startPath` (inclusive) and return the first
- * ancestor for which `predicate` is true, or null if none match up to the
- * filesystem root.
+ * ancestor for which `predicate` is true, or null if none match.
+ *
+ * If `stopAt` is provided, the walk is bounded above by that directory
+ * (inclusive): `stopAt` is still tested, but the walk never climbs past it.
+ * Otherwise the walk is bounded only by the filesystem root.
  *
  * Used by the permission layer so a subfolder inherits the agent permissions of
  * the nearest ancestor directory that has them explicitly set (the project the
- * user trusted). Pure and synchronous — the caller supplies the lookup.
+ * user trusted), while `stopAt` keeps that inheritance from crossing a project
+ * boundary. Pure and synchronous — the caller supplies the lookup.
  */
 export function findNearestAncestor(
   startPath: string,
   predicate: (dir: string) => boolean,
+  stopAt?: string,
 ): string | null {
   if (!startPath) {
     return null;
@@ -131,11 +136,16 @@ export function findNearestAncestor(
 
   let current = normalizeWorkspacePath(startPath);
   const root = path.parse(current).root;
+  const boundary = stopAt ? normalizeWorkspacePath(stopAt) : null;
 
-  // Bounded by the filesystem root; dirname() converges to the root.
+  // Bounded by `stopAt` (if given) and the filesystem root; dirname() converges.
   while (true) {
     if (predicate(current)) {
       return current;
+    }
+    // Reached the inclusive upper boundary without a match - do not climb past it.
+    if (boundary && current === boundary) {
+      return null;
     }
     const parent = path.dirname(current);
     if (parent === current || current === root) {
@@ -143,6 +153,26 @@ export function findNearestAncestor(
     }
     current = parent;
   }
+}
+
+/**
+ * Walk up from `startPath` (inclusive) to the nearest directory that is a git
+ * repository root (contains a `.git` directory or file), or null if none is
+ * found up to the filesystem root.
+ *
+ * The permission cascade uses this as the upper bound of its trust walk: a real
+ * project is a git repo, so bounding the walk here means a subfolder inherits
+ * its OWN project's trust, but a distinct project (its own `.git`) nested under
+ * a trusted parent directory does not silently inherit that parent's trust.
+ */
+export function findProjectRoot(startPath: string): string | null {
+  return findNearestAncestor(startPath, (dir) => {
+    try {
+      return fs.existsSync(path.join(dir, '.git'));
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**

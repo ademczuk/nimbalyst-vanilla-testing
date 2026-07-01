@@ -6,6 +6,7 @@ import {
   resolveProjectPath,
   isWorktreePath,
   findNearestAncestor,
+  findProjectRoot,
   getAdditionalDirectoriesForWorkspace,
 } from '../workspaceDetection';
 
@@ -209,5 +210,73 @@ describe('findNearestAncestor', () => {
   it('handles empty input and trailing slashes', () => {
     expect(findNearestAncestor('', pred)).toBe(null);
     expect(findNearestAncestor('/path/to/project/packages/', pred)).toBe('/path/to/project');
+  });
+
+  describe('stopAt boundary', () => {
+    it('still returns a match found at or below the boundary', () => {
+      // boundary === the matching ancestor: it is tested, then the walk stops.
+      expect(findNearestAncestor('/path/to/project/src', pred, '/path/to/project'))
+        .toBe('/path/to/project');
+    });
+
+    it('does NOT climb past the boundary to a higher match', () => {
+      // A trusted grandparent must not be inherited when a nearer boundary caps
+      // the walk - this is the trust-boundary guard for nested projects.
+      const t = new Set(['/root']);
+      const p = (d: string) => t.has(d);
+      expect(findNearestAncestor('/root/child/leaf', p, '/root/child')).toBe(null);
+    });
+
+    it('returns the nearer match even when a farther one also matches', () => {
+      const t = new Set(['/root', '/root/child']);
+      const p = (d: string) => t.has(d);
+      expect(findNearestAncestor('/root/child/leaf', p, '/root/child')).toBe('/root/child');
+    });
+  });
+});
+
+describe('findProjectRoot', () => {
+  let tmpRoot: string;
+
+  beforeEach(() => {
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nim-projroot-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  // findProjectRoot returns the normalized INPUT path (it does not resolve
+  // symlinks), so compare against the input, not realpathSync.
+  it('returns the start path when it is itself a git repo root', () => {
+    fs.mkdirSync(path.join(tmpRoot, '.git'));
+    expect(findProjectRoot(tmpRoot)).toBe(tmpRoot);
+  });
+
+  it('walks up to the nearest git repo root from a subfolder', () => {
+    fs.mkdirSync(path.join(tmpRoot, '.git'));
+    const sub = path.join(tmpRoot, 'packages', 'electron');
+    fs.mkdirSync(sub, { recursive: true });
+    expect(findProjectRoot(sub)).toBe(tmpRoot);
+  });
+
+  it('stops at a nested repo root rather than the outer repo (fresh-clone case)', () => {
+    // Outer repo contains an independent nested repo with its own .git.
+    fs.mkdirSync(path.join(tmpRoot, '.git'));
+    const nested = path.join(tmpRoot, 'vendored-clone');
+    fs.mkdirSync(path.join(nested, '.git'), { recursive: true });
+    expect(findProjectRoot(nested)).toBe(nested);
+  });
+
+  it('recognizes a .git file (linked worktree) as a repo root', () => {
+    fs.writeFileSync(path.join(tmpRoot, '.git'), 'gitdir: /somewhere/else');
+    expect(findProjectRoot(tmpRoot)).toBe(tmpRoot);
+  });
+
+  it('returns null when no ancestor is a git repo', () => {
+    const sub = path.join(tmpRoot, 'a', 'b');
+    fs.mkdirSync(sub, { recursive: true });
+    // tmpRoot lives under the OS temp dir; none of it should be a git repo.
+    expect(findProjectRoot(sub)).toBe(null);
   });
 });
