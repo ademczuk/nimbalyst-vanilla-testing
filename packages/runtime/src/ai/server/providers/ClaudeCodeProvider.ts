@@ -13,6 +13,8 @@ interface Query extends AsyncGenerator<SDKMessage, void> {
   streamInput(stream: AsyncIterable<any>): Promise<void>;
   mcpServerStatus(): Promise<McpServerStatusInfo[]>;
   reconnectMcpServer(serverName: string): Promise<void>;
+  /** Close the query and terminate the underlying CLI subprocess. */
+  close(): void;
 }
 
 /** MCP server status as reported by the SDK */
@@ -103,7 +105,15 @@ import {
   shouldDeferTeardownForSubagents,
   shouldExitDrain,
   classifyDrainOutcome,
+  shouldSettleTaskFromToolResult,
+  mapTaskUpdatedPatchStatus,
+  shouldApplyTaskUpdatedStatus,
+  isNotificationFlushResult,
+  shouldArmGraceTimerForResult,
+  shouldContinueWithTaskResults,
+  buildTaskResultContinuationMessage,
   type DrainExitCause,
+  type TaskTerminalNotification,
 } from './claudeCode/subagentDrain';
 import {
   isBunRuntimeSpawnCrash,
@@ -241,7 +251,15 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     durationMs: number;
     lastToolName?: string;
     summary?: string;
+    // Set from task_updated patches (is_backgrounded): the task's tool call
+    // returned a launch acknowledgement, not a completion. See NIM-1470.
+    isBackgrounded?: boolean;
   }>();
+
+  // Terminal task_notification chunks received while draining background tasks
+  // after the lead turn ended. Consumed by finalizeBackgroundDrain to wake the
+  // session with a visible continuation turn carrying the results. NIM-1470.
+  private drainTerminalNotifications: TaskTerminalNotification[] = [];
 
   // SDK-native task-list tracking (TaskCreate/TaskUpdate tools — the shared,
   // dependency-aware work queue, distinct from the sub-agent telemetry above).
@@ -756,6 +774,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // Reset per-turn background-drain state (defensive; also reset in finally).
       this.drainingBackgroundTasks = false;
       this.drainExitCause = 'resolved';
+      this.drainTerminalNotifications = [];
       const queryIterator = leadQuery as AsyncIterable<any>;
       const queryCallDuration = Date.now() - queryCallStart;
       if (queryCallDuration > 5000) {
@@ -847,6 +866,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // Used to detect when a slash command returns no output
       let hasYieldedContent = false;
       let hasYieldedError = false;
+      // Flags for detecting the CLI's "notification flush" result: on resume
+      // with pending task notifications the CLI emits task_notification chunks
+      // then an empty success result (num_turns=0) BEFORE processing the user's
+      // prompt. Ending the turn on that result swallows the prompt. NIM-1470.
+      let sawTaskNotificationThisTurn = false;
+      let sawAssistantOutputThisTurn = false;
 
 
       // Stream the response
@@ -895,14 +920,26 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           // complete on the still-open stdin while still letting the turn
           // finish in a bounded amount of time.
           if (typeof chunk === 'object' && chunk !== null) {
-            if (chunk.type === 'result' && resultReceivedTime === null) {
+            // A notification-flush result (num_turns=0, no output, emitted on
+            // resume before the real turn runs) is NOT end-of-turn. Arming the
+            // grace timer on it starts a 5s-silence countdown while the CLI is
+            // still working — during a long background sub-agent (minutes of
+            // main-stream silence) the timer fires, ends the control channel,
+            // and every later canUseTool/hook fails "Stream closed" while the
+            // subprocess runs away. Only arm on the REAL result. See NIM-1470.
+            const armsGraceTimer = shouldArmGraceTimerForResult(
+              chunk,
+              sawTaskNotificationThisTurn,
+              sawAssistantOutputThisTurn,
+            );
+            if (armsGraceTimer && resultReceivedTime === null) {
               resultReceivedTime = Date.now();
               resultReceivedChunkCount = chunkCount;
               console.log(`[CLAUDE-CODE] RESULT_MESSAGE_RECEIVED: turnElapsed=${resultReceivedTime - queryStartTime}ms chunkCount=${chunkCount} subtype="${chunk.subtype}" isError=${chunk.is_error === true}`);
               armPromptEndTimer('grace-period-after-result');
             } else if (resultReceivedTime !== null) {
-              // Activity continued after result -- reset the grace timer so
-              // we don't kill stdin while the binary is still working.
+              // Activity continued after the real result -- reset the grace
+              // timer so we don't kill stdin while the binary is still working.
               armPromptEndTimer('grace-period-reset-on-activity');
             }
           }
@@ -999,6 +1036,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             switch (item.kind) {
               case 'text':
                 fullContent += item.text;
+                sawAssistantOutputThisTurn = true;
                 yield { type: 'text', content: item.text };
                 break;
 
@@ -1048,6 +1086,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
               case 'tool_use': {
                 toolCallCount++;
+                sawAssistantOutputThisTurn = true;
                 const { toolId, toolName, args, isMcp, isSubagent } = item;
 
                 if (toolName === 'TodoWrite' && args?.todos) {
@@ -1119,7 +1158,11 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
                   if (item.toolUseId) {
                     for (const task of this.activeTasks.values()) {
-                      if (task.toolUseId === item.toolUseId && task.status === 'running') {
+                      // Only settle FOREGROUND tasks here (the tool call blocked
+                      // until completion). A backgrounded task's tool_result is a
+                      // launch acknowledgement while it is still running; settling
+                      // on it killed the task at turn-end teardown. NIM-1470.
+                      if (task.toolUseId === item.toolUseId && shouldSettleTaskFromToolResult(task, item.content)) {
                         task.status = toolCall.isError ? 'failed' : 'completed';
                         if (typeof item.content === 'string') task.summary = (item.content as string).substring(0, 200);
                         this.emitTaskUpdate(sessionId).catch(() => {});
@@ -1191,6 +1234,9 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                 break;
 
               case 'system_task':
+                if (item.subtype === 'task_notification') {
+                  sawTaskNotificationThisTurn = true;
+                }
                 this.handleSystemTask(item.subtype, item.chunk, sessionId);
                 break;
 
@@ -1268,6 +1314,21 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           // by the parsed items above (via `usage` items from the result chunk).
           // The for-await keeps running so stdin stays open for late control
           // requests, but the consumer sees completion immediately.
+          // Skip the CLI's "notification flush" result: on resume with pending
+          // task notifications the CLI emits an empty success result (num_turns=0)
+          // BEFORE processing the queued notification and the user's prompt.
+          // Ending the turn here swallows the prompt — the real answer streams
+          // afterward. Keep the loop (and the control channel) alive; the real
+          // result completes the turn, and the post-loop fallback covers the
+          // case where it never arrives. See NIM-1470.
+          if (
+            typeof chunk === 'object' && chunk !== null && !completeEmitted
+            && isNotificationFlushResult(chunk, sawTaskNotificationThisTurn, sawAssistantOutputThisTurn)
+          ) {
+            console.log('[CLAUDE-CODE] Ignoring notification-flush result (num_turns=0, no output) — awaiting the real turn result');
+            continue;
+          }
+
           if (typeof chunk === 'object' && chunk !== null && chunk.type === 'result' && !completeEmitted) {
             await this.flushPendingWrites();
             if (sessionId) await this.processTranscriptMessages(sessionId);
@@ -1680,6 +1741,10 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // the SDK subprocess stays alive for session resume, so MCP operations
       // (health checks, reconnect) should keep working between turns.
       // They are cleaned up in abort() and when the provider is destroyed.
+      // Kept for finalizeBackgroundDrain: after a drain, the subprocess must be
+      // closed (not just stdin-ended) or it runs a doomed continuation turn
+      // against the torn-down control channel and leaks. NIM-1470.
+      const queryForDrainCleanup = this.leadQuery;
       this.leadQuery = null;
       this.abortController = null;
       this.wasInterrupted = false;
@@ -1704,9 +1769,10 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // subagents:drainSettled handler's isLeadBusy() check reads false and can
       // actually release the deferred session. Reads drainExitCause /
       // drainingBackgroundTasks, so reset those only afterward. NIM-1344 / #732.
-      this.finalizeBackgroundDrain(sessionId);
+      this.finalizeBackgroundDrain(sessionId, queryForDrainCleanup);
       this.drainingBackgroundTasks = false;
       this.drainExitCause = 'resolved';
+      this.drainTerminalNotifications = [];
 
       // Note: markMessagesAsHidden is reset at the START of sendMessage to prevent race conditions
 
@@ -2302,10 +2368,30 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
    * nudge the orchestrator with a VISIBLE continuation turn so it doesn't idle
    * forever waiting for a result that will never arrive. See NIM-1344 / #732.
    */
-  private finalizeBackgroundDrain(sessionId: string | undefined): void {
+  private finalizeBackgroundDrain(
+    sessionId: string | undefined,
+    query?: { close?: () => void } | null,
+  ): void {
     // Only meaningful when we actually deferred teardown to drain sub-agents.
     // Normal turns never enter this branch (zero behavior change).
     if (!this.drainingBackgroundTasks) return;
+
+    // Close the drained subprocess outright. Ending stdin is not enough: the
+    // CLI queues its own task-notification continuation turn, which would run
+    // against the torn-down control channel (every canUseTool/hook request
+    // fails with "Stream closed") and the process leaks. The continuation is
+    // delivered by Nimbalyst below instead. NIM-1470.
+    if (query && typeof query.close === 'function') {
+      try {
+        query.close();
+      } catch {
+        // Best effort — the process may already have exited.
+      }
+      if (this.mcpQuery === (query as unknown as Query)) {
+        this.stopMcpHealthChecks();
+        this.mcpQuery = null;
+      }
+    }
 
     const outcome = classifyDrainOutcome({
       wasDraining: true,
@@ -2336,6 +2422,23 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         message:
           '[System: A sub-agent you launched did not finish — its process was interrupted before returning results. Do not keep waiting for it; continue without it, or retry the delegation if the work still matters.]',
       });
+      return;
+    }
+
+    // Clean resolve with results: a background task finished AFTER the lead
+    // turn ended. Wake the session with a visible continuation turn carrying
+    // the task outcome — this is what makes "you will be notified when it
+    // completes" actually true. (The drained CLI's own continuation turn was
+    // discarded by the post-complete filter and its process closed above.)
+    // See NIM-1470.
+    if (
+      sessionId
+      && shouldContinueWithTaskResults(this.drainExitCause, this.drainTerminalNotifications)
+    ) {
+      const message = buildTaskResultContinuationMessage(this.drainTerminalNotifications);
+      console.log(`[CLAUDE-CODE] SUBAGENT_DRAIN: waking session ${sessionId} with ${this.drainTerminalNotifications.length} background task result(s)`);
+      this.teammateIdleMessagePending = true;
+      this.emit('teammate:messageWhileIdle', { sessionId, message });
       return;
     }
 
@@ -2391,6 +2494,38 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           existing.durationMs = chunk.usage.duration_ms ?? existing.durationMs;
         }
         console.log(`[CLAUDE-CODE] SUBAGENT_TASK notification: id=${chunk.task_id} status=${existing.status} draining=${this.drainingBackgroundTasks}`);
+        // While draining after the lead turn ended, capture terminal
+        // notifications so finalizeBackgroundDrain can wake the session with
+        // the results (the CLI's own continuation turn cannot be surfaced —
+        // the consumer already received complete). NIM-1470.
+        if (this.drainingBackgroundTasks) {
+          this.drainTerminalNotifications.push({
+            taskId: chunk.task_id,
+            description: existing.description,
+            status: existing.status === 'running' ? 'completed' : existing.status,
+            summary: chunk.summary,
+            outputFile: chunk.output_file,
+          });
+        }
+        this.emitTaskUpdate(sessionId).catch(() => {});
+      }
+    } else if (subtype === 'task_updated') {
+      // Wire-safe TaskState patch (status / is_backgrounded / description).
+      // is_backgrounded is the authoritative "the tool_result was a launch
+      // acknowledgement" signal used by shouldSettleTaskFromToolResult.
+      const existing = this.activeTasks.get(chunk.task_id);
+      const patch = chunk.patch;
+      if (existing && patch && typeof patch === 'object') {
+        if (patch.is_backgrounded === true) existing.isBackgrounded = true;
+        if (typeof patch.description === 'string' && patch.description) existing.description = patch.description;
+        // While draining, terminal status comes ONLY from task_notification —
+        // settling on the (earlier) terminal patch exits the drain loop before
+        // the notification is read, and the wake continuation never fires.
+        const mapped = mapTaskUpdatedPatchStatus(patch.status);
+        if (shouldApplyTaskUpdatedStatus(mapped, this.drainingBackgroundTasks)) {
+          existing.status = mapped!;
+        }
+        if (typeof patch.error === 'string' && patch.error) existing.summary = patch.error;
         this.emitTaskUpdate(sessionId).catch(() => {});
       }
     }

@@ -383,6 +383,13 @@ export function VoiceModeButton({ workspacePath }: VoiceModeButtonProps) {
         globalAudioPlayback.setOnDrained(() => {
           notifyVoiceAudioPlaybackDrained();
         });
+        // Report audible playback state to main: only the renderer knows when
+        // the assistant is actually audible (playback outlives response.done),
+        // and main's barge-in policy uses it to classify echo-suspect VAD
+        // trips and gate server responses while the agent speaks.
+        globalAudioPlayback.setOnActiveChanged((active) => {
+          window.electronAPI.send('voice-mode:playback-active', { active });
+        });
         globalAudioCapture = new AudioCapture();
         await globalAudioCapture.start((pcm16Base64) => {
           // Use activeVoiceSessionId (module-level, updated on session switch)

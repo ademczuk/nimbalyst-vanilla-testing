@@ -67,10 +67,19 @@ public final class VoiceAgent: ObservableObject {
     private var realtimeClient: RealtimeClient?
     private let audioPipeline = AudioPipeline()
 
+    /// Barge-in decision + echo metrics seam (NIM-1314 Phase 0). Classifies
+    /// every server-VAD trigger as echo-suspect vs genuine so self-interruption
+    /// is measurable; later phases gate the interrupt decision here.
+    private let bargeInPolicy = BargeInPolicy()
+
     // MARK: - Timers
 
     private var idleTimer: Timer?
     private var pendingPromptTimer: Timer?
+    /// Probation timer for an echo-suspect VAD trigger (min-duration
+    /// heuristic): fires `onDeferredInterruptTimeout` to decide whether the
+    /// speech outlived the window (real barge-in) or was an echo blip.
+    private var deferredBargeInTimer: Timer?
 
     // MARK: - Queued Notifications
 
@@ -139,11 +148,16 @@ public final class VoiceAgent: ObservableObject {
 
             // Set up the Realtime client
             let client = RealtimeClient(apiKey: apiKey)
-            client.voice = "alloy"
+            // The user's chosen voice: the Settings picker writes it and the
+            // desktop syncs its own voice preference into it (SyncManager), so
+            // both devices sound the same. (Was hardcoded "alloy", which
+            // silently ignored both.)
+            client.voice = settings.voice
             client.instructions = buildCompactInstructions()
             client.tools = buildCoreToolDefinitions()
             client.vadThreshold = settings.vadThreshold
             client.silenceDurationMs = settings.silenceDurationMs
+            client.vadDetection = settings.effectiveVadDetection
 
             // Wire callbacks
             setupClientCallbacks(client)
@@ -155,8 +169,14 @@ public final class VoiceAgent: ObservableObject {
 
     /// Stop voice mode entirely. Disconnects from OpenAI and releases audio resources.
     public func deactivate() {
+        let m = bargeInPolicy.metrics
+        if m.speechStartedCount > 0 {
+            logger.info("[barge-in] session summary: speechStarted=\(m.speechStartedCount) echoSuspect=\(m.echoSuspectCount) genuine=\(m.genuineCount) interrupts=\(m.interruptCount) suppressedEcho=\(m.suppressedEchoCount)")
+        }
+        bargeInPolicy.resetSession()
         cancelIdleTimer()
         cancelPendingPromptTimer()
+        cancelDeferredBargeInTimer()
         realtimeClient?.disconnect()
         realtimeClient = nil
         audioPipeline.shutdown()
@@ -171,8 +191,17 @@ public final class VoiceAgent: ObservableObject {
     /// Mirrors the barge-in path used when the user speaks over the agent.
     public func interrupt() {
         guard state == .speaking || state == .processing else { return }
+        // A manual tap supersedes any pending echo-suspect probation window.
+        cancelDeferredBargeInTimer()
         audioPipeline.stopPlayback(fadeOut: true)
+        // Tell the server how much audio was actually heard before cancelling,
+        // so the model's context matches reality (NIM-1314 lever 5).
+        if let ms = bargeInPolicy.msSincePlaybackStarted() {
+            realtimeClient?.truncatePlayedAudio(audioEndMs: ms)
+        }
+        bargeInPolicy.notePlaybackStopped()
         realtimeClient?.cancelResponse()
+        realtimeClient?.setServerResponsesGated(false)
         state = .listening
         resetIdleTimer()
     }
@@ -283,6 +312,12 @@ public final class VoiceAgent: ObservableObject {
                 self.state = .speaking
                 self.cancelIdleTimer()
             }
+            self.bargeInPolicy.notePlaybackStarted()
+            // While the agent's audio is audibly playing, gate server VAD
+            // responses so residual echo can't make the server cancel or
+            // answer its own voice (NIM-1314); the client keeps barge-in
+            // control. No-ops after the first chunk of a turn.
+            self.realtimeClient?.setServerResponsesGated(true)
             self.audioPipeline.enqueuePlayback(base64Audio: base64Audio)
         }
 
@@ -298,6 +333,8 @@ public final class VoiceAgent: ObservableObject {
 
         audioPipeline.onPlaybackFinished = { [weak self] in
             guard let self else { return }
+            self.bargeInPolicy.notePlaybackStopped()
+            self.realtimeClient?.setServerResponsesGated(false)
             self.state = .listening
             self.resetIdleTimer()
             self.processQueuedCompletions()
@@ -322,19 +359,32 @@ public final class VoiceAgent: ObservableObject {
 
         client.onSpeechStarted = { [weak self] in
             guard let self else { return }
-            // User started speaking - interrupt agent playback if active.
-            // Fade rather than hard-cut, and always cancel: the local
-            // hasActiveResponse flag races the server (audio streams faster than
-            // realtime, so it's often still playing after response.done), and
-            // cancelResponse() now suppresses the benign "no active response".
-            self.audioPipeline.stopPlayback(fadeOut: true)
-            self.realtimeClient?.cancelResponse()
-            self.state = .listening
+            // Server VAD fired. Route the barge-in decision through the policy
+            // seam: it classifies echo-suspect (agent audio still audibly
+            // playing -- residual echo can trip VAD on speakerphone, NIM-1314)
+            // vs genuine. Genuine triggers interrupt now; echo-suspect ones get
+            // a probation window (min-duration heuristic) resolved by a timer.
+            // The local hasActiveResponse flag races the server (audio streams
+            // faster than realtime, so playback often outlives response.done),
+            // which is why the audible-playback signal is used instead, and
+            // cancelResponse() suppresses the benign "no active response".
+            let playbackActive = self.audioPipeline.isAudiblyPlaying
+            let decision = self.bargeInPolicy.onSpeechStarted(playbackActive: playbackActive)
+            let m = self.bargeInPolicy.metrics
+            self.logger.info("[barge-in] speech_started echoSuspect=\(decision.echoSuspect) msSincePlayback=\(decision.msSincePlaybackStarted.map(String.init) ?? "n/a") interrupt=\(decision.shouldInterrupt) deferMs=\(decision.deferInterruptMs.map(String.init) ?? "n/a") totals=\(m.echoSuspectCount)/\(m.genuineCount) (echo/genuine)")
+            if decision.shouldInterrupt {
+                self.performBargeInInterrupt(msSincePlaybackStarted: decision.msSincePlaybackStarted)
+            } else if let deferMs = decision.deferInterruptMs {
+                self.scheduleDeferredBargeIn(afterMs: deferMs)
+            }
             self.cancelIdleTimer()
         }
 
         client.onSpeechStopped = { [weak self] in
             guard let self else { return }
+            if let ms = self.bargeInPolicy.onSpeechStopped() {
+                self.logger.info("[barge-in] speech_stopped durationMs=\(ms)")
+            }
             self.state = .processing
         }
 
@@ -363,6 +413,55 @@ public final class VoiceAgent: ObservableObject {
                 "Token usage: in=\(usage.inputTokens) out=\(usage.outputTokens) audio_in=\(usage.inputAudioTokens) audio_out=\(usage.outputAudioTokens)"
             )
         }
+    }
+
+    // MARK: - Barge-In
+
+    /// Stop playback and cancel the in-flight response after a barge-in
+    /// decision (immediate genuine trigger, or a deferred echo-suspect one
+    /// whose speech outlived the probation window).
+    private func performBargeInInterrupt(msSincePlaybackStarted: Int?) {
+        audioPipeline.stopPlayback(fadeOut: true)
+        // Truncate before cancel so the model's context reflects how much of
+        // the reply the user actually heard (NIM-1314 lever 5).
+        if let ms = msSincePlaybackStarted {
+            realtimeClient?.truncatePlayedAudio(audioEndMs: ms)
+        }
+        bargeInPolicy.notePlaybackStopped()
+        realtimeClient?.cancelResponse()
+        realtimeClient?.setServerResponsesGated(false)
+        state = .listening
+    }
+
+    /// Echo-suspect trigger: playback keeps going; after the probation window
+    /// the policy decides whether the speech persisted (interrupt late) or was
+    /// an echo blip that already ended (suppress -- playback never hiccuped).
+    private func scheduleDeferredBargeIn(afterMs deferMs: Int) {
+        deferredBargeInTimer?.invalidate()
+        deferredBargeInTimer = Timer.scheduledTimer(
+            withTimeInterval: Double(deferMs) / 1000.0,
+            repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.resolveDeferredBargeIn()
+            }
+        }
+    }
+
+    private func resolveDeferredBargeIn() {
+        deferredBargeInTimer = nil
+        let playbackActive = audioPipeline.isAudiblyPlaying
+        let decision = bargeInPolicy.onDeferredInterruptTimeout(playbackActive: playbackActive)
+        let m = bargeInPolicy.metrics
+        logger.info("[barge-in] deferred \(decision.shouldInterrupt ? "fired" : "suppressed") playbackActive=\(playbackActive) msSincePlayback=\(decision.msSincePlaybackStarted.map(String.init) ?? "n/a") suppressed=\(m.suppressedEchoCount)")
+        if decision.shouldInterrupt {
+            performBargeInInterrupt(msSincePlaybackStarted: decision.msSincePlaybackStarted)
+        }
+    }
+
+    private func cancelDeferredBargeInTimer() {
+        deferredBargeInTimer?.invalidate()
+        deferredBargeInTimer = nil
     }
 
     // MARK: - Tool Handling
@@ -402,6 +501,12 @@ public final class VoiceAgent: ObservableObject {
         }
     }
 
+    // Intentional divergence from desktop: on gpt-realtime-2 the desktop keeps
+    // submit_agent_prompt open as an async (deferred) call and resolves it with
+    // the coding agent's real summary. iOS cannot -- the prompt is relayed to
+    // the desktop over the sync channel and the completion arrives later as a
+    // separate broadcast (onSessionCompleted), so the tool call is answered
+    // immediately with a queued acknowledgment on both models.
     private func handleSubmitPrompt(args: [String: Any], callId: String) {
         let prompt = args["prompt"] as? String ?? ""
         let sessionId = args["session_id"] as? String ?? activeSessionId
@@ -1149,53 +1254,4 @@ public final class VoiceAgent: ObservableObject {
     }
 }
 
-// MARK: - Voice Mode Settings
-
-public struct VoiceModeSettings: Codable {
-    public var voice: String
-    public var idleTimeout: TimeInterval
-    public var autoAnnounceCompletions: Bool
-    public var vadThreshold: Double
-    public var silenceDurationMs: Int
-    public var promptConfirmationDelay: TimeInterval
-    /// Preferred spoken language synced from the desktop (BCP-47 or common
-    /// language name). The voice agent pins its language to this. Nil/empty
-    /// means no preference -> English. Optional so older persisted settings
-    /// that lack the field still decode.
-    public var language: String?
-
-    public init(
-        voice: String = "sage",
-        idleTimeout: TimeInterval = 30,
-        autoAnnounceCompletions: Bool = true,
-        vadThreshold: Double = 0.5,
-        silenceDurationMs: Int = 500,
-        promptConfirmationDelay: TimeInterval = 5,
-        language: String? = nil
-    ) {
-        self.voice = voice
-        self.idleTimeout = idleTimeout
-        self.autoAnnounceCompletions = autoAnnounceCompletions
-        self.vadThreshold = vadThreshold
-        self.silenceDurationMs = silenceDurationMs
-        self.promptConfirmationDelay = promptConfirmationDelay
-        self.language = language
-    }
-
-    private static let userDefaultsKey = "voiceModeSettings"
-
-    public static func load() -> VoiceModeSettings {
-        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey),
-              let settings = try? JSONDecoder().decode(VoiceModeSettings.self, from: data) else {
-            return VoiceModeSettings()
-        }
-        return settings
-    }
-
-    public func save() {
-        if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: VoiceModeSettings.userDefaultsKey)
-        }
-    }
-}
 #endif

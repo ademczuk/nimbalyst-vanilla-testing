@@ -428,17 +428,30 @@ export function initVoiceModeService() {
         codingAgentPrompt?: { prepend?: string; append?: string };
         turnDetection?: {
           mode: 'server_vad' | 'push_to_talk';
+          detection?: 'semantic_vad' | 'server_vad';
           vadThreshold?: number;
           silenceDuration?: number;
           interruptible?: boolean;
         };
+        noiseReduction?: 'near_field' | 'far_field' | 'off';
       } | undefined;
       const customPrompt = voiceModeSettings?.voiceAgentPrompt || {};
-      const turnDetection = voiceModeSettings?.turnDetection || {
-        mode: 'server_vad' as const,
-        vadThreshold: 0.5,
-        silenceDuration: 500,
-        interruptible: true,
+      const turnDetection = {
+        ...(voiceModeSettings?.turnDetection || {
+          mode: 'server_vad' as const,
+          silenceDuration: 500,
+          interruptible: true,
+        }),
+        // Echo round 2 defaults: model-judged semantic_vad (echo-robust; the
+        // old amplitude server_vad tripped on residual echo at 0.5) and
+        // far_field noise reduction (loud open speakers are the echo case).
+        // Persisted settings can override both.
+        detection: voiceModeSettings?.turnDetection?.detection ?? ('semantic_vad' as const),
+        noiseReduction: voiceModeSettings?.noiseReduction ?? ('far_field' as const),
+        // A persisted 0.5 is indistinguishable from the old default and lets
+        // echo trip amplitude VAD -- treat it as unset so the raised builder
+        // default applies (matches the iOS NIM-1314 migration).
+        ...(voiceModeSettings?.turnDetection?.vadThreshold === 0.5 ? { vadThreshold: undefined } : {}),
       };
       const selectedVoice = voiceModeSettings?.voice || 'alloy';
       // Old persisted settings predate these fields -- fall back to the defaults.
@@ -1364,6 +1377,18 @@ export function initVoiceModeService() {
   ipcMain.on('voice-mode:listen-state-changed', (_event, data: { sleeping: boolean }) => {
     if (!activeVoiceSession) return;
     activeVoiceSession.poc.setListeningPaused(data.sleeping);
+  });
+
+  /**
+   * Audible playback state from the renderer (the renderer owns the playback
+   * buffer, so only it knows when the assistant is actually audible -- audio
+   * keeps playing after response.done because it streams faster than
+   * realtime). Drives echo-vs-genuine barge-in classification and server VAD
+   * response gating (echo cancellation round 2).
+   */
+  ipcMain.on('voice-mode:playback-active', (_event, data: { active: boolean }) => {
+    if (!activeVoiceSession) return;
+    activeVoiceSession.poc.setPlaybackActive(data.active);
   });
 
   /**

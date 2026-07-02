@@ -398,6 +398,14 @@ final class AudioPipeline: @unchecked Sendable {
         endOfPlaybackMarked = false
     }
 
+    /// Whether agent audio is audibly playing (or buffered and about to play).
+    /// True from the first enqueued chunk until the ring buffer drains or
+    /// playback is stopped. The barge-in policy uses this to classify a server
+    /// VAD trigger as echo-suspect (agent still talking) vs genuine.
+    var isAudiblyPlaying: Bool {
+        isPlaying || playbackRingBuffer.availableFrames > 0
+    }
+
     /// Signal that no more playback audio chunks are coming from the server.
     /// Fires onPlaybackFinished once the ring buffer has fully drained.
     func markEndOfPlayback() {
@@ -444,6 +452,10 @@ final class AudioPipeline: @unchecked Sendable {
     /// buffer are set up there). Does not call `markEndOfPlayback()`, so it
     /// won't fire `onPlaybackFinished`.
     func playReadyChime() {
+        // Logged because the chime counts as audible playback and its speaker
+        // output can trip VAD when AEC doesn't fully cancel it -- a chime at an
+        // unexpected point in the log is a red flag (NIM-1471).
+        logger.info("Playing ready chime")
         enqueuePlayback(base64Audio: Self.readyChimeBase64PCM())
     }
 

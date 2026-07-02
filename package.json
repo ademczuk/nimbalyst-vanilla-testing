@@ -115,6 +115,9 @@
     "zod": "^4.0.0",
     "concurrently": {
       "shell-quote": "^1.8.4"
+    },
+    "app-builder-lib": {
+      "minimatch": "^10.2.5"
     }
   }
 }

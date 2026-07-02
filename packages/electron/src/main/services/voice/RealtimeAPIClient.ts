@@ -9,6 +9,7 @@ import WebSocket from 'ws';
 import { ipcMain } from 'electron';
 import { AnalyticsService } from '../analytics/AnalyticsService';
 import type { RealtimeFunctionTool } from './voiceToolBridge';
+import { VoiceBargeInPolicy, buildTurnDetection, type NoiseReductionType, type VadDetectionType } from './voiceBargeInPolicy';
 
 interface RealtimeEvent {
   type: string;
@@ -103,7 +104,11 @@ interface SessionConfig {
         threshold?: number;
         prefix_padding_ms?: number;
         silence_duration_ms?: number;
+        eagerness?: string;
+        create_response?: boolean;
+        interrupt_response?: boolean;
       };
+      noise_reduction?: { type: string };
     };
     output: {
       voice: string;
@@ -125,9 +130,18 @@ interface CustomPromptConfig {
 
 interface TurnDetectionConfig {
   mode: 'server_vad' | 'push_to_talk';
+  // Which detection engine drives turn-taking when mode is not push_to_talk.
+  // semantic_vad (default) is model-judged and echo-robust; server_vad is the
+  // amplitude fallback the threshold/silence settings apply to.
+  detection?: VadDetectionType;
   vadThreshold?: number;
   silenceDuration?: number;
   interruptible?: boolean;
+  // Audio-input noise-reduction profile (rides in this settings bag so it
+  // doesn't grow the already-wide constructor). 'far_field' default: live
+  // desktop metrics showed loud open speakers behave far-field; 'near_field'
+  // for close/headset mics; 'off' omits.
+  noiseReduction?: NoiseReductionType;
 }
 
 // All available OpenAI Realtime API voices
@@ -207,6 +221,25 @@ export class RealtimeAPIClient {
   private hasActiveResponse: boolean = false;
   private hasPendingFunctionCall: boolean = false;
   private isOutputtingAudio: boolean = false;
+
+  // Barge-in / echo instrumentation (echo cancellation round 2, NIM-1314
+  // desktop parity). `playbackActive` mirrors the renderer's audible playback
+  // state via voice-mode:playback-active; the policy classifies VAD triggers
+  // as echo-suspect vs genuine and owns the interrupt decision.
+  private bargeInPolicy = new VoiceBargeInPolicy();
+  private playbackActive: boolean = false;
+  // The conversation item currently streaming (or last streamed) assistant
+  // audio. Kept past response.done because renderer playback outlives the
+  // response; a tail barge-in must truncate THIS item. Cleared once truncated.
+  private currentAssistantItemId: string | null = null;
+  // While agent audio is audibly playing, server VAD responses are gated
+  // (create_response/interrupt_response=false) so residual echo cannot make
+  // the server act on its own voice; the client keeps barge-in control.
+  private serverResponsesGated: boolean = false;
+  // Probation timer for an echo-suspect VAD trigger (min-duration heuristic):
+  // fires onDeferredInterruptTimeout to decide whether the speech outlived
+  // the window (real barge-in) or was an echo blip.
+  private deferredBargeInTimer: NodeJS.Timeout | null = null;
 
   // When true, the inactivity monitor is suspended (e.g. voice is sleeping)
   private listeningPaused: boolean = false;
@@ -716,6 +749,11 @@ export class RealtimeAPIClient {
       case 'response.audio.delta':
         // Received audio chunk from OpenAI
         this.isOutputtingAudio = true;
+        // Remember which conversation item is speaking so a barge-in during
+        // the (renderer-side) playback tail can truncate it server-side.
+        if ((event as any).item_id) {
+          this.currentAssistantItemId = (event as any).item_id as string;
+        }
         const audioDelta = (event as any).delta as string; // base64-encoded PCM16
         this.handleAudioDelta(audioDelta);
         if (this.onAudioCallback) {
@@ -752,22 +790,34 @@ export class RealtimeAPIClient {
         this.handleFunctionCall(callId, name, args);
         break;
 
-      case 'input_audio_buffer.speech_started':
-        console.log('[RealtimeAPIClient] speech_started (VAD detected voice)');
+      case 'input_audio_buffer.speech_started': {
         this.updateActivity();
-        this.cancelCurrentResponse();
-        if (this.onInterruptionCallback) {
-          this.onInterruptionCallback();
+        // Route the barge-in decision through the policy seam: it classifies
+        // echo-suspect (agent audio still audibly playing in the renderer --
+        // residual echo can trip VAD on open speakers, NIM-1314 desktop
+        // parity) vs genuine. Genuine triggers interrupt now; echo-suspect
+        // ones get a probation window (min-duration heuristic) resolved by a
+        // timer in resolveDeferredBargeIn().
+        const decision = this.bargeInPolicy.onSpeechStarted(this.playbackActive);
+        const m = this.bargeInPolicy.metrics;
+        console.log(`[RealtimeAPIClient] [barge-in] speech_started echoSuspect=${decision.echoSuspect} msSincePlayback=${decision.msSincePlaybackStarted ?? 'n/a'} interrupt=${decision.shouldInterrupt} deferMs=${decision.deferInterruptMs ?? 'n/a'} totals=${m.echoSuspectCount}/${m.genuineCount} (echo/genuine)`);
+        if (decision.shouldInterrupt) {
+          this.performBargeInInterrupt(decision.msSincePlaybackStarted);
+        } else if (decision.deferInterruptMs !== null) {
+          this.scheduleDeferredBargeIn(decision.deferInterruptMs);
         }
         break;
+      }
 
-      case 'input_audio_buffer.speech_stopped':
-        console.log('[RealtimeAPIClient] speech_stopped (VAD detected silence)');
+      case 'input_audio_buffer.speech_stopped': {
         this.updateActivity();
+        const durationMs = this.bargeInPolicy.onSpeechStopped();
+        console.log(`[RealtimeAPIClient] [barge-in] speech_stopped durationMs=${durationMs ?? 'n/a'}`);
         if (this.onSpeechStoppedCallback) {
           this.onSpeechStoppedCallback();
         }
         break;
+      }
 
       case 'conversation.item.input_audio_transcription.delta':
         // Streaming transcription delta - shows partial text while user is speaking
@@ -811,6 +861,52 @@ export class RealtimeAPIClient {
 
       default:
         break;
+    }
+  }
+
+  /**
+   * Stop playback and cancel the in-flight response after a barge-in decision
+   * (immediate genuine trigger, or a deferred echo-suspect one whose speech
+   * outlived the probation window).
+   */
+  private performBargeInInterrupt(msSincePlaybackStarted: number | null): void {
+    // Tell the server how much audio was actually heard before cancelling,
+    // so the model's context matches reality.
+    if (msSincePlaybackStarted !== null) {
+      this.truncatePlayedAudio(msSincePlaybackStarted);
+    }
+    this.cancelCurrentResponse();
+    if (this.onInterruptionCallback) {
+      this.onInterruptionCallback();
+    }
+  }
+
+  /**
+   * Echo-suspect trigger: playback keeps going; after the probation window
+   * the policy decides whether the speech persisted (interrupt late) or was
+   * an echo blip that already ended (suppress -- playback never hiccuped).
+   */
+  private scheduleDeferredBargeIn(deferMs: number): void {
+    if (this.deferredBargeInTimer) clearTimeout(this.deferredBargeInTimer);
+    this.deferredBargeInTimer = setTimeout(() => {
+      this.deferredBargeInTimer = null;
+      this.resolveDeferredBargeIn();
+    }, deferMs);
+  }
+
+  private resolveDeferredBargeIn(): void {
+    const decision = this.bargeInPolicy.onDeferredInterruptTimeout(this.playbackActive);
+    const m = this.bargeInPolicy.metrics;
+    console.log(`[RealtimeAPIClient] [barge-in] deferred ${decision.shouldInterrupt ? 'fired' : 'suppressed'} playbackActive=${this.playbackActive} msSincePlayback=${decision.msSincePlaybackStarted ?? 'n/a'} suppressed=${m.suppressedEchoCount}`);
+    if (decision.shouldInterrupt) {
+      this.performBargeInInterrupt(decision.msSincePlaybackStarted);
+    }
+  }
+
+  private cancelDeferredBargeInTimer(): void {
+    if (this.deferredBargeInTimer) {
+      clearTimeout(this.deferredBargeInTimer);
+      this.deferredBargeInTimer = null;
     }
   }
 
@@ -894,12 +990,16 @@ Your job is to be a voice relay, not to interpret or improve the user's requests
     // 'push_to_talk' mode uses type: 'none' which disables automatic turn detection
     const turnDetectionConfig = this.turnDetection.mode === 'push_to_talk'
       ? undefined // No automatic turn detection - user must manually commit audio
-      : {
-          type: 'server_vad' as const,
-          threshold: this.turnDetection.vadThreshold ?? 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: this.turnDetection.silenceDuration ?? 500,
-        };
+      : buildTurnDetection({
+          detection: this.turnDetection.detection,
+          vadThreshold: this.turnDetection.vadThreshold,
+          silenceDurationMs: this.turnDetection.silenceDuration,
+          allowServerResponses: !this.serverResponsesGated,
+        });
+
+    // Input noise reduction (echo round 2): 'far_field' by default (loud open
+    // speakers are the echo-prone case); 'off' omits the config entirely.
+    const noiseReduction = this.turnDetection.noiseReduction ?? 'far_field';
 
     // GA Realtime API session shape: audio config is nested under audio.{input,output}
     // with format as an object ({type,rate}), not the flat beta fields. PCM16 @ 24kHz
@@ -919,6 +1019,7 @@ Your job is to be a voice relay, not to interpret or improve the user's requests
           // conversation.item.input_audio_transcription.{delta,completed}.
           transcription: { model: TRANSCRIPTION_MODEL },
           ...(turnDetectionConfig ? { turn_detection: turnDetectionConfig } : {}),
+          ...(noiseReduction !== 'off' ? { noise_reduction: { type: noiseReduction } } : {}),
         },
         output: {
           voice: this.voice,
@@ -1653,6 +1754,66 @@ Your job is to be a voice relay, not to interpret or improve the user's requests
   }
 
   /**
+   * Renderer-reported audible playback state (voice-mode:playback-active).
+   * Drives the barge-in policy's playback clock and gates server VAD
+   * responses while the agent is audibly speaking (NIM-1314 lever 4).
+   */
+  setPlaybackActive(active: boolean): void {
+    if (active === this.playbackActive) return;
+    this.playbackActive = active;
+    if (active) {
+      this.bargeInPolicy.notePlaybackStarted();
+    } else {
+      this.bargeInPolicy.notePlaybackStopped();
+    }
+    this.setServerResponsesGated(active);
+  }
+
+  /**
+   * Gate or un-gate server VAD responses while the agent's audio plays.
+   * Sends a partial session.update touching only turn_detection. No-ops in
+   * push_to_talk mode (no turn detection) and when the state is unchanged.
+   */
+  private setServerResponsesGated(gated: boolean): void {
+    if (gated === this.serverResponsesGated) return;
+    this.serverResponsesGated = gated;
+    if (!this.ws || !this.connected || this.turnDetection.mode === 'push_to_talk') return;
+    this.ws.send(JSON.stringify({
+      type: 'session.update',
+      session: {
+        type: 'realtime',
+        audio: {
+          input: {
+            turn_detection: buildTurnDetection({
+              detection: this.turnDetection.detection,
+              vadThreshold: this.turnDetection.vadThreshold,
+              silenceDurationMs: this.turnDetection.silenceDuration,
+              allowServerResponses: !gated,
+            }),
+          },
+        },
+      },
+    }));
+  }
+
+  /**
+   * Tell the server how much of the current assistant item's audio the user
+   * actually heard before a barge-in, so the model's context matches reality.
+   * Clears the item id so the same item is never truncated twice.
+   */
+  private truncatePlayedAudio(audioEndMs: number): void {
+    if (!this.ws || !this.connected || !this.currentAssistantItemId) return;
+    const itemId = this.currentAssistantItemId;
+    this.currentAssistantItemId = null;
+    this.ws.send(JSON.stringify({
+      type: 'conversation.item.truncate',
+      item_id: itemId,
+      content_index: 0,
+      audio_end_ms: Math.max(0, Math.round(audioEndMs)),
+    }));
+  }
+
+  /**
    * Cancel the current response (used when user interrupts)
    */
   private cancelCurrentResponse(): void {
@@ -1778,6 +1939,12 @@ Your job is to be a voice relay, not to interpret or improve the user's requests
    * @param reason Optional reason for disconnect (default: 'user_stopped')
    */
   disconnect(reason: 'timeout' | 'error' | 'user_stopped' = 'user_stopped'): void {
+    const m = this.bargeInPolicy.metrics;
+    if (m.speechStartedCount > 0) {
+      console.log(`[RealtimeAPIClient] [barge-in] session summary: speechStarted=${m.speechStartedCount} echoSuspect=${m.echoSuspectCount} genuine=${m.genuineCount} interrupts=${m.interruptCount} suppressedEcho=${m.suppressedEchoCount}`);
+    }
+    this.bargeInPolicy.resetSession();
+    this.cancelDeferredBargeInTimer();
     // Mark intentional BEFORE closing so the close handler doesn't reconnect.
     this.intentionalDisconnect = true;
     if (this.reconnectTimer) {
@@ -1800,6 +1967,9 @@ Your job is to be a voice relay, not to interpret or improve the user's requests
       this.sessionId = null;
       this.currentResponseId = null;
       this.hasActiveResponse = false;
+      this.currentAssistantItemId = null;
+      this.serverResponsesGated = false;
+      this.playbackActive = false;
     }
   }
 
