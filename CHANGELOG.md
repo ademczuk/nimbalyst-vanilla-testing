@@ -13,9 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Refreshed the extension marketplace: updated all published extensions and added Browser, Calc Sheets, GitHub Issues Importer, and Memory
 
 ### Fixed
-<!-- Bug fixes go here -->
+- Tracker item content no longer renders as raw JSON text after closing and reopening the item.
 
 ### Removed
 <!-- Removed features go here -->
@@ -32,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Gemini (Antigravity) agent and meta-agent turns no longer come back empty after the agent runs a tool that returns no results.
 - Agent calls to deferred background tools (Monitor et al) no longer fail with schema validation errors.
 
 ### Removed
