@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Sync settings now show a per-project document-sync status (connected, file count, or an error) so you can tell whether mobile document sync is working.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -23,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Code sessions now end with an error instead of spinning forever if the agent stream silently stalls.
 - iOS: session badges now label Fable 5 and Sonnet 5 sessions instead of showing a generic "Claude Agent" fallback.
 - The Claude Code model picker now always shows every available model, so Fable 5 and other variants can no longer go missing.
+- Mobile document sync now propagates `.md` deletions to your other devices and reconnects after you change sync settings, instead of silently leaving later edits unsynced.
 
 ### Removed
 <!-- Removed features go here -->
