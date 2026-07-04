@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- The New File menu now scrolls when long, lists file types by name (Markdown first, the rest alphabetical), and no longer shows a duplicate Mockup entry.
 - Refreshed the extension marketplace: updated all published extensions and added Browser, Calc Sheets, GitHub Issues Importer, and Memory
 - Voice mode: the assistant now replies more briefly and no longer asks you to approve tasks that auto-send after the on-screen countdown.
 
@@ -25,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - iOS: session badges now label Fable 5 and Sonnet 5 sessions instead of showing a generic "Claude Agent" fallback.
 - The Claude Code model picker now always shows every available model, so Fable 5 and other variants can no longer go missing.
 - Mobile document sync now propagates `.md` deletions to your other devices and reconnects after you change sync settings, instead of silently leaving later edits unsynced.
+- Clicking a relative file link in a markdown doc now opens the file in a tab instead of a blank white window; external links open in your browser.
 
 ### Removed
 <!-- Removed features go here -->
