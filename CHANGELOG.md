@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - iOS: session badges now label Fable 5 and Sonnet 5 sessions instead of showing a generic "Claude Agent" fallback.
 - The Claude Code model picker now always shows every available model, so Fable 5 and other variants can no longer go missing.
 - Mobile document sync now propagates `.md` deletions to your other devices and reconnects after you change sync settings, instead of silently leaving later edits unsynced.
+- Clicking a relative file link in a markdown doc now opens the file in a tab instead of a blank white window; external links open in your browser.
 
 ### Removed
 <!-- Removed features go here -->

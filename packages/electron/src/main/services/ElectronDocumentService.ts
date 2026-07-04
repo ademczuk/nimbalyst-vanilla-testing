@@ -842,7 +842,11 @@ export class ElectronDocumentService implements DocumentService {
     };
   }
 
-  async openDocument(documentId: string, fallback?: DocumentOpenOptions): Promise<void> {
+  async openDocument(
+    documentId: string,
+    fallback?: DocumentOpenOptions,
+    requester?: Electron.WebContents,
+  ): Promise<void> {
     let doc: Document | null = null;
 
     if (documentId) {
@@ -867,10 +871,16 @@ export class ElectronDocumentService implements DocumentService {
       );
     }
 
-    // Send message to renderer to open the document
-    const window = BrowserWindow.getFocusedWindow();
-    if (window) {
-      window.webContents.send('open-document', {
+    // Send message to renderer to open the document. Prefer the requesting
+    // webContents — the focused window can be a different window (or none at
+    // all, e.g. the app is in the background), which used to silently drop
+    // the open.
+    const target =
+      requester && !requester.isDestroyed()
+        ? requester
+        : BrowserWindow.getFocusedWindow()?.webContents;
+    if (target) {
+      target.send('open-document', {
         path: path.join(this.workspacePath, doc.path)
       });
     }
@@ -3369,7 +3379,7 @@ export function setupDocumentServiceHandlers(resolver: DocumentServiceResolver) 
   safeHandle('document-service:open', async (event, payload: { documentId: string; fallback?: DocumentOpenOptions }) => {
     try {
       const { documentId, fallback } = payload ?? { documentId: '' };
-      return await requireDocumentService(event).openDocument(documentId, fallback);
+      return await requireDocumentService(event).openDocument(documentId, fallback, event.sender);
     } catch (error) {
       console.error('[DocumentService] open failed:', error);
       throw error;
