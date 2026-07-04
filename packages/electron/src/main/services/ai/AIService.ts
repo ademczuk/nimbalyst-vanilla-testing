@@ -24,6 +24,8 @@ import {
   OpenAICodexProvider,
 } from '@nimbalyst/runtime/ai/server';
 import { CLAUDE_CODE_SAFE_FALLBACK_MODEL } from '@nimbalyst/runtime/ai/modelConstants';
+import { reconcileClaudeCodeModels } from './claudeCodeModelReconcile';
+import { isModelEnabled } from './modelEnablementFilter';
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
 import { parseContextUsageMessage } from '@nimbalyst/runtime/ai/server/utils/contextUsage';
 import { isBedrockToolSearchError } from '@nimbalyst/runtime/ai/server/utils/errorDetection';
@@ -399,47 +401,39 @@ export class AIService {
   }
 
   /**
-   * Append any claude-code variants that were added after this user's
-   * `providerSettings['claude-code'].models` list was first persisted. Without
-   * this, `ai:getModels` filters out newly-introduced variants (e.g. the
-   * `opus-4-6` pinned variant) because they aren't in the saved list and
-   * there's no UI in ClaudeCodePanel to re-enable them.
+   * Back-fill any claude-code variants that shipped after this user's
+   * `providerSettings['claude-code'].models` allow-list was first persisted.
+   * Without this, `ai:getModels` filters out newly-introduced variants (they
+   * aren't in the saved list and ClaudeCodePanel has no per-model UI to re-enable
+   * them) — the drift that silently hid Fable 5 and sonnet-4-6.
    *
-   * Each variant gets its own migration key so we can introduce new pinned
-   * variants incrementally without re-running prior insertions.
+   * This is a single self-reconciliation against the catalog source of truth
+   * (`CLAUDE_CODE_VARIANTS`) rather than one hand-written migration per variant:
+   * a persisted snapshot of "known" variant ids records what we've seen before,
+   * so any future variant is enabled by default with no code change, while a
+   * variant the user has deliberately removed (already in the snapshot) is never
+   * re-added. See `claudeCodeModelReconcile.ts`.
    */
-  private migrateClaudeCodeModelList(): void {
-    this.migrateClaudeCodeVariantInsertion(
-      'migrations.claudeCodeOpus46Added',
-      'claude-code:opus-4-6',
-      'claude-code:opus',
-    );
-    this.migrateClaudeCodeVariantInsertion(
-      'migrations.claudeCodeOpus47Added',
-      'claude-code:opus-4-7',
-      'claude-code:opus',
-    );
-  }
-
-  private migrateClaudeCodeVariantInsertion(
-    migrationKey: string,
-    variantId: string,
-    insertAfterId: string,
-  ): void {
-    if (this.settingsStore!.get(migrationKey)) return;
+  private reconcileClaudeCodeModelList(): void {
+    const KNOWN_KEY = 'migrations.knownClaudeCodeVariants';
+    const known = this.settingsStore!.get(KNOWN_KEY) as string[] | undefined;
     const providerSettings = this.settingsStore!.get('providerSettings', {}) as any;
     const claudeCode = providerSettings?.['claude-code'];
-    if (claudeCode && Array.isArray(claudeCode.models) && !claudeCode.models.includes(variantId)) {
-      const anchorIndex = claudeCode.models.indexOf(insertAfterId);
-      const insertAt = anchorIndex >= 0 ? anchorIndex + 1 : claudeCode.models.length;
-      claudeCode.models = [
-        ...claudeCode.models.slice(0, insertAt),
-        variantId,
-        ...claudeCode.models.slice(insertAt),
-      ];
-      this.settingsStore!.set('providerSettings', providerSettings);
+
+    // An empty/undefined models array means "allow all", so there is nothing to
+    // back-fill — only reconcile an explicit allow-list.
+    if (claudeCode && Array.isArray(claudeCode.models) && claudeCode.models.length > 0) {
+      const result = reconcileClaudeCodeModels(claudeCode.models, known);
+      if (result.changed) {
+        claudeCode.models = result.models;
+        this.settingsStore!.set('providerSettings', providerSettings);
+      }
+      this.settingsStore!.set(KNOWN_KEY, result.known);
+    } else {
+      // Still advance the snapshot so a later switch to an explicit list starts
+      // from the current catalog instead of re-flagging everything as new.
+      this.settingsStore!.set(KNOWN_KEY, reconcileClaudeCodeModels([], known).known);
     }
-    this.settingsStore!.set(migrationKey, true);
   }
 
   private getSettingsStore(): Store<Record<string, unknown>> {
@@ -466,7 +460,15 @@ export class AIService {
                 enabled: true,
                 testStatus: "idle",
                 installStatus: "not-installed",
-                models: ["claude-code:opus", "claude-code:opus-4-7", "claude-code:opus-4-6", "claude-code:sonnet", "claude-code:haiku"]
+                // Allow-all: no curated default list. There is no UI to curate
+                // claude-code models and nothing writes this array, so shipping a
+                // hardcoded subset only creates drift — a newly-added variant that
+                // someone forgets to list gets silently filtered out of the picker
+                // (this is how Fable 5 and sonnet-4-6 disappeared, NIM-1486). An
+                // empty list means "show whatever the catalog emits", so the
+                // catalog (ClaudeCodeProvider.getModels) is the single source of
+                // truth and cannot drift.
+                models: []
               },
               openai: {
                 enabled: false,
@@ -498,7 +500,7 @@ export class AIService {
           }
         }
       });
-      this.migrateClaudeCodeModelList();
+      this.reconcileClaudeCodeModelList();
     }
     return this.settingsStore;
   }
@@ -3468,35 +3470,12 @@ export class AIService {
       // console.log('[AIService] ai:getModels - claude-code models from registry:',
       //   claudeCodeModels.map(m => ({ id: m.id, name: m.name })));
 
-      // Filter to only enabled models
-      const enabledModels = allModels.filter(model => {
-        const provider = enabledProviders[model.provider as AIProviderType];
-        // if (model.provider === 'openai-codex') {
-        //   console.log('[AIService] Filtering openai-codex model:', {
-        //     modelId: model.id,
-        //     providerEnabled: provider?.enabled,
-        //     selectedModels: provider?.models
-        //   });
-        // }
-        if (!provider?.enabled) return false;
-        // If specific models are selected, filter to those
-        if (provider.models && provider.models.length > 0) {
-          if (model.provider === 'claude-code' && provider.models.includes('claude-code')) {
-            return true;
-          }
-          // For Claude Code: if base model is selected, also include 1M variants
-          // e.g., if 'claude-code:sonnet' is selected, also include 'claude-code:sonnet-1m'
-          if (model.provider === 'claude-code' && model.id.includes('-1m')) {
-            const baseModelId = model.id.replace(/-1m$/, '');
-            if (provider.models.includes(baseModelId)) {
-              return true;
-            }
-          }
-          return provider.models.includes(model.id);
-        }
-        // Otherwise include all models for this provider
-        return true;
-      });
+      // Filter to only enabled models. The gate is extracted to a pure,
+      // unit-tested function so the claude-code family (SDK + CLI) can't silently
+      // hide a shipped variant again (NIM-1486).
+      const enabledModels = allModels.filter(model =>
+        isModelEnabled(model, enabledProviders[model.provider as AIProviderType]),
+      );
 
       // Surface extension-contributed agent providers (aiAgentProviders) in the
       // picker. The built-in `enabledProviders` map is keyed on AIProviderType,

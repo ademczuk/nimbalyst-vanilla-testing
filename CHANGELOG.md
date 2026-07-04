@@ -10,13 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Sync settings now show a per-project document-sync status (connected, file count, or an error) so you can tell whether mobile document sync is working.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
 - Refreshed the extension marketplace: updated all published extensions and added Browser, Calc Sheets, GitHub Issues Importer, and Memory
+- Voice mode: the assistant now replies more briefly and no longer asks you to approve tasks that auto-send after the on-screen countdown.
 
 ### Fixed
 - Tracker item content no longer renders as raw JSON text after closing and reopening the item.
+- Interactive input prompts no longer collapse into plain chat if you take longer than 5 minutes to answer.
+- Open custom-editor tabs (e.g. Replicad, Excalidraw) now refresh when an agent edits the file, instead of staying stale until closed and reopened.
+- Claude Code sessions now end with an error instead of spinning forever if the agent stream silently stalls.
+- iOS: session badges now label Fable 5 and Sonnet 5 sessions instead of showing a generic "Claude Agent" fallback.
+- The Claude Code model picker now always shows every available model, so Fable 5 and other variants can no longer go missing.
+- Mobile document sync now propagates `.md` deletions to your other devices and reconnects after you change sync settings, instead of silently leaving later edits unsynced.
 
 ### Removed
 <!-- Removed features go here -->

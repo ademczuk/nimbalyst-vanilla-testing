@@ -116,6 +116,11 @@ import {
   type TaskTerminalNotification,
 } from './claudeCode/subagentDrain';
 import {
+  raceNextChunkWithStallWatchdog,
+  resolveStreamStallMs,
+  shouldArmStreamStallWatchdog,
+} from './claudeCode/streamStallWatchdog';
+import {
   isBunRuntimeSpawnCrash,
   collectSpawnCrashDiagnostics,
   armAgentSdkDebugLogging,
@@ -787,6 +792,10 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       let firstChunkTime: number | undefined;
       let toolCallCount = 0;
       let receivedCompactBoundary = false;
+      // Count of tool calls whose result has not yet come back. While > 0 a tool
+      // is executing in the subprocess and main-stream silence is legitimate, so
+      // the stall watchdog stays disarmed (see below). NIM-1481.
+      let outstandingToolCalls = 0;
       // Timestamp of the first `type: 'result'` chunk from the SDK. Used to
       // arm a grace-period timer that ends the prompt AsyncIterable so the
       // SDK can call transport.endInput() and let the binary exit cleanly.
@@ -830,6 +839,13 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // sub-agent never trips it, while a genuinely stuck one is eventually reaped
       // (avoiding the #320 "Stream closed" hang). See NIM-1344 / GitHub #732.
       const SUBAGENT_DRAIN_GRACE_MS = 5 * 60_000;
+      // Stall watchdog window (NIM-1481). If the SDK yields no chunk of ANY kind
+      // for this long while the model -- not a tool -- is expected to be producing
+      // output, the stream is wedged (e.g. a thinking phase whose upstream died
+      // silently) and the turn is aborted instead of hanging forever. Legitimate
+      // long thinking never trips it because the SDK emits `thinking_tokens`
+      // heartbeats roughly once a second.
+      const streamStallMs = resolveStreamStallMs();
       const armPromptEndTimer = (reason: string) => {
         if (this.promptEndTimer) {
           clearTimeout(this.promptEndTimer);
@@ -890,17 +906,58 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             break;
           }
 
-          // Race the next chunk against the interrupt signal
+          // Race the next chunk against the interrupt signal and, when armed, a
+          // stall watchdog. The watchdog is only armed while the MODEL is
+          // expected to be producing output: before any `result` chunk, with no
+          // tool executing, no background sub-agent draining, and no pending user
+          // prompt/permission request. In those states the SDK heartbeats
+          // (`thinking_tokens`) continuously, so total silence for streamStallMs
+          // means the stream is wedged. During a long tool call, sub-agent drain,
+          // or user interaction, silence is legitimate and the watchdog stays
+          // disarmed so real work is never reaped. NIM-1481.
+          const watchdogActive = shouldArmStreamStallWatchdog({
+            resultReceivedTime,
+            outstandingToolCalls,
+            hasRunningTasks: this.hasRunningTasks(),
+            hasPendingUserInteraction: this.hasPendingUserInteraction(),
+          });
           const nextPromise = iterator.next();
-          const raceResult = await Promise.race([nextPromise, interruptPromise]);
+          const raceResult = await raceNextChunkWithStallWatchdog<any>({
+            nextPromise,
+            interruptPromise,
+            watchdogActive,
+            stallMs: streamStallMs,
+          });
 
-          if (raceResult === 'interrupted') {
+          if (raceResult.kind === 'interrupted') {
             console.log('[CLAUDE-CODE] Interrupt signal received, breaking streaming loop');
             this.drainExitCause = 'interrupted';
             break;
           }
 
-          const iterResult = raceResult as IteratorResult<any>;
+          if (raceResult.kind === 'stalled') {
+            // Abandon the pending next() so its eventual (abort-induced) rejection
+            // isn't an unhandled rejection, then tear down the wedged subprocess.
+            void nextPromise.catch(() => {});
+            const stalledAfterMs = Date.now() - queryStartTime;
+            console.error(`[CLAUDE-CODE] STREAM_STALL_DETECTED: no chunk for ${streamStallMs}ms pre-result (chunkCount=${chunkCount}, turnElapsed=${stalledAfterMs}ms). Aborting wedged query.`);
+            try { this.abortController?.abort(); } catch { /* best effort */ }
+            // Throw so the existing catch path logs the error, yields it to the
+            // UI, and emits the terminal `complete` -- unwinding the stuck spinner.
+            throw new Error(
+              `Claude Code stopped responding: no output for ${Math.round(streamStallMs / 1000)}s. `
+              + `The model stream went silent (this can happen during a long thinking phase). `
+              + `The turn was ended -- send your message again to retry.`,
+            );
+          }
+
+          if (raceResult.kind === 'chunk-error') {
+            // Preserve the pre-existing behavior: an iterator.next() rejection
+            // propagates to the catch(iterError) handler below.
+            throw raceResult.error;
+          }
+
+          const iterResult = raceResult.result;
           if (iterResult.done) {
             this.drainExitCause = 'iterator-done';
             break;
@@ -1086,6 +1143,9 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
               case 'tool_use': {
                 toolCallCount++;
+                // A tool is now executing; disarm the stall watchdog until its
+                // result comes back (main-stream silence is legitimate). NIM-1481.
+                outstandingToolCalls++;
                 sawAssistantOutputThisTurn = true;
                 const { toolId, toolName, args, isMcp, isSubagent } = item;
 
@@ -1130,6 +1190,9 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                 if (toolCall) {
                   const { isDuplicate } = applyToolResultToToolCall(toolCall, item.content, item.isError);
                   if (isDuplicate) break;
+                  // Tool finished -- re-arm the stall watchdog for the model's
+                  // next thinking/generation phase. NIM-1481.
+                  outstandingToolCalls = Math.max(0, outstandingToolCalls - 1);
 
                   // Diagnostic: detect "Stream closed" errors from the native binary
                   const resultText = typeof item.content === 'string' ? item.content : JSON.stringify(item.content);
@@ -2358,6 +2421,13 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   /** True if any tracked SDK-native sub-agent task is still running. */
   private hasRunningTasks(): boolean {
     return computeHasRunningTasks(this.activeTasks.values());
+  }
+
+  private hasPendingUserInteraction(): boolean {
+    return this.pendingExitPlanModeConfirmations.size > 0
+      || this.pendingAskUserQuestions.size > 0
+      || this.permissions.pendingToolPermissions.size > 0
+      || (this.permissionService?.hasPendingPermissions() ?? false);
   }
 
   /**

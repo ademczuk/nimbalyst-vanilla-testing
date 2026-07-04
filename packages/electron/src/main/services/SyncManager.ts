@@ -24,7 +24,7 @@ import { getStytchUserId, isAuthenticated, getPersonalOrgId, getPersonalUserId, 
 import { app } from 'electron';
 import * as os from 'os';
 import { getProjectFileSyncService } from './ProjectFileSyncService';
-import { startProjectFileSync } from '../file/WorkspaceWatcher';
+import { startProjectFileSync, stopAllProjectFileSync } from '../file/WorkspaceWatcher';
 import { windowStates } from '../window/WindowManager';
 import { getNormalizedGitRemote } from '../utils/gitUtils';
 import { resolveProjectPath } from '../utils/workspaceDetection';
@@ -964,8 +964,12 @@ export function shutdownSync(): void {
     clearInterval(state.sessionKeepAliveInterval);
     state.sessionKeepAliveInterval = null;
   }
-  // Shutdown ProjectFileSyncService
+  // Shutdown ProjectFileSyncService. Clear the watcher subscriptions first so
+  // a subsequent initializeSync re-subscribes and reconnects each project room
+  // (a stale subscription entry would make startProjectFileSync early-return
+  // and strand every later file save in a never-drained offline queue).
   try {
+    stopAllProjectFileSync();
     getProjectFileSyncService().shutdown();
   } catch {
     // Non-fatal
