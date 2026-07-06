@@ -25,6 +25,13 @@ import { BetaFeatureTag } from '../../../shared/betaFeatures';
 import { DeveloperFeatureTag, DEVELOPER_FEATURES, getDefaultDeveloperFeatures, enableAllDeveloperFeatures, disableAllDeveloperFeatures, areAllDeveloperFeaturesEnabled } from '../../../shared/developerFeatures';
 import { normalizeCodexProviderConfig, stripTransientProviderFields } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 import { onSettingChanged } from './settingAtomFamily';
+import {
+  type GutterCustomizationState,
+  type GutterSection,
+  DEFAULT_GUTTER_CUSTOMIZATION,
+  HIDDEN_GUTTER_ITEMS_KEY,
+  GUTTER_ITEM_ORDER_KEY,
+} from '../../components/NavigationGutter/navGutterItems';
 
 // Voice type - all available OpenAI Realtime voices
 export type VoiceId = 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'sage' | 'shimmer' | 'verse' | 'marin' | 'cedar';
@@ -2246,3 +2253,105 @@ export const copyFilePathAtom = atom(
     }
   }
 );
+
+// ============================================================================
+// Navigation Gutter Customization (GLOBAL)
+//
+// Which gutter icons are hidden, and their per-section order. Stored as a
+// global app setting (not per-project) because it's a personal preference that
+// should apply across all projects. Capability gating (team/remote/terminal)
+// stays per-project and automatic; it filters which items exist before this
+// preference is applied. See components/NavigationGutter/navGutterItems.ts.
+// ============================================================================
+
+/**
+ * The main gutter customization atom. Initialized from IPC on app load via
+ * initGutterCustomization().
+ */
+export const gutterCustomizationAtom = atom<GutterCustomizationState>(DEFAULT_GUTTER_CUSTOMIZATION);
+
+/** Ids of gutter items the user has hidden (global). */
+export const hiddenGutterItemsAtom = atom((get) => get(gutterCustomizationAtom).hiddenItems);
+
+/** Per-section saved order of gutter items (global, sparse). */
+export const gutterItemOrderAtom = atom((get) => get(gutterCustomizationAtom).order);
+
+function persistGutterCustomization(state: GutterCustomizationState): void {
+  if (typeof window === 'undefined' || !window.electronAPI) return;
+  window.electronAPI
+    .invoke('app-settings:set', HIDDEN_GUTTER_ITEMS_KEY, state.hiddenItems)
+    .catch((err: unknown) => console.error('[appSettings] Failed to persist hiddenGutterItems:', err));
+  window.electronAPI
+    .invoke('app-settings:set', GUTTER_ITEM_ORDER_KEY, state.order)
+    .catch((err: unknown) => console.error('[appSettings] Failed to persist gutterItemOrder:', err));
+}
+
+/**
+ * Toggle (or explicitly set) the hidden state of a gutter item. Pass `hidden`
+ * to force a state; omit it to flip. Persists globally.
+ *
+ * The keep-one-mode / non-hideable guards live in the caller (which has the
+ * live registry); this setter only mutates the stored set.
+ */
+export const toggleGutterItemHiddenAtom = atom(
+  null,
+  (get, set, payload: { id: string; hidden?: boolean }) => {
+    const { id, hidden } = payload;
+    const state = get(gutterCustomizationAtom);
+    const isHidden = state.hiddenItems.includes(id);
+    const nextHidden = hidden ?? !isHidden;
+    if (nextHidden === isHidden) return;
+    const hiddenItems = nextHidden
+      ? [...state.hiddenItems, id]
+      : state.hiddenItems.filter((h) => h !== id);
+    const next = { ...state, hiddenItems };
+    set(gutterCustomizationAtom, next);
+    persistGutterCustomization(next);
+  },
+);
+
+/**
+ * Replace the saved order for one section. Persists globally.
+ */
+export const setGutterSectionOrderAtom = atom(
+  null,
+  (get, set, payload: { section: GutterSection; order: string[] }) => {
+    const { section, order } = payload;
+    const state = get(gutterCustomizationAtom);
+    const next = { ...state, order: { ...state.order, [section]: order } };
+    set(gutterCustomizationAtom, next);
+    persistGutterCustomization(next);
+  },
+);
+
+/**
+ * Reset all gutter customization (unhide everything, clear custom order).
+ */
+export const resetGutterCustomizationAtom = atom(null, (_get, set) => {
+  const next = { ...DEFAULT_GUTTER_CUSTOMIZATION };
+  set(gutterCustomizationAtom, next);
+  persistGutterCustomization(next);
+});
+
+/**
+ * Initialize gutter customization from the app-settings store.
+ * Call once at app startup.
+ */
+export async function initGutterCustomization(): Promise<GutterCustomizationState> {
+  if (typeof window === 'undefined' || !window.electronAPI) {
+    return DEFAULT_GUTTER_CUSTOMIZATION;
+  }
+  try {
+    const [hiddenItems, order] = await Promise.all([
+      window.electronAPI.invoke('app-settings:get', HIDDEN_GUTTER_ITEMS_KEY),
+      window.electronAPI.invoke('app-settings:get', GUTTER_ITEM_ORDER_KEY),
+    ]);
+    return {
+      hiddenItems: Array.isArray(hiddenItems) ? hiddenItems : [],
+      order: order && typeof order === 'object' ? order : {},
+    };
+  } catch (error) {
+    console.error('[appSettings] Failed to load gutter customization:', error);
+    return DEFAULT_GUTTER_CUSTOMIZATION;
+  }
+}

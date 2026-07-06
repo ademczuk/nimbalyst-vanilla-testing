@@ -4,7 +4,7 @@ import { MaterialSymbol } from '@nimbalyst/runtime';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import type { TrackerItemType } from '@nimbalyst/runtime/plugins/TrackerPlugin';
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
-import { getRecordTitle, getRecordStatus, getRecordPriority, getRecordSortOrder, getFieldByRole, buildKanbanStatusColumns, resolveRoleFieldName } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
+import { getRecordTitle, getRecordStatus, getRecordPriority, getRecordSortOrder, getRecordExternalKey, getFieldByRole, buildKanbanStatusColumns, resolveRoleFieldName } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { generateKeyBetween } from '@nimbalyst/runtime/utils/fractionalIndex';
 import { UserAvatar } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/UserAvatar';
 
@@ -624,11 +624,18 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                       style={{ backgroundColor: PRIORITY_COLORS[getRecordPriority(item) || 'medium'] || '#6b7280' }}
                     />
                     <div className="flex-1 min-w-0">
-                      {item.issueKey && (
-                        <div className="text-[10px] font-mono font-medium uppercase tracking-[0.08em] text-nim-faint mb-0.5">
-                          {item.issueKey}
-                        </div>
-                      )}
+                      {(() => {
+                        // externalKey role (e.g. a PR number) rides next to the
+                        // local issue key so imported/external items stay
+                        // recognizable on the board.
+                        const externalKey = getRecordExternalKey(item);
+                        const keyLine = [item.issueKey, externalKey].filter(Boolean).join(' · ');
+                        return keyLine ? (
+                          <div className="text-[10px] font-mono font-medium uppercase tracking-[0.08em] text-nim-faint mb-0.5">
+                            {keyLine}
+                          </div>
+                        ) : null;
+                      })()}
                       <div className="text-sm text-nim leading-snug line-clamp-2">
                         {getRecordTitle(item)}
                       </div>

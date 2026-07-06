@@ -146,6 +146,17 @@ A concise reference of all features in the product. Keep this up to date as feat
 - Git ref watcher (detects external git operations)
 - Gitignore-aware file watching
 
+### Pull Request Review Mode
+
+- Integrated GitHub PR view (Cmd+U, developer mode + GitHub remote): list, conversation, files-changed diffs, commits, checks
+- Approve and merge (squash/merge/rebase) from inside the app; `gh` CLI auth, no stored tokens
+- Open a PR in a git worktree with an agent session on its head branch
+- Tracker integration (reference-based, works with any tracker type): status badge + priority marker on list rows, editable status pill and tracker chips in the detail header, dynamic review-status filter chips
+- Jump PR ↔ tracker item ↔ review session in one click from any of the three surfaces
+- Link any tracker item to a PR from the PR detail; opening a worktree auto-links the session to referencing items
+- Merging transitions referencing tracker items via the opt-in `prMergedStatus` schema role (comment-only for types without it); externally merged PRs surface a one-click catch-up hint
+- Tracker kanban cards show an item's external identity (e.g. PR number) via the `externalKey` schema role
+
 ## File Management
 
 - File tree with expand/collapse and keyboard navigation
@@ -169,6 +180,7 @@ A concise reference of all features in the product. Keep this up to date as feat
 - Reopen closed tab (Cmd+Shift+T)
 - Navigate between tabs (Cmd+Option+Left/Right)
 - Close tab (Cmd+W)
+- Double-click a tab to maximize the editor to the whole window (collapses surrounding panels); double-click again to restore — works in Files, Agent, and Shared Docs modes
 - Unified editor header bar
 - Extension-contributed document headers
 
@@ -368,6 +380,7 @@ A concise reference of all features in the product. Keep this up to date as feat
 - Global semantic search (Cmd+Shift+O) — a Quick Open "Search" tab that finds any tracker or document by meaning (hybrid semantic + keyword), powered by the Nimbalyst Memory extension; appears only when that extension is enabled. Optionally indexes AI sessions too (off by default)
 - Mouse back/forward button support
 - Breadcrumb navigation
+- Customizable navigation gutter — hide/show any gutter icon (modes, extension panels, indicators) and drag-to-reorder within a group via a "Customize Gutter" popover (right-click the gutter) or right-click any icon to hide it; preferences are global across projects, and the account/settings button always stays visible
 
 ## Window & Application
 
