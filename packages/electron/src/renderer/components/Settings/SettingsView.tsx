@@ -356,6 +356,9 @@ export function SettingsView({
   const [workspaceMcpServerCount, setWorkspaceMcpServerCount] = useState(0);
 
   // Valid categories for each scope.
+  // MUST stay in sync with the groups SettingsSidebar shows for each scope --
+  // a sidebar item whose id is missing here is a dead link (the scope-guard
+  // effect below bounces the selection back to the scope default).
   // Epic H3 P3: 'org' (pure org admin) is Organization-scope only. 'team' lives
   // in BOTH scopes -- workspace-centric setup (create/join) in Project scope, and
   // org admin in Organization scope. 'tracker-config' stays project-local.
@@ -365,7 +368,9 @@ export function SettingsView({
     'team',
     'tracker-config',
     ...(developerMode ? (['github'] as SettingsCategory[]) : []),
+    'marketplace',
     'installed-extensions',
+    'privileged-extensions',
     'claude-plugins',
     'mcp-servers',
     'claude-code',
@@ -396,6 +401,7 @@ export function SettingsView({
     'beta-features',
     'marketplace',
     'installed-extensions',
+    'privileged-extensions',
     'claude-plugins',
     'mcp-servers',
   ];
