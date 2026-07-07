@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.67.1] - 2026-07-07
+
+
+### Added
+<!-- New features go here -->
 - Double-click an editor tab to maximize the editor area in Files, Agent, and Shared Docs modes, then double-click again to restore the previous layout.
 - Customize the navigation gutter: hide or show any icon and drag to reorder them via a Customize Gutter popover (right-click the gutter), with preferences applied across all projects.
 - The Pull Requests view now connects to trackers and sessions: review-status badges and filter chips, one-click jumps between a PR, its tracker item, and its review session, linking any tracker item to a PR, and merges update linked tracker items automatically.
@@ -19,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
+- Claude Agent sessions now recover a turn whose stream closes mid-response instead of losing the reply.
+- Git branch watching no longer crawls the entire workspace, cutting CPU and disk churn in large projects.
 - Reduce lost project states on reopen.
 - Shared extension-editor documents (CSV, data model, mindmap) no longer come back empty or wipe the shared copy after close and reopen, and re-uploading a local file into a shared document now checks for conflicts before overwriting.
 - Marketplace extension installs no longer hang mid-extraction and fail with "reply was never sent".
