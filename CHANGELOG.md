@@ -11,12 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 <!-- New features go here -->
 - Shared Docs discovery home: search, favorites, recently opened, and docs new or changed since you last viewed them, with a sidebar filter (All / Favorites / Updated) and controls to hide or clear unread markers.
+- Tools & Token Cost settings panel: see every tool group's estimated context-token cost and load policy in one place, with a link from the AI panel's token meter.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Agent sessions no longer include tracker guidance in the system prompt when trackers are disabled for the workspace, reducing per-request token usage.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Agent sessions use fewer tokens upfront: tool definitions stay deferred until used regardless of model, the always-loaded tool set was cut to an essential subset with slimmer schemas, and projects with many worktrees no longer load duplicate copies of every project command.
 
 ### Removed
 <!-- Removed features go here -->

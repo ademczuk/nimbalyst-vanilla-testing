@@ -22,6 +22,7 @@ import { BetaFeaturesPanel } from '../GlobalSettings/panels/BetaFeaturesPanel';
 import { NotificationsPanel } from '../GlobalSettings/panels/NotificationsPanel';
 import { VoiceModePanel } from './VoiceModePanel';
 import { MCPServersPanel } from '../GlobalSettings/panels/MCPServersPanel';
+import { ToolsMcpPanel } from './panels/ToolsMcpPanel';
 import { ClaudeCodePluginsPanel } from '../GlobalSettings/panels/ClaudeCodePluginsPanel';
 import { SyncPanel } from '../GlobalSettings/panels/SyncPanel';
 import { SharedLinksPanel } from '../GlobalSettings/panels/SharedLinksPanel';
@@ -373,6 +374,7 @@ export function SettingsView({
     'privileged-extensions',
     'claude-plugins',
     'mcp-servers',
+    'tools-mcp',
     'claude-code',
     'claude',
     'openai',
@@ -404,6 +406,7 @@ export function SettingsView({
     'privileged-extensions',
     'claude-plugins',
     'mcp-servers',
+    'tools-mcp',
   ];
 
   // When initialCategory/initialScope props change, update state (for deep linking)
@@ -892,6 +895,13 @@ export function SettingsView({
               workspacePath={scope === 'project' ? workspacePath ?? undefined : undefined}
             />
           </>
+        );
+      case 'tools-mcp':
+        return (
+          <ToolsMcpPanel
+            workspacePath={workspacePath ?? undefined}
+            onNavigateToCategory={setSelectedCategory}
+          />
         );
       case 'claude-plugins':
         return (

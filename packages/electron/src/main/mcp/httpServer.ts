@@ -94,6 +94,7 @@ import {
   isMcpEndpoint,
   selectFirstPartyToolsForEndpoint,
   selectExtensionToolsForEndpoint,
+  applyCoreAlwaysLoadMeta,
 } from "./mcpEndpointRouting";
 
 // Re-export functions that don't need transport state
@@ -449,6 +450,9 @@ function createSharedMcpServer(
       if (excludeHostSettings) {
         allTools = allTools.filter((tool) => !SETTINGS_TOOL_NAMES.has(tool.name));
       }
+      // Core endpoint: mark the always-load subset with per-tool _meta so the
+      // interactive/session tools stay eager while display/screenshot defer.
+      allTools = applyCoreAlwaysLoadMeta(allTools, endpoint.configKey);
     } else {
       // Fallback (bare `/mcp` or an unknown `/mcp/<x>`): the consolidation is
       // complete and the legacy monolith is retired, so no first-party tools are

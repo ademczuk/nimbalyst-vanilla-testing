@@ -5,6 +5,7 @@ import {
   MCP_CORE,
   MCP_TRACKERS,
   MCP_SITUATIONAL,
+  CORE_ALWAYS_LOAD_TOOLS,
   buildToolBudgetReport,
   formatToolBudgetReport,
   type MeasurableToolSchema,
@@ -55,7 +56,9 @@ describe('MCP tool budget characterization (current first-party surface)', () =>
       (byServer[server] ??= []).push(tool);
     }
 
-    const report = buildToolBudgetReport(byServer, MCP_EAGER_CONFIG_KEYS);
+    // Per-tool eagerness: only CORE_ALWAYS_LOAD_TOOLS are charged eagerly
+    // (display_to_user / capture_editor_screenshot stay on core but defer).
+    const report = buildToolBudgetReport(byServer, MCP_EAGER_CONFIG_KEYS, CORE_ALWAYS_LOAD_TOOLS);
 
     // Visible in test output for before/after comparison across phases.
     // eslint-disable-next-line no-console
@@ -65,10 +68,12 @@ describe('MCP tool budget characterization (current first-party surface)', () =>
     );
 
     expect(report.totalToolCount).toBeGreaterThan(0);
-    // The eager surface should be a clear minority of the total once trackers,
-    // host config, and extensions defer. Generous ceiling guards regressions.
+    // The always-load core subset is the fixed tool floor every session pays;
+    // trimmed schemas + per-tool deferral landed it ~1.5K (2026-07-07).
+    // Ceiling leaves headroom for description churn but catches a fat schema
+    // creeping back in.
     expect(report.eagerEstTokens).toBeGreaterThan(0);
-    expect(report.eagerEstTokens).toBeLessThan(12000);
+    expect(report.eagerEstTokens).toBeLessThan(2500);
   });
 
   it('maps every current first-party tool to a topology server (except known IPC-only names)', () => {

@@ -359,6 +359,7 @@ A concise reference of all features in the product. Keep this up to date as feat
 
 - Global: theme, AI providers, MCP servers, notifications, sync/account, shared links, advanced, beta features
 - Per-workspace: AI provider override, agent permissions, team, tracker config, extensions
+- Tools & Token Cost panel: per-tool-group estimated context-token cost and load policy (eager / on-demand / conditional) across built-in, extension, and user MCP servers; trackers toggle inline; reachable from the AI panel's token meter ("Manage tools")
 - Claude Code: custom executable path, environment variables, effort slider, plan mode, auto-commit, extended context
 - Multi-account support (add/remove accounts, per-project binding)
 - Release channel selection (stable / beta / alpha)

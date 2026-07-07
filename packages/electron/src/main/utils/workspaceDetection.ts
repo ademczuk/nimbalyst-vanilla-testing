@@ -386,15 +386,26 @@ export function getExtensionSDKDocsPath(): string | null {
 }
 
 /**
- * Gets additional directories that should be accessible to Claude for the given workspace.
- * This includes:
+ * Gets additional directories that should be accessible to the agent for the
+ * given workspace. This includes:
  * - Extension SDK documentation when working on an extension project
  * - Parent project directory when working in a worktree
+ * - Sibling worktrees (unless opted out — see includeSiblingWorktrees)
  *
  * @param workspacePath - The current workspace path
- * @returns Array of additional directory paths Claude should have access to
+ * @param options.includeSiblingWorktrees - default true. The Claude Code
+ *   loader passes false: the Claude CLI discovers `.claude/commands` skills in
+ *   every additional directory, so with N sibling worktrees every project
+ *   skill appears N+1 times in the system prompt (~7K tokens of duplicates per
+ *   session in a many-worktree repo). Codex keeps true — its workspace-write
+ *   sandbox blocks sibling-worktree edits without `--add-dir`, and it loads no
+ *   skills from those directories.
+ * @returns Array of additional directory paths the agent should have access to
  */
-export function getAdditionalDirectoriesForWorkspace(workspacePath: string): string[] {
+export function getAdditionalDirectoriesForWorkspace(
+  workspacePath: string,
+  options?: { includeSiblingWorktrees?: boolean },
+): string[] {
   const additionalDirs = new Set<string>();
   const projectPath = resolveProjectPath(workspacePath);
 
@@ -412,10 +423,12 @@ export function getAdditionalDirectoriesForWorkspace(workspacePath: string): str
   // CLI invocation. Listing the filesystem keeps this sync and self-contained
   // (no DB query) and matches the existing worktree directory convention used
   // by GitWorktreeService.
-  const siblingWorktrees = listSiblingWorktreePaths(projectPath);
-  for (const siblingPath of siblingWorktrees) {
-    if (siblingPath !== workspacePath) {
-      additionalDirs.add(siblingPath);
+  if (options?.includeSiblingWorktrees !== false) {
+    const siblingWorktrees = listSiblingWorktreePaths(projectPath);
+    for (const siblingPath of siblingWorktrees) {
+      if (siblingPath !== workspacePath) {
+        additionalDirs.add(siblingPath);
+      }
     }
   }
 

@@ -182,6 +182,33 @@ describe('getAdditionalDirectoriesForWorkspace', () => {
     // No worktrees dir created. Should not throw, just return empty.
     expect(getAdditionalDirectoriesForWorkspace(projectPath)).toEqual([]);
   });
+
+  it('excludes sibling worktrees when includeSiblingWorktrees is false (project root)', () => {
+    // The Claude Code loader opts out: the CLI discovers .claude/commands
+    // skills in every additional directory, so N sibling worktrees inflate the
+    // system prompt with N duplicate copies of every project skill.
+    fs.mkdirSync(worktreesDir);
+    fs.mkdirSync(path.join(worktreesDir, 'proud-gorge'));
+    fs.mkdirSync(path.join(worktreesDir, 'swift-falcon'));
+
+    const dirs = getAdditionalDirectoriesForWorkspace(projectPath, {
+      includeSiblingWorktrees: false,
+    });
+    expect(dirs).toEqual([]);
+  });
+
+  it('keeps the parent project but drops siblings when includeSiblingWorktrees is false (worktree)', () => {
+    fs.mkdirSync(worktreesDir);
+    const cwd = path.join(worktreesDir, 'proud-gorge');
+    fs.mkdirSync(cwd);
+    fs.mkdirSync(path.join(worktreesDir, 'swift-falcon'));
+
+    const dirs = getAdditionalDirectoriesForWorkspace(cwd, {
+      includeSiblingWorktrees: false,
+    });
+    // Parent project access (shared configs, .git common dir) must survive.
+    expect(dirs).toEqual([projectPath]);
+  });
 });
 
 describe('findNearestAncestor', () => {
