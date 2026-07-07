@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useCallback, useRef, useState } from 'react';
 import { useFloating, offset, flip, shift, FloatingPortal } from '@floating-ui/react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol, TrackerUnreadDot } from '@nimbalyst/runtime';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import type { TrackerItemType } from '@nimbalyst/runtime/plugins/TrackerPlugin';
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
@@ -623,6 +623,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                       className="w-2 h-2 rounded-full mt-1.5 shrink-0"
                       style={{ backgroundColor: PRIORITY_COLORS[getRecordPriority(item) || 'medium'] || '#6b7280' }}
                     />
+                    <TrackerUnreadDot itemId={item.id} className="mt-1" />
                     <div className="flex-1 min-w-0">
                       {(() => {
                         // externalKey role (e.g. a PR number) rides next to the

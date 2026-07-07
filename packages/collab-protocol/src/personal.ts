@@ -43,6 +43,7 @@ export type ClientMessage =
   | RequestMobilePushMessage
   | ProjectConfigUpdateMessage
   | SettingsSyncMessage
+  | ReadReceiptSyncMessage
   | InboxSyncRequestMessage
   | MarkInboxReadMessage
   | PingMessage;
@@ -307,6 +308,38 @@ export interface SettingsSyncMessage {
   settings: EncryptedSettingsPayload;
 }
 
+/**
+ * Sync a personal read receipt (unread-indicator state for a tracker/doc) to
+ * the user's other devices. Personal channel ONLY — read receipts are personal
+ * per-user state ABOUT team objects and must never travel on team rooms.
+ */
+export interface ReadReceiptSyncMessage {
+  type: 'readReceipt';
+  receipt: EncryptedReadReceiptPayload;
+}
+
+/**
+ * Encrypted read-receipt payload. The `receiptKey` (a hash of
+ * entityKind|entityId|scope) is plaintext so the server can last-writer-wins
+ * dedup per entity without learning the id/scope; `version` (the receipt's
+ * epoch-ms watermark) drives that LWW. The entity id/scope + watermark values
+ * live inside the encrypted blob.
+ */
+export interface EncryptedReadReceiptPayload {
+  /** Opaque per-entity routing/LWW key: hex(sha256(entityKind|entityId|scope)). */
+  receiptKey: string;
+  /** Encrypted JSON { entityKind, entityId, scope, lastViewedAt, lastSeenVersion } (base64). */
+  encryptedReceipt: string;
+  /** IV for receipt decryption (base64). */
+  receiptIv: string;
+  /** Device id of sender. */
+  deviceId: string;
+  /** Advance-only LWW version — the receipt's `lastViewedAt` (epoch ms). */
+  version: number;
+  /** Timestamp of the sync (epoch ms). */
+  timestamp: number;
+}
+
 /** Encrypted settings payload for wire transmission */
 export interface EncryptedSettingsPayload {
   /** Encrypted JSON blob containing settings (base64) */
@@ -346,6 +379,7 @@ export type ServerMessage =
   | VoiceToolResponseBroadcastMessage
   | SessionControlBroadcastMessage
   | SettingsSyncBroadcastMessage
+  | ReadReceiptSyncBroadcastMessage
   | InboxSyncResponseMessage
   | InboxEventBroadcastMessage
   | MarkInboxReadResponseMessage
@@ -492,6 +526,13 @@ export interface SessionControlBroadcastMessage {
 export interface SettingsSyncBroadcastMessage {
   type: 'settingsSyncBroadcast';
   settings: EncryptedSettingsPayload;
+  fromConnectionId?: string;
+}
+
+/** Broadcast a read receipt to the user's other devices (or replay on connect). */
+export interface ReadReceiptSyncBroadcastMessage {
+  type: 'readReceiptBroadcast';
+  receipt: EncryptedReadReceiptPayload;
   fromConnectionId?: string;
 }
 

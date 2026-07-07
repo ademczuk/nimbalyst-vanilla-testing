@@ -41,6 +41,7 @@ import { ModelIdentifier } from '@nimbalyst/runtime/ai/server/types';
 import { store } from '../../store';
 import { useFloatingMenu } from '../../hooks/useFloatingMenu';
 import { buildTrackerTagOptions, filterTrackerItemsByTags } from './trackerTagFilterUtils';
+import { useTrackerUnread } from '../../hooks/useTrackerUnread';
 
 export type ViewMode = 'list' | 'table' | 'kanban' | 'tag-board';
 
@@ -114,6 +115,9 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       if (result?.success) setCurrentIdentity(result.identity);
     });
   }, []);
+
+  // Drive the per-item "unread" dots from the local read-receipt store.
+  useTrackerUnread(workspacePath, currentIdentity?.email ?? null);
 
   // Selected item for detail panel
   const modeLayout = useAtomValue(trackerModeLayoutAtom);

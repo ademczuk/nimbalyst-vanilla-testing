@@ -86,6 +86,7 @@ import {
 import { mergeAISettings, getAIProviderOverridesWithWorktreeFallback } from '../../utils/aiSettingsMerge';
 import { DocumentContextService, type RawDocumentContext, type PreparedDocumentContext } from '@nimbalyst/runtime';
 import { getMessageSyncHandler, getSyncProvider, isDesktopTrulyAway } from '../SyncManager';
+import { applyRemoteReadReceipt } from '../../ipc/ReadReceiptHandlers';
 import { normalizeCodexProviderConfig, omitModelsField, stripTransientProviderFields } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 import { isFileInWorkspaceOrWorktree, resolveProjectPath } from '../../utils/workspaceDetection';
 import { SessionFilesRepository } from '@nimbalyst/runtime';
@@ -1029,6 +1030,14 @@ export class AIService {
         // logger.main.info('[AIService] Mobile sync handler initialized (using queued_prompts table)');
       } else {
         // logger.main.info('[AIService] onIndexChange not available on sync provider');
+      }
+
+      // Personal read receipts arriving from the user's other devices — persist
+      // locally (advance-only) and notify renderers so unread dots recompute.
+      if (syncProvider.onReadReceipt) {
+        syncProvider.onReadReceipt((receipt) => {
+          void applyRemoteReadReceipt(receipt);
+        });
       }
 
       // Listen for session creation requests from mobile

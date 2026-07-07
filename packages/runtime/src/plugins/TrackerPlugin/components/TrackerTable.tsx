@@ -32,6 +32,7 @@ import {
   type TypeColumnConfig,
 } from './trackerColumns';
 import { UserAvatar } from './UserAvatar';
+import { TrackerUnreadDot } from '../../../readReceipts/TrackerUnreadDot';
 import { DisplayOptionsPanel } from './DisplayOptionsPanel';
 import { useTrackerRows } from './useTrackerRows';
 
@@ -1301,6 +1302,9 @@ export function TrackerTable({
                 onDoubleClick={() => { if (item.system.documentPath) openItemInEditor(item); }}
                 onContextMenu={(e) => handleContextMenu(e, item, index)}
               >
+                {/* Unread dot (nothing when read) */}
+                <TrackerUnreadDot itemId={item.id} className="w-2" />
+
                 {/* Type icon - fixed width for alignment */}
                 <span className="shrink-0 w-5 flex items-center justify-center" style={{ color: getTypeColor(item.primaryType), opacity: 0.7 }}>
                   <span className="material-symbols-outlined" style={{ fontSize: '16px', fontVariationSettings: "'wght' 300" }}>{getTypeIcon(item.primaryType)}</span>

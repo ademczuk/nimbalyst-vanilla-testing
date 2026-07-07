@@ -31,6 +31,7 @@ import { buildTrackerDeepLink } from '../../store/atoms/collabDocuments';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
 import { getRelativeTimeString } from '../../utils/dateFormatting';
 import { useTrackerContentCollab } from '../../hooks/useTrackerContentCollab';
+import { useMarkTrackerViewed } from '../../hooks/useTrackerUnread';
 import { reconcileExternalFieldChanges } from './trackerDetailFieldSync';
 
 interface TrackerItemDetailProps {
@@ -199,6 +200,10 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
   const refreshSessionList = useSetAtom(refreshSessionListAtom);
 
   const model = useMemo(() => globalRegistry.get(item?.primaryType ?? ''), [item?.primaryType]);
+
+  // Mark this item read while it is open (debounced; refires when a newer
+  // version arrives). Clears its unread dot in the list/board views.
+  useMarkTrackerViewed(item, workspacePath);
 
   // Detect whether this workspace has a team. The team check feeds the
   // content editor mode (collab vs local); the member list feeds the

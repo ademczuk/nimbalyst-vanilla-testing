@@ -6,6 +6,7 @@
  */
 
 import type { AgentMessage } from '../ai/server/types';
+import type { SyncedReadReceipt } from '../readReceipts/readReceipts';
 
 export interface SyncConfig {
   /** WebSocket server URL (e.g., ws://localhost:8787 or wss://sync.nimbalyst.com) */
@@ -298,6 +299,19 @@ export interface SyncProvider {
    * Used by mobile to receive settings from desktop.
    */
   onSettingsSync?(callback: (settings: SyncedSettings) => void): () => void;
+
+  /**
+   * Push a personal read receipt (unread-indicator state for a tracker/doc) to
+   * the user's other devices over the personal channel. Personal data only —
+   * never routed through team rooms.
+   */
+  syncReadReceipt?(receipt: SyncedReadReceipt): Promise<void>;
+
+  /**
+   * Subscribe to read receipts arriving from the user's other devices (and the
+   * server replay on connect). Advance-only; callers merge into local state.
+   */
+  onReadReceipt?(callback: (receipt: SyncedReadReceipt) => void): () => void;
 
   /**
    * Attempt to reconnect the index connection.
@@ -738,4 +752,25 @@ export interface EncryptedSettingsPayload {
   timestamp: number;
   /** Version to handle upgrades */
   version: number;
+}
+
+/**
+ * Encrypted read-receipt payload for the personal sync channel. The
+ * `receiptKey` (hash of entityKind|entityId|scope) is plaintext so the server
+ * can last-writer-wins dedup per entity without learning the id/scope; the
+ * entity id/scope + watermark live inside the encrypted blob.
+ */
+export interface EncryptedReadReceiptPayload {
+  /** Opaque per-entity routing/LWW key: hex(sha256(entityKind|entityId|scope)). */
+  receiptKey: string;
+  /** Encrypted JSON SyncedReadReceipt (base64). */
+  encryptedReceipt: string;
+  /** IV for receipt decryption (base64). */
+  receiptIv: string;
+  /** Device id of sender. */
+  deviceId: string;
+  /** Advance-only LWW version — the receipt's `lastViewedAt` (epoch ms). */
+  version: number;
+  /** Timestamp of the sync (epoch ms). */
+  timestamp: number;
 }

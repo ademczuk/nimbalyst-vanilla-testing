@@ -190,5 +190,27 @@ export {
 export * from './editors';
 // Sync types (for capacitor)
 export type { SessionIndexEntry } from './sync/types';
+// Read receipts (unread indicators for trackers/docs)
+export {
+  isEntityUnread,
+  mergeReceipt,
+  receiptAdvances,
+} from './readReceipts/readReceipts';
+export type {
+  ReadReceipt,
+  ReadReceiptEntityKind,
+  SyncedReadReceipt,
+  UnreadEntitySnapshot,
+} from './readReceipts/readReceipts';
+export {
+  trackerUnreadAtom,
+  trackerUnreadByWorkspaceAtom,
+  trackerReceiptsAtom,
+  setTrackerUnreadAtom,
+  recomputeTrackerUnreadAtom,
+  applyTrackerReceiptAtom,
+  trackerSnapshot,
+} from './readReceipts/trackerUnreadAtoms';
+export { TrackerUnreadDot } from './readReceipts/TrackerUnreadDot';
 // Themes
 export * from './themes';

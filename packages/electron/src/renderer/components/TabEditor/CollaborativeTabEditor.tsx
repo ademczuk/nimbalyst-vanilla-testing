@@ -34,7 +34,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai';
 import { MarkdownEditor, DocumentPathProvider } from '@nimbalyst/runtime';
 import { $convertFromEnhancedMarkdownString, getEditorTransformers, type CommentsConfig } from '@nimbalyst/runtime/editor';
-import { getTeamSyncProvider } from '../../store/atoms/collabDocuments';
+import { getTeamSyncProvider, sharedDocumentsAtom } from '../../store/atoms/collabDocuments';
 import { buildCollabUri } from '../../utils/collabUri';
 import { FixedTabHeaderContainer, FixedTabHeaderRegistry } from '@nimbalyst/runtime/plugins/shared/fixedTabHeader';
 import { LexicalDiffHeaderAdapter } from '../UnifiedDiffHeader';
@@ -66,6 +66,7 @@ import { CollabAssetService } from '../../services/CollabAssetService';
 import { customEditorRegistry } from '../CustomEditors';
 import type { CustomEditorRegistration } from '../CustomEditors/types';
 import { useCollabLocalOrigin } from '../../hooks/useCollabLocalOrigin';
+import { markDocViewed } from '../../hooks/useDocUnread';
 import { getCollabContentAdapter } from '@nimbalyst/collab-adapters';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
 import { FilePathBreadcrumb } from '../common/FilePathBreadcrumb';
@@ -267,6 +268,8 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
   const setHistoryDialogFile = useSetAtom(historyDialogFileAtom);
   const bumpHistoryControllers = useSetAtom(collabHistoryControllerBumpAtom);
   const isActiveRef = useRef(isActive);
+  const docIndexUpdatedAtRef = useRef<number | null>(null);
+  const sharedDocuments = useAtomValue(sharedDocumentsAtom);
   const cursorColor = useMemo(() => randomCursorColor(), []);
   const assetService = useMemo(() => new CollabAssetService(activeConfig), [activeConfig]);
   const localOrigin = useCollabLocalOrigin(
@@ -288,6 +291,18 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
     lastRecordedRevisionHashRef.current = null;
     lastAutoRevisionAtRef.current = 0;
   }, [activeConfig.orgId, activeConfig.documentId, filePath]);
+
+  useEffect(() => {
+    const doc = sharedDocuments.find((entry) => entry.documentId === activeConfig.documentId);
+    docIndexUpdatedAtRef.current = doc?.updatedAt ?? null;
+  }, [sharedDocuments, activeConfig.documentId]);
+
+  const getDocReadWatermark = useCallback((provider: DocumentSyncProvider | null): number | null => {
+    const contentUpdatedAt = provider?.getLastUpdatedAt() ?? null;
+    const indexUpdatedAt = docIndexUpdatedAtRef.current;
+    const watermark = Math.max(contentUpdatedAt ?? 0, indexUpdatedAt ?? 0);
+    return watermark > 0 ? watermark : null;
+  }, []);
 
   const createHistoryClient = useCallback(() => new CollabHistoryClient({
     serverUrl: activeConfig.serverUrl,
@@ -419,7 +434,15 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         isActive && hasCollabUnsyncedChanges(status)
       );
     }
-  }, [isActive]);
+    // Switching to this doc (already synced) marks it read.
+    if (isActive && activeConfig.orgId && syncProviderRef.current?.isSynced()) {
+      void markDocViewed(
+        activeConfig.documentId,
+        activeConfig.orgId,
+        getDocReadWatermark(syncProviderRef.current),
+      );
+    }
+  }, [isActive, activeConfig.documentId, activeConfig.orgId, getDocReadWatermark]);
 
   useEffect(() => {
     console.log('[CollaborativeTabEditor] Creating providers, initialContent:', !!activeConfig.initialContent);
@@ -460,6 +483,16 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         }
         if (status === 'connected') {
           void ensureBootstrapRevision();
+          // Mark the doc read once it has synced, if the user is looking at it.
+          // Clears its unread dot in the sidebar. Watermark = the doc's current
+          // content timestamp so a later teammate edit re-surfaces as unread.
+          if (isActiveRef.current && activeConfig.orgId) {
+            void markDocViewed(
+              activeConfig.documentId,
+              activeConfig.orgId,
+              getDocReadWatermark(syncProvider),
+            );
+          }
         }
       },
       initialPendingUpdateBase64: activeConfig.pendingUpdateBase64,
@@ -522,7 +555,7 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
       store.set(collabConnectionStatusAtom(filePath), 'disconnected');
       store.set(collabAwarenessAtom(filePath), new Map());
     };
-  }, [activeConfig, ensureBootstrapRevision, filePath]);
+  }, [activeConfig, ensureBootstrapRevision, filePath, getDocReadWatermark]);
 
   // Build the provider factory for CollaborationPlugin
   // This function is called by CollaborationPlugin with a doc ID and yjsDocMap.

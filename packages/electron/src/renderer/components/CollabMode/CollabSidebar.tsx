@@ -31,6 +31,8 @@ import { useCollabLocalOrigin } from '../../hooks/useCollabLocalOrigin';
 import { useSetAtom } from 'jotai';
 import { historyDialogFileAtom } from '../../store/atoms/historyDialog';
 import { buildCollabUri } from '../../utils/collabUri';
+import { DocUnreadDot } from './DocUnreadDot';
+import { useDocUnread } from '../../hooks/useDocUnread';
 
 // ---------------------------------------------------------------------------
 // TeamSync status indicator -- shown in the header subtitle slot
@@ -71,6 +73,9 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
   const teamSyncStatus = useAtomValue(teamSyncStatusAtom);
   const teamOrgId = useAtomValue(activeTeamOrgIdAtom);
   const workspaceHasTeam = useAtomValue(workspaceHasTeamAtom);
+
+  // Drive the per-doc "unread" dots from the local read-receipt store.
+  useDocUnread();
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -610,6 +615,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
             <MaterialSymbol icon="description" size={16} />
           </span>
           <span className="file-tree-name">{node.name}</span>
+          <DocUnreadDot documentId={node.document.documentId} className="ml-auto mr-1" />
         </button>
       );
     });

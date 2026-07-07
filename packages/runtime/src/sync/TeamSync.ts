@@ -584,6 +584,7 @@ export class TeamSyncProvider {
         createdBy: msg.document.createdBy,
         createdAt: msg.document.createdAt,
         updatedAt: msg.document.updatedAt,
+        lastWriterUserId: msg.document.lastWriterUserId ?? null,
         decryptFailed: true,
       };
     }
@@ -658,6 +659,7 @@ export class TeamSyncProvider {
           createdBy: e.createdBy,
           createdAt: e.createdAt,
           updatedAt: e.updatedAt,
+          lastWriterUserId: e.lastWriterUserId ?? null,
           decryptFailed: true,
         });
       }
@@ -683,6 +685,7 @@ export class TeamSyncProvider {
       createdBy: encrypted.createdBy,
       createdAt: encrypted.createdAt,
       updatedAt: encrypted.updatedAt,
+      lastWriterUserId: encrypted.lastWriterUserId ?? null,
     };
   }
 

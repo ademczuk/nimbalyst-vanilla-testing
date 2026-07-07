@@ -36,11 +36,13 @@ import type {
   VoiceToolRequest,
   VoiceToolResponse,
   EncryptedSettingsPayload,
+  EncryptedReadReceiptPayload,
   SyncedSettings,
   SessionControlMessage,
   EncryptedAttachment,
   FileIndexData,
 } from './types';
+import type { SyncedReadReceipt } from '../readReceipts/readReceipts';
 
 // ============================================================================
 // CollabV3 Protocol Types (matches server)
@@ -289,6 +291,7 @@ type ClientMessage =
   | { type: 'sessionControl'; message: { sessionId: string; messageType: string; payload?: Record<string, unknown>; timestamp: number; sentBy: 'desktop' | 'mobile' } }
   | { type: 'requestMobilePush'; sessionId: string; title: string; body: string; requestingDeviceId?: string }
   | { type: 'settingsSync'; settings: EncryptedSettingsPayload }
+  | { type: 'readReceipt'; receipt: EncryptedReadReceiptPayload }
   | { type: 'fileIndexUpdate'; file: EncryptedFileIndexEntry }
   | { type: 'fileIndexDelete'; docId: string };
 
@@ -337,6 +340,7 @@ type ServerMessage =
   | { type: 'voiceToolResponseBroadcast'; response: EncryptedVoiceToolResponse; fromConnectionId?: string }
   | { type: 'sessionControlBroadcast'; message: { sessionId: string; messageType: string; payload?: Record<string, unknown>; timestamp: number; sentBy: 'desktop' | 'mobile' }; fromConnectionId?: string }
   | { type: 'settingsSyncBroadcast'; settings: EncryptedSettingsPayload; fromConnectionId?: string }
+  | { type: 'readReceiptBroadcast'; receipt: EncryptedReadReceiptPayload; fromConnectionId?: string }
   | { type: 'error'; code: string; message: string };
 
 // ============================================================================
@@ -455,6 +459,18 @@ async function decrypt(
   );
 
   return new TextDecoder().decode(decrypted);
+}
+
+/**
+ * Hex SHA-256 of a string. Used to derive an opaque, id-hiding routing key for
+ * read receipts (so the server can dedup per entity without learning the id).
+ */
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 // ============================================================================
@@ -1093,6 +1109,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
   // Settings sync listeners (for receiving synced settings from other devices)
   const settingsSyncListeners = new Set<(settings: SyncedSettings) => void>();
+
+  // Read-receipt listeners (unread-indicator state arriving from other devices)
+  const readReceiptListeners = new Set<(receipt: SyncedReadReceipt) => void>();
 
   // Notify all device status listeners
   function notifyDeviceStatusChange(): void {
@@ -2394,6 +2413,40 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               });
             } catch (err) {
               console.error('[CollabV3] Failed to decrypt settings:', err);
+            }
+            break;
+          }
+
+          case 'readReceiptBroadcast': {
+            // A read receipt from another device (or the server replay on
+            // connect). Personal, single-user channel — decrypt + hand to
+            // listeners which merge advance-only into local state.
+            const payload = message.receipt;
+
+            const ourDeviceId = config.getDeviceInfo?.()?.deviceId ?? config.deviceInfo?.deviceId;
+            if (ourDeviceId && payload.deviceId === ourDeviceId) {
+              break;
+            }
+            if (!config.encryptionKey) {
+              console.error('[CollabV3] Cannot decrypt read receipt - no encryption key');
+              break;
+            }
+            try {
+              const json = await decrypt(
+                payload.encryptedReceipt,
+                payload.receiptIv,
+                config.encryptionKey,
+              );
+              const receipt: SyncedReadReceipt = JSON.parse(json);
+              readReceiptListeners.forEach((callback) => {
+                try {
+                  callback(receipt);
+                } catch (err) {
+                  console.error('[CollabV3] Error in read receipt listener:', err);
+                }
+              });
+            } catch (err) {
+              console.error('[CollabV3] Failed to decrypt read receipt:', err);
             }
             break;
           }
@@ -3728,6 +3781,52 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       settingsSyncListeners.add(callback);
       return () => {
         settingsSyncListeners.delete(callback);
+      };
+    },
+
+    /** Push a personal read receipt to the user's other devices. */
+    async syncReadReceipt(receipt: SyncedReadReceipt): Promise<void> {
+      if (!indexWs || !indexConnected) {
+        try {
+          await connectToIndex();
+        } catch (err) {
+          console.error('[CollabV3] Failed to connect to index before syncing read receipt:', err);
+          return;
+        }
+      }
+      if (!indexWs || !indexConnected || indexWs.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      if (!config.encryptionKey) {
+        console.error('[CollabV3] Cannot sync read receipt - no encryption key');
+        return;
+      }
+      try {
+        const deviceId = config.getDeviceInfo?.()?.deviceId ?? config.deviceInfo?.deviceId ?? 'unknown';
+        const receiptKey = await sha256Hex(
+          `${receipt.entityKind}|${receipt.entityId}|${receipt.scope}`,
+        );
+        const { encrypted, iv } = await encrypt(JSON.stringify(receipt), config.encryptionKey);
+        const payload: EncryptedReadReceiptPayload = {
+          receiptKey,
+          encryptedReceipt: encrypted,
+          receiptIv: iv,
+          deviceId,
+          version: receipt.lastViewedAt,
+          timestamp: Date.now(),
+        };
+        const msg: ClientMessage = { type: 'readReceipt', receipt: payload };
+        indexWs.send(JSON.stringify(msg));
+      } catch (err) {
+        console.error('[CollabV3] Failed to encrypt/send read receipt:', err);
+      }
+    },
+
+    /** Subscribe to read receipts arriving from the user's other devices. */
+    onReadReceipt(callback: (receipt: SyncedReadReceipt) => void): () => void {
+      readReceiptListeners.add(callback);
+      return () => {
+        readReceiptListeners.delete(callback);
       };
     },
 
