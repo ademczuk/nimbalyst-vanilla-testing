@@ -846,6 +846,20 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
           const fileRes = await window.electronAPI.readFileContent(localPath);
           if (fileRes?.success && typeof fileRes.content === 'string') {
             adapter.applyFromFile(provider.getYDoc(), fileRes.content);
+            // Durably persist to the server before reporting success -- a
+            // timed-out flush means a teammate / reopen may still see the old
+            // room, so surface that instead of a false "updated" toast.
+            const acked = await provider.flushWithAck(8000);
+            console.log(
+              `[CollaborativeTabEditor] live re-upload flushed: acked=${acked} type=${documentType} doc=${activeConfig.documentId} bytes=${fileRes.content.length}`,
+            );
+            if (!acked) {
+              errorNotificationService.showError(
+                'Re-upload not confirmed',
+                'The push was sent but the server did not confirm persisting it. Check your connection and retry.',
+              );
+              return;
+            }
             errorNotificationService.showInfo(
               'Shared document updated',
               'Pushed the current local file into the shared document.',

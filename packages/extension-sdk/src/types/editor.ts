@@ -126,6 +126,14 @@ export interface CollaborationContext {
   hasUndecodedContent?(): boolean;
 
   /**
+   * Host-level reporting hook for first-open seed durability. The SDK calls
+   * this when seeding succeeds, throws, or its server-persisted flush is not
+   * confirmed, so extension authors do not have to wire their own toast to
+   * avoid silent blank-room failures.
+   */
+  reportSeedOutcome?(outcome: { ok: boolean; error?: unknown }): void;
+
+  /**
    * @deprecated Use {@link flushWithAck}, which awaits a server-persisted ack.
    * `flushLocalState` fires-and-forgets (resolves after the socket write, not
    * the server ack) and rode in the mindmap seed data-loss race. Retained only

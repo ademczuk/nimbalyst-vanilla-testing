@@ -98,6 +98,37 @@ export function removeCollabConfig(uri: string): void {
 }
 
 /**
+ * Register a resolved collab config without opening a tab. Used by headless
+ * flows (and the Playwright test helpers) that need a room connection but no
+ * editor: the config becomes discoverable by documentId for seed/export/
+ * re-upload passes.
+ */
+export function registerCollabConfig(config: CollabDocumentConfig): string {
+  const uri = buildCollabUri(config.orgId, config.documentId);
+  collabConfigRegistry.set(uri, config);
+  return uri;
+}
+
+/**
+ * Find an already-resolved config for a document regardless of the URI it was
+ * registered under. Seed/export/re-upload flows address rooms as
+ * `collab://seed/<documentId>` before they know the orgId; when the document
+ * was opened this session its resolved config -- keys, server URL, websocket
+ * factory -- is directly reusable.
+ */
+export function findCollabConfigByDocumentId(
+  workspacePath: string,
+  documentId: string,
+): CollabDocumentConfig | undefined {
+  for (const config of collabConfigRegistry.values()) {
+    if (config.documentId === documentId && config.workspacePath === workspacePath) {
+      return config;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Open a collaborative document as a tab.
  *
  * Stores the connection config in the registry and calls addTab()
@@ -354,6 +385,12 @@ export async function resolveCollabConfigForUri(
   // Already resolved
   const existing = collabConfigRegistry.get(uri);
   if (existing) return existing;
+
+  // A seed/export/re-upload caller may only know the documentId (its URI is
+  // `collab://seed/<documentId>`); reuse the config resolved when the doc was
+  // opened rather than re-running the IPC resolution.
+  const byDocument = findCollabConfigByDocumentId(workspacePath, documentId);
+  if (byDocument) return byDocument;
 
   try {
     const result = await window.electronAPI.documentSync.open(

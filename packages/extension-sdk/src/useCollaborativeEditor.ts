@@ -331,9 +331,11 @@ export function useCollaborativeEditor(
               );
               console.warn('[useCollaborativeEditor]', err.message);
               setSeedError(err);
+              collab.reportSeedOutcome?.({ ok: false, error: err });
               cfg.onSeedOutcome?.({ ok: false, error: err });
             } else {
               setSeedError(null);
+              collab.reportSeedOutcome?.({ ok: true });
               cfg.onSeedOutcome?.({ ok: true });
             }
           }
@@ -343,6 +345,7 @@ export function useCollaborativeEditor(
             err
           );
           setSeedError(err);
+          collab.reportSeedOutcome?.({ ok: false, error: err });
           cfg.onSeedOutcome?.({ ok: false, error: err });
           // Continue with bind -- the doc may still be usable once another
           // client seeds it.
