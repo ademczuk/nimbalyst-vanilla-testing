@@ -214,6 +214,17 @@ export class DocumentSyncProvider {
    * own `docCompact`. Used to compute how many updates have accumulated.
    */
   private lastSnapshotSeq = 0;
+
+  /**
+   * True once ANY snapshot/update/broadcast failed to decode and was skipped
+   * (the NIM-878 tolerant-skip). `lastSeq` still advances past skipped rows, so
+   * this doc is missing server content it can never re-fetch on this provider
+   * (resync resumes from `lastSeq`). While set, this client must NEVER win
+   * compaction: a `docCompact` of an incomplete doc buries the unread rows
+   * behind `replacesUpTo` for every client and prune later deletes them
+   * (NIM-1519). Deliberately never reset for the provider's lifetime.
+   */
+  private skippedUndecodablePayload = false;
   private lastCompactionAttemptAt = 0;
   private compactionTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -414,6 +425,18 @@ export class DocumentSyncProvider {
   /** Get the last known server sequence number. */
   getLastSeq(): number {
     return this.lastSeq;
+  }
+
+  /**
+   * True when any snapshot/update/broadcast was skipped as undecodable this
+   * provider's lifetime. While true, the Y.Doc looking "empty" does NOT mean
+   * the room is empty — server content exists that this client cannot read.
+   * Hosts must gate first-open seeding on this (seeding a default document
+   * over unreadable-but-real content clobbers it for every client) and this
+   * provider will never compact (NIM-1519).
+   */
+  hasUndecodedContent(): boolean {
+    return this.skippedUndecodablePayload;
   }
 
   /**
@@ -623,6 +646,11 @@ export class DocumentSyncProvider {
    * Used by custom-editor collaboration bootstrap after a first-open seed from
    * in-memory share payloads. This avoids depending on observer/replay timing
    * when the seed happens after the initial empty sync completes.
+   *
+   * @deprecated Fire-and-forget: this resolves after the socket write, NOT
+   * after the server confirms persistence, so a teardown immediately after can
+   * lose the seed (the mindmap seed data-loss race). Prefer {@link flushWithAck},
+   * which awaits a server-persisted `docUpdateAck`.
    */
   async flushLocalState(): Promise<void> {
     const update = Y.encodeStateAsUpdate(this.ydoc);
@@ -631,6 +659,32 @@ export class DocumentSyncProvider {
     if (this.ws && this.ws.readyState === WebSocket.OPEN && this.synced) {
       await this.replayPendingUpdate();
     }
+  }
+
+  /**
+   * Flush the current Y.Doc state upstream and resolve ONLY after the server
+   * acknowledges persistence (`docUpdateAck`), not merely after the socket
+   * write. This is the durability guarantee for first-open seeds and headless
+   * re-uploads: content the user sees locally must reach the server before the
+   * provider tears down.
+   *
+   * Returns `true` when the server ack'd within `timeoutMs`, `false` on timeout
+   * or when not connected/synced — the caller decides whether to warn / retry
+   * rather than silently discarding the seed. An empty doc (encoded state
+   * <= 2 bytes) resolves `true` immediately (nothing to persist).
+   *
+   * The server-ack semantics come from `waitForPendingWrites`, which settles
+   * only once the inflight `docUpdate` is cleared by a matching `docUpdateAck`
+   * (the DocumentRoom persists synchronously to DO storage before acking).
+   */
+  async flushWithAck(timeoutMs = 5_000): Promise<boolean> {
+    const update = Y.encodeStateAsUpdate(this.ydoc);
+    if (update.length <= 2) return true;
+    this.enqueuePendingLocalUpdate(update);
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.synced) {
+      await this.replayPendingUpdate();
+    }
+    return this.waitForPendingWrites(timeoutMs);
   }
 
   // --------------------------------------------------------------------------
@@ -833,6 +887,7 @@ export class DocumentSyncProvider {
         // payload, never abort the whole sync. One bad row must not blank the
         // entire document body. See NIM-878.
         console.warn('[DocumentSync] Skipping undecodable snapshot; sync will continue:', err instanceof Error ? err.message : err);
+        this.skippedUndecodablePayload = true;
       }
       this.lastSeq = Math.max(this.lastSeq, msg.snapshot.replacesUpTo);
       this.lastSnapshotSeq = Math.max(this.lastSnapshotSeq, msg.snapshot.replacesUpTo);
@@ -850,6 +905,7 @@ export class DocumentSyncProvider {
         // Skip only this update (stale key epoch, un-migrated legacy row, or
         // corrupt bytes); never abort the whole sync. See NIM-878.
         console.warn(`[DocumentSync] Skipping undecodable update at seq ${update.sequence}:`, err instanceof Error ? err.message : err);
+        this.skippedUndecodablePayload = true;
       }
       this.lastSeq = Math.max(this.lastSeq, update.sequence);
     }
@@ -913,6 +969,7 @@ export class DocumentSyncProvider {
       // corrupt bytes that make Y.applyUpdate throw); never abort sync. The
       // applyUpdate is INSIDE the try so garbage bytes can't escape. See NIM-878.
       console.warn(`[DocumentSync] Skipping undecodable broadcast at seq ${msg.sequence}:`, err instanceof Error ? err.message : err);
+      this.skippedUndecodablePayload = true;
       this.lastSeq = Math.max(this.lastSeq, msg.sequence);
       return;
     }
@@ -1439,6 +1496,9 @@ export class DocumentSyncProvider {
     // for CRDTs but wasteful).
     if (this.queuedPendingUpdate || this.inflightPendingUpdate) return;
     if (this.replayingClientUpdateId) return;
+    // NIM-1519: this doc is missing rows we could not decode; a snapshot from
+    // us would bury them behind replacesUpTo for every other client.
+    if (this.skippedUndecodablePayload) return;
 
     const updatesSinceSnapshot = this.lastSeq - this.lastSnapshotSeq;
     if (updatesSinceSnapshot <= 0) return;
@@ -1461,6 +1521,17 @@ export class DocumentSyncProvider {
   private async sendCompactionSnapshot(): Promise<void> {
     const currentSeq = this.lastSeq;
     const stateBytes = Y.encodeStateAsUpdate(this.ydoc);
+
+    // NIM-1519: never replace server rows with an EMPTY snapshot. An empty doc
+    // with a non-zero lastSeq means we hold none of the content those rows
+    // carry (undecodable rows, or a doc we never applied) -- compacting would
+    // hide it from every client and prune would delete it.
+    if (stateBytes.byteLength <= 2) {
+      console.warn(
+        `[DocumentSync] Refusing empty-doc compaction (lastSeq=${currentSeq}); leaving server rows untouched`
+      );
+      return;
+    }
 
     try {
       const { encrypted, iv } = await this.encryptForWire(stateBytes);
