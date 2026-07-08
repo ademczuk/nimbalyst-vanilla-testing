@@ -137,6 +137,21 @@ export function trackerItemToRecord(item: TrackerItem): TrackerRecord {
     }
   }
 
+  // NIM-1559: NEVER fabricate `new Date()` for a missing created/updated. This
+  // mapping runs on EVERY tracker reload (initial load, metadata-changed,
+  // workspace scan). Defaulting an absent timestamp to `now` produced a fresh
+  // value each reload, so any item without a frontmatter `created`/`updated`
+  // (e.g. a plan file with no dates) showed "just now" and jumped to the top of
+  // the Updated-sorted table on every restart/refresh. Fall back to the item's
+  // `lastIndexed` (a stable file mtime), then epoch -- a stable, non-churning
+  // value that sorts undated items to the bottom instead of the top.
+  const lastIndexedIso = item.lastIndexed instanceof Date
+    ? item.lastIndexed.toISOString()
+    : typeof item.lastIndexed === 'string'
+      ? item.lastIndexed
+      : undefined;
+  const EPOCH_ISO = new Date(0).toISOString();
+
   const record: TrackerRecord = {
     id: item.id,
     primaryType: item.type,
@@ -152,13 +167,9 @@ export function trackerItemToRecord(item: TrackerItem): TrackerRecord {
       workspace: item.workspace,
       documentPath: item.module || undefined,
       lineNumber: item.lineNumber,
-      createdAt: item.created ?? new Date().toISOString(),
-      updatedAt: item.updated ?? new Date().toISOString(),
-      lastIndexed: item.lastIndexed instanceof Date
-        ? item.lastIndexed.toISOString()
-        : typeof item.lastIndexed === 'string'
-          ? item.lastIndexed
-          : undefined,
+      createdAt: item.created ?? lastIndexedIso ?? EPOCH_ISO,
+      updatedAt: item.updated ?? lastIndexedIso ?? EPOCH_ISO,
+      lastIndexed: lastIndexedIso,
       authorIdentity: item.authorIdentity,
       lastModifiedBy: item.lastModifiedBy,
       createdByAgent: item.createdByAgent,

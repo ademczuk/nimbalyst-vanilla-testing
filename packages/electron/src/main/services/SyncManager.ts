@@ -1218,7 +1218,9 @@ async function getAvailableModelsForMobile(): Promise<{ models: Array<{ id: stri
     const allModels = await ModelRegistry.getAllModels(modelsConfig, enabledSet as Set<any>);
     // Filter to enabled models (model-level filtering for specific model selection)
     const enabledModels = allModels.filter(model => {
-      const ps = providerSettings[model.provider] as { enabled?: boolean; models?: string[] } | undefined;
+      const ps = providerSettings[model.provider] as { enabled?: boolean; models?: string[]; hiddenModels?: string[] } | undefined;
+      // Denylist wins: a hidden model never syncs to mobile, even if allow-listed.
+      if (ps?.hiddenModels?.includes(model.id)) return false;
       // If specific models are selected for this provider, filter
       if (ps?.models && ps.models.length > 0) {
         return ps.models.includes(model.id);

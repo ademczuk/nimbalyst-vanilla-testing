@@ -10,12 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Shared Docs discovery home: search, favorites, recently opened, and docs new or changed since you last viewed them, with a sidebar filter (All / Favorites / Updated) and controls to hide or clear unread markers.
+- Tools & Token Cost settings panel: see every tool group's estimated context-token cost and load policy in one place, with a link from the AI panel's token meter.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Trim the session model picker: each provider's settings page has checkboxes to hide models you don't use, and the Claude Agent SDK and Claude Code CLI sets can be enabled or disabled independently.
+- Agent sessions no longer include tracker guidance in the system prompt when trackers are disabled for the workspace, reducing per-request token usage.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Agent sessions defer MCP tool definitions until used on all models, and multi-worktree projects no longer load duplicate copies of project commands.
+- Background agents launched by a session are no longer killed when the session's turn ends; the session stays alive and wakes when they finish.
 
 ### Removed
 <!-- Removed features go here -->

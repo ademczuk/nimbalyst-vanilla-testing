@@ -1128,6 +1128,8 @@ export interface ProviderConfig {
   apiKey?: string;
   baseUrl?: string;
   models?: string[];
+  /** Model IDs hidden from the session picker (denylist; wins over `models`). */
+  hiddenModels?: string[];
   testStatus?: 'idle' | 'testing' | 'success' | 'error';
   testMessage?: string;
   installed?: boolean;
@@ -1161,6 +1163,9 @@ export interface AIProviderSettings {
 const defaultProviders: Record<string, ProviderConfig> = {
   claude: { enabled: false, testStatus: 'idle' },
   'claude-code': { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
+  // Subscription CLI. On by default like `claude-code` (main treats undefined as
+  // enabled); listed here so the renderer toggle renders in the correct state.
+  'claude-code-cli': { enabled: true, testStatus: 'idle' },
   openai: { enabled: false, testStatus: 'idle' },
   'openai-codex': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
   'openai-codex-acp': { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },

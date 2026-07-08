@@ -56,6 +56,7 @@ import { notificationService } from '../NotificationService';
 import { TrayManager } from '../../tray/TrayManager';
 import { logger } from '../../utils/logger';
 import { getSettingsService } from '../SettingsService';
+import { subscribeProviderSettingsInvalidation } from './providerSettingsCacheInvalidation';
 import { windowStates, findWindowByWorkspace, getWindowId, createWindow } from '../../window/WindowManager';
 import { resolveActiveWorkspacePathForWindowId } from '../../window/windowState';
 import { sessionFileTracker } from '../SessionFileTracker';
@@ -203,6 +204,18 @@ export class AIService {
     // Initialize mobile sync handler if sync is enabled
     this.initializeMobileSyncHandler().catch(err => {
       logger.main.error('[AIService] initializeMobileSyncHandler threw:', err);
+    });
+
+    // Invalidate the normalized-provider-settings cache whenever a provider
+    // config changes through the per-key SettingsService path (the renderer
+    // settings panels use `settingsSet('ai.provider.<id>', ...)`). Without this,
+    // toggling a provider off (e.g. Claude Code CLI) wrote enabled:false to disk
+    // but `ai:getModels` kept serving the stale enabled:true snapshot until
+    // restart. Mirrors the inline invalidation in the legacy ai:saveSettings
+    // handler, including the mobile-picker refresh.
+    subscribeProviderSettingsInvalidation(getSettingsService(), () => {
+      this.cachedNormalizedProviderSettings = null;
+      scheduleMobileSettingsSync();
     });
 
     // Initialize SessionStateManager with the database worker
@@ -3297,6 +3310,9 @@ export class AIService {
       const enabledSet = new Set<AIProviderType>();
       if (providerSettings['claude']?.enabled === true && !!apiKeys['anthropic']) enabledSet.add('claude');
       if (providerSettings['claude-code']?.enabled !== false) enabledSet.add('claude-code');
+      // Include the subscription CLI (on by default) so its variants render as
+      // checkboxes in the settings panel even before the user touches the toggle.
+      if (providerSettings['claude-code-cli']?.enabled !== false) enabledSet.add('claude-code-cli');
       if (providerSettings['openai']?.enabled === true && !!apiKeys['openai']) enabledSet.add('openai');
       if (providerSettings['openai-codex']?.enabled === true) enabledSet.add('openai-codex');
       if (providerSettings['opencode']?.enabled === true) enabledSet.add('opencode');
@@ -3421,25 +3437,29 @@ export class AIService {
       // });
 
       // Build enabled providers map (needed before fetching to skip disabled providers)
-      const enabledProviders: Record<AIProviderType, { enabled: boolean; models?: string[] }> = {
+      const enabledProviders: Record<AIProviderType, { enabled: boolean; models?: string[]; hiddenModels?: string[] }> = {
         'claude': {
           enabled: providerSettings['claude']?.enabled === true && !!apiKeys['anthropic'],
-          models: providerSettings['claude']?.models
+          models: providerSettings['claude']?.models,
+          hiddenModels: providerSettings['claude']?.hiddenModels
         },
         'claude-code': {
           // Respect the user's toggle but don't require an API key—Claude Code uses CLI auth
           enabled: claudeCodeSettings.enabled !== false,
-          models: claudeCodeSettings.models
+          models: claudeCodeSettings.models,
+          hiddenModels: claudeCodeSettings.hiddenModels
         },
         'claude-code-cli': {
           // Genuine `claude` CLI on the user's subscription. On by default (like
           // `claude-code`); no API key required — the CLI uses its own login.
           enabled: providerSettings['claude-code-cli']?.enabled !== false,
-          models: providerSettings['claude-code-cli']?.models
+          models: providerSettings['claude-code-cli']?.models,
+          hiddenModels: providerSettings['claude-code-cli']?.hiddenModels
         },
         'openai': {
           enabled: providerSettings['openai']?.enabled === true && !!apiKeys['openai'],
-          models: providerSettings['openai']?.models
+          models: providerSettings['openai']?.models,
+          hiddenModels: providerSettings['openai']?.hiddenModels
         },
         'openai-codex': {
           // Codex SDK uses its own auth (codex auth login), API key is optional
@@ -3459,7 +3479,8 @@ export class AIService {
         },
         'lmstudio': {
           enabled: providerSettings['lmstudio']?.enabled === true,
-          models: providerSettings['lmstudio']?.models
+          models: providerSettings['lmstudio']?.models,
+          hiddenModels: providerSettings['lmstudio']?.hiddenModels
         }
       };
 

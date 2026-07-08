@@ -24,6 +24,8 @@ import {
   type PersistedCollabEntry,
 } from '../../utils/collabOpenDocsPersistence';
 import { initSharedDocuments, pendingCollabDocumentAtom, sharedDocumentsAtom, type SharedDocument } from '../../store/atoms/collabDocuments';
+import { hydrateCollabDiscovery } from '../../store/atoms/collabDiscovery';
+import { SharedDocsHome } from './SharedDocsHome';
 import { isCollabUri, parseCollabUri } from '../../utils/collabUri';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import { getCollabNodeName } from './collabTree';
@@ -152,6 +154,9 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
   const [chatWidth, setChatWidth] = useState(COLLAB_CHAT_DEFAULT);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState(false);
+  // Discovery hub overlay: shown over open tabs when the user clicks "Home".
+  // With no tabs, the hub is the empty state and this flag is irrelevant.
+  const [showHome, setShowHome] = useState(false);
 
   // Refs for sidebar resize drag (avoids re-renders during drag)
   const sidebarDragRef = useRef({ isDragging: false, startX: 0, startWidth: 0 });
@@ -244,6 +249,19 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
     return () => { cancelled = true; };
   }, [workspacePath]);
 
+  // Hydrate favorites + discovery prefs (tree filter, unread-bubble visibility)
+  // from workspace state so the hub and sidebar reflect saved choices.
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI?.invoke?.('workspace:get-state', workspacePath)
+      .then((state: any) => {
+        if (cancelled) return;
+        hydrateCollabDiscovery(workspacePath, state?.collabDiscovery);
+      })
+      .catch(() => { /* best-effort; defaults apply */ });
+    return () => { cancelled = true; };
+  }, [workspacePath]);
+
   // --- Sidebar resize handlers ---
   const handleSidebarMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -324,6 +342,8 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
   }, [isEditorMaximized, sidebarCollapsed, chatCollapsed, clearEditorMaximized]);
 
   const handleDocumentSelect = useCallback(async (doc: SharedDocument, initialContent?: string) => {
+    // Opening a doc dismisses the discovery hub overlay.
+    setShowHome(false);
     // Check if already open as a tab
     const existingTab = tabs.find((tab) => {
       if (!isCollabUri(tab.filePath)) return false;
@@ -522,6 +542,8 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
               workspacePath={workspacePath}
               onDocumentSelect={handleDocumentSelect}
               activeDocumentId={activeCollabDocumentId}
+              onShowHome={() => setShowHome(true)}
+              homeActive={showHome || !hasTabs}
             />
           </div>
 
@@ -546,23 +568,35 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
             isAIChatCollapsed={chatCollapsed}
             onTabDoubleClick={toggleEditorMaximized}
           >
-            <TabContent
-              workspaceId={workspacePath}
-              onTabClose={handleTabClose}
-              onGetContentReady={handleGetContentReady}
-            />
+            <>
+              <TabContent
+                workspaceId={workspacePath}
+                onTabClose={handleTabClose}
+                onGetContentReady={handleGetContentReady}
+              />
+              {/* Discovery hub overlay — reachable while tabs are open.
+                  Rendered as a sibling so TabContent is never re-mounted. */}
+              {showHome && (
+                <div className="collab-home-overlay absolute inset-0 z-20 flex flex-col bg-nim">
+                  <div className="flex items-center justify-end px-3 py-1.5 border-b border-nim shrink-0">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-[12px] text-nim-muted hover:text-nim bg-transparent border-none cursor-pointer px-2 py-1 rounded hover:bg-nim-hover"
+                      onClick={() => setShowHome(false)}
+                      title="Back to editor"
+                    >
+                      <MaterialSymbol icon="close" size={16} />
+                      Back to editor
+                    </button>
+                  </div>
+                  <SharedDocsHome onDocumentSelect={handleDocumentSelect} />
+                </div>
+              )}
+            </>
           </TabManager>
         ) : (
-          /* Empty state when no tabs open */
-          <div className="flex-1 flex items-center justify-center text-nim-muted">
-            <div className="text-center">
-              <MaterialSymbol icon="cloud_sync" size={48} className="text-nim-faint mb-3" />
-              <p className="text-base m-0">Select a shared document</p>
-              <p className="text-sm text-nim-faint mt-1 m-0">
-                Choose a document from the sidebar to start collaborating
-              </p>
-            </div>
-          </div>
+          /* No tabs open: the discovery hub is the full-bleed empty state */
+          <SharedDocsHome onDocumentSelect={handleDocumentSelect} />
         )}
       </div>
 

@@ -150,11 +150,14 @@ describe('buildSdkOptions env-key hardening', () => {
     const { options } = await buildSdkOptions(makeDeps(), makeParams());
 
     // Flags buildSdkOptions always composes onto the spawned session env.
-    expect(options.env.ENABLE_TOOL_SEARCH).toBe('auto:2');
+    // 'true' = unconditional tool-search deferral: every MCP server except the
+    // alwaysLoad core defers regardless of the model's context window. The old
+    // 'auto:2' default meant a 20K-token eager floor on 1M-context models.
+    expect(options.env.ENABLE_TOOL_SEARCH).toBe('true');
     expect(options.env.CLAUDE_CODE_ENTRYPOINT).toBe('cli');
   });
 
-  it('lets a user-configured ENABLE_TOOL_SEARCH override the auto:2 default', async () => {
+  it('lets a user-configured ENABLE_TOOL_SEARCH override the default', async () => {
     // NIM-1475: the hardcoded default used to be spread after settingsEnv,
     // silently clobbering the ENABLE_TOOL_SEARCH=false remediation our own
     // Bedrock error guidance tells users to apply.

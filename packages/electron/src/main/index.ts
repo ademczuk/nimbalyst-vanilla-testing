@@ -1844,7 +1844,13 @@ app.whenReady().then(async () => {
     // common dir from a worktree, and (for Codex) escape its workspace-write
     // sandbox when an orchestrator session needs to edit sibling worktrees.
     // Issue #37 problem 1.
-    ClaudeCodeProvider.setAdditionalDirectoriesLoader(getAdditionalDirectoriesForWorkspace);
+    // Claude opts out of sibling worktrees: the Claude CLI loads .claude/commands
+    // skills from every additional directory, so N worktrees = N duplicate
+    // copies of every project skill in the system prompt (~7K tokens wasted per
+    // session). Claude has no Codex-style sandbox; cross-worktree file access
+    // still works through the normal permission flow.
+    ClaudeCodeProvider.setAdditionalDirectoriesLoader((workspacePath: string) =>
+      getAdditionalDirectoriesForWorkspace(workspacePath, { includeSiblingWorktrees: false }));
     OpenAICodexProvider.setAdditionalDirectoriesLoader(getAdditionalDirectoriesForWorkspace);
 
     // Wire the Codex PreToolUse hook (LEGACY -- only consulted by the SDK

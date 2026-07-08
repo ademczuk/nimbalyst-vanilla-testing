@@ -8,6 +8,14 @@ export interface ProviderEnablement {
    * restricts the picker to exactly those ids (plus the family conveniences below).
    */
   models?: string[];
+  /**
+   * Optional per-provider hide-list (denylist). Any model id here is hidden from
+   * the picker regardless of the allow-list. Empty/undefined hides nothing, so a
+   * newly shipped variant always appears until the user explicitly hides it — this
+   * is the primary "trim the picker" control for the Claude Code family, which
+   * keeps `models` empty (allow-all) on purpose (NIM-1486).
+   */
+  hiddenModels?: string[];
 }
 
 export interface FilterableModel {
@@ -31,6 +39,11 @@ export function isModelEnabled(
   entry: ProviderEnablement | undefined,
 ): boolean {
   if (!entry?.enabled) return false;
+
+  // Denylist wins: a hidden id is never shown, even if it's also allow-listed.
+  // Rows map 1:1 to picker rows, so hiding is per exact id (a base variant and
+  // its -1m row are hidden independently).
+  if (entry.hiddenModels && entry.hiddenModels.includes(model.id)) return false;
 
   const list = entry.models;
   if (list && list.length > 0) {

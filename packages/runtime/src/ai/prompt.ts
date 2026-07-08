@@ -140,6 +140,13 @@ export interface ClaudeCodePromptOptions {
   enableAgentTeams?: boolean;
   /** When true, includes plan tracking frontmatter instructions and directs plans to nimbalyst-local/plans/ */
   planTrackingEnabled?: boolean;
+  /**
+   * When false, omits the tracker-references guidance (trackers are disabled
+   * for the workspace, so the agent has no tracker tools to look items up with).
+   * Defaults to true so providers that don't know the workspace state keep the
+   * existing behavior.
+   */
+  trackersEnabled?: boolean;
   // Legacy fields - kept for backward compatibility but no longer used in prompt building
   /** @deprecated No longer used - prompt is now static for all session types */
   sessionType?: string;
@@ -167,6 +174,7 @@ export function buildClaudeCodeSystemPrompt(options: ClaudeCodePromptOptions): s
     isVoiceMode = false,
     voiceModeCodingAgentPrompt,
     planTrackingEnabled = false,
+    trackersEnabled = true,
   } = options;
   const effectiveToolReferenceStyle = sessionNamingInstructionStyle ?? toolReferenceStyle;
   // These are all core tools, served by the eager `nimbalyst` server.
@@ -228,11 +236,16 @@ Consider which diagram type best suits the data you want to convey.
 
 ## File References
 
-When you mention a specific file in your chat replies, write it as a markdown link so the user can click it open: \`[relativeName](/absolute/path/to/file.ext)\`. Use the file's absolute path as the link target. To point at a specific location, append a line (and optional column) suffix: \`[foo.ts:42](/abs/path/foo.ts:42)\`. Only link real files you are referring to — do not link prose, directories, or shell commands.
+When you mention a specific file in your chat replies, write it as a markdown link so the user can click it open: \`[relativeName](/absolute/path/to/file.ext)\`. Use the file's absolute path as the link target. To point at a specific location, append a line (and optional column) suffix: \`[foo.ts:42](/abs/path/foo.ts:42)\`. Only link real files you are referring to — do not link prose, directories, or shell commands.`;
+
+  // Tracker guidance only makes sense when the workspace has tracker tools.
+  if (trackersEnabled) {
+    prompt += `
 
 ## Tracker References
 
 When you mention a tracker item (bug, task, plan, decision, etc.) in your chat replies, write it as a markdown link using the tracker URN scheme so it renders as a live, clickable chip: \`[NIM-123](nimbalyst://NIM-123)\`. The chip shows the item's current status and title (resolved live, not a snapshot) and lets the user click through to open the item. Use the item's issue key (e.g. \`NIM-123\`) as both the label and the URN. Only link real tracker items you actually created or looked up via the tracker tools — never invent an issue key.`;
+  }
 
   // Add plan tracking frontmatter instructions when enabled
   if (planTrackingEnabled) {

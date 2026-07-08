@@ -436,7 +436,8 @@ export interface ProviderCapabilities {
 export interface ProviderSettings {
   enabled: boolean;
   apiKey?: string;
-  models?: string[];  // List of enabled model IDs for this provider
+  models?: string[];  // List of enabled model IDs for this provider (allow-list)
+  hiddenModels?: string[];  // Model IDs hidden from the picker (denylist; wins over the allow-list)
   defaultModel?: string;
   baseUrl?: string;  // For custom endpoints
 }

@@ -103,6 +103,26 @@ export const CORE_TOOLS: readonly string[] = [
 ];
 
 /**
+ * The subset of CORE_TOOLS that is always loaded into the prompt. Eagerness is
+ * now per-TOOL, not per-server: the core server config no longer sets
+ * `alwaysLoad: true`; instead the `/mcp/core` ListTools marks these tools with
+ * `_meta['anthropic/alwaysLoad']`, which the Claude CLI honors per tool.
+ *
+ * `display_to_user` and `capture_editor_screenshot` stay on core so their
+ * `mcp__nimbalyst__*` names (referenced by tool policies, permissions,
+ * analytics, and onboarding prompts) never change, but they defer behind tool
+ * search — visual output is occasional and their schemas cost ~1.1K tokens on
+ * every session.
+ */
+export const CORE_ALWAYS_LOAD_TOOLS: readonly string[] = [
+  'AskUserQuestion',
+  'PromptForUserInput',
+  'get_session_edited_files',
+  'developer_git_commit_proposal',
+  'update_session_meta',
+];
+
+/**
  * Deferred host bucket: app-config + session-context + child-session
  * orchestration + file/content. Host, but rarely needed → never eager.
  */

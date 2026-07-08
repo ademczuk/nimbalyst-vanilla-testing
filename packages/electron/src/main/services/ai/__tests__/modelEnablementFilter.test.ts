@@ -53,4 +53,35 @@ describe('isModelEnabled', () => {
       ),
     ).toBe(true);
   });
+
+  describe('hiddenModels (denylist)', () => {
+    it('hides exactly the listed ids and shows everything else', () => {
+      const entry = { enabled: true, hiddenModels: ['claude-code:sonnet'] };
+      expect(isModelEnabled({ id: 'claude-code:sonnet', provider: 'claude-code' }, entry)).toBe(false);
+      expect(isModelEnabled({ id: 'claude-code:opus', provider: 'claude-code' }, entry)).toBe(true);
+    });
+
+    it('is independent per exact id — hiding a base variant leaves its 1M row visible', () => {
+      // Denylist rows map 1:1 to picker rows; base and -1m are toggled separately.
+      const entry = { enabled: true, hiddenModels: ['claude-code:opus'] };
+      expect(isModelEnabled({ id: 'claude-code:opus', provider: 'claude-code' }, entry)).toBe(false);
+      expect(isModelEnabled({ id: 'claude-code:opus-1m', provider: 'claude-code' }, entry)).toBe(true);
+    });
+
+    it('an empty/undefined hidden set shows everything', () => {
+      expect(isModelEnabled({ id: 'claude-code:opus', provider: 'claude-code' }, { enabled: true, hiddenModels: [] })).toBe(true);
+      expect(isModelEnabled({ id: 'claude-code:opus', provider: 'claude-code' }, { enabled: true })).toBe(true);
+    });
+
+    it('hidden wins over the allow-list — a hidden id is never shown even if allow-listed', () => {
+      const entry = { enabled: true, models: ['claude-code:opus'], hiddenModels: ['claude-code:opus'] };
+      expect(isModelEnabled({ id: 'claude-code:opus', provider: 'claude-code' }, entry)).toBe(false);
+    });
+
+    it('works for the CLI provider so its set can be trimmed independently', () => {
+      const entry = { enabled: true, hiddenModels: ['claude-code-cli:haiku'] };
+      expect(isModelEnabled({ id: 'claude-code-cli:haiku', provider: 'claude-code-cli' }, entry)).toBe(false);
+      expect(isModelEnabled({ id: 'claude-code:haiku', provider: 'claude-code' }, entry)).toBe(true);
+    });
+  });
 });

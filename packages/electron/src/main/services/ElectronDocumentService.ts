@@ -24,6 +24,7 @@ import {
 import { propagateInverseRelationships } from './tracker/inverseRelationshipWrites';
 import { applyRelationshipFieldWrites } from './tracker/relationshipFieldWrite';
 import { nestRelationshipFieldsIntoCustomFields } from './tracker/relationshipFieldStorage';
+import { projectionWouldChange } from './tracker/projectionUpdateGuard';
 import { extractFrontmatter, extractCommonFields } from '../utils/frontmatterReader';
 import { VIRTUAL_DOCS, isVirtualPath } from '@nimbalyst/runtime';
 import {
@@ -131,6 +132,22 @@ function parseJsonColumn<T>(value: unknown): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Parse a frontmatter date value (string/number/Date) into a valid Date, or
+ * undefined if absent/unparseable. Used as a STABLE fallback for a
+ * frontmatter tracker's timestamp so we never fabricate scan-time `new Date()`
+ * (NIM-1559).
+ */
+function parseStableDate(value: unknown): Date | undefined {
+  if (value === null || value === undefined) return undefined;
+  const d = value instanceof Date
+    ? value
+    : typeof value === 'number'
+      ? new Date(value)
+      : new Date(String(value));
+  return Number.isNaN(d.getTime()) ? undefined : d;
 }
 
 /**
@@ -1160,7 +1177,20 @@ export class ElectronDocumentService implements DocumentService {
         updated: trackerData.updated ? String(trackerData.updated) : undefined,
         dueDate: trackerData.dueDate ? String(trackerData.dueDate) : undefined,
         progress: typeof trackerData.progress === 'number' ? trackerData.progress : undefined,
-        lastIndexed: metadata.lastModified || metadata.lastIndexed || new Date(),
+        // NIM-1559: this value drives the tracker table's "Updated" column/sort
+        // (which uses `updatedAt || createdAt || lastIndexed`) for a plan with
+        // no frontmatter `updated`/`created`. It must be a STABLE timestamp, so
+        // it must NOT come from a scan-time source. `metadata.lastIndexed` is
+        // the doc-scan timestamp (≈ now during cold-open, before the file mtime
+        // is read) -- using it made every undated plan jump to the top as "just
+        // now" on every restart. Prefer file mtime, then frontmatter dates, and
+        // epoch as a last resort so undated plans sort to the bottom, not the
+        // top. Never `metadata.lastIndexed` / `new Date()`.
+        lastIndexed:
+          metadata.lastModified
+          || parseStableDate(trackerData.updated)
+          || parseStableDate(trackerData.created)
+          || new Date(0),
         archived: false,
         source: 'frontmatter',
         sourceRef: metadata.path,
@@ -2653,17 +2683,42 @@ export class ElectronDocumentService implements DocumentService {
 
     const contentJson = markdownBody ? JSON.stringify(markdownBody) : null;
 
-    // Insert into database
-    await database.query(
-      `INSERT INTO tracker_items (
-        id, type, data, workspace, document_path, line_number,
-        created, updated, last_indexed, sync_status,
-        content, archived, source, source_ref
-      ) VALUES ($1, $2, $3, $4, $6, NULL, NOW(), NOW(), NOW(), 'local', $5, FALSE, 'frontmatter', $6)
-      ON CONFLICT (id) DO UPDATE SET
-        data = tracker_items.data || $3, content = $5, source = 'frontmatter', source_ref = $6, document_path = $6, updated = NOW()`,
-      [id, trackerType, JSON.stringify(data), this.workspacePath, contentJson, relativePath]
+    // NIM-1559: don't bump `updated` on a no-op re-import. A cold-open scan
+    // re-imports every tracker markdown file; without this guard each one
+    // re-stamps `updated = NOW()` even when nothing changed (and a shared
+    // `fm:` item then re-syncs that bogus timestamp to the whole org). Read
+    // the existing projection row and only advance `updated` when a projected
+    // field or the body actually changed; otherwise refresh `last_indexed`
+    // (the scan timestamp) alone.
+    const existingRow = await database.query<any>(
+      `SELECT data, content FROM tracker_items WHERE id = $1`,
+      [id]
     );
+    const hadRow = existingRow.rows.length > 0;
+    const changed = !hadRow || projectionWouldChange(
+      parseJsonColumn<Record<string, unknown>>(existingRow.rows[0].data) ?? {},
+      data,
+      existingRow.rows[0].content,
+      contentJson,
+    );
+
+    if (hadRow && !changed) {
+      await database.query(
+        `UPDATE tracker_items SET last_indexed = NOW() WHERE id = $1`,
+        [id]
+      );
+    } else {
+      await database.query(
+        `INSERT INTO tracker_items (
+          id, type, data, workspace, document_path, line_number,
+          created, updated, last_indexed, sync_status,
+          content, archived, source, source_ref
+        ) VALUES ($1, $2, $3, $4, $6, NULL, NOW(), NOW(), NOW(), 'local', $5, FALSE, 'frontmatter', $6)
+        ON CONFLICT (id) DO UPDATE SET
+          data = tracker_items.data || $3, content = $5, source = 'frontmatter', source_ref = $6, document_path = $6, updated = NOW(), last_indexed = NOW()`,
+        [id, trackerType, JSON.stringify(data), this.workspacePath, contentJson, relativePath]
+      );
+    }
 
     const result = await database.query<any>(
       `SELECT * FROM tracker_items WHERE id = $1`,
@@ -3052,7 +3107,7 @@ export class ElectronDocumentService implements DocumentService {
       // Get existing items for this module
       // console.log(`[DocumentService] Querying database for existing tracker items...`);
       const existingResult = await database.query<any>(
-        `SELECT id, type, line_number, title
+        `SELECT id, type, line_number, title, data, updated
          FROM tracker_items
          WHERE workspace = $1 AND document_path = $2`,
         [this.workspacePath, relativePath]
@@ -3061,6 +3116,26 @@ export class ElectronDocumentService implements DocumentService {
       const existingIds = new Set(existingResult.rows.map(row => row.id));
       const items = resolveInlineTrackerIds(parsedItems, existingResult.rows, relativePath);
       const newIds = new Set(items.map(item => item.id));
+
+      // NIM-1559: look up each existing row BY ID across the workspace, not
+      // scoped to this file's `document_path`. The same inline `#id[...]`
+      // marker can appear in two files (e.g. a plan and its aggregated
+      // `__plans.md`); the row is keyed by its unique id, so a per-file lookup
+      // misses it (`document_path` currently belongs to the other file) and
+      // the item looks brand-new. That made each file's scan re-home the row
+      // and bump `updated`, ping-ponging it every re-index. Keyed by id, the
+      // guard sees the real row and preserves `updated` when content matches.
+      const resolvedIds = items.map(item => item.id).filter(Boolean) as string[];
+      const existingById = new Map<string, any>();
+      if (resolvedIds.length > 0) {
+        const byIdResult = await database.query<any>(
+          `SELECT id, type, line_number, data, updated
+           FROM tracker_items
+           WHERE workspace = $1 AND id = ANY($2)`,
+          [this.workspacePath, resolvedIds]
+        );
+        for (const row of byIdResult.rows) existingById.set(row.id, row);
+      }
 
       // Find items to remove (existed before but not anymore)
       const removedIds = Array.from(existingIds).filter(id => !newIds.has(id));
@@ -3090,8 +3165,13 @@ export class ElectronDocumentService implements DocumentService {
       // merge file-derived fields INTO existing JSONB (preserves system metadata
       // like authorIdentity, createdByAgent, linkedSessions, activity, comments
       // that the indexer doesn't know about).
-      const COLS_PER_ROW = 9; // params per row; NOW(), NOW() are inlined
-      const UPSERT_CHUNK = 100; // 900 bound vars/chunk, safely under SQLite's limit
+      // NIM-1559: `updated` is a per-row bound param (not an inlined NOW()) so
+      // an item whose projected fields are unchanged on this re-index keeps
+      // its existing `updated`, while `last_indexed` still advances. Editing
+      // one line of a file must not re-stamp every tracker item in it.
+      const scanNow = new Date().toISOString();
+      const COLS_PER_ROW = 10; // params per row; created NOW() is inlined
+      const UPSERT_CHUNK = 90; // 900 bound vars/chunk, safely under SQLite's limit
       for (let offset = 0; offset < items.length; offset += UPSERT_CHUNK) {
         const chunk = items.slice(offset, offset + UPSERT_CHUNK);
         const valuesClauses: string[] = [];
@@ -3109,10 +3189,26 @@ export class ElectronDocumentService implements DocumentService {
             created: item.created,
             updated: item.updated
           };
+          const existing = existingById.get(item.id);
+          // Only a change to projected CONTENT (or the item's type) advances
+          // `updated`. Positional metadata -- line number, which file owns the
+          // marker -- is written but must NOT bump `updated` (NIM-1559).
+          const changed =
+            !existing ||
+            existing.type !== item.type ||
+            projectionWouldChange(
+              parseJsonColumn<Record<string, unknown>>(existing.data) ?? {},
+              data,
+            );
+          const updatedValue = changed
+            ? scanNow
+            : (existing.updated != null
+                ? new Date(existing.updated).toISOString()
+                : scanNow);
           const isArchived = item.archived === true;
           const b = i * COLS_PER_ROW;
           valuesClauses.push(
-            `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, NOW(), NOW(), $${b + 7}, $${b + 8}, $${b + 9})`
+            `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, NOW(), $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10})`
           );
           params.push(
             item.id,
@@ -3121,6 +3217,7 @@ export class ElectronDocumentService implements DocumentService {
             item.workspace,
             item.module, // document_path
             item.lineNumber || null,
+            updatedValue,
             item.lastIndexed,
             isArchived,
             isArchived ? new Date().toISOString() : null
@@ -3136,7 +3233,7 @@ export class ElectronDocumentService implements DocumentService {
             workspace = EXCLUDED.workspace,
             document_path = EXCLUDED.document_path,
             line_number = EXCLUDED.line_number,
-            updated = NOW(),
+            updated = EXCLUDED.updated,
             last_indexed = EXCLUDED.last_indexed,
             archived = CASE WHEN EXCLUDED.archived = TRUE THEN TRUE ELSE tracker_items.archived END,
             archived_at = CASE WHEN EXCLUDED.archived = TRUE THEN EXCLUDED.archived_at ELSE tracker_items.archived_at END`,

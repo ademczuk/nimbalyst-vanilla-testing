@@ -60,7 +60,7 @@ import { parseBashForFileOps, hasShellChainingOperators, splitOnShellOperators }
 import { ToolPermissionService } from '../permissions/ToolPermissionService';
 import { AgentToolHooks } from '../permissions/AgentToolHooks';
 import { McpConfigService } from '../services/McpConfigService';
-import { getMcpConfigService, isInternalMcpServerEnabled } from '../services/mcpServerConfig';
+import { getMcpConfigService, isInternalMcpServerEnabled, areTrackerToolsEnabled, resolveTrackersWorkspacePath } from '../services/mcpServerConfig';
 import { historyManager } from '../../../../../electron/src/main/HistoryManager';
 import {
   appendLargeAttachmentInstructions,
@@ -106,6 +106,7 @@ import {
   shouldExitDrain,
   classifyDrainOutcome,
   shouldSettleTaskFromToolResult,
+  extractToolResultText,
   mapTaskUpdatedPatchStatus,
   shouldApplyTaskUpdatedStatus,
   isNotificationFlushResult,
@@ -1266,7 +1267,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                       // on it killed the task at turn-end teardown. NIM-1470.
                       if (task.toolUseId === item.toolUseId && shouldSettleTaskFromToolResult(task, item.content)) {
                         task.status = toolCall.isError ? 'failed' : 'completed';
-                        if (typeof item.content === 'string') task.summary = (item.content as string).substring(0, 200);
+                        const summaryText = extractToolResultText(item.content);
+                        if (summaryText) task.summary = summaryText.substring(0, 200);
                         this.emitTaskUpdate(sessionId).catch(() => {});
                         break;
                       }
@@ -3711,6 +3713,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       isVoiceMode,
       voiceModeCodingAgentPrompt,
       enableAgentTeams,
+      trackersEnabled: areTrackerToolsEnabled(resolveTrackersWorkspacePath(documentContext)),
     });
 
     // console.log('[CLAUDE-CODE] Built system prompt - length:', prompt.length, 'characters');
