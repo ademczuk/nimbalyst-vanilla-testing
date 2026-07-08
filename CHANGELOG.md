@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared Docs discovery home: search, favorites, recently opened, and docs new or changed since you last viewed them, with a sidebar filter (All / Favorites / Updated) and controls to hide or clear unread markers.
 - Tools & Token Cost settings panel: see every tool group's estimated context-token cost and load policy in one place, with a link from the AI panel's token meter.
 - iOS: create a Meta Agent on mobile and see it grouped with its sub-agents in a collapsible "Meta Agent" group (alpha-gated to the desktop feature flag).
+- Slash commands now work anywhere in a message and appear as clickable pills that show what each command does and open its source file.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
