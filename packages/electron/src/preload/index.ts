@@ -634,6 +634,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendMcpReadCollabDocResult: (resultChannel: string, result: { success: boolean; content?: string; error?: string }) => {
     ipcRenderer.send(resultChannel, result);
   },
+  // Shared-index (first-class shared folders + documents) MCP operations.
+  onMcpCreateSharedDoc: (callback: (data: { title: string, documentType?: string, parentFolderId?: string | null, folderPath?: string, initialContent?: string, resultChannel: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('mcp:createSharedDoc', handler);
+    return () => ipcRenderer.removeListener('mcp:createSharedDoc', handler);
+  },
+  onMcpCreateSharedFolder: (callback: (data: { name: string, parentFolderId?: string | null, folderPath?: string, resultChannel: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('mcp:createSharedFolder', handler);
+    return () => ipcRenderer.removeListener('mcp:createSharedFolder', handler);
+  },
+  onMcpMoveSharedItem: (callback: (data: { itemId: string, kind: 'doc' | 'folder', newParentFolderId?: string | null, folderPath?: string, resultChannel: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('mcp:moveSharedItem', handler);
+    return () => ipcRenderer.removeListener('mcp:moveSharedItem', handler);
+  },
+  onMcpRenameSharedItem: (callback: (data: { itemId: string, kind: 'doc' | 'folder', newName: string, resultChannel: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('mcp:renameSharedItem', handler);
+    return () => ipcRenderer.removeListener('mcp:renameSharedItem', handler);
+  },
+  onMcpDeleteSharedItem: (callback: (data: { itemId: string, kind: 'doc' | 'folder', resultChannel: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('mcp:deleteSharedItem', handler);
+    return () => ipcRenderer.removeListener('mcp:deleteSharedItem', handler);
+  },
+  // Generic reply for all shared-index tools; the result payload varies per tool
+  // (documentId / folderId / removedCount) but always carries { success, error? }.
+  sendMcpCollabIndexResult: (resultChannel: string, result: { success: boolean; error?: string; [key: string]: unknown }) => {
+    ipcRenderer.send(resultChannel, result);
+  },
   onMcpNavigateTo: (callback: (data: { line: number, column: number }) => void) => {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('mcp:navigateTo', handler);

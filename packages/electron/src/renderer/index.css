@@ -405,3 +405,21 @@ body[data-dev-mode="true"] .nav-quick-access::before {
   background-color: color-mix(in srgb, var(--nim-primary) 24%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--nim-primary) 24%, transparent);
 }
+
+/* Mention pills: tint `@` file refs and `@@[title](id)` session mentions inside
+   the AI chat input. Same glyph-advance constraint as .command-pill (tint only,
+   no padding/border/font-weight). Kept visually lighter than the command tint and
+   given distinct hues: neutral/gray for files, purple accent for sessions. These
+   are pure decoration -- no hover, no pointer events. */
+.mention-pill-file {
+  color: var(--nim-text);
+  background-color: color-mix(in srgb, var(--nim-text-muted) 16%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nim-text-muted) 16%, transparent);
+  border-radius: 4px;
+}
+.mention-pill-session {
+  color: var(--nim-purple);
+  background-color: color-mix(in srgb, var(--nim-purple) 12%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nim-purple) 12%, transparent);
+  border-radius: 4px;
+}

@@ -112,6 +112,25 @@ const NON_FIELD_KEYS = new Set([
 // TrackerItem <-> TrackerRecord converters
 // ---------------------------------------------------------------------------
 
+function isDateOnlyOrMidnightUtc(value: string | undefined): boolean {
+  if (!value) return false;
+  const trimmed = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed)
+    || /^\d{4}-\d{2}-\d{2}T00:00:00(?:\.000)?Z$/.test(trimmed);
+}
+
+function chooseUpdatedAt(item: TrackerItem, lastIndexedIso: string | undefined): string | undefined {
+  const candidate = item.updated ?? item.created;
+  if (
+    item.source === 'frontmatter'
+    && lastIndexedIso
+    && isDateOnlyOrMidnightUtc(candidate)
+  ) {
+    return lastIndexedIso;
+  }
+  return item.updated ?? item.created ?? lastIndexedIso;
+}
+
 /**
  * Convert a legacy TrackerItem to the canonical TrackerRecord.
  * All TrackerItem properties that aren't system/routing keys go into `fields`.
@@ -151,6 +170,7 @@ export function trackerItemToRecord(item: TrackerItem): TrackerRecord {
       ? item.lastIndexed
       : undefined;
   const EPOCH_ISO = new Date(0).toISOString();
+  const updatedAt = chooseUpdatedAt(item, lastIndexedIso) ?? EPOCH_ISO;
 
   const record: TrackerRecord = {
     id: item.id,
@@ -168,7 +188,7 @@ export function trackerItemToRecord(item: TrackerItem): TrackerRecord {
       documentPath: item.module || undefined,
       lineNumber: item.lineNumber,
       createdAt: item.created ?? lastIndexedIso ?? EPOCH_ISO,
-      updatedAt: item.updated ?? lastIndexedIso ?? EPOCH_ISO,
+      updatedAt,
       lastIndexed: lastIndexedIso,
       authorIdentity: item.authorIdentity,
       lastModifiedBy: item.lastModifiedBy,

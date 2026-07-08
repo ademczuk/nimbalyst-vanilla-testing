@@ -67,6 +67,7 @@ import { customEditorRegistry } from '../CustomEditors';
 import type { CustomEditorRegistration } from '../CustomEditors/types';
 import { useCollabLocalOrigin } from '../../hooks/useCollabLocalOrigin';
 import { markDocViewed } from '../../hooks/useDocUnread';
+import { recordDocOpened } from '../../store/atoms/collabDiscovery';
 import { getCollabContentAdapter } from '@nimbalyst/collab-adapters';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
 import { FilePathBreadcrumb } from '../common/FilePathBreadcrumb';
@@ -434,13 +435,15 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         isActive && hasCollabUnsyncedChanges(status)
       );
     }
-    // Switching to this doc (already synced) marks it read.
+    // Switching to this doc (already synced) marks it read and counts as a
+    // genuine open (drives the "Recent" list).
     if (isActive && activeConfig.orgId && syncProviderRef.current?.isSynced()) {
       void markDocViewed(
         activeConfig.documentId,
         activeConfig.orgId,
         getDocReadWatermark(syncProviderRef.current),
       );
+      recordDocOpened(activeConfig.documentId);
     }
   }, [isActive, activeConfig.documentId, activeConfig.orgId, getDocReadWatermark]);
 
@@ -492,6 +495,7 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
               activeConfig.orgId,
               getDocReadWatermark(syncProvider),
             );
+            recordDocOpened(activeConfig.documentId);
           }
         }
       },

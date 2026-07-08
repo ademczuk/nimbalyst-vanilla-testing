@@ -223,6 +223,7 @@ export type {
   MemberInfo as TeamMemberInfo,
   KeyEnvelopeData,
   DocIndexEntry as TeamDocIndexEntry,
+  FolderNode,
 } from './teamSyncTypes';
 
 export {

@@ -36,7 +36,7 @@ import { reverseCodexPatch, type CodexPatchKind } from './codex/patchReverse';
  * Codex transport selection.
  *
  * - `sdk`: the original `@openai/codex-sdk`-driven `codex exec --experimental-json`
- *   flow. Stable, fully featured. Limitation: file_change events do not carry
+ *   flow. Legacy escape hatch only. Limitation: file_change events do not carry
  *   the patch diff text, so host-side pre-edit baselines race apply_patch.
  * - `app-server`: drives `codex app-server --listen stdio://` directly via
  *   JSON-RPC v2. Emits the full patch diff per file_change item, which lets us
@@ -218,15 +218,16 @@ export class OpenAICodexProvider extends BaseAgentProvider {
   // (Homebrew, nvm, volta, etc.) that are missing from Electron's minimal GUI PATH
   private static enhancedPathLoader: (() => string) | null = null;
 
-  // SDK module loader (injected from electron main process for packaged builds)
-  // In packaged builds, dynamic import('@openai/codex-sdk') fails because the
-  // package isn't resolvable from within app.asar. This loader provides an
-  // alternative resolution path using process.resourcesPath.
+  // Legacy SDK module loader (injected from electron main process for packaged builds)
+  // when `openaiCodex.transport = 'sdk'` is explicitly selected. In packaged
+  // builds, dynamic import('@openai/codex-sdk') fails because the package isn't
+  // resolvable from within app.asar. This loader provides an alternative
+  // resolution path using process.resourcesPath.
   private static sdkModuleLoader: (() => Promise<CodexSdkModuleLike>) | null = null;
 
   // Additional writable directories loader (injected from electron main process).
   // Returns paths like sibling worktrees and the parent project root that the
-  // Codex SDK should pass to the CLI as --add-dir entries so workspace-write
+  // Codex transport should pass to the CLI as --add-dir entries so workspace-write
   // sandbox does not block edits to those directories. Issue #37 problem 1.
   private static additionalDirectoriesLoader: ((workspacePath: string) => string[]) | null = null;
 
@@ -253,8 +254,9 @@ export class OpenAICodexProvider extends BaseAgentProvider {
   // time. Each new session reads this anew, so a settings change between
   // sessions takes effect on the next session.
   //
-  // Defaults to `sdk` when no resolver is registered (back-compat for unit
-  // tests and pre-migration code paths).
+  // Defaults to `app-server` when no resolver is registered. Tests or legacy
+  // callers that need the old SDK transport should request `transport: 'sdk'`;
+  // SDK-specific injected deps still imply the legacy transport for old tests.
   private static codexTransportResolver: (() => CodexTransport) | null = null;
 
   public static setCodexTransportResolver(resolver: (() => CodexTransport) | null): void {
@@ -285,17 +287,18 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     super();
     const apiKey = config?.apiKey || '';
 
-    // Resolve transport: explicit dep > registered resolver > default 'sdk'.
+    // Resolve transport: explicit dep > registered resolver > SDK-specific test
+    // deps > default 'app-server'.
     // Captured at construct time; each new provider instance reads the
     // resolver anew so a settings change takes effect on the next session.
     //
-    // The in-code default is 'sdk' so unit tests (and any future library
-    // consumers) get the SDK transport without needing to spawn a codex
-    // binary at construction. The Electron host overrides this via
-    // `setCodexTransportResolver` to default to 'app-server' in production,
-    // honoring the `aiProviders.openai-codex.transport` setting when set.
+    // The in-code default matches production: app-server. SDK-specific injected
+    // deps still imply the legacy transport so existing low-level protocol tests
+    // can stay isolated from the app-server child process.
     this.transport =
-      deps?.transport ?? OpenAICodexProvider.codexTransportResolver?.() ?? 'sdk';
+      deps?.transport
+      ?? OpenAICodexProvider.codexTransportResolver?.()
+      ?? (deps?.loadSdkModule || deps?.resolveCodexPathOverride ? 'sdk' : 'app-server');
 
     // Initialize protocol (or use injected for testing)
     // Support legacy loadSdkModule and resolveCodexPathOverride for existing tests

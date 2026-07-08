@@ -42,6 +42,14 @@ import {
   getEditorToolSchemas,
 } from "./tools/editorToolHandlers";
 import {
+  handleCreateSharedDoc,
+  handleCreateSharedFolder,
+  handleMoveSharedItem,
+  handleRenameSharedItem,
+  handleDeleteSharedItem,
+  getCollabIndexToolSchemas,
+} from "./tools/collabIndexToolHandlers";
+import {
   handleTrackerList,
   handleTrackerGet,
   handleTrackerListTypes,
@@ -425,6 +433,7 @@ function createSharedMcpServer(
 
     const builtInTools: Array<{ name: string; description: string; inputSchema: any }> = [
       ...getEditorToolSchemas(sessionId),
+      ...getCollabIndexToolSchemas(),
       ...displayToolSchemas,
       ...voiceToolSchemas,
       ...getInteractiveToolSchemas(sessionId),
@@ -486,6 +495,21 @@ function createSharedMcpServer(
 
         case "readCollabDoc":
           return handleReadCollabDoc(args);
+
+        case "createSharedDoc":
+          return handleCreateSharedDoc(args, workspacePath);
+
+        case "createSharedFolder":
+          return handleCreateSharedFolder(args, workspacePath);
+
+        case "moveSharedItem":
+          return handleMoveSharedItem(args, workspacePath);
+
+        case "renameSharedItem":
+          return handleRenameSharedItem(args, workspacePath);
+
+        case "deleteSharedItem":
+          return handleDeleteSharedItem(args, workspacePath);
 
         case "streamContent":
           return handleStreamContent(args);

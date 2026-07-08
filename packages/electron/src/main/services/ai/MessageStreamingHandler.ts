@@ -686,6 +686,55 @@ export class MessageStreamingHandler {
       }
     }
 
+    // Chat providers are lightweight direct API clients, and unlike agent
+    // providers they do not maintain provider-side conversation state. Refresh
+    // their runtime config from the persisted session before each send so a
+    // cached provider cannot keep an empty or stale model after the picker
+    // updates session.model and invalidates the prior instance.
+    if (['claude', 'openai', 'lmstudio'].includes(session.provider)) {
+      let expectedModel: string | undefined;
+      const fullModel = session.model || session.providerConfig?.model;
+      if (fullModel) {
+        const modelForProvider = extractModelForProvider(fullModel, session.provider as AIProviderType);
+        if (modelForProvider !== null) {
+          expectedModel = modelForProvider;
+        }
+      }
+
+      if (!expectedModel) {
+        const defaultModel = await ModelRegistry.getDefaultModel(session.provider as AIProviderType);
+        const defaultModelForProvider = extractModelForProvider(defaultModel, session.provider as AIProviderType);
+        if (defaultModelForProvider !== null) {
+          expectedModel = defaultModelForProvider;
+        }
+      }
+
+      const currentModel = ((provider as any).config as ProviderConfig | undefined)?.model;
+      if (expectedModel && currentModel !== expectedModel) {
+        const effectiveWorkspacePath = session.workspacePath || workspacePath;
+        const apiKey = session.provider === 'lmstudio'
+          ? 'not-required'
+          : this.svc.getApiKeyForProvider(session.provider, effectiveWorkspacePath);
+        if (!apiKey && session.provider !== 'lmstudio') {
+          throw new Error(session.provider === 'openai' ? 'OpenAI API key not configured' : 'Anthropic API key not configured');
+        }
+
+        const refreshedConfig: ProviderConfig = {
+          apiKey,
+          model: expectedModel,
+          maxTokens: (session.providerConfig as any)?.maxTokens,
+          temperature: (session.providerConfig as any)?.temperature,
+        };
+
+        if (session.provider === 'lmstudio') {
+          const providerSettings = this.svc.getSettingsStore().get('providerSettings', {}) as any;
+          refreshedConfig.baseUrl = providerSettings['lmstudio']?.baseUrl || 'http://127.0.0.1:8234';
+        }
+
+        await provider.initialize(refreshedConfig);
+      }
+    }
+
     // NOTE: No longer tracking provider per-window - each session has its own provider instance
 
     // Resolve the selected model's context window from the model registry.

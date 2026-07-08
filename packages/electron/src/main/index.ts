@@ -711,6 +711,17 @@ safeHandle('deep-link:consume-pending-tracker', (_event, workspacePath: string) 
     return { ...pending, workspacePath };
 });
 
+// Same pattern for shared-folder deep links: nimbalyst://folder/{folderId}?orgId=...
+const pendingSharedFolderLinks = new Map<string, { folderId: string; orgId: string }>();
+
+safeHandle('deep-link:consume-pending-shared-folder', (_event, workspacePath: string) => {
+    if (!workspacePath) return null;
+    const pending = pendingSharedFolderLinks.get(workspacePath);
+    if (!pending) return null;
+    pendingSharedFolderLinks.delete(workspacePath);
+    return { ...pending, workspacePath };
+});
+
 // Sensitive query params that must not be logged verbatim. Anything not in
 // this set is logged as-is so worker-supplied error codes/messages are visible.
 const SENSITIVE_DEEP_LINK_PARAMS = new Set([
@@ -857,6 +868,26 @@ async function handleDeepLink(url: string): Promise<void> {
             }
 
             await openSharedDocumentFromDeepLink(documentId, orgId);
+        } else if (parsed.host === 'folder' || parsed.pathname?.startsWith('/folder/')) {
+            // Handle shared folder link: nimbalyst://folder/{folderId}?orgId={orgId}
+            const encoded = parsed.host === 'folder'
+                ? parsed.pathname?.replace(/^\//, '')
+                : parsed.pathname?.replace('/folder/', '');
+            let folderId: string | undefined;
+            try {
+                folderId = encoded ? decodeURIComponent(encoded) : undefined;
+            } catch {
+                logger.main.warn('[DeepLink] Shared folder link has malformed folderId:', summarizeDeepLink(url));
+                return;
+            }
+            const orgId = parsed.searchParams.get('orgId');
+
+            if (!folderId || !orgId) {
+                logger.main.warn('[DeepLink] Shared folder link missing folderId or orgId:', summarizeDeepLink(url));
+                return;
+            }
+
+            await openSharedFolderFromDeepLink(folderId, orgId);
         } else if (parsed.host === 'tracker' || parsed.pathname?.startsWith('/tracker/')) {
             // Handle tracker link: nimbalyst://tracker/{trackerId}?orgId={orgId}
             const encoded = parsed.host === 'tracker'
@@ -1037,6 +1068,45 @@ async function openSharedDocumentFromDeepLink(documentId: string, orgId: string)
     // No window has this workspace open — create one. The renderer's
     // deep-link listener will drain the pending queue once it mounts.
     logger.main.info('[DeepLink] Opening new window for shared doc workspace:', { workspacePath, documentId });
+    createWindow(false, true, workspacePath);
+}
+
+/**
+ * Route a shared-folder deep link to the renderer holding the matching team
+ * workspace. Mirrors the shared-document flow, but targets Collab mode focused
+ * on the folder (expand ancestors + select).
+ */
+async function openSharedFolderFromDeepLink(folderId: string, orgId: string): Promise<void> {
+    const reason = !isAuthenticated() ? 'not-authenticated' : 'no-workspace';
+    const workspacePath = isAuthenticated() ? await findWorkspaceForOrgId(orgId) : null;
+
+    if (!workspacePath) {
+        logger.main.warn('[DeepLink] Cannot route shared folder:', { reason, orgId, folderId });
+        const fallback = getMostRecentlyFocusedWorkspaceWindow();
+        if (fallback) {
+            if (fallback.isMinimized()) fallback.restore();
+            fallback.focus();
+            fallback.webContents.send('deep-link:shared-folder-not-available', { folderId, orgId, reason });
+        }
+        return;
+    }
+
+    pendingSharedFolderLinks.set(workspacePath, { folderId, orgId });
+
+    const existing = findWindowByWorkspace(workspacePath);
+    if (existing && !existing.isDestroyed()) {
+        if (existing.isMinimized()) existing.restore();
+        existing.focus();
+        existing.webContents.send('deep-link:open-shared-folder', {
+            folderId,
+            orgId,
+            workspacePath,
+        });
+        logger.main.info('[DeepLink] Routed shared folder to existing window:', { workspacePath, folderId });
+        return;
+    }
+
+    logger.main.info('[DeepLink] Opening new window for shared folder workspace:', { workspacePath, folderId });
     createWindow(false, true, workspacePath);
 }
 

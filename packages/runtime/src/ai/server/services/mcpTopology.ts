@@ -206,6 +206,12 @@ export const SITUATIONAL_TOOLS: readonly string[] = [
   // collab doc in context only
   'readCollabDoc',
   'applyCollabDocEdit',
+  // shared-index (first-class shared folders + documents) management
+  'createSharedDoc',
+  'createSharedFolder',
+  'moveSharedItem',
+  'renameSharedItem',
+  'deleteSharedItem',
   // feedback (deferred)
   'feedback_anonymize_text',
   'feedback_get_environment',

@@ -1,4 +1,4 @@
-import type { SharedDocument } from '../../store/atoms/collabDocuments';
+import type { SharedDocument, SharedFolder } from '../../store/atoms/collabDocuments';
 
 export interface CollabTreeFolderNode {
   id: string;
@@ -6,6 +6,15 @@ export interface CollabTreeFolderNode {
   path: string;
   name: string;
   children: CollabTreeNode[];
+  /**
+   * First-class folder id, present when the tree was built from real folder
+   * nodes (`buildCollabTreeFromFolders`). Absent for the legacy path-in-title
+   * builder (`buildCollabTree`). Folder operations (rename/move/delete/link)
+   * key off this id.
+   */
+  folderId?: string;
+  /** The underlying folder node (first-class builder only). */
+  folder?: SharedFolder;
 }
 
 export interface CollabTreeDocumentNode {
@@ -144,6 +153,191 @@ export function buildCollabTree(
   };
 
   return sortNodes(roots);
+}
+
+/**
+ * Build the collab tree from FIRST-CLASS folder nodes + each document's
+ * `parentFolderId`, instead of splitting titles on '/'. Folder identity is the
+ * stable `folderId`; `path` is a derived breadcrumb (parent path + name) kept
+ * for search and display. A document's display name is the leaf of its title —
+ * during the dual-write transition a title may still be a full path, so the
+ * leaf is taken defensively (`getCollabNodeName`).
+ *
+ * Documents (or folders) whose `parentFolderId` points at a missing folder are
+ * placed at root so nothing disappears if a parent is briefly out of sync.
+ */
+export function buildCollabTreeFromFolders(
+  documents: SharedDocument[],
+  folders: SharedFolder[],
+): CollabTreeNode[] {
+  const foldersById = new Map(folders.map(f => [f.folderId, f]));
+  const nodesById = new Map<string, CollabTreeFolderNode>();
+  const roots: CollabTreeNode[] = [];
+
+  // Derive a folder's breadcrumb path by walking its ancestor chain.
+  const pathCache = new Map<string, string>();
+  const folderPath = (folderId: string): string => {
+    const cached = pathCache.get(folderId);
+    if (cached !== undefined) return cached;
+    const folder = foldersById.get(folderId);
+    if (!folder) return '';
+    const guard = new Set<string>();
+    const segments: string[] = [];
+    let current: SharedFolder | undefined = folder;
+    while (current && !guard.has(current.folderId)) {
+      guard.add(current.folderId);
+      segments.unshift(current.name);
+      current = current.parentFolderId ? foldersById.get(current.parentFolderId) : undefined;
+    }
+    const path = normalizeCollabPath(segments.join('/'));
+    pathCache.set(folderId, path);
+    return path;
+  };
+
+  // Materialize every folder node first so documents can attach to them.
+  for (const folder of folders) {
+    nodesById.set(folder.folderId, {
+      id: `folder:${folder.folderId}`,
+      type: 'folder',
+      path: folderPath(folder.folderId),
+      name: folder.name,
+      children: [],
+      folderId: folder.folderId,
+      folder,
+    });
+  }
+
+  // Parent folders into their parents (or root).
+  for (const folder of folders) {
+    const node = nodesById.get(folder.folderId)!;
+    const parent = folder.parentFolderId ? nodesById.get(folder.parentFolderId) : undefined;
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+
+  // Attach documents.
+  for (const document of documents) {
+    const parentId = document.parentFolderId ?? null;
+    const parent = parentId ? nodesById.get(parentId) : undefined;
+    const leaf = getCollabNodeName(document.title) || document.title || document.documentId;
+    const parentPath = parent ? parent.path : '';
+    const documentNode: CollabTreeDocumentNode = {
+      id: `document:${document.documentId}`,
+      type: 'document',
+      path: joinCollabPath(parentPath, leaf),
+      name: leaf,
+      document,
+    };
+    if (parent) parent.children.push(documentNode);
+    else roots.push(documentNode);
+  }
+
+  const sortNodes = (nodes: CollabTreeNode[]): CollabTreeNode[] => {
+    nodes.sort((left, right) => {
+      if (left.type !== right.type) {
+        return left.type === 'folder' ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      });
+    });
+    for (const node of nodes) {
+      if (node.type === 'folder') sortNodes(node.children);
+    }
+    return nodes;
+  };
+
+  return sortNodes(roots);
+}
+
+/**
+ * Compute the document title rewrites needed to rename a LEGACY (path-in-title)
+ * folder. Legacy folders have no first-class `folderId`; their identity is the
+ * breadcrumb path, and their structure lives in each descendant document's
+ * full-path title. Renaming such a folder swaps the folder's segment in every
+ * descendant doc's title (dual-write friendly: un-upgraded clients keep the
+ * structure, and it works whether or not first-class migration has run).
+ *
+ * Returns one `{ documentId, newTitle }` per affected document. Empty when the
+ * new name is blank or unchanged.
+ */
+export function computeLegacyFolderRenameUpdates(
+  documents: SharedDocument[],
+  folderPath: string,
+  newName: string,
+): { documentId: string; newTitle: string }[] {
+  const normalizedFolder = normalizeCollabPath(folderPath);
+  const normalizedName = normalizeCollabPath(newName);
+  if (!normalizedFolder || !normalizedName) return [];
+  const parent = getCollabParentPath(normalizedFolder);
+  const newFolderPath = joinCollabPath(parent, normalizedName);
+  if (!newFolderPath || newFolderPath === normalizedFolder) return [];
+
+  const prefix = `${normalizedFolder}/`;
+  const updates: { documentId: string; newTitle: string }[] = [];
+  for (const document of documents) {
+    const path = getCollabDocumentPath(document);
+    if (path.startsWith(prefix)) {
+      updates.push({
+        documentId: document.documentId,
+        newTitle: newFolderPath + path.slice(normalizedFolder.length),
+      });
+    }
+  }
+  return updates;
+}
+
+/**
+ * Choose the right tree builder so folders NEVER visually disappear during the
+ * legacy -> first-class folder transition.
+ *
+ * The first-class builder (`buildCollabTreeFromFolders`) places any document
+ * whose `parentFolderId` is null at ROOT. Legacy documents encode their folder
+ * structure in the TITLE (`Specs/API Spec`) and still have a null
+ * `parentFolderId` until the client-driven migration populates `folder_nodes`
+ * on the server AND those rows round-trip back into `sharedFolders`. Until then,
+ * building exclusively from first-class rows collapses every foldered doc to a
+ * flat root list and the user's folders vanish.
+ *
+ * Fallback rule: if there are NO first-class folder rows yet but some document
+ * still encodes a folder path in its title, render with the legacy path-in-title
+ * builder. Otherwise use the first-class builder (which also handles the "no
+ * folders, all root-level docs" case correctly). Once migration completes and
+ * folder rows exist, we always use the first-class builder — so its
+ * context-menu / drag / deep-link behavior (keyed off `folderId`) is preserved.
+ */
+export function buildCollabTreeAdaptive(
+  documents: SharedDocument[],
+  folders: SharedFolder[],
+): CollabTreeNode[] {
+  if (folders.length === 0) {
+    const hasPathInTitle = documents.some(
+      doc => !doc.parentFolderId && getCollabParentPath(getCollabDocumentPath(doc)) !== null,
+    );
+    if (hasPathInTitle) {
+      return buildCollabTree(documents, []);
+    }
+  }
+  return buildCollabTreeFromFolders(documents, folders);
+}
+
+/**
+ * Drop folder nodes that contain no documents (directly or transitively). Used
+ * by the Favorites/Updated segments so an empty folder doesn't linger once its
+ * only matching docs are filtered out. Folders with document descendants are
+ * kept (with their empty sub-branches pruned).
+ */
+export function pruneEmptyFolders(nodes: CollabTreeNode[]): CollabTreeNode[] {
+  const prune = (node: CollabTreeNode): CollabTreeNode | null => {
+    if (node.type === 'document') return node;
+    const children = node.children
+      .map(prune)
+      .filter((c): c is CollabTreeNode => c !== null);
+    if (children.length === 0) return null;
+    return { ...node, children };
+  };
+  return nodes.map(prune).filter((n): n is CollabTreeNode => n !== null);
 }
 
 export function filterCollabTree(nodes: CollabTreeNode[], query: string): CollabTreeNode[] {

@@ -2,8 +2,20 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import type { CommandToken } from './parseCommandTokens';
 
 /**
+ * A token the overlay knows how to tint. Commands are clickable (they open the
+ * inspect popover); mentions are pure decoration. Every kind indexes the raw
+ * value 1:1 (start/end) so the visible glyphs match the transparent textarea and
+ * the caret stays aligned — see the pill CSS notes in index.css.
+ */
+export type OverlayToken =
+  | { kind: 'command'; start: number; end: number; name: string }
+  | { kind: 'fileMention'; start: number; end: number }
+  | { kind: 'sessionMention'; start: number; end: number };
+
+/**
  * Renders a transparent layer over the chat textarea that re-draws the same text
- * with known `/command` tokens wrapped in clickable pills.
+ * with known `/command` tokens wrapped in clickable pills and `@`/`@@` mentions
+ * tinted as (non-interactive) pills.
  *
  * The textarea keeps ownership of editing (its text is made transparent by the
  * caller, caret stays visible); this overlay paints the visible glyphs plus the
@@ -49,7 +61,7 @@ const TEXT_STYLE_PROPS = [
 interface HighlightOverlayProps {
   textareaRef: React.RefObject<HTMLTextAreaElement>;
   value: string;
-  tokens: CommandToken[];
+  tokens: OverlayToken[];
   /** Called with the clicked command token and the pill's viewport rect. */
   onPillClick: (token: CommandToken, rect: DOMRect) => void;
 }
@@ -99,7 +111,9 @@ export const HighlightOverlay: React.FC<HighlightOverlayProps> = ({
   }, [textareaRef]);
 
   // Split the value into plain segments and pill spans. Tokens are assumed sorted
-  // by start (parseCommandTokens emits them in order).
+  // by start and non-overlapping (the caller merges command + mention tokens in
+  // order). Commands stay clickable; mentions are pure decoration (pointer-events
+  // fall through to the textarea so selection/caret placement is unaffected).
   const segments = useMemo(() => {
     const nodes: React.ReactNode[] = [];
     let cursor = 0;
@@ -107,23 +121,34 @@ export const HighlightOverlay: React.FC<HighlightOverlayProps> = ({
       if (token.start > cursor) {
         nodes.push(value.slice(cursor, token.start));
       }
-      nodes.push(
-        <span
-          key={`pill-${token.start}-${i}`}
-          className="command-pill"
-          data-command-name={token.name}
-          style={{ pointerEvents: 'auto', cursor: 'pointer' }}
-          // Keep the textarea focused and stop the caret from being placed
-          // inside the pill when it is clicked.
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onPillClick(token, (e.currentTarget as HTMLElement).getBoundingClientRect());
-          }}
-        >
-          {value.slice(token.start, token.end)}
-        </span>
-      );
+      const text = value.slice(token.start, token.end);
+      if (token.kind === 'command') {
+        nodes.push(
+          <span
+            key={`pill-${token.start}-${i}`}
+            className="command-pill"
+            data-command-name={token.name}
+            style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+            // Keep the textarea focused and stop the caret from being placed
+            // inside the pill when it is clicked.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onPillClick(token, (e.currentTarget as HTMLElement).getBoundingClientRect());
+            }}
+          >
+            {text}
+          </span>
+        );
+      } else {
+        const className =
+          token.kind === 'sessionMention' ? 'mention-pill-session' : 'mention-pill-file';
+        nodes.push(
+          <span key={`pill-${token.start}-${i}`} className={className}>
+            {text}
+          </span>
+        );
+      }
       cursor = token.end;
     });
     if (cursor < value.length) {

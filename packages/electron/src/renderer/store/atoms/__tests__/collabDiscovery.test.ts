@@ -1,12 +1,29 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { isEntityUnread } from '@nimbalyst/runtime/readReceipts/readReceipts';
 import type { ReadReceipt } from '@nimbalyst/runtime/readReceipts/readReceipts';
+
+// Mock the read-receipt IPC facade so markDocViewed's await resolves without a
+// real main process. markAllSharedDocsViewed only needs the write to succeed.
+vi.mock('../../../services/RendererReadReceiptService', () => ({
+  readReceiptService: {
+    markViewed: vi.fn(async () => ({ lastSeenVersion: null, lastViewedAt: 0 })),
+    getForScope: vi.fn(async () => []),
+  },
+}));
+
+import { store } from '@nimbalyst/runtime/store';
 import {
   classifyChangedDocs,
   selectFavoriteDocs,
   selectRecentDocs,
+  markAllSharedDocsViewed,
+  recentSharedDocsAtom,
+  changedSharedDocsAtom,
+  recordDocOpened,
 } from '../collabDiscovery';
-import { docSnapshot } from '../docUnread';
+import { docSnapshot, docReceiptsAtom } from '../docUnread';
+import { sharedDocumentsAtom } from '../collabDocuments';
+import { activeWorkspacePathAtom } from '../openProjects';
 import type { SharedDocument } from '../collabDocuments';
 
 const ME = 'member-me';
@@ -80,25 +97,66 @@ describe('classifyChangedDocs', () => {
 });
 
 describe('selectRecentDocs', () => {
-  it('orders by lastViewedAt desc and excludes never-viewed', () => {
+  it('orders by openedAt desc and excludes never-opened', () => {
     const docs = [doc('a', 0), doc('b', 0), doc('c', 0)];
-    const receipts = new Map<string, { lastViewedAt: number }>([
-      ['a', { lastViewedAt: 100 }],
-      ['c', { lastViewedAt: 300 }],
-      // 'b' never viewed → excluded
-    ]);
-    const result = selectRecentDocs(docs, receipts);
+    const openedAt: Record<string, number> = {
+      a: 100,
+      c: 300,
+      // 'b' never opened → excluded
+    };
+    const result = selectRecentDocs(docs, openedAt);
     expect(result.map((d) => d.documentId)).toEqual(['c', 'a']);
   });
 
   it('caps at the requested limit', () => {
     const docs = [doc('a', 0), doc('b', 0), doc('c', 0)];
-    const receipts = new Map<string, { lastViewedAt: number }>([
-      ['a', { lastViewedAt: 1 }],
-      ['b', { lastViewedAt: 2 }],
-      ['c', { lastViewedAt: 3 }],
-    ]);
-    expect(selectRecentDocs(docs, receipts, 2).map((d) => d.documentId)).toEqual(['c', 'b']);
+    const openedAt: Record<string, number> = { a: 1, b: 2, c: 3 };
+    expect(selectRecentDocs(docs, openedAt, 2).map((d) => d.documentId)).toEqual(['c', 'b']);
+  });
+});
+
+describe('markAllSharedDocsViewed', () => {
+  // Each test uses a unique workspace path: the shared singleton store + jotai
+  // atomFamily makes reused-key derived atoms retain stale dependencies across
+  // tests, which is a test artifact, not product behavior.
+  let wsSeq = 0;
+  function freshWorkspace(): string {
+    const ws = `/tmp/ws-collab-${wsSeq++}`;
+    store.set(activeWorkspacePathAtom, ws);
+    store.set(docReceiptsAtom, new Map());
+    store.set(sharedDocumentsAtom, []);
+    return ws;
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal('window', { electronAPI: { invoke: vi.fn(async () => ({ success: true })) } });
+  });
+
+  it('clears unread without adding docs to recently-opened', async () => {
+    freshWorkspace();
+    const docs = [doc('a', 1000), doc('b', 2000)];
+    store.set(sharedDocumentsAtom, docs);
+
+    // Precondition: both docs are unread (never viewed), none recently opened.
+    expect(store.get(changedSharedDocsAtom).map((c) => c.doc.documentId).sort()).toEqual(['a', 'b']);
+    expect(store.get(recentSharedDocsAtom)).toEqual([]);
+
+    await markAllSharedDocsViewed('org-1');
+
+    // Unread cleared…
+    expect(store.get(changedSharedDocsAtom)).toEqual([]);
+    // …but the user never OPENED these docs, so they must not appear as recent.
+    expect(store.get(recentSharedDocsAtom)).toEqual([]);
+  });
+
+  it('recordDocOpened surfaces a genuinely-opened doc in recent', () => {
+    freshWorkspace();
+    const docs = [doc('a', 1000), doc('b', 2000)];
+    store.set(sharedDocumentsAtom, docs);
+
+    recordDocOpened('b');
+
+    expect(store.get(recentSharedDocsAtom).map((d) => d.documentId)).toEqual(['b']);
   });
 });
 

@@ -37,7 +37,8 @@ import {
 import { useAIInputUndo } from '../../hooks/useAIInputUndo';
 import type { AIInputSnapshot } from '../../store/atoms/aiInputUndo';
 import { parseCommandTokens, type CommandToken } from './commandPills/parseCommandTokens';
-import { HighlightOverlay } from './commandPills/HighlightOverlay';
+import { parseMentionTokens } from './commandPills/parseMentionTokens';
+import { HighlightOverlay, type OverlayToken } from './commandPills/HighlightOverlay';
 import { CommandPillPopover } from './commandPills/CommandPillPopover';
 
 export interface AIInputRef {
@@ -492,6 +493,25 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     const commandTokens = useMemo(
       () => (enableSlashCommands ? parseCommandTokens(value, knownCommandNames, caretPos) : []),
       [enableSlashCommands, value, knownCommandNames, caretPos]
+    );
+
+    // `@` file refs and `@@[title](id)` session mentions tint in the same overlay.
+    // Gated on the overlay being active (enableSlashCommands) so we don't parse
+    // when nothing is painted.
+    const mentionTokens = useMemo(
+      () => (enableSlashCommands ? parseMentionTokens(value, caretPos) : []),
+      [enableSlashCommands, value, caretPos]
+    );
+
+    // Commands and mentions never overlap (different lead chars) but must be
+    // handed to the overlay sorted by start.
+    const overlayTokens = useMemo<OverlayToken[]>(
+      () =>
+        [
+          ...commandTokens.map((t): OverlayToken => ({ kind: 'command', ...t })),
+          ...mentionTokens,
+        ].sort((a, b) => a.start - b.start),
+      [commandTokens, mentionTokens]
     );
 
     const handlePillClick = useCallback(
@@ -1432,7 +1452,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
             <HighlightOverlay
               textareaRef={textareaRef}
               value={value}
-              tokens={commandTokens}
+              tokens={overlayTokens}
               onPillClick={handlePillClick}
             />
           )}

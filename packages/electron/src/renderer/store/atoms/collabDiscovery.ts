@@ -3,12 +3,18 @@
  * derived Recent / New-&-Changed / Favorites selectors that power the
  * Shared Docs discovery hub (SharedDocsHome) and the CollabSidebar filters.
  *
- * Reuse note: per-user "last viewed" and the "changed since viewed" flag are
- * ALREADY tracked by the read-receipt system (`docReceiptsAtom`, driven by
- * `useDocUnread` + `markDocViewed`). Recent / New / Changed are pure
- * derivations over `sharedDocumentsAtom` + `docReceiptsAtom`, so no new DB
- * table is needed. The genuinely new state is:
+ * Reuse note: the "changed since viewed" flag is ALREADY tracked by the
+ * read-receipt system (`docReceiptsAtom`, driven by `useDocUnread` +
+ * `markDocViewed`). New / Changed are pure derivations over
+ * `sharedDocumentsAtom` + `docReceiptsAtom`, so no new DB table is needed.
+ *
+ * "Recently opened" is a SEPARATE concept from "read". A read receipt is
+ * advanced both when a doc is opened AND when it's bulk-marked-read ("Mark all
+ * as read"), so it can't distinguish an actual open. Recently-opened is
+ * therefore tracked by its own `openedAt` watermark, stamped ONLY when a doc is
+ * genuinely opened in the editor (`recordDocOpened`). The genuinely new state:
  *   - favorites: an ordered list of documentIds (most-recently-favorited first)
+ *   - openedAt: documentId -> epoch ms of last real open (drives "Recent")
  *   - treeFilter / showUnreadBubbles: CollabSidebar view prefs
  * All of it is local-only, per-user, per-workspace, and persisted in
  * workspace state (like `collabTree` / `collabLayout`) — never synced.
@@ -44,6 +50,8 @@ export interface ChangedSharedDoc {
 /** Shape persisted under `collabDiscovery` in workspace state. */
 export interface CollabDiscoveryState {
   favorites: string[];
+  /** documentId -> epoch ms of the last genuine open (drives "Recent"). */
+  openedAt: Record<string, number>;
   treeFilter: CollabTreeFilter;
   showUnreadBubbles: boolean;
 }
@@ -53,10 +61,6 @@ const RECENT_LIMIT = 20;
 // ============================================================
 // Pure selectors (unit-tested directly, no atom/store coupling)
 // ============================================================
-
-interface HasLastViewedAt {
-  lastViewedAt: number;
-}
 
 /** Favorited docs in favorite order, resolved to current index entries. */
 export function selectFavoriteDocs(
@@ -73,16 +77,20 @@ export function selectFavoriteDocs(
   return result;
 }
 
-/** Opened docs, most-recently-viewed first (excludes never-viewed). */
+/**
+ * Opened docs, most-recently-opened first (excludes never-opened). Driven by
+ * the `openedAt` watermark — NOT read receipts — so bulk "Mark all as read"
+ * (which advances receipts but opens nothing) never surfaces docs here.
+ */
 export function selectRecentDocs(
   docs: readonly SharedDocument[],
-  receipts: ReadonlyMap<string, HasLastViewedAt>,
+  openedAt: Readonly<Record<string, number>>,
   limit: number = RECENT_LIMIT,
 ): SharedDocument[] {
   return docs
-    .map((doc) => ({ doc, lastViewedAt: receipts.get(doc.documentId)?.lastViewedAt ?? 0 }))
-    .filter((x) => x.lastViewedAt > 0)
-    .sort((a, b) => b.lastViewedAt - a.lastViewedAt)
+    .map((doc) => ({ doc, openedAt: openedAt[doc.documentId] ?? 0 }))
+    .filter((x) => x.openedAt > 0)
+    .sort((a, b) => b.openedAt - a.openedAt)
     .slice(0, limit)
     .map((x) => x.doc);
 }
@@ -112,6 +120,7 @@ export function classifyChangedDocs(
 // ============================================================
 
 const favoritesAtomFamily = atomFamily((_workspacePath: string) => atom<string[]>([]));
+const openedAtAtomFamily = atomFamily((_workspacePath: string) => atom<Record<string, number>>({}));
 const treeFilterAtomFamily = atomFamily((_workspacePath: string) => atom<CollabTreeFilter>('all'));
 const showUnreadBubblesAtomFamily = atomFamily((_workspacePath: string) => atom<boolean>(true));
 
@@ -124,6 +133,13 @@ export const collabFavoritesAtom = atom<string[]>((get) => {
   const path = get(activeWorkspacePathAtom);
   if (!path) return [];
   return get(favoritesAtomFamily(path));
+});
+
+/** documentId -> last-opened epoch ms for the active workspace. */
+export const docOpenedAtAtom = atom<Record<string, number>>((get) => {
+  const path = get(activeWorkspacePathAtom);
+  if (!path) return {};
+  return get(openedAtAtomFamily(path));
 });
 
 /** Sidebar segmented filter for the active workspace. */
@@ -165,9 +181,9 @@ export const favoriteSharedDocsAtom = atom<SharedDocument[]>((get) =>
   selectFavoriteDocs(get(collabFavoritesAtom), get(sharedDocumentsAtom))
 );
 
-/** Docs the user has opened, most-recently-viewed first (excludes never-viewed). */
+/** Docs the user has opened, most-recently-opened first (excludes never-opened). */
 export const recentSharedDocsAtom = atom<SharedDocument[]>((get) =>
-  selectRecentDocs(get(sharedDocumentsAtom), get(docReceiptsAtom))
+  selectRecentDocs(get(sharedDocumentsAtom), get(docOpenedAtAtom))
 );
 
 /**
@@ -214,6 +230,19 @@ export function isDocFavorited(documentId: string): boolean {
 }
 
 /**
+ * Stamp a doc as opened NOW (drives the "Recent" list). Call this only for a
+ * genuine open in the editor — never from bulk/per-doc mark-read, which advance
+ * the read receipt but do not open anything.
+ */
+export function recordDocOpened(documentId: string): void {
+  const path = store.get(activeWorkspacePathAtom);
+  if (!path) return;
+  const fam = openedAtAtomFamily(path);
+  store.set(fam, { ...store.get(fam), [documentId]: Date.now() });
+  persistDiscovery(path);
+}
+
+/**
  * Mark every currently-unread shared doc as viewed, clearing all bubbles.
  * Best-effort; advances read receipts to each doc's current content time.
  */
@@ -241,11 +270,18 @@ export function hydrateCollabDiscovery(
   const favorites = Array.isArray(state?.favorites)
     ? state!.favorites.filter((id): id is string => typeof id === 'string')
     : [];
+  const openedAt: Record<string, number> = {};
+  if (state?.openedAt && typeof state.openedAt === 'object') {
+    for (const [id, ts] of Object.entries(state.openedAt)) {
+      if (typeof ts === 'number' && ts > 0) openedAt[id] = ts;
+    }
+  }
   const treeFilter: CollabTreeFilter =
     state?.treeFilter === 'favorites' || state?.treeFilter === 'updated' ? state.treeFilter : 'all';
   const showUnreadBubbles = state?.showUnreadBubbles !== false; // default true
 
   store.set(favoritesAtomFamily(workspacePath), favorites);
+  store.set(openedAtAtomFamily(workspacePath), openedAt);
   store.set(treeFilterAtomFamily(workspacePath), treeFilter);
   store.set(showUnreadBubblesAtomFamily(workspacePath), showUnreadBubbles);
 }
@@ -254,6 +290,7 @@ export function hydrateCollabDiscovery(
 function persistDiscovery(workspacePath: string): void {
   const payload: CollabDiscoveryState = {
     favorites: store.get(favoritesAtomFamily(workspacePath)),
+    openedAt: store.get(openedAtAtomFamily(workspacePath)),
     treeFilter: store.get(treeFilterAtomFamily(workspacePath)),
     showUnreadBubbles: store.get(showUnreadBubblesAtomFamily(workspacePath)),
   };
@@ -267,6 +304,7 @@ function persistDiscovery(workspacePath: string): void {
 /** Drop cached per-workspace discovery atoms (project close). */
 export function pruneCollabDiscoveryState(workspacePath: string): void {
   favoritesAtomFamily.remove(workspacePath);
+  openedAtAtomFamily.remove(workspacePath);
   treeFilterAtomFamily.remove(workspacePath);
   showUnreadBubblesAtomFamily.remove(workspacePath);
 }

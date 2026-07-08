@@ -418,6 +418,12 @@ interface ElectronAPI {
   sendMcpApplyDiffResult: (resultChannel: string, result: any) => void;
   sendMcpStreamContentResult: (resultChannel: string, result: any) => void;
   sendMcpReadCollabDocResult: (resultChannel: string, result: { success: boolean; content?: string; error?: string }) => void;
+  onMcpCreateSharedDoc: (callback: (data: { title: string, documentType?: string, parentFolderId?: string | null, folderPath?: string, initialContent?: string, resultChannel: string }) => void) => () => void;
+  onMcpCreateSharedFolder: (callback: (data: { name: string, parentFolderId?: string | null, folderPath?: string, resultChannel: string }) => void) => () => void;
+  onMcpMoveSharedItem: (callback: (data: { itemId: string, kind: 'doc' | 'folder', newParentFolderId?: string | null, folderPath?: string, resultChannel: string }) => void) => () => void;
+  onMcpRenameSharedItem: (callback: (data: { itemId: string, kind: 'doc' | 'folder', newName: string, resultChannel: string }) => void) => () => void;
+  onMcpDeleteSharedItem: (callback: (data: { itemId: string, kind: 'doc' | 'folder', resultChannel: string }) => void) => () => void;
+  sendMcpCollabIndexResult: (resultChannel: string, result: { success: boolean; error?: string; [key: string]: unknown }) => void;
   updateMcpDocumentState: (state: any) => void;
   clearMcpDocumentState: () => Promise<void>;
 

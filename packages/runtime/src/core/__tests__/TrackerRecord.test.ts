@@ -102,6 +102,20 @@ describe('trackerItemToRecord', () => {
     expect(new Date(record.system.updatedAt).getTime()).toBeLessThan(before - 1000);
   });
 
+  it('uses frontmatter file mtime for day-precision updated timestamps', () => {
+    const mtime = new Date('2026-07-08T16:36:30.000Z');
+    const item = makeTrackerItem({
+      source: 'frontmatter',
+      created: '2026-07-08',
+      updated: '2026-07-08T00:00:00.000Z',
+      lastIndexed: mtime,
+    });
+    const record = trackerItemToRecord(item);
+
+    expect(record.system.createdAt).toBe('2026-07-08');
+    expect(record.system.updatedAt).toBe(mtime.toISOString());
+  });
+
   it('falls back to epoch when both dates and lastIndexed are absent', () => {
     const item = makeTrackerItem({ created: undefined, updated: undefined, lastIndexed: undefined });
     const record = trackerItemToRecord(item);
@@ -421,4 +435,3 @@ describe('trackerItemToRecord comments/activity via customFields', () => {
     expect(record.system.activity![0].action).toBe('created');
   });
 });
-

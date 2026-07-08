@@ -15,7 +15,20 @@ import { store } from '@nimbalyst/runtime/store';
 import { DocumentModelRegistry } from '../services/document-model/DocumentModelRegistry';
 import { aiApi } from '../services/aiApi';
 import { getFileName } from '../utils/pathUtils';
-import { isCollabUri } from '../utils/collabUri';
+import { isCollabUri, buildCollabUri } from '../utils/collabUri';
+import {
+  registerDocumentInIndex,
+  updateSharedDocumentTitle,
+  removeSharedDocument,
+  moveSharedDocument,
+  createSharedFolder,
+  renameSharedFolder,
+  moveSharedFolder,
+  removeSharedFolder,
+  collectFolderSubtree,
+  sharedFoldersAtom,
+  activeTeamOrgIdAtom,
+} from '../store/atoms/collabDocuments';
 import type { ContentMode } from '../types/WindowModeTypes';
 import { dialogRef } from '../contexts/DialogContext';
 import { DIALOG_IDS } from '../dialogs';
@@ -27,6 +40,31 @@ import {
 
 // Tracker field updates now go through the generic trackerStatus frontmatter format.
 // No hardcoded plan-specific field list needed.
+
+/**
+ * Resolve a human folder path (e.g. "A/B") to a folderId, walking the shared
+ * folder tree by name and creating any missing segments via createSharedFolder
+ * (the same path a person uses). Empty/blank path resolves to the root (null).
+ * Used by the shared-index MCP tool listeners below.
+ */
+async function resolveSharedFolderPath(folderPath: string | undefined): Promise<string | null> {
+  const trimmed = (folderPath ?? '').trim();
+  if (!trimmed) return null;
+  const segments = trimmed.split('/').map((s) => s.trim()).filter(Boolean);
+  let parentId: string | null = null;
+  for (const segment of segments) {
+    const folders = store.get(sharedFoldersAtom);
+    const existing = folders.find(
+      (f) => (f.parentFolderId ?? null) === parentId && f.name === segment,
+    );
+    if (existing) {
+      parentId = existing.folderId;
+    } else {
+      parentId = await createSharedFolder(segment, parentId);
+    }
+  }
+  return parentId;
+}
 
 function mergeFrontmatterData(
   existing: FrontmatterData | undefined,
@@ -657,6 +695,127 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
           window.electronAPI.sendMcpReadCollabDocResult(resultChannel, {
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error reading collab doc',
+          });
+        }
+      }));
+    }
+
+    // Shared-index (first-class shared folders + documents) MCP tools. Each
+    // routes through the SAME renderer functions a person uses so the AI's
+    // changes sync to the team identically.
+    if (window.electronAPI.onMcpCreateSharedDoc) {
+      cleanupFns.push(window.electronAPI.onMcpCreateSharedDoc(async ({ title, documentType, parentFolderId, folderPath, initialContent, resultChannel }) => {
+        try {
+          // folderPath (by name, creates missing folders) wins over an explicit
+          // parentFolderId when both are supplied.
+          const targetParentId = folderPath !== undefined
+            ? await resolveSharedFolderPath(folderPath)
+            : (parentFolderId ?? null);
+
+          const documentId = crypto.randomUUID();
+          await registerDocumentInIndex(documentId, title, documentType || 'markdown');
+          if (targetParentId) {
+            moveSharedDocument(documentId, targetParentId);
+          }
+
+          // Best-effort content seed: only possible when an editor for the doc is
+          // already mounted (a Y.Doc-backed CollaborativeTabEditor). A freshly
+          // created doc has none, so it is seeded when it is next opened.
+          if (initialContent) {
+            const orgId = store.get(activeTeamOrgIdAtom);
+            if (orgId) {
+              const collabUri = buildCollabUri(orgId, documentId);
+              if (editorRegistry.has(collabUri)) {
+                const streamId = `mcp-seed-${Date.now()}-${Math.random()}`;
+                editorRegistry.startStreaming(collabUri, { id: streamId, position: 'end', mode: 'append' });
+                editorRegistry.streamContent(collabUri, streamId, initialContent);
+                editorRegistry.endStreaming(collabUri, streamId);
+              }
+            }
+          }
+
+          window.electronAPI.sendMcpCollabIndexResult(resultChannel, { success: true, documentId });
+        } catch (error) {
+          window.electronAPI.sendMcpCollabIndexResult(resultChannel, {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error creating shared document',
+          });
+        }
+      }));
+    }
+
+    if (window.electronAPI.onMcpCreateSharedFolder) {
+      cleanupFns.push(window.electronAPI.onMcpCreateSharedFolder(async ({ name, parentFolderId, folderPath, resultChannel }) => {
+        try {
+          const targetParentId = folderPath !== undefined
+            ? await resolveSharedFolderPath(folderPath)
+            : (parentFolderId ?? null);
+          const folderId = await createSharedFolder(name, targetParentId);
+          window.electronAPI.sendMcpCollabIndexResult(resultChannel, { success: true, folderId });
+        } catch (error) {
+          window.electronAPI.sendMcpCollabIndexResult(resultChannel, {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error creating shared folder',
+          });
+        }
+      }));
+    }
+
+    if (window.electronAPI.onMcpMoveSharedItem) {
+      cleanupFns.push(window.electronAPI.onMcpMoveSharedItem(async ({ itemId, kind, newParentFolderId, folderPath, resultChannel }) => {
+        try {
+          const targetParentId = folderPath !== undefined
+            ? await resolveSharedFolderPath(folderPath)
+            : (newParentFolderId ?? null);
+          if (kind === 'doc') {
+            moveSharedDocument(itemId, targetParentId);
+          } else {
+            moveSharedFolder(itemId, targetParentId);
+          }
+          window.electronAPI.sendMcpCollabIndexResult(resultChannel, { success: true });
+        } catch (error) {
+          window.electronAPI.sendMcpCollabIndexResult(resultChannel, {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error moving shared item',
+          });
+        }
+      }));
+    }
+
+    if (window.electronAPI.onMcpRenameSharedItem) {
+      cleanupFns.push(window.electronAPI.onMcpRenameSharedItem(async ({ itemId, kind, newName, resultChannel }) => {
+        try {
+          if (kind === 'doc') {
+            await updateSharedDocumentTitle(itemId, newName);
+          } else {
+            await renameSharedFolder(itemId, newName);
+          }
+          window.electronAPI.sendMcpCollabIndexResult(resultChannel, { success: true });
+        } catch (error) {
+          window.electronAPI.sendMcpCollabIndexResult(resultChannel, {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error renaming shared item',
+          });
+        }
+      }));
+    }
+
+    if (window.electronAPI.onMcpDeleteSharedItem) {
+      cleanupFns.push(window.electronAPI.onMcpDeleteSharedItem(async ({ itemId, kind, resultChannel }) => {
+        try {
+          if (kind === 'doc') {
+            removeSharedDocument(itemId);
+            window.electronAPI.sendMcpCollabIndexResult(resultChannel, { success: true });
+          } else {
+            // Count the subtree before removal so we can report what was pruned.
+            const removedCount = collectFolderSubtree(store.get(sharedFoldersAtom), itemId).length;
+            removeSharedFolder(itemId);
+            window.electronAPI.sendMcpCollabIndexResult(resultChannel, { success: true, removedCount });
+          }
+        } catch (error) {
+          window.electronAPI.sendMcpCollabIndexResult(resultChannel, {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error deleting shared item',
           });
         }
       }));

@@ -168,6 +168,16 @@ All events include `$session_id` property automatically. Dev users are marked wi
 | `content_shared` | `ShareHandlers.ts` | User shares a session or file as an encrypted link | `content_type` (session/file)<br/>`is_update` (boolean) | (pending release as of c28302ea) |  |
 | `share_deleted` | `ShareHandlers.ts` | User deletes (unshares) a shared session or file | None | (pending release as of c28302ea) |  |
 
+### Shared Folders (Collab)
+
+| Event Name | File(s) | Trigger | Properties | First Added (Public) | Significant Changes |
+| --- | --- | --- | --- | --- | --- |
+| `collab_folder_created` | `CollabSidebar.tsx` | User creates a first-class shared folder | `nested` (boolean) | (pending release) |  |
+| `collab_folder_renamed` | `CollabSidebar.tsx` | User renames a shared folder | None | (pending release) |  |
+| `collab_folder_moved` | `CollabSidebar.tsx` | User moves a shared folder (drag reparent) | `toRoot` (boolean) | (pending release) |  |
+| `collab_folder_deleted` | `CollabSidebar.tsx` | User deletes a shared folder (recursive) | `documentCount`<br/>`subfolderCount` | (pending release) |  |
+| `collab_folder_link_copied` | `CollabSidebar.tsx` | User copies a shared-folder deep link | None | (pending release) |  |
+
 ### Session Export
 
 | Event Name | File(s) | Trigger | Properties | First Added (Public) | Significant Changes |

@@ -32,6 +32,7 @@ import {
   getTypeColor,
   getTypeIcon,
   getCellValue,
+  getEffectiveUpdatedDate,
   type TrackerColumnDef,
   type TypeColumnConfig,
 } from './trackerColumns';
@@ -109,12 +110,7 @@ export function TrackerTableGrid({
 
   const items = useMemo(() => {
     return sourceItems.map((item: TrackerRecord) => {
-      const dateSource = item.system.updatedAt || item.system.createdAt;
-      let actualDate: Date | null = null;
-      if (dateSource) {
-        const parsed = new Date(dateSource);
-        if (!isNaN(parsed.getTime())) actualDate = parsed;
-      }
+      const actualDate = getEffectiveUpdatedDate(item);
       const lastIndexed = actualDate ? actualDate.toISOString() : (item.system.lastIndexed || new Date(0).toISOString());
       return { ...item, system: { ...item.system, lastIndexed } };
     });

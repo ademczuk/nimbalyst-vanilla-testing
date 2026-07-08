@@ -13,10 +13,17 @@
 import { atom } from 'jotai';
 import { atomFamily } from '../debug/atomFamilyRegistry';
 import { store } from '@nimbalyst/runtime/store';
-import type { TeamSyncProvider as TeamSyncProviderType } from '@nimbalyst/runtime/sync';
+import type { TeamSyncProvider as TeamSyncProviderType, FolderNode } from '@nimbalyst/runtime/sync';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
 import { collabKeyRotationEpochAtom } from './collabEditor';
 import { activeWorkspacePathAtom } from './openProjects';
+import { pendingDocRegistrations } from './pendingDocRegistrations';
+import {
+  normalizeCollabPath,
+  getCollabParentPath,
+  getCollabNodeName,
+  computeLegacyFolderRenameUpdates,
+} from '../../components/CollabMode/collabTree';
 
 // ============================================================
 // Types
@@ -35,13 +42,46 @@ export interface SharedDocument {
    */
   lastWriterUserId?: string | null;
   /**
+   * First-class folders: the folder this doc lives in. Null/undefined = root.
+   * The tree is built from this + folder nodes, not from splitting the title.
+   */
+  parentFolderId?: string | null;
+  /**
    * True when the doc index entry's encrypted title could not be decrypted.
    * Rendered as a locked placeholder in the sidebar; not openable.
    */
   decryptFailed?: boolean;
 }
 
+/** A first-class shared folder node projected for the renderer. */
+export interface SharedFolder {
+  folderId: string;
+  /** Null/undefined = root level. */
+  parentFolderId?: string | null;
+  name: string;
+  sortOrder: number;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+  /** True when the folder name could not be decrypted (render as locked). */
+  decryptFailed?: boolean;
+}
+
 type TeamSyncStatus = 'disconnected' | 'connecting' | 'syncing' | 'connected' | 'error';
+
+/** Map a runtime FolderNode projection to the renderer SharedFolder shape. */
+function mapFolderNode(f: FolderNode): SharedFolder {
+  return {
+    folderId: f.folderId,
+    parentFolderId: f.parentFolderId ?? null,
+    name: f.name,
+    sortOrder: f.sortOrder,
+    createdBy: f.createdBy,
+    createdAt: f.createdAt,
+    updatedAt: f.updatedAt,
+    decryptFailed: f.decryptFailed,
+  };
+}
 
 // ============================================================
 // Per-workspace atom families
@@ -49,6 +89,10 @@ type TeamSyncStatus = 'disconnected' | 'connecting' | 'syncing' | 'connected' | 
 
 const sharedDocumentsAtomFamily = atomFamily((_workspacePath: string) =>
   atom<SharedDocument[]>([])
+);
+
+const sharedFoldersAtomFamily = atomFamily((_workspacePath: string) =>
+  atom<SharedFolder[]>([])
 );
 
 const teamSyncStatusAtomFamily = atomFamily((_workspacePath: string) =>
@@ -97,6 +141,29 @@ export const sharedDocumentsAtom = atom<SharedDocument[], [SharedDocument[] | ((
     const path = get(activeWorkspacePathAtom);
     if (!path) return;
     const target = sharedDocumentsAtomFamily(path);
+    if (typeof valueOrUpdater === 'function') {
+      set(target, valueOrUpdater(get(target)));
+    } else {
+      set(target, valueOrUpdater);
+    }
+  }
+);
+
+/**
+ * First-class shared folders for the active workspace. Populated from TeamRoom
+ * on connect, updated via folder broadcasts. The collab tree is built from
+ * these nodes plus each document's `parentFolderId`.
+ */
+export const sharedFoldersAtom = atom<SharedFolder[], [SharedFolder[] | ((current: SharedFolder[]) => SharedFolder[])], void>(
+  (get) => {
+    const path = get(activeWorkspacePathAtom);
+    if (!path) return [];
+    return get(sharedFoldersAtomFamily(path));
+  },
+  (get, set, valueOrUpdater) => {
+    const path = get(activeWorkspacePathAtom);
+    if (!path) return;
+    const target = sharedFoldersAtomFamily(path);
     if (typeof valueOrUpdater === 'function') {
       set(target, valueOrUpdater(get(target)));
     } else {
@@ -160,6 +227,16 @@ export function buildSharedDocumentDeepLink(documentId: string, orgId: string): 
 }
 
 /**
+ * Build a deep link to a shared folder. Same routing semantics as shared
+ * documents: the recipient's app uses the orgId to find the matching team
+ * workspace, switches to Collab mode, and focuses the folder. Folders carry no
+ * key material in the URL — membership-gated, exactly like doc links.
+ */
+export function buildSharedFolderDeepLink(folderId: string, orgId: string): string {
+  return `nimbalyst://folder/${encodeURIComponent(folderId)}?orgId=${encodeURIComponent(orgId)}`;
+}
+
+/**
  * Build a deep link to a tracker item. Same routing semantics as shared
  * documents: the recipient's app uses the orgId to find the matching team
  * workspace and opens the tracker in tracker mode.
@@ -188,6 +265,13 @@ export interface PendingCollabDocument {
   documentType?: string;
 }
 export const pendingCollabDocumentAtom = atom<PendingCollabDocument | null>(null);
+
+/**
+ * Pending shared folder to focus in CollabMode after switching modes (folder
+ * deep link). Consumed by CollabMode on activation: expand ancestors + select.
+ * Single-shot signal; not workspace-scoped.
+ */
+export const pendingCollabFolderAtom = atom<{ folderId: string } | null>(null);
 
 // ============================================================
 // Provider Instances (per workspace)
@@ -254,12 +338,24 @@ export async function registerDocumentInIndex(
   });
 
   const provider = getTeamSyncProvider();
+  const workspacePath = store.get(activeWorkspacePathAtom);
   if (provider) {
     try {
       await provider.registerDocument(documentId, title, documentType);
     } catch (err) {
+      // NIM-1565: a failed send used to vanish (fire-and-forget). Queue it so
+      // the next provider connect retries, instead of orphaning the doc.
       console.error('[collabDocuments] Failed to register in index:', err);
+      if (workspacePath) {
+        pendingDocRegistrations.enqueue(workspacePath, { documentId, title, documentType });
+      }
     }
+  } else if (workspacePath) {
+    // NIM-1565: no team-sync provider yet (doc created/shared before
+    // initSharedDocuments connected). Queue the registration for flush on
+    // connect rather than silently dropping it — otherwise the doc has content
+    // but never a doc-index entry, so it never appears in the Shared Items tree.
+    pendingDocRegistrations.enqueue(workspacePath, { documentId, title, documentType });
   }
 }
 
@@ -318,6 +414,347 @@ export function removeSharedDocument(documentId: string): void {
       console.error('[collabDocuments] Failed to remove document from index:', err);
     }
   }
+}
+
+/**
+ * Reparent a shared document into a folder (null = root). Optimistic local
+ * update, then the server docMove. Touches only `parentFolderId` — the document
+ * content and its local-to-shared link are untouched.
+ */
+export function moveSharedDocument(documentId: string, newParentFolderId: string | null): void {
+  store.set(sharedDocumentsAtom, (current) =>
+    current.map(d => d.documentId === documentId ? { ...d, parentFolderId: newParentFolderId } : d)
+  );
+
+  const provider = getTeamSyncProvider();
+  if (provider) {
+    try {
+      provider.moveDocument(documentId, newParentFolderId);
+    } catch (err) {
+      console.error('[collabDocuments] Failed to move document:', err);
+    }
+  }
+}
+
+// ============================================================
+// First-class Folders
+// ============================================================
+
+/**
+ * Create a shared folder (optimistic local add + server register). Returns the
+ * generated folderId so callers can select/expand it. `parentFolderId` null =
+ * root level.
+ */
+export async function createSharedFolder(name: string, parentFolderId: string | null = null): Promise<string> {
+  const folderId = crypto.randomUUID();
+  const now = Date.now();
+  const sortOrder = now; // monotonic-ish; newest sorts last among siblings
+
+  store.set(sharedFoldersAtom, (current) => [
+    ...current,
+    { folderId, parentFolderId, name, sortOrder, createdBy: '', createdAt: now, updatedAt: now },
+  ]);
+
+  const provider = getTeamSyncProvider();
+  if (provider) {
+    try {
+      await provider.registerFolder(folderId, name, parentFolderId, sortOrder);
+    } catch (err) {
+      console.error('[collabDocuments] Failed to register folder:', err);
+    }
+  }
+  return folderId;
+}
+
+/**
+ * Rename a LEGACY (path-in-title) folder — one that has no first-class
+ * `folderId` yet. Rewrites the folder's segment in every descendant document's
+ * title, which both updates the rendered fallback tree and syncs to the server
+ * (via `updateSharedDocumentTitle`) so the rename survives and other clients see
+ * it. Returns the number of documents retitled.
+ */
+export async function renameLegacyCollabFolder(folderPath: string, newName: string): Promise<number> {
+  const documents = store.get(sharedDocumentsAtom);
+  const updates = computeLegacyFolderRenameUpdates(documents, folderPath, newName);
+  for (const { documentId, newTitle } of updates) {
+    await updateSharedDocumentTitle(documentId, newTitle);
+  }
+  return updates.length;
+}
+
+/** Rename a shared folder in place. */
+export async function renameSharedFolder(folderId: string, newName: string): Promise<void> {
+  store.set(sharedFoldersAtom, (current) =>
+    current.map(f => f.folderId === folderId ? { ...f, name: newName, updatedAt: Date.now() } : f)
+  );
+
+  const provider = getTeamSyncProvider();
+  if (provider) {
+    try {
+      await provider.renameFolder(folderId, newName);
+    } catch (err) {
+      console.error('[collabDocuments] Failed to rename folder:', err);
+    }
+  }
+}
+
+/**
+ * Move a shared folder to a new parent (null = root). The server rejects a move
+ * into the folder's own subtree; we mirror that guard client-side so the
+ * optimistic update never creates a local cycle.
+ */
+export function moveSharedFolder(folderId: string, newParentFolderId: string | null): void {
+  const folders = store.get(sharedFoldersAtom);
+  if (newParentFolderId && isDescendantFolder(folders, newParentFolderId, folderId)) {
+    console.warn('[collabDocuments] Refusing to move folder into its own subtree:', folderId);
+    return;
+  }
+
+  store.set(sharedFoldersAtom, (current) =>
+    current.map(f => f.folderId === folderId ? { ...f, parentFolderId: newParentFolderId, updatedAt: Date.now() } : f)
+  );
+
+  const provider = getTeamSyncProvider();
+  if (provider) {
+    try {
+      provider.moveFolder(folderId, newParentFolderId);
+    } catch (err) {
+      console.error('[collabDocuments] Failed to move folder:', err);
+    }
+  }
+}
+
+/**
+ * Delete a shared folder recursively. Optimistically prunes the folder subtree
+ * and its documents locally, then sends the server folderRemove (which cascades
+ * the DocumentRoom deletes and broadcasts the removed id sets).
+ */
+export function removeSharedFolder(folderId: string): void {
+  const folders = store.get(sharedFoldersAtom);
+  const removedFolderIds = collectFolderSubtree(folders, folderId);
+  const removed = new Set(removedFolderIds);
+
+  store.set(sharedFoldersAtom, (current) => current.filter(f => !removed.has(f.folderId)));
+  store.set(sharedDocumentsAtom, (current) =>
+    current.filter(d => !(d.parentFolderId && removed.has(d.parentFolderId)))
+  );
+
+  const provider = getTeamSyncProvider();
+  if (provider) {
+    try {
+      provider.removeFolder(folderId);
+    } catch (err) {
+      console.error('[collabDocuments] Failed to remove folder:', err);
+    }
+  }
+}
+
+/** Every folderId in the subtree rooted at `folderId` (inclusive). */
+export function collectFolderSubtree(folders: SharedFolder[], folderId: string): string[] {
+  const byParent = new Map<string | null | undefined, SharedFolder[]>();
+  for (const f of folders) {
+    const key = f.parentFolderId ?? null;
+    const list = byParent.get(key) ?? [];
+    list.push(f);
+    byParent.set(key, list);
+  }
+  const out: string[] = [];
+  const queue = [folderId];
+  const seen = new Set<string>();
+  while (queue.length > 0) {
+    const id = queue.shift() as string;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    for (const child of byParent.get(id) ?? []) queue.push(child.folderId);
+  }
+  return out;
+}
+
+/** True if `candidateId` is `ancestorId` or lives under it in `folders`. */
+export function isDescendantFolder(folders: SharedFolder[], candidateId: string, ancestorId: string): boolean {
+  const byId = new Map(folders.map(f => [f.folderId, f]));
+  let current: string | null | undefined = candidateId;
+  const guard = new Set<string>();
+  while (current) {
+    if (current === ancestorId) return true;
+    if (guard.has(current)) break;
+    guard.add(current);
+    current = byId.get(current)?.parentFolderId ?? null;
+  }
+  return false;
+}
+
+// ============================================================
+// Migration: virtual (path-in-title) folders -> first-class folders
+// ============================================================
+
+/** Workspaces whose virtual-folder migration already ran this session. */
+const migratedFolderWorkspaces = new Set<string>();
+
+/**
+ * Deterministic folderId for a normalized path so every client that runs the
+ * migration converges on the SAME id (no duplicate folder rows). Uses SHA-256
+ * of `orgId:path` truncated to 24 hex chars — collision-negligible for the
+ * folder counts a team realistically has.
+ */
+async function stableFolderId(orgId: string, normalizedPath: string): Promise<string> {
+  const bytes = new TextEncoder().encode(`${orgId}:${normalizedPath}`);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const hex = Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `fld_${hex.slice(0, 24)}`;
+}
+
+/**
+ * One-time (per session) migration from the legacy virtual-folder model (folder
+ * structure encoded in each doc's `A/B/Doc` title) to first-class folder rows.
+ *
+ * Client-driven because the server cannot read encrypted titles in legacy mode.
+ * Idempotent: folder ids are a deterministic hash of the path, so re-running
+ * upserts the same rows and re-sets the same `parentFolderId`. Dual-write: the
+ * doc TITLE is left untouched (still full-path) so un-upgraded clients keep
+ * rendering the tree, while `parentFolderId` becomes the authoritative placement.
+ *
+ * Only migrates docs whose title contains a `/` and whose `parentFolderId` is
+ * still null. Empty local-only folders (the retired `customFolders`) are not
+ * carried over — they were never synced.
+ */
+/**
+ * Pure derivation of the first-class folder structure implied by legacy
+ * path-in-title documents. Returns every folder path (all ancestor prefixes,
+ * shallowest first) and each migratable document's immediate parent path.
+ * Documents already first-class (`parentFolderId` set) or at root (no `/`)
+ * are skipped. Exported for testing.
+ */
+export function deriveVirtualFolderStructure(
+  documents: SharedDocument[],
+): { folderPaths: string[]; docParent: Map<string, string> } {
+  const folderPaths = new Set<string>();
+  const docParent = new Map<string, string>();
+  for (const doc of documents) {
+    if (doc.parentFolderId) continue; // already first-class
+    // Undecryptable titles are raw ciphertext (base64, which can contain '/')
+    // — never derive folders from them or we'd create garbage folder rows.
+    if (doc.decryptFailed) continue;
+    const path = normalizeCollabPath(doc.title);
+    const parent = getCollabParentPath(path);
+    if (!parent) continue; // root-level doc, nothing to migrate
+    docParent.set(doc.documentId, parent);
+    let p: string | null = parent;
+    while (p) {
+      folderPaths.add(p);
+      p = getCollabParentPath(p);
+    }
+  }
+  const sorted = Array.from(folderPaths).sort((a, b) => a.split('/').length - b.split('/').length);
+  return { folderPaths: sorted, docParent };
+}
+
+/**
+ * Build the optimistic first-class folder rows for a legacy migration. Pure so
+ * the placement logic (parent linkage, leaf naming, sort order) is unit-testable
+ * without the store or a live provider. `sortedFolderPaths` must be
+ * shallowest-first so a parent's id resolves before its children.
+ */
+export function buildMigratedFolderRows(
+  sortedFolderPaths: string[],
+  idByPath: Map<string, string>,
+  createdBy: string,
+  now: number,
+): SharedFolder[] {
+  return sortedFolderPaths.map((path, index) => {
+    const parentPath = getCollabParentPath(path);
+    return {
+      folderId: idByPath.get(path)!,
+      parentFolderId: parentPath ? (idByPath.get(parentPath) ?? null) : null,
+      name: getCollabNodeName(path),
+      sortOrder: index,
+      createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+  });
+}
+
+async function migrateVirtualFolders(workspacePath: string, orgId: string): Promise<void> {
+  if (migratedFolderWorkspaces.has(workspacePath)) return;
+
+  const provider = providersByPath.get(workspacePath);
+  if (!provider) return;
+
+  const documents = store.get(sharedDocumentsAtomFamily(workspacePath));
+
+  const { folderPaths: sorted, docParent } = deriveVirtualFolderStructure(documents);
+  // Nothing to migrate YET. This is the common case on the first
+  // `onDocumentsLoaded` of a connect, which fires from `teamSync` with raw
+  // (undecryptable) titles before the decrypting `docIndexSync` pass arrives.
+  // Do NOT consume the one-shot here, or the later decrypted pass — the one that
+  // actually has path-in-title folders to migrate — would be blocked forever.
+  if (sorted.length === 0) return;
+
+  // We have real, decrypted path-in-title folders to migrate: claim the one-shot
+  // now so concurrent `onDocumentsLoaded` callbacks don't double-register.
+  migratedFolderWorkspaces.add(workspacePath);
+
+  // Deterministic id per path (parent id resolves before children — `sorted` is
+  // shallowest-first).
+  const idByPath = new Map<string, string>();
+  for (const path of sorted) {
+    idByPath.set(path, await stableFolderId(orgId, path));
+  }
+
+  const now = Date.now();
+  const createdBy = store.get(teamUserIdAtomFamily(workspacePath)) ?? '';
+  const migratedFolders = buildMigratedFolderRows(sorted, idByPath, createdBy, now);
+
+  // Optimistically add the folder rows locally FIRST. The server excludes the
+  // sender from its folderBroadcast, so without this the migrating client would
+  // not see its own folders until the next reconnect — which is exactly the
+  // "Shared Items shows no folders" regression. Merge/dedupe by folderId so a
+  // re-run (or a concurrent server load) never duplicates rows.
+  store.set(sharedFoldersAtomFamily(workspacePath), (current) => {
+    const byId = new Map(current.map(f => [f.folderId, f]));
+    for (const f of migratedFolders) byId.set(f.folderId, f);
+    return Array.from(byId.values());
+  });
+
+  // Register a folder row for each path on the server (deterministic id, parent
+  // linkage). Parent-before-child by `migratedFolders` order.
+  for (const folder of migratedFolders) {
+    try {
+      await provider.registerFolder(folder.folderId, folder.name, folder.parentFolderId ?? null, folder.sortOrder);
+    } catch (err) {
+      console.error('[collabDocuments] Folder migration register failed for', folder.name, err);
+    }
+  }
+
+  // Optimistically point each legacy doc at its first-class parent folder in the
+  // local atom, so once the first-class builder takes over (folders present) the
+  // docs nest correctly instead of collapsing to root.
+  store.set(sharedDocumentsAtomFamily(workspacePath), (current) =>
+    current.map(d => {
+      const parentPath = docParent.get(d.documentId);
+      if (!parentPath) return d;
+      const parentId = idByPath.get(parentPath);
+      return parentId ? { ...d, parentFolderId: parentId } : d;
+    })
+  );
+
+  // Persist each doc reparent to the server.
+  for (const [documentId, parentPath] of docParent) {
+    const parentId = idByPath.get(parentPath);
+    if (parentId) {
+      try {
+        provider.moveDocument(documentId, parentId);
+      } catch (err) {
+        console.error('[collabDocuments] Folder migration docMove failed for', documentId, err);
+      }
+    }
+  }
+
+  console.log(`[collabDocuments] Migrated ${docParent.size} document(s) into ${sorted.length} first-class folder(s) for ${workspacePath}`);
 }
 
 // ============================================================
@@ -444,9 +881,11 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
             createdAt: d.createdAt,
             updatedAt: d.updatedAt,
             lastWriterUserId: d.lastWriterUserId,
+            parentFolderId: d.parentFolderId,
             decryptFailed: d.decryptFailed,
           })));
         }
+        store.set(sharedFoldersAtomFamily(workspacePath), state.folders.map(mapFolderNode));
       },
 
       onDocumentsLoaded: (documents) => {
@@ -458,8 +897,12 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
           createdAt: d.createdAt,
           updatedAt: d.updatedAt,
           lastWriterUserId: d.lastWriterUserId,
+          parentFolderId: d.parentFolderId,
           decryptFailed: d.decryptFailed,
         })));
+        // One-time client-driven migration of legacy path-in-title folders into
+        // first-class folder rows (idempotent, dual-write; no-op once migrated).
+        void migrateVirtualFolders(workspacePath, orgId);
       },
 
       onDocumentChanged: (document) => {
@@ -473,6 +916,7 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
             createdAt: document.createdAt,
             updatedAt: document.updatedAt,
             lastWriterUserId: document.lastWriterUserId,
+            parentFolderId: document.parentFolderId,
             decryptFailed: document.decryptFailed,
           }, ...filtered];
         });
@@ -481,6 +925,28 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
       onDocumentRemoved: (documentId) => {
         store.set(sharedDocumentsAtomFamily(workspacePath), (current) =>
           current.filter(d => d.documentId !== documentId)
+        );
+      },
+
+      onFoldersLoaded: (folders) => {
+        store.set(sharedFoldersAtomFamily(workspacePath), folders.map(mapFolderNode));
+      },
+
+      onFolderChanged: (folder) => {
+        store.set(sharedFoldersAtomFamily(workspacePath), (current) => {
+          const filtered = current.filter(f => f.folderId !== folder.folderId);
+          return [...filtered, mapFolderNode(folder)];
+        });
+      },
+
+      onFoldersRemoved: (folderIds, documentIds) => {
+        const removedFolders = new Set(folderIds);
+        const removedDocs = new Set(documentIds);
+        store.set(sharedFoldersAtomFamily(workspacePath), (current) =>
+          current.filter(f => !removedFolders.has(f.folderId))
+        );
+        store.set(sharedDocumentsAtomFamily(workspacePath), (current) =>
+          current.filter(d => !removedDocs.has(d.documentId))
         );
       },
 
@@ -586,6 +1052,20 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
     try {
       await provider.connect();
       providersByPath.set(workspacePath, provider);
+      // NIM-1565: flush any registrations queued while this workspace had no
+      // connected provider (e.g. a doc created/shared during startup). The
+      // provider itself queues sends across a socket blip; this covers the
+      // earlier window where no provider existed at all.
+      void pendingDocRegistrations.flush(workspacePath, provider).then(({ flushed, failed }) => {
+        if (flushed > 0) {
+          console.log(`[collabDocuments] Flushed ${flushed} pending doc registration(s) for ${workspacePath}`);
+        }
+        if (failed.length > 0) {
+          console.warn(`[collabDocuments] ${failed.length} pending doc registration(s) still unsent for ${workspacePath}`);
+        }
+      }).catch((flushErr) => {
+        console.warn('[collabDocuments] Failed to flush pending doc registrations:', flushErr);
+      });
     } catch (connectErr) {
       provider.destroy();
       throw connectErr;

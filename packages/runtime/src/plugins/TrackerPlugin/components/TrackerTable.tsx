@@ -28,6 +28,7 @@ import {
   getTypeIcon as getTypeIconFromRegistry,
   formatRelativeDate,
   getCellValue,
+  getEffectiveUpdatedDate,
   type TrackerColumnDef,
   type TypeColumnConfig,
 } from './trackerColumns';
@@ -784,14 +785,7 @@ export function TrackerTable({
   // Items from source (atom or override)
   const items = useMemo(() => {
     return sourceItems.map((item: TrackerRecord) => {
-      const dateSource = item.system.updatedAt || item.system.createdAt;
-      let actualDate: Date | null = null;
-      if (dateSource) {
-        const parsed = new Date(dateSource);
-        if (!isNaN(parsed.getTime())) {
-          actualDate = parsed;
-        }
-      }
+      const actualDate = getEffectiveUpdatedDate(item);
       // Ensure lastIndexed is a valid ISO string for sorting
       const lastIndexed = actualDate ? actualDate.toISOString() : (item.system.lastIndexed || new Date(0).toISOString());
       return {

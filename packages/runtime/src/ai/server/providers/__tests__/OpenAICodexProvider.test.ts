@@ -697,7 +697,7 @@ describe('OpenAICodexProvider', () => {
       },
     } as any);
 
-    const provider = new OpenAICodexProvider({ apiKey: 'test-key' });
+    const provider = new OpenAICodexProvider({ apiKey: 'test-key' }, { transport: 'sdk' });
     await provider.initialize({
       apiKey: 'test-key',
       model: 'openai-codex:gpt-5',
