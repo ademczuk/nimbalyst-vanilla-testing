@@ -10,12 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.67.2] - 2026-07-08
+
+
+### Added
+<!-- New features go here -->
 - Shared folders are now first-class: right-click a folder in Shared Items to rename, move, copy a link, or delete it (with a count-based confirmation), drag folders and documents to reorganize, and let an AI agent create or reorganize shared files and folders — reorganizing never breaks a document's local link.
 - Advanced setting to route Claude Code CLI (Subscription) traffic through a custom local API proxy (e.g. a token-compression or caching layer).
 - Shared Docs discovery home: search, favorites, recently opened, and docs new or changed since you last viewed them, with a sidebar filter (All / Favorites / Updated) and controls to hide or clear unread markers.
 - Tools & Token Cost settings panel: see every tool group's estimated context-token cost and load policy in one place, with a link from the AI panel's token meter.
 - iOS: create a Meta Agent on mobile and see it grouped with its sub-agents in a collapsible "Meta Agent" group (alpha-gated to the desktop feature flag).
 - Slash commands, `@` file references, and `@@` session mentions now appear as tinted pills anywhere in a chat message; slash-command pills stay clickable to show what each command does and open its source file.
+- Unread indicators mark trackers and shared docs that have changed since you last viewed them.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -29,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Background agents launched by a session are no longer killed when the session's turn ends; the session stays alive and wakes when they finish.
 - Sync: meta agents and their spawned sub-agents now group together on mobile in real time instead of only after a full resync.
 - Shared documents created while team sync was still connecting no longer go missing from the Shared Items tree; their registration is now queued and completed once sync attaches.
+- OpenAI chat model selection works again.
+- Plan items show fresh updated timestamps in the tracker table, and spurious tracker timestamp churn is stopped.
 
 ### Removed
 <!-- Removed features go here -->
