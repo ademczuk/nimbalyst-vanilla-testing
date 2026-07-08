@@ -17,6 +17,7 @@ import type { TeamSyncProvider as TeamSyncProviderType } from '@nimbalyst/runtim
 import { errorNotificationService } from '../../services/ErrorNotificationService';
 import { collabKeyRotationEpochAtom } from './collabEditor';
 import { activeWorkspacePathAtom } from './openProjects';
+import { pendingDocRegistrations } from './pendingDocRegistrations';
 
 // ============================================================
 // Types
@@ -254,12 +255,24 @@ export async function registerDocumentInIndex(
   });
 
   const provider = getTeamSyncProvider();
+  const workspacePath = store.get(activeWorkspacePathAtom);
   if (provider) {
     try {
       await provider.registerDocument(documentId, title, documentType);
     } catch (err) {
+      // NIM-1565: a failed send used to vanish (fire-and-forget). Queue it so
+      // the next provider connect retries, instead of orphaning the doc.
       console.error('[collabDocuments] Failed to register in index:', err);
+      if (workspacePath) {
+        pendingDocRegistrations.enqueue(workspacePath, { documentId, title, documentType });
+      }
     }
+  } else if (workspacePath) {
+    // NIM-1565: no team-sync provider yet (doc created/shared before
+    // initSharedDocuments connected). Queue the registration for flush on
+    // connect rather than silently dropping it — otherwise the doc has content
+    // but never a doc-index entry, so it never appears in the Shared Items tree.
+    pendingDocRegistrations.enqueue(workspacePath, { documentId, title, documentType });
   }
 }
 
@@ -586,6 +599,20 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
     try {
       await provider.connect();
       providersByPath.set(workspacePath, provider);
+      // NIM-1565: flush any registrations queued while this workspace had no
+      // connected provider (e.g. a doc created/shared during startup). The
+      // provider itself queues sends across a socket blip; this covers the
+      // earlier window where no provider existed at all.
+      void pendingDocRegistrations.flush(workspacePath, provider).then(({ flushed, failed }) => {
+        if (flushed > 0) {
+          console.log(`[collabDocuments] Flushed ${flushed} pending doc registration(s) for ${workspacePath}`);
+        }
+        if (failed.length > 0) {
+          console.warn(`[collabDocuments] ${failed.length} pending doc registration(s) still unsent for ${workspacePath}`);
+        }
+      }).catch((flushErr) => {
+        console.warn('[collabDocuments] Failed to flush pending doc registrations:', flushErr);
+      });
     } catch (connectErr) {
       provider.destroy();
       throw connectErr;
