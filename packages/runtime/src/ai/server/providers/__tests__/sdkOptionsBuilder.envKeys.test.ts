@@ -73,12 +73,16 @@ describe('buildSdkOptions env-key hardening', () => {
   let originalOpenAI: string | undefined;
   let originalEntrypoint: string | undefined;
   let originalToolSearch: string | undefined;
+  let originalDisableAutoupdater: string | undefined;
+  let originalDisableUpdates: string | undefined;
 
   beforeEach(() => {
     originalAnthropic = process.env.ANTHROPIC_API_KEY;
     originalOpenAI = process.env.OPENAI_API_KEY;
     originalEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT;
     originalToolSearch = process.env.ENABLE_TOOL_SEARCH;
+    originalDisableAutoupdater = process.env.DISABLE_AUTOUPDATER;
+    originalDisableUpdates = process.env.DISABLE_UPDATES;
   });
 
   afterEach(() => {
@@ -101,6 +105,16 @@ describe('buildSdkOptions env-key hardening', () => {
       delete process.env.ENABLE_TOOL_SEARCH;
     } else {
       process.env.ENABLE_TOOL_SEARCH = originalToolSearch;
+    }
+    if (originalDisableAutoupdater === undefined) {
+      delete process.env.DISABLE_AUTOUPDATER;
+    } else {
+      process.env.DISABLE_AUTOUPDATER = originalDisableAutoupdater;
+    }
+    if (originalDisableUpdates === undefined) {
+      delete process.env.DISABLE_UPDATES;
+    } else {
+      process.env.DISABLE_UPDATES = originalDisableUpdates;
     }
   });
 
@@ -155,6 +169,32 @@ describe('buildSdkOptions env-key hardening', () => {
     // 'auto:2' default meant a 20K-token eager floor on 1M-context models.
     expect(options.env.ENABLE_TOOL_SEARCH).toBe('true');
     expect(options.env.CLAUDE_CODE_ENTRYPOINT).toBe('cli');
+  });
+
+  it('disables the CLI self-updater by default on every spawn (NIM-1573)', async () => {
+    // The bundled native CLI is version-pinned to the SDK JS we ship. Its
+    // built-in AutoUpdater does a non-atomic in-place `rename claude.exe ->
+    // claude.exe.old.<ts>` + re-download on version drift; an interrupted
+    // update leaves an orphan and no binary, permanently breaking Claude Code.
+    // Pin the updater off so nothing mutates the in-place binary.
+    delete process.env.DISABLE_AUTOUPDATER;
+    delete process.env.DISABLE_UPDATES;
+
+    const { options } = await buildSdkOptions(makeDeps(), makeParams());
+
+    expect(options.env.DISABLE_AUTOUPDATER).toBe('1');
+    expect(options.env.DISABLE_UPDATES).toBe('1');
+  });
+
+  it('lets a user-configured DISABLE_AUTOUPDATER override the default (NIM-1573)', async () => {
+    delete process.env.DISABLE_AUTOUPDATER;
+
+    const { options } = await buildSdkOptions(
+      makeDeps(),
+      makeParams({ settingsEnv: { DISABLE_AUTOUPDATER: '0' } })
+    );
+
+    expect(options.env.DISABLE_AUTOUPDATER).toBe('0');
   });
 
   it('lets a user-configured ENABLE_TOOL_SEARCH override the default', async () => {

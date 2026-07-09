@@ -194,8 +194,25 @@ export async function buildSdkOptions(
   }
 
   const enhancedPath = ClaudeCodeDeps.enhancedPathLoader?.() || undefined;
-  const resolvedBinaryPath = await resolveClaudeAgentCliPath(enhancedPath).catch(() => undefined);
   const customPath = ClaudeCodeDeps.customClaudeCodePathLoader?.(workspacePath) || '';
+  let resolvedBinaryPath: string | undefined;
+  try {
+    resolvedBinaryPath = await resolveClaudeAgentCliPath(enhancedPath);
+  } catch (err) {
+    // NIM-1573: In packaged builds there is no SDK self-resolve fallback --
+    // letting pathToClaudeCodeExecutable become undefined makes the native SDK
+    // emit a misleading "does not match this system's libc ... musl"
+    // ReferenceError (e.g. after an interrupted CLI self-update orphaned the
+    // bundled binary). Fail honestly with resolveClaudeAgentCliPath's
+    // "repair Nimbalyst" message instead, so the provider's catch surfaces it
+    // verbatim. In dev the SDK resolves its own native binary via
+    // require.resolve, so a failure here is non-fatal; a user-configured custom
+    // path also overrides.
+    if (app.isPackaged && !customPath) {
+      throw err instanceof Error ? err : new Error(String(err));
+    }
+    resolvedBinaryPath = undefined;
+  }
   const effectivePath = customPath || resolvedBinaryPath;
   // console.log(`[CLAUDE-CODE] Binary path: custom=${customPath || '(none)'} resolved=${resolvedBinaryPath ?? '(none)'} effective=${effectivePath ?? '(none)'}`);
 
@@ -341,6 +358,24 @@ export async function buildSdkOptions(
       sanitizedShellEnv.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT == null &&
       sanitizedSettingsEnv.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT == null && {
         CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: '0',
+      }),
+    // NIM-1573: Pin the bundled native CLI's self-updater OFF. We ship a
+    // version-pinned binary and spawn it in place from app.asar.unpacked; the
+    // CLI's AutoUpdater does a non-atomic in-place `rename claude.exe ->
+    // claude.exe.old.<ts>` + re-download on version drift, and an interrupted
+    // update leaves an orphan with no `claude.exe`, permanently breaking Claude
+    // Code (surfacing a misleading libc/musl ReferenceError). The updater's gate
+    // honors DISABLE_UPDATES / DISABLE_AUTOUPDATER. Default only -- a user-set
+    // value (settings/shell/process env) still wins.
+    ...(sanitizedProcessEnv.DISABLE_AUTOUPDATER == null &&
+      sanitizedShellEnv.DISABLE_AUTOUPDATER == null &&
+      sanitizedSettingsEnv.DISABLE_AUTOUPDATER == null && {
+        DISABLE_AUTOUPDATER: '1',
+      }),
+    ...(sanitizedProcessEnv.DISABLE_UPDATES == null &&
+      sanitizedShellEnv.DISABLE_UPDATES == null &&
+      sanitizedSettingsEnv.DISABLE_UPDATES == null && {
+        DISABLE_UPDATES: '1',
       }),
   };
 
