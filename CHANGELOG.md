@@ -10,12 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- OpenCode presets now include GLM 5.2 through the Z.AI and Z.AI Coding Plan providers.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Bundled Codex runtime updated to 0.142.5 so the Codex Chrome plugin can start in Nimbalyst with the current Codex plugin protocol.
 
 ### Removed
 <!-- Removed features go here -->
