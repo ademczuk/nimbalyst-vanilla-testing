@@ -17,6 +17,7 @@ import { TabManager } from '../TabManager/TabManager';
 import { TabContent } from '../TabContent/TabContent';
 import { ChatSidebar } from '../ChatSidebar';
 import { useEditorMaximize } from '../../hooks/useEditorMaximize';
+import { useResizeDragShield } from '../../hooks/useResizeDragShield';
 import { openCollabDocumentViaIPC } from '../../utils/collabDocumentOpener';
 import {
   loadOpenCollabDocs,
@@ -159,7 +160,8 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
   const [showHome, setShowHome] = useState(false);
 
   // Refs for sidebar resize drag (avoids re-renders during drag)
-  const sidebarDragRef = useRef({ isDragging: false, startX: 0, startWidth: 0 });
+  const sidebarDragRef = useRef({ startX: 0, startWidth: 0, latestWidth: sidebarWidth });
+  sidebarDragRef.current.latestWidth = sidebarWidth;
 
   // Track active tab and its getContent function so the right-pane chat can
   // pull a fresh snapshot of the live (Yjs-synced) document on each message.
@@ -263,34 +265,32 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
   }, [workspacePath]);
 
   // --- Sidebar resize handlers ---
-  const handleSidebarMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    sidebarDragRef.current = { isDragging: true, startX: e.clientX, startWidth: sidebarWidth };
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-
-    const handleMouseMove = (ev: MouseEvent) => {
-      const delta = ev.clientX - sidebarDragRef.current.startX;
+  const startSidebarResizeDrag = useResizeDragShield({
+    onMove: (event) => {
+      const delta = event.clientX - sidebarDragRef.current.startX;
       const newWidth = Math.max(COLLAB_SIDEBAR_MIN, Math.min(COLLAB_SIDEBAR_MAX, sidebarDragRef.current.startWidth + delta));
+      sidebarDragRef.current.latestWidth = newWidth;
       setSidebarWidth(newWidth);
-    };
-
-    const handleMouseUp = () => {
-      sidebarDragRef.current.isDragging = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+    },
+    onEnd: () => {
       // Persist after drag ends
-      setSidebarWidth((w) => {
-        persistCollabLayout(workspacePath, { sidebarWidth: w, chatWidth, sidebarCollapsed, chatCollapsed });
-        return w;
+      persistCollabLayout(workspacePath, {
+        sidebarWidth: sidebarDragRef.current.latestWidth,
+        chatWidth,
+        sidebarCollapsed,
+        chatCollapsed,
       });
-    };
+    },
+  });
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, [sidebarWidth, chatWidth, sidebarCollapsed, chatCollapsed, workspacePath]);
+  const handleSidebarPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    sidebarDragRef.current = {
+      startX: event.clientX,
+      startWidth: sidebarWidth,
+      latestWidth: sidebarWidth,
+    };
+    startSidebarResizeDrag(event);
+  }, [sidebarWidth, startSidebarResizeDrag]);
 
   // --- Chat sidebar resize handler (via ChatSidebar's onWidthChange) ---
   const handleChatWidthChange = useCallback((newWidth: number) => {
@@ -549,8 +549,12 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
 
           {/* Left resize handle */}
           <div
-            onMouseDown={handleSidebarMouseDown}
-            className="w-1 cursor-col-resize shrink-0 relative z-10 bg-nim-secondary"
+            onPointerDown={handleSidebarPointerDown}
+            className="collab-mode-sidebar-resize-handle w-1 cursor-col-resize shrink-0 relative z-10 bg-nim-secondary"
+            data-testid="collab-mode-sidebar-resize-handle"
+            role="separator"
+            aria-label="Resize shared documents sidebar"
+            aria-orientation="vertical"
           >
             <div className="w-0.5 h-full mx-auto bg-nim-border transition-colors duration-200 hover:bg-nim-accent" />
           </div>

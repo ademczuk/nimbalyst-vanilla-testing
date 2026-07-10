@@ -73,6 +73,7 @@ import {
   toggleSessionHistoryCollapsedAtom,
 } from '../../store/atoms/agentMode';
 import { useEditorMaximize } from '../../hooks/useEditorMaximize';
+import { useResizeDragShield } from '../../hooks/useResizeDragShield';
 import { ArchiveWorktreeDialog } from './ArchiveWorktreeDialog';
 import { useArchiveWorktreeDialog } from '../../hooks/useArchiveWorktreeDialog';
 import { detectFileType, type SerializableDocumentContext } from '../../hooks/useDocumentContext';
@@ -864,6 +865,8 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
 
   // Ref for the content container (used for resize calculations)
   const contentRef = useRef<HTMLDivElement>(null);
+  const verticalResizeRef = useRef({ startY: 0, startRatio: splitRatio, containerHeight: 0 });
+  const sidebarResizeRef = useRef({ startX: 0, startWidth: sidebarWidth });
 
   // Ref for the editor area to check focus
   const editorAreaRef = useRef<HTMLDivElement>(null);
@@ -1089,70 +1092,56 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
     }
   }, [showEditorTabs]); // Re-run when editor becomes visible
 
-  // Vertical resizer (between editor and session) - uses split ratio like AISessionView
-  const handleVerticalResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDraggingVertical(true);
-
-    const container = contentRef.current;
-    if (!container) return;
-
-    const containerRect = container.getBoundingClientRect();
-    const containerHeight = containerRect.height;
-    const startY = e.clientY;
-    const startRatio = splitRatio;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaY = moveEvent.clientY - startY;
+  // Resizers use a host-level shield so pointer input cannot be swallowed by
+  // an iframe-backed editor in the workstream's top tab area.
+  const startVerticalResizeDrag = useResizeDragShield({
+    cursor: 'ns-resize',
+    onMove: (event) => {
+      const { startY, startRatio, containerHeight } = verticalResizeRef.current;
+      const deltaY = event.clientY - startY;
       const currentHeight = startRatio * containerHeight;
       const newHeight = currentHeight + deltaY;
       const newRatio = newHeight / containerHeight;
-
-      // Clamp between 10% and 90%
       const clampedRatio = Math.max(0.1, Math.min(0.9, newRatio));
       setSplitRatio({ workstreamId, ratio: clampedRatio });
-    };
-
-    const handleMouseUp = () => {
+    },
+    onEnd: () => {
       setIsDraggingVertical(false);
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
+    },
+  });
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = 'ns-resize';
-    document.body.style.userSelect = 'none';
-  }, [workstreamId, splitRatio, setSplitRatio]);
+  const handleVerticalResizeStart = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const container = contentRef.current;
+    if (!container) return;
+    verticalResizeRef.current = {
+      startY: event.clientY,
+      startRatio: splitRatio,
+      containerHeight: container.getBoundingClientRect().height,
+    };
+    setIsDraggingVertical(true);
+    startVerticalResizeDrag(event);
+  }, [splitRatio, startVerticalResizeDrag]);
 
   // Sidebar resizer (between content and sidebar)
-  const handleSidebarResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDraggingSidebar(true);
-    const startX = e.clientX;
-    const startWidth = sidebarWidth;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = startX - moveEvent.clientX;
-      const newWidth = startWidth + deltaX;
+  const startSidebarResizeDrag = useResizeDragShield({
+    cursor: 'ew-resize',
+    onMove: (event) => {
+      const deltaX = sidebarResizeRef.current.startX - event.clientX;
+      const newWidth = sidebarResizeRef.current.startWidth + deltaX;
       setSidebarWidth(newWidth);
-    };
-
-    const handleMouseUp = () => {
+    },
+    onEnd: () => {
       setIsDraggingSidebar(false);
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
+    },
+  });
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = 'ew-resize';
-    document.body.style.userSelect = 'none';
-  }, [sidebarWidth, setSidebarWidth]);
+  const handleSidebarResizeStart = useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    sidebarResizeRef.current = { startX: event.clientX, startWidth: sidebarWidth };
+    setIsDraggingSidebar(true);
+    startSidebarResizeDrag(event);
+  }, [sidebarWidth, startSidebarResizeDrag]);
 
   // Track which panel was last clicked to route CMD+F correctly.
   // document.activeElement is unreliable because clicking tab bars, non-focusable
@@ -1325,7 +1314,11 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
           {layoutMode === 'split' && (
             <div
               className={`agent-workstream-vertical-resizer h-1 shrink-0 cursor-ns-resize bg-[var(--nim-border)] transition-colors duration-150 hover:bg-[var(--nim-primary)] ${isDraggingVertical ? 'dragging bg-[var(--nim-primary)]' : ''}`}
-              onMouseDown={handleVerticalResizeStart}
+              data-testid="agent-workstream-vertical-resize-handle"
+              onPointerDown={handleVerticalResizeStart}
+              role="separator"
+              aria-label="Resize workstream editor area"
+              aria-orientation="horizontal"
             />
           )}
 
@@ -1357,7 +1350,11 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
       {sidebarVisible && activeSessionId && (
         <div
           className={`agent-workstream-sidebar-resizer w-1 shrink-0 cursor-ew-resize bg-[var(--nim-border)] transition-colors duration-150 hover:bg-[var(--nim-primary)] ${isDraggingSidebar ? 'dragging bg-[var(--nim-primary)]' : ''}`}
-          onMouseDown={handleSidebarResizeStart}
+          data-testid="agent-files-sidebar-resize-handle"
+          onPointerDown={handleSidebarResizeStart}
+          role="separator"
+          aria-label="Resize files edited sidebar"
+          aria-orientation="vertical"
         />
       )}
 

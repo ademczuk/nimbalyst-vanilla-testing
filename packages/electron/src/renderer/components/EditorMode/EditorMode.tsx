@@ -8,6 +8,7 @@ import { pushNavigationEntryAtom, isRestoringNavigationAtom, historyDialogFileAt
 import { newBrowserTabRequestAtom, newMockupRequestAtom, toggleAIChatPanelRequestAtom } from '../../store/atoms/appCommands';
 import { useTabNavigation } from '../../hooks/useTabNavigation';
 import { useEditorMaximize } from '../../hooks/useEditorMaximize';
+import { useResizeDragShield } from '../../hooks/useResizeDragShield';
 import { handleWorkspaceFileSelect as handleWorkspaceFileSelectUtil } from '../../utils/workspaceFileOperations';
 import { createInitialFileContent, createMockupContent } from '../../utils/fileUtils';
 import { getFileName } from '../../utils/pathUtils';
@@ -119,7 +120,8 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
   const handleSaveRef = useRef<(() => Promise<void>) | null>(null);
   const getNavigationStateRef = useRef<(() => any) | null>(null);
   const isInitializedRef = useRef<boolean>(false);
-  const isResizingRef = useRef<boolean>(false);
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
   const chatSidebarRef = useRef<ChatSidebarRef>(null);
   const saveTabByIdRef = useRef<((tabId: string) => Promise<void>) | null>(null);
 
@@ -993,43 +995,19 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
     }
   }), [handleOpen, handleSaveAs, handleWorkspaceFileSelect, handleTabClose, toggleSidebarCollapsed]);
 
-  // Handle sidebar resize
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isResizingRef.current = true;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-  }, []);
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizingRef.current) return;
-
-      const newWidth = Math.min(Math.max(200, e.clientX), 500);
+  // Keep pointer input in the host document while dragging across iframe-backed editors.
+  const startSidebarResize = useResizeDragShield({
+    onMove: (event) => {
+      const newWidth = Math.min(Math.max(200, event.clientX), 500);
+      sidebarWidthRef.current = newWidth;
       setSidebarWidth(newWidth);
-    };
-
-    const handleMouseUp = () => {
-      if (!isResizingRef.current) return;
-
-      isResizingRef.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-
-      // Save the width
+    },
+    onEnd: () => {
       if (window.electronAPI && workspacePath) {
-        window.electronAPI.setSidebarWidth(workspacePath, sidebarWidth);
+        window.electronAPI.setSidebarWidth(workspacePath, sidebarWidthRef.current);
       }
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [sidebarWidth, workspacePath]);
+    },
+  });
 
   // Load sidebar width from storage
   useEffect(() => {
@@ -1278,8 +1256,12 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
 
             {/* Resize handle */}
             <div
-              onMouseDown={handleMouseDown}
-              className="w-1 cursor-col-resize shrink-0 relative z-10 bg-nim-secondary"
+              onPointerDown={startSidebarResize}
+              className="editor-mode-sidebar-resize-handle w-1 cursor-col-resize shrink-0 relative z-10 bg-nim-secondary"
+              data-testid="editor-mode-sidebar-resize-handle"
+              role="separator"
+              aria-label="Resize file sidebar"
+              aria-orientation="vertical"
             >
               <div
                 className="w-0.5 h-full mx-auto bg-nim-border transition-colors duration-200 hover:bg-nim-accent"
