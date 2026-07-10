@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
-<!-- Bug fixes go here -->
+- MCP servers disabled in Settings no longer load in Claude Code (SDK) sessions; the disable toggle now governs both the CLI and SDK paths.
 
 ### Removed
 <!-- Removed features go here -->
