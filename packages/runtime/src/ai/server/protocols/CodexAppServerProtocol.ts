@@ -58,6 +58,7 @@ import type {
   ItemCommandExecutionRequestApprovalParams,
   ItemPermissionsRequestApprovalParams,
   ItemStartedNotification,
+  McpElicitationResponse,
   ThreadResumeResponse,
   ThreadStartParams,
   ThreadStartResponse,
@@ -91,8 +92,8 @@ export interface CodexAppServerHostBindings {
   approveCommandExecution?: (params: ItemCommandExecutionRequestApprovalParams) => Promise<ApprovalResponse> | ApprovalResponse;
   /** Decide an arbitrary codex permissions request. */
   approvePermissions?: (params: ItemPermissionsRequestApprovalParams) => Promise<ApprovalResponse> | ApprovalResponse;
-  /** Handle an MCP elicitation prompt. */
-  handleMcpElicitation?: (params: unknown) => Promise<unknown> | unknown;
+  /** Handle an MCP elicitation prompt (MCP tool approval / form prompt). */
+  handleMcpElicitation?: (params: unknown) => Promise<McpElicitationResponse> | McpElicitationResponse;
   /** Handle a tool-driven user-input prompt. */
   handleToolUserInput?: (params: unknown) => Promise<unknown> | unknown;
   /** Execute a host-registered dynamic tool. Phase 2 plumbing; no callers yet. */
@@ -583,7 +584,13 @@ export class CodexAppServerProtocol implements AgentProtocol {
 
     client.setServerRequestHandler('mcpServer/elicitation/request', async (raw) => {
       if (this.host.handleMcpElicitation) return this.host.handleMcpElicitation(raw);
-      return null;
+      // No host binding: auto-accept, mirroring this transport's permissive
+      // exec/file defaults (approvalPolicy: 'never'). Returning `null` fails
+      // codex's deserializer ("invalid type: null, expected struct
+      // McpServerElicitationRequestResponse") and codex then reports every
+      // nimbalyst MCP tool call as "user rejected MCP tool call" (#797).
+      const autoAccept: McpElicitationResponse = { action: 'accept', content: null, _meta: null };
+      return autoAccept;
     });
 
     client.setServerRequestHandler('item/tool/requestUserInput', async (raw) => {
