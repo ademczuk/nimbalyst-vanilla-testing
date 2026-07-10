@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Codex tool results no longer appear as stray "message elided" warnings in iOS transcripts.
 
 ### Removed
 <!-- Removed features go here -->

@@ -98,6 +98,65 @@ describe('truncateContentForSync', () => {
     expect(result.stats.blocksTruncated).toBeGreaterThan(1);
   });
 
+  it('preserves Codex app-server command events while truncating nested output', () => {
+    const raw = JSON.stringify({
+      method: 'item/completed',
+      params: {
+        item: {
+          id: 'cmd-1',
+          type: 'commandExecution',
+          status: 'completed',
+          command: 'cat large.log',
+          aggregatedOutput: 'x'.repeat(32 * 1024),
+          exitCode: 0,
+        },
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+      },
+    });
+
+    const result = truncateContentForSync(raw, 'openai-codex');
+
+    expect(result.stats.bytesAfter).toBeLessThanOrEqual(16 * 1024);
+    expect(result.content).not.toContain('Full openai-codex message elided');
+    const parsed = JSON.parse(result.content);
+    expect(parsed.method).toBe('item/completed');
+    expect(parsed.params.item.aggregatedOutput).toContain('elided from mobile sync');
+    expect(parsed.params.item.command).toBe('cat large.log');
+  });
+
+  it('preserves Codex app-server MCP events while truncating nested result content', () => {
+    const raw = JSON.stringify({
+      method: 'item/completed',
+      params: {
+        item: {
+          id: 'mcp-1',
+          type: 'mcpToolCall',
+          status: 'completed',
+          server: 'posthog',
+          tool: 'exec',
+          arguments: { command: 'info execute-sql' },
+          result: {
+            content: [{ type: 'text', text: 'schema'.repeat(6 * 1024) }],
+          },
+        },
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+      },
+    });
+
+    const result = truncateContentForSync(raw, 'openai-codex');
+
+    expect(result.stats.bytesAfter).toBeLessThanOrEqual(16 * 1024);
+    expect(result.content).not.toContain('Full openai-codex message elided');
+    const parsed = JSON.parse(result.content);
+    expect(parsed.method).toBe('item/completed');
+    expect(parsed.params.item.result.content[0].text).toHaveLength(4 * 1024);
+    expect(parsed.params.item.result.content[0].text).toMatch(/^schemaschema/);
+    expect(parsed.params.item.result.content[1].text).toContain('elided from mobile sync');
+    expect(parsed.params.item.arguments).toEqual({ command: 'info execute-sql' });
+  });
+
   it('skips transient Codex app-server delta events from session-room sync', () => {
     expect(
       shouldSyncMessageForSessionRoom('openai-codex', {
