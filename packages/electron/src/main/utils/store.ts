@@ -10,6 +10,7 @@ import { DEFAULT_ONBOARDING_CONFIG } from '../../shared/types/workspace';
 import { AlphaFeatureTag, getDefaultAlphaFeatures, ALPHA_FEATURES } from '../../shared/alphaFeatures';
 import { DeveloperFeatureTag, getDefaultDeveloperFeatures, DEVELOPER_FEATURES } from '../../shared/developerFeatures';
 import { BetaFeatureTag, getDefaultBetaFeatures, enableAllBetaFeatures as enableAllBetaFeaturesUtil, BETA_FEATURES } from '../../shared/betaFeatures';
+import { deriveIssueKeyPrefix } from '../../shared/trackerIssueKeyPrefix';
 import { normalizeCodexProviderConfig, omitModelsField } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 
 // Theme can be a built-in theme or an extension theme ID (format: "extensionId:themeId")
@@ -667,6 +668,7 @@ function createDefaultWorkspaceState(workspacePath: string): WorkspaceState {
       customFolders: [],
     },
     collabPendingUpdates: {},
+    issueKeyPrefix: deriveIssueKeyPrefix(workspacePath),
     lastUpdated: Date.now(),
   };
 }
@@ -693,6 +695,13 @@ function normalizeWorkspaceState(raw: any, wsPath: string): WorkspaceState {
 
   // Deep merge raw data - this automatically preserves all fields
   deepMerge(state, raw);
+
+  // Preserve the historical NIM fallback for existing workspaces that never
+  // saved a prefix. Only newly-created workspace state gets the derived
+  // project-name default, so existing issue-key sequences do not change.
+  if (!Object.prototype.hasOwnProperty.call(raw, 'issueKeyPrefix')) {
+    state.issueKeyPrefix = undefined;
+  }
 
   // Ensure workspacePath is set correctly (in case raw had a different value)
   state.workspacePath = wsPath;

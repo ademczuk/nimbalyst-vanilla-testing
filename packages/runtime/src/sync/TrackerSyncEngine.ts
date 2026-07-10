@@ -187,6 +187,13 @@ export interface TrackerSyncEngineConfig {
   schemaSync?: TrackerSchemaSyncHooks;
 
   /**
+   * Prefix to install when the first bootstrap proves the tracker room is
+   * empty and still has the historical NIM default. Existing rooms and custom
+   * server prefixes are never changed.
+   */
+  initializeIssueKeyPrefix?: string;
+
+  /**
    * Resolve a fresh team-scoped JWT. Called on every (re)connect AND
    * during reconnect retries -- the JWT can expire during long
    * disconnections.
@@ -480,10 +487,14 @@ export class TrackerSyncEngine {
       // Loop while the server says it has more rows. SYNC_ID_INITIAL (0)
       // is the "send me everything" sentinel.
       let isFirstBatch = cursor === SYNC_ID_INITIAL;
+      const isInitialBootstrap = isFirstBatch;
+      let receivedItems = false;
+      let initialConfig: TrackerRoomConfig | undefined;
       let staleKeyRefreshTried = false;
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const response = await this.requestSync(cursor);
+        receivedItems ||= response.items.length > 0;
 
         // Stale-key-on-connect detection: if the server is shipping us
         // envelopes encrypted under a key whose fingerprint differs from
@@ -503,11 +514,25 @@ export class TrackerSyncEngine {
 
         await this.applyBootstrapBatch(response);
         if (isFirstBatch && response.config) {
+          initialConfig = response.config;
           this.config.onConfigChange?.(response.config);
         }
         isFirstBatch = false;
         cursor = response.cursorSyncId;
         if (!response.hasMore) break;
+      }
+
+      const desiredPrefix = this.config.initializeIssueKeyPrefix;
+      if (
+        isInitialBootstrap &&
+        !receivedItems &&
+        desiredPrefix &&
+        initialConfig?.issueKeyPrefix === 'NIM' &&
+        desiredPrefix !== initialConfig.issueKeyPrefix
+      ) {
+        // WebSocket messages are ordered, so the config reaches the room
+        // before replayPending can ask it to allocate the first issue key.
+        this.setIssueKeyPrefix(desiredPrefix);
       }
 
       await this.runSchemaBootstrap();

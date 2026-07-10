@@ -60,6 +60,7 @@ import { applyRemoteWorkspaceTrackerSchemaDef } from './TrackerSchemaService';
 import { windows, windowStates } from '../window/windowState';
 import { getEffectiveTrackerSyncPolicy, decideBackfillAction } from './TrackerPolicyService';
 import { rowToTrackerItem } from '../mcp/tools/trackerToolHandlers';
+import { getWorkspaceState } from '../utils/store';
 
 // ============================================================================
 // Engine registry (per workspace)
@@ -304,6 +305,7 @@ async function doInitializeTrackerSync(workspacePath: string): Promise<void> {
     encryptionKey: encryptionKey ?? undefined,
     orgKeyFingerprint,
     persistence,
+    initializeIssueKeyPrefix: getWorkspaceState(workspacePath).issueKeyPrefix,
     schemaSync: {
       getMaxSyncId: () => getMaxTrackerSchemaSyncId(workspacePath),
       listUnsynced: () => listUnsyncedTrackerSchemaDefs(workspacePath),

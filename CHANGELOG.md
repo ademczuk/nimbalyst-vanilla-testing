@@ -20,6 +20,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 <!-- Removed features go here -->
 
+## [0.68.1] - 2026-07-10
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- New projects now derive their tracker issue-key prefix from the project name instead of always using `NIM`.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Long Claude Code thinking phases no longer end early with a "no output for 120s" stream-silent error.
+- Codex tool results no longer appear as stray "message elided" warnings in iOS transcripts.
+- Tracker reference popovers now follow the active theme instead of always rendering light.
+
+### Removed
+<!-- Removed features go here -->
+
 ## [0.68.0] - 2026-07-10
 
 

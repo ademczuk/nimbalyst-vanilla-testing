@@ -856,9 +856,11 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // Stall watchdog window (NIM-1481). If the SDK yields no chunk of ANY kind
       // for this long while the model -- not a tool -- is expected to be producing
       // output, the stream is wedged (e.g. a thinking phase whose upstream died
-      // silently) and the turn is aborted instead of hanging forever. Legitimate
-      // long thinking never trips it because the SDK emits `thinking_tokens`
-      // heartbeats roughly once a second.
+      // silently) and the turn is aborted instead of hanging forever. The
+      // `thinking_tokens` chunk keeps a live thinking phase alive, but it is a
+      // variable-cadence estimated-token progress tick (avg ~5s, observed intra-turn
+      // gaps up to ~589s), NOT a ~1Hz keepalive -- so the window is sized generously
+      // above that jitter to avoid reaping legitimate long rewrites (#802).
       const streamStallMs = resolveStreamStallMs();
       const armPromptEndTimer = (reason: string) => {
         if (this.promptEndTimer) {
@@ -924,11 +926,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           // stall watchdog. The watchdog is only armed while the MODEL is
           // expected to be producing output: before any `result` chunk, with no
           // tool executing, no background sub-agent draining, and no pending user
-          // prompt/permission request. In those states the SDK heartbeats
-          // (`thinking_tokens`) continuously, so total silence for streamStallMs
-          // means the stream is wedged. During a long tool call, sub-agent drain,
-          // or user interaction, silence is legitimate and the watchdog stays
-          // disarmed so real work is never reaped. NIM-1481.
+          // prompt/permission request. In those states the SDK still emits
+          // `thinking_tokens` progress ticks (bursty, not a fixed cadence), so total
+          // silence for the full streamStallMs window means the stream is wedged.
+          // During a long tool call, sub-agent drain, or user interaction, silence is
+          // legitimate and the watchdog stays disarmed so real work is never reaped.
+          // NIM-1481 / #802.
           const watchdogActive = shouldArmStreamStallWatchdog({
             resultReceivedTime,
             outstandingToolCalls,

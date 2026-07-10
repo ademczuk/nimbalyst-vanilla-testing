@@ -539,15 +539,68 @@ function truncateClaudeToolUseResultInPlace(
 }
 
 /**
- * Walk a parsed Codex SDK event and truncate any oversize string fields on
- * its `item` record in place. Codex events look like
+ * Walk a parsed Codex event and truncate any oversize fields on its `item`
+ * record in place. SDK events look like
  *   { type: 'item.completed', item: { type: 'command_execution',
  *     aggregated_output: '...full shell stdout...' } }
- * with the bloat almost always in `aggregated_output`. `output` and `result`
- * are also listed because the Codex tool-call extractor in
- * `codexEventParser.ts` accepts them as aliases for the same payload.
+ * while app-server events wrap the item under `{ method, params: { item } }`
+ * and currently use camel-case command fields. MCP results are structured as
+ * `{ result: { content: [{ type: 'text', text: '...' }] } }`.
  */
-const CODEX_TRUNCATE_FIELDS = ['aggregated_output', 'output', 'result'] as const;
+const CODEX_TRUNCATE_FIELDS = ['aggregated_output', 'aggregatedOutput', 'output', 'result'] as const;
+
+function recordCodexTruncation(
+  originalBytes: number,
+  truncatedBytes: number,
+  stats: PerMessageTruncationStats,
+  blockBytesBefore: number[],
+): void {
+  const elided = originalBytes - truncatedBytes;
+  stats.blocksTruncated++;
+  stats.elidedBytes += elided;
+  if (elided > stats.largestBlockElidedBytes) {
+    stats.largestBlockElidedBytes = elided;
+  }
+  blockBytesBefore.push(originalBytes);
+}
+
+function truncateCodexStructuredResultInPlace(
+  value: unknown,
+  stats: PerMessageTruncationStats,
+  blockBytesBefore: number[],
+): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+
+  const resultObj = value as Record<string, unknown>;
+  let modified = false;
+
+  for (const [key, fieldValue] of Object.entries(resultObj)) {
+    const result = truncateBlockContent(fieldValue);
+    if (result) {
+      resultObj[key] = result.content;
+      recordCodexTruncation(result.originalBytes, result.truncatedBytes, stats, blockBytesBefore);
+      modified = true;
+      continue;
+    }
+
+    // Structured sidecars are not consumed by the transcript parser. Keep the
+    // field name and a compact marker rather than allowing a large opaque
+    // object to force the entire app-server envelope through the whole-message
+    // clamp.
+    if (fieldValue && typeof fieldValue === 'object') {
+      const json = JSON.stringify(fieldValue);
+      const originalBytes = utf8ByteLen(json);
+      if (originalBytes > TRUNCATE_THRESHOLD_BYTES) {
+        const marker = `[... ${formatBytes(originalBytes)} elided from mobile sync; view on desktop for full output]`;
+        resultObj[key] = marker;
+        recordCodexTruncation(originalBytes, utf8ByteLen(marker), stats, blockBytesBefore);
+        modified = true;
+      }
+    }
+  }
+
+  return modified;
+}
 
 function truncateCodexItemInPlace(
   parsed: unknown,
@@ -555,7 +608,8 @@ function truncateCodexItemInPlace(
   blockBytesBefore: number[],
 ): boolean {
   if (!parsed || typeof parsed !== 'object') return false;
-  const item = (parsed as { item?: unknown }).item;
+  const parsedRecord = parsed as { item?: unknown; params?: { item?: unknown } };
+  const item = parsedRecord.item ?? parsedRecord.params?.item;
   if (!item || typeof item !== 'object') return false;
 
   const itemObj = item as Record<string, unknown>;
@@ -563,17 +617,15 @@ function truncateCodexItemInPlace(
 
   for (const field of CODEX_TRUNCATE_FIELDS) {
     const value = itemObj[field];
-    if (typeof value !== 'string') continue;
+    if (field === 'result' && truncateCodexStructuredResultInPlace(value, stats, blockBytesBefore)) {
+      modified = true;
+      continue;
+    }
+
     const result = truncateBlockContent(value);
     if (!result) continue;
     itemObj[field] = result.content;
-    const elided = result.originalBytes - result.truncatedBytes;
-    stats.blocksTruncated++;
-    stats.elidedBytes += elided;
-    if (elided > stats.largestBlockElidedBytes) {
-      stats.largestBlockElidedBytes = elided;
-    }
-    blockBytesBefore.push(result.originalBytes);
+    recordCodexTruncation(result.originalBytes, result.truncatedBytes, stats, blockBytesBefore);
     modified = true;
   }
   return modified;

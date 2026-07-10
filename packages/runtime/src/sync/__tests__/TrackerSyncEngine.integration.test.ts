@@ -90,6 +90,7 @@ async function buildEngine(opts: {
   serverConnect: () => WebSocket;
   encryptionKey: CryptoKey;
   refreshKey?: () => Promise<TrackerKeyMaterial | null>;
+  initializeIssueKeyPrefix?: string;
 }): Promise<BuiltEngine> {
   const fingerprint = await fingerprintTrackerKey(opts.encryptionKey);
   const persistence = new InMemoryTrackerPersistence();
@@ -101,6 +102,7 @@ async function buildEngine(opts: {
     encryptionKey: opts.encryptionKey,
     orgKeyFingerprint: fingerprint,
     persistence,
+    initializeIssueKeyPrefix: opts.initializeIssueKeyPrefix,
     getJwt: async () => 'fake-jwt',
     refreshKey: opts.refreshKey,
     createWebSocket: () => opts.serverConnect(),
@@ -571,6 +573,50 @@ describe('TrackerSyncEngine (in-memory)', () => {
 
     a.engine.destroy();
     b.engine.destroy();
+  });
+
+  it('initializes an empty room with the project-derived issue prefix', async () => {
+    const server = createFakeServer();
+    const a = await buildEngine({
+      room: server.room,
+      serverConnect: server.connect,
+      encryptionKey: key,
+      initializeIssueKeyPrefix: 'STR',
+    });
+    const seen: string[] = [];
+    a.config.onConfigChange = (config) => seen.push(config.issueKeyPrefix);
+
+    await a.engine.connect();
+    await waitUntil(() => seen.includes('STR'));
+    await a.engine.upsertItem(basePayload('first-derived'));
+    await waitUntil(() => server.room.getStoredItems().length === 1);
+
+    expect(server.room.getStoredItems()[0]?.issueKey).toBe('STR-1');
+    a.engine.destroy();
+  });
+
+  it('does not replace the prefix of a room that already has items', async () => {
+    const server = createFakeServer();
+    const seed = await buildEngine({ room: server.room, serverConnect: server.connect, encryptionKey: key });
+    await seed.engine.connect();
+    await seed.engine.upsertItem(basePayload('existing'));
+    await waitUntil(() => server.room.getStoredItems().length === 1);
+    seed.engine.destroy();
+
+    const next = await buildEngine({
+      room: server.room,
+      serverConnect: server.connect,
+      encryptionKey: key,
+      initializeIssueKeyPrefix: 'STR',
+    });
+    const seen: string[] = [];
+    next.config.onConfigChange = (config) => seen.push(config.issueKeyPrefix);
+    await next.engine.connect();
+    await waitUntil(() => next.engine.getStatus() === 'connected');
+
+    expect(seen).toContain('NIM');
+    expect(seen).not.toContain('STR');
+    next.engine.destroy();
   });
 
   // ==========================================================================

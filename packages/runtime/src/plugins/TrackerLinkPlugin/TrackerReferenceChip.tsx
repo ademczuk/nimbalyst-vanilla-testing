@@ -49,11 +49,11 @@ const STATUS_COLORS: Record<string, string> = {
   'wont-fix': '#6b7280',
 };
 
-const UNRESOLVED_COLOR = 'var(--nim-text-faint, #9ca3af)';
+const UNRESOLVED_COLOR = 'var(--nim-text-faint)';
 
 function statusColor(status: string | undefined): string {
   if (!status) return UNRESOLVED_COLOR;
-  return STATUS_COLORS[status] ?? 'var(--nim-text-muted, #6b7280)';
+  return STATUS_COLORS[status] ?? 'var(--nim-text-muted)';
 }
 
 interface TrackerReferenceChipProps {
@@ -112,8 +112,8 @@ export function TrackerReferenceChip({
           lineHeight: '1.5',
           verticalAlign: 'baseline',
           cursor: 'pointer',
-          background: 'var(--nim-surface-secondary, rgba(127,127,127,0.12))',
-          border: '1px solid var(--nim-border, rgba(127,127,127,0.25))',
+          background: 'var(--nim-bg-secondary)',
+          border: '1px solid var(--nim-border)',
           whiteSpace: 'nowrap',
           userSelect: 'none',
         }}
@@ -130,7 +130,7 @@ export function TrackerReferenceChip({
         />
         <span
           className="tracker-reference-chip-key"
-          style={{ fontWeight: 600, color: 'var(--nim-text, inherit)' }}
+          style={{ fontWeight: 600, color: 'var(--nim-text)' }}
         >
           {label}
         </span>
@@ -138,7 +138,7 @@ export function TrackerReferenceChip({
           <span
             className="tracker-reference-chip-title"
             style={{
-              color: 'var(--nim-text-muted, #6b7280)',
+              color: 'var(--nim-text-muted)',
               maxWidth: '40ch',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -191,11 +191,11 @@ function TrackerReferencePreview({
         maxWidth: '320px',
         padding: '10px 12px',
         borderRadius: '8px',
-        background: 'var(--nim-surface, #2d2d2d)',
-        border: '1px solid var(--nim-border, rgba(127,127,127,0.3))',
+        background: 'var(--nim-bg)',
+        border: '1px solid var(--nim-border)',
         boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
         fontSize: '12px',
-        color: 'var(--nim-text, #e5e5e5)',
+        color: 'var(--nim-text)',
         zIndex: 1000,
       }}
     >
@@ -222,7 +222,7 @@ function TrackerReferencePreview({
               {resolved.issueKey ?? referenceKey}
             </span>
             {resolved.status ? (
-              <span style={{ color: 'var(--nim-text-muted, #9ca3af)' }}>
+              <span style={{ color: 'var(--nim-text-muted)' }}>
                 {resolved.status}
               </span>
             ) : null}
@@ -232,7 +232,7 @@ function TrackerReferencePreview({
             style={{
               display: 'flex',
               gap: '8px',
-              color: 'var(--nim-text-faint, #9ca3af)',
+              color: 'var(--nim-text-faint)',
               marginBottom: '8px',
             }}
           >
@@ -247,9 +247,9 @@ function TrackerReferencePreview({
               fontSize: '12px',
               padding: '4px 10px',
               borderRadius: '6px',
-              border: '1px solid var(--nim-border, rgba(127,127,127,0.3))',
-              background: 'var(--nim-surface-secondary, rgba(127,127,127,0.12))',
-              color: 'var(--nim-text, inherit)',
+              border: '1px solid var(--nim-border)',
+              background: 'var(--nim-bg-secondary)',
+              color: 'var(--nim-text)',
               cursor: 'pointer',
             }}
           >
@@ -257,7 +257,7 @@ function TrackerReferencePreview({
           </button>
         </>
       ) : (
-        <div style={{ color: 'var(--nim-text-muted, #9ca3af)' }}>
+        <div style={{ color: 'var(--nim-text-muted)' }}>
           <div style={{ fontWeight: 600, marginBottom: '4px' }}>
             {referenceKey}
           </div>
