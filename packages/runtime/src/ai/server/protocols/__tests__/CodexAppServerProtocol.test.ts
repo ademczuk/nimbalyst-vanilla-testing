@@ -86,6 +86,30 @@ function nextWrittenMatching(child: FakeChildProcess, method: string, timeoutMs 
   });
 }
 
+/** Wait for the client's response line to a server-initiated request `id`. */
+function nextResponseFor(child: FakeChildProcess, id: unknown, timeoutMs = 1000): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const check = () => {
+      for (const line of child.writtenLines) {
+        if (line && typeof line === 'object') {
+          const obj = line as Record<string, unknown>;
+          if (obj.id === id && ('result' in obj || 'error' in obj)) {
+            resolve(obj);
+            return;
+          }
+        }
+      }
+      if (Date.now() - start > timeoutMs) {
+        reject(new Error(`timeout waiting for response to ${JSON.stringify(id)}; saw: ${JSON.stringify(child.writtenLines)}`));
+        return;
+      }
+      setTimeout(check, 5);
+    };
+    check();
+  });
+}
+
 describe('CodexAppServerProtocol', () => {
   let child: FakeChildProcess;
 
@@ -269,6 +293,33 @@ describe('CodexAppServerProtocol', () => {
     });
     child.emitLine({ id: startReq.id, result: { thread: { id: 't-mcp' } } });
     const session = await sessionPromise;
+    protocol.cleanupSession(session);
+  });
+
+  it('answers mcpServer/elicitation/request with an accept struct, not null (#797)', async () => {
+    // Regression: codex forwards MCP tool-approval as an elicitation request.
+    // Replying `null` fails codex's deserializer and it reports every nimbalyst
+    // MCP tool call as "user rejected MCP tool call" with no visible prompt.
+    const protocol = new CodexAppServerProtocol();
+    const sessionPromise = protocol.createSession({ workspacePath: '/tmp/ws' });
+    const initReq = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: initReq.id, result: { codexHome: '/fake', platformFamily: 'unix', platformOs: 'macos', userAgent: 'fake/0' } });
+    const startReq = await nextWrittenMatching(child, 'thread/start');
+    child.emitLine({ id: startReq.id, result: { thread: { id: 'thread-elicit' } } });
+    const session = await sessionPromise;
+
+    // Codex asks the client to handle an MCP elicitation (tool approval).
+    child.emitLine({
+      id: 'elicit-1',
+      method: 'mcpServer/elicitation/request',
+      params: { serverName: 'nimbalyst-trackers', message: 'approve tracker_list?' },
+    });
+
+    const response = await nextResponseFor(child, 'elicit-1');
+    expect(response.error).toBeUndefined();
+    expect(response.result).not.toBeNull();
+    expect(response.result).toMatchObject({ action: 'accept' });
+
     protocol.cleanupSession(session);
   });
 

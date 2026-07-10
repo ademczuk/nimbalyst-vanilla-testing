@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Editing a markdown file with em dashes or curly quotes no longer corrupts the text into `â` symbols or traps it in a reload loop.
 - File links to paths with spaces (e.g. `My Project`) now stay clickable in chat instead of breaking at the first space.
 - Sidebar resize handles now keep responding while dragged over a mockup preview.
+- Codex/ChatGPT sessions no longer reject Nimbalyst's own tools with "user rejected MCP tool call".
 
 ### Removed
 <!-- Removed features go here -->

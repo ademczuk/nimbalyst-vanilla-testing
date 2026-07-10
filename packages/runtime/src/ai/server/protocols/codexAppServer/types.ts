@@ -448,6 +448,22 @@ export interface ApprovalResponse {
   decision: 'approved' | 'denied' | 'abort';
 }
 
+// Response to codex's `mcpServer/elicitation/request` (server -> client). Codex
+// forwards an MCP server's elicitation -- used both for MCP tool approval and
+// for form-style prompts -- and expects this structured reply. Shape mirrors
+// codex's `McpServerElicitationRequestResponse` (action + optional content and
+// `_meta`). Returning `null` fails codex's deserializer ("invalid type: null,
+// expected struct McpServerElicitationRequestResponse") and surfaces to the
+// user as "user rejected MCP tool call" for every nimbalyst MCP tool (#797).
+export type McpElicitationAction = 'accept' | 'decline' | 'cancel';
+
+export interface McpElicitationResponse {
+  action: McpElicitationAction;
+  /** Structured user input for accepted elicitations; null for decline/cancel. */
+  content?: unknown | null;
+  _meta?: unknown | null;
+}
+
 // Dynamic tool call (codex asks the host to run a host-registered tool).
 export interface DynamicToolCallParams {
   threadId: string;
