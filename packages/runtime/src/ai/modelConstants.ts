@@ -108,6 +108,27 @@ export const CLAUDE_MODELS: ModelDefinition[] = [
 
 export const OPENAI_MODELS: ModelDefinition[] = [
   {
+    id: 'gpt-5.6-sol',
+    displayName: 'GPT-5.6 Sol',
+    shortName: '5.6 Sol',
+    maxTokens: 128000,
+    contextWindow: 372000,
+  },
+  {
+    id: 'gpt-5.6-terra',
+    displayName: 'GPT-5.6 Terra',
+    shortName: '5.6 Terra',
+    maxTokens: 128000,
+    contextWindow: 372000,
+  },
+  {
+    id: 'gpt-5.6-luna',
+    displayName: 'GPT-5.6 Luna',
+    shortName: '5.6 Luna',
+    maxTokens: 128000,
+    contextWindow: 372000,
+  },
+  {
     id: 'gpt-5.5',
     displayName: 'GPT-5.5',
     shortName: '5.5',
@@ -334,11 +355,11 @@ export const CLAUDE_CODE_SAFE_FALLBACK_MODEL = 'claude-code:opus' as const;
 
 export const DEFAULT_MODELS = {
   claude: 'claude:claude-opus-4-8',
-  openai: 'openai:gpt-5.5',
+  openai: 'openai:gpt-5.6-sol',
   'claude-code': 'claude-code:opus-1m',
   'claude-code-cli': 'claude-code-cli:opus-1m',
-  'openai-codex': 'openai-codex:gpt-5.5',
-  'openai-codex-acp': 'openai-codex-acp:gpt-5.5',
+  'openai-codex': 'openai-codex:gpt-5.6-sol',
+  'openai-codex-acp': 'openai-codex-acp:gpt-5.6-sol',
   lmstudio: 'lmstudio:local-model',
   opencode: 'opencode:anthropic/claude-sonnet-4-5',
   'copilot-cli': 'copilot-cli:default',

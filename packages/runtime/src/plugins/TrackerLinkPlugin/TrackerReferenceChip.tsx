@@ -139,7 +139,7 @@ export function TrackerReferenceChip({
             className="tracker-reference-chip-title"
             style={{
               color: 'var(--nim-text-muted, #6b7280)',
-              maxWidth: '18ch',
+              maxWidth: '40ch',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
             }}

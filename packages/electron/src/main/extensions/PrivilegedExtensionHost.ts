@@ -367,30 +367,7 @@ export class PrivilegedExtensionHost extends EventEmitter {
       return this.snapshot(managed);
     }
 
-    // Dev convenience: when dev backend modules are explicitly allowed
-    // (NIMBALYST_ALLOW_DEV_BACKEND_MODULES=1 in a non-packaged build), auto-grant
-    // the module's declared permissions. The flag is the developer's explicit
-    // opt-in to trust dev backend modules, so a turn should not hang on a
-    // first-use consent prompt. A packaged build (no flag) still raises the
-    // prompt below. This grant is global so it persists across the dev session.
-    if (
-      process.env.NIMBALYST_ALLOW_DEV_BACKEND_MODULES === '1' &&
-      !app.isPackaged &&
-      declared.length > 0
-    ) {
-      grantModulePermissions({
-        extensionId: args.extensionId,
-        moduleId: args.module.id,
-        permissions: declared,
-        scope: 'global',
-      });
-      logger.main.info(
-        `[PrivilegedExtensionHost] dev auto-grant ${args.extensionId}/${args.module.id}: ${declared.join(', ')}`
-      );
-    }
-
-    // Built-in extensions ship inside the app bundle and pass the
-    // backend-module allowlist unconditionally -- they are the same trust
+    // Built-in extensions ship inside the app bundle -- they are the same trust
     // domain as the app itself, so a first-use consent prompt would be
     // warning the user about code they already installed. Auto-grant
     // globally so the prompt below never raises for built-ins; marketplace

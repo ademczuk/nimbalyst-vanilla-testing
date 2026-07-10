@@ -96,6 +96,9 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     contextWindow: number;
     maxTokens: number;
   }> = [
+    { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', contextWindow: 372000, maxTokens: 128000 },
+    { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', contextWindow: 372000, maxTokens: 128000 },
+    { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', contextWindow: 372000, maxTokens: 128000 },
     { id: 'gpt-5.5', name: 'GPT-5.5', contextWindow: 400000, maxTokens: 128000 },
     { id: 'gpt-5.4', name: 'GPT-5.4', contextWindow: 400000, maxTokens: 128000 },
     { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex', contextWindow: 400000, maxTokens: 128000 },
@@ -105,6 +108,9 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     { id: 'gpt-5.1-codex-mini', name: 'GPT-5.1 Codex Mini', contextWindow: 400000, maxTokens: 128000 },
   ];
   private static readonly MODEL_FALLBACK_PRIORITY: ReadonlyArray<string> = [
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
     'gpt-5.5',
     'gpt-5.4',
     'gpt-5.3-codex',
@@ -428,6 +434,9 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     'cli',
   ]);
   private static readonly MODEL_REPLACEMENTS = new Map<string, string>([
+    // Codex (ChatGPT-account auth) rejects the bare `gpt-5.6` alias that the
+    // OpenAI API accepts; route it to the flagship Sol tier.
+    ['gpt-5.6', 'gpt-5.6-sol'],
     ['gpt-5', 'gpt-5.2'],
     ['gpt-5-codex', 'gpt-5.4'],
     ['gpt-5.4-codex', 'gpt-5.4'],
@@ -447,7 +456,7 @@ export class OpenAICodexProvider extends BaseAgentProvider {
   static normalizeModelSelection(modelId: string): string {
     const normalized = modelId.trim().toLowerCase();
     if (OpenAICodexProvider.LEGACY_MODEL_ALIASES.has(normalized)) {
-      return 'openai-codex:gpt-5.5';
+      return 'openai-codex:gpt-5.6-sol';
     }
 
     const parsed = ModelIdentifier.tryParse(modelId);
@@ -1722,7 +1731,7 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     const resolved = parsed ? parsed.model : configured.replace(/^openai-codex:/, '');
     const normalized = resolved.toLowerCase();
     if (normalized === 'openai-codex-cli' || normalized === 'default' || normalized === 'cli') {
-      return 'gpt-5.5';
+      return 'gpt-5.6-sol';
     }
 
     // Pass the model directly to the Codex SDK without pre-validation.

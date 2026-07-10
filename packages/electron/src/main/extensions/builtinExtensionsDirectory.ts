@@ -50,8 +50,8 @@ export async function getBuiltinExtensionsDirectory(): Promise<string | null> {
  * True when `extensionPath` points inside the built-in extensions directory.
  * Built-in extensions ship with the app bundle (or the in-repo
  * packages/extensions dir in dev) and are the same trust domain as the app
- * itself, which is why the backend-module allowlist admits them
- * unconditionally and the consent prompt is skipped for them.
+ * itself, which is why their backend modules are auto-granted and the consent
+ * prompt is skipped for them.
  */
 export async function isBuiltinExtensionPath(extensionPath: string): Promise<boolean> {
   const builtinDir = await getBuiltinExtensionsDirectory();

@@ -11,13 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 <!-- New features go here -->
 - OpenCode presets now include GLM 5.2 through the Z.AI and Z.AI Coding Plan providers.
+- GPT-5.6 (Sol, Terra, and Luna) is available for the OpenAI and Codex agents, with Sol as the new default.
 
 ### Changed
-<!-- Changes to existing functionality go here -->
+- Any extension can now enable a native-code backend module, approved once via a single consent prompt instead of an allowlist or a per-workspace dialog.
+- Tracker link chips in chat now show more of the item title before truncating.
 
 ### Fixed
 <!-- Bug fixes go here -->
 - Bundled Codex runtime updated to 0.142.5 so the Codex Chrome plugin can start in Nimbalyst with the current Codex plugin protocol.
+- The Claude Usage popover now shows the Claude provider icon instead of a generic layers icon.
+- Editing a markdown file with em dashes or curly quotes no longer corrupts the text into `â` symbols or traps it in a reload loop.
+- File links to paths with spaces (e.g. `My Project`) now stay clickable in chat instead of breaking at the first space.
+- Sidebar resize handles now keep responding while dragged over a mockup preview.
 
 ### Removed
 <!-- Removed features go here -->

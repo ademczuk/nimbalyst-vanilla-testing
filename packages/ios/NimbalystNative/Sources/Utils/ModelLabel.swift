@@ -150,6 +150,9 @@ public enum ModelLabel {
     /// (e.g. "GPT-5.4" rather than just "5.4") so the badge reads cleanly
     /// without relying on a neighboring provider word.
     private static let openAIShortNames: [String: String] = [
+        "gpt-5.6-sol": "GPT-5.6 Sol",
+        "gpt-5.6-terra": "GPT-5.6 Terra",
+        "gpt-5.6-luna": "GPT-5.6 Luna",
         "gpt-5.5": "GPT-5.5",
         "gpt-5.4": "GPT-5.4",
         "gpt-5.3-chat-latest": "GPT-5.3",

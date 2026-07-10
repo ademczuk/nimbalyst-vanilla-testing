@@ -57,6 +57,9 @@ export class OpenAICodexACPProvider extends BaseAgentProvider {
     contextWindow: number;
     maxTokens: number;
   }> = [
+    { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', contextWindow: 372000, maxTokens: 128000 },
+    { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', contextWindow: 372000, maxTokens: 128000 },
+    { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', contextWindow: 372000, maxTokens: 128000 },
     { id: 'gpt-5.5', name: 'GPT-5.5', contextWindow: 400000, maxTokens: 128000 },
     { id: 'gpt-5.4', name: 'GPT-5.4', contextWindow: 400000, maxTokens: 128000 },
     { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex', contextWindow: 400000, maxTokens: 128000 },
@@ -529,7 +532,7 @@ export class OpenAICodexACPProvider extends BaseAgentProvider {
           .replace(/^openai-codex:/, '');
     const normalized = resolved.toLowerCase();
     if (!normalized || normalized === 'default' || normalized === 'cli') {
-      return 'gpt-5.5';
+      return 'gpt-5.6-sol';
     }
     return resolved;
   }
