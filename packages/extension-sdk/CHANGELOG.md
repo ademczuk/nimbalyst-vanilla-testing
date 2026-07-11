@@ -15,6 +15,10 @@ The SDK is versioned independently of the Nimbalyst app. Each release declares i
 
 ## [Unreleased]
 
+### Added
+
+- Host-provided tracker reference chips and pickers let extensions persist stable item keys while using Nimbalyst's live metadata and navigation.
+
 ## [0.2.1]
 
 ### Added
