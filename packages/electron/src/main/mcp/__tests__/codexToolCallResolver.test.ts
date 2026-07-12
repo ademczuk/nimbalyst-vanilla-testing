@@ -6,6 +6,7 @@ import {
   extractToolUseIdFromMcpRequest,
   findCodexAppServerToolCallId,
   resolveAskUserQuestionPromptTargets,
+  resolvePromptTargets,
   resolveRequestUserInputPromptTargets,
   resolveToolUseIdFromMcpRequest,
 } from "../tools/codexToolCallResolver";
@@ -87,6 +88,18 @@ describe("codexToolCallResolver", () => {
         },
       },
     }, "session-1", "PromptForUserInput")).resolves.toBe("call_recovered");
+  });
+
+  it("resolves generic prompt targets, expanding synthetic ids", () => {
+    expect(resolvePromptTargets("nimtc|call_generic|1779232811883|74")).toEqual({
+      canonicalId: "nimtc|call_generic|1779232811883|74",
+      rawId: "call_generic",
+      waiterIds: ["nimtc|call_generic|1779232811883|74", "call_generic"],
+    });
+    expect(resolvePromptTargets("call_generic")).toEqual({
+      canonicalId: "call_generic",
+      waiterIds: ["call_generic"],
+    });
   });
 
   it("expands synthetic prompt ids into waiter aliases", () => {

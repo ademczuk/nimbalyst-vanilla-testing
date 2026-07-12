@@ -143,34 +143,55 @@ export async function resolveToolUseIdFromMcpRequest(
 }
 
 /**
- * Expand a renderer prompt id into every prompt id the waiter/DB may know.
+ * Prompt-type-agnostic target set: the canonical id the renderer submitted,
+ * the raw `call_...` id behind a Codex synthetic id (if any), and the full
+ * alias list a waiter / persisted response row may key on.
+ */
+export interface PromptTargets {
+  canonicalId: string;
+  rawId?: string;
+  waiterIds: string[];
+}
+
+/**
+ * Expand a renderer prompt id into every id the waiter/DB may know.
  *
  * For Codex, widgets may submit the synthetic `nimtc|...` id while the MCP
  * waiter and persisted response row also need to recognize the raw `call_...`
- * id behind it.
+ * id behind it. This is the single generic resolver; the named wrappers below
+ * only reshape its result into the legacy field names their call sites read.
  */
+export function resolvePromptTargets(id: string): PromptTargets {
+  const waiterIds = getCodexToolLookupAliases(id);
+  const rawId = waiterIds.find((candidate) => candidate !== id);
+
+  return {
+    canonicalId: id,
+    ...(rawId ? { rawId } : {}),
+    waiterIds,
+  };
+}
+
 export function resolveRequestUserInputPromptTargets(
   promptId: string,
 ): RequestUserInputPromptTargets {
-  const waiterPromptIds = getCodexToolLookupAliases(promptId);
-  const rawPromptId = waiterPromptIds.find((id) => id !== promptId);
+  const { canonicalId, rawId, waiterIds } = resolvePromptTargets(promptId);
 
   return {
-    promptId,
-    ...(rawPromptId ? { rawPromptId } : {}),
-    waiterPromptIds,
+    promptId: canonicalId,
+    ...(rawId ? { rawPromptId: rawId } : {}),
+    waiterPromptIds: waiterIds,
   };
 }
 
 export function resolveAskUserQuestionPromptTargets(
   questionId: string,
 ): AskUserQuestionPromptTargets {
-  const waiterQuestionIds = getCodexToolLookupAliases(questionId);
-  const rawQuestionId = waiterQuestionIds.find((id) => id !== questionId);
+  const { canonicalId, rawId, waiterIds } = resolvePromptTargets(questionId);
 
   return {
-    questionId,
-    ...(rawQuestionId ? { rawQuestionId } : {}),
-    waiterQuestionIds,
+    questionId: canonicalId,
+    ...(rawId ? { rawQuestionId: rawId } : {}),
+    waiterQuestionIds: waiterIds,
   };
 }

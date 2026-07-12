@@ -53,6 +53,50 @@ export function isAskUserQuestionProvider(provider: AIProvider): provider is AIP
   return !!provider && typeof (provider as any).resolveAskUserQuestion === 'function';
 }
 
+/**
+ * Interface for providers that resolve an ExitPlanMode confirmation.
+ * Implemented by agent providers that surface a plan-approval prompt.
+ */
+export interface ExitPlanModeConfirmationProvider {
+  resolveExitPlanModeConfirmation(
+    requestId: string,
+    response: { approved: boolean; clearContext?: boolean; feedback?: string },
+    sessionId?: string,
+    respondedBy?: 'desktop' | 'mobile'
+  ): void;
+}
+
+/**
+ * Type guard to check if a provider can resolve ExitPlanMode confirmations.
+ */
+export function isExitPlanModeProvider(
+  provider: AIProvider | null | undefined
+): provider is AIProvider & ExitPlanModeConfirmationProvider {
+  return !!provider && typeof (provider as any).resolveExitPlanModeConfirmation === 'function';
+}
+
+/**
+ * Interface for providers that resolve a ToolPermission request.
+ * Implemented by agent providers that gate tool use behind an approval prompt.
+ */
+export interface ToolPermissionProvider {
+  resolveToolPermission(
+    requestId: string,
+    response: { decision: 'allow' | 'deny'; scope: 'once' | 'session' | 'always' | 'always-all' },
+    sessionId?: string,
+    respondedBy?: 'desktop' | 'mobile'
+  ): void;
+}
+
+/**
+ * Type guard to check if a provider can resolve ToolPermission requests.
+ */
+export function isToolPermissionProvider(
+  provider: AIProvider | null | undefined
+): provider is AIProvider & ToolPermissionProvider {
+  return !!provider && typeof (provider as any).resolveToolPermission === 'function';
+}
+
 export interface SlashCommandCatalogProvider {
   getSlashCommands?(): string[];
   getSkills?(): string[];
