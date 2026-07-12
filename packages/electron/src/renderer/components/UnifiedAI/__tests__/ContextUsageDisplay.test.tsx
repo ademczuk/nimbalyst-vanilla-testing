@@ -71,11 +71,15 @@ describe('ContextUsageDisplay - cumulative rows are labeled as session totals (#
   });
 
   it('omits the session-totals label when there is no context window (header already says Token Usage)', () => {
+    // contextWindow: 0 is the no-window state (hasContextWindow derives from
+    // displayContextWindow > 0); the header then reads "Token Usage" and no
+    // window-fill total renders, so there is no second quantity to label.
     render(
       <ContextUsageDisplay
         inputTokens={80_000}
         outputTokens={20_000}
         totalTokens={100_000}
+        contextWindow={0}
       />
     );
     fireEvent.click(screen.getByTestId('context-indicator'));
