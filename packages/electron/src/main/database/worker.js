@@ -844,6 +844,14 @@ class PGLiteWorker {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_history_one_pending_per_file
         ON document_history(file_path)
         WHERE metadata->>'status' = 'pending-review';
+
+      -- Mirror of SQLite migration 0018_history_preedit_session_index.sql -- keep in sync.
+      -- Speeds up ToolCallMatcher.createSessionEnrichmentContext, which loads every
+      -- pre-edit snapshot for a session on ai:loadSession; without it the query
+      -- full-scanned document_history (1.7-4.7s on large sessions).
+      CREATE INDEX IF NOT EXISTS idx_history_preedit_session
+        ON document_history((metadata->>'sessionId'))
+        WHERE metadata->>'type' = 'pre-edit';
     `);
 
     // Session Files table

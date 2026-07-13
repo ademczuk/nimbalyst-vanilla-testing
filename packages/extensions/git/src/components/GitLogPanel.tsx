@@ -150,7 +150,47 @@ export function GitLogPanel({ host }: PanelHostProps) {
     },
     [workspacePath, commits, setSelectedHash],
   );
-  const { entries: logEntries, clearLog, withLog } = useOperationLog();
+  const subscribeToGitEvents = useCallback(
+    (event: string, callback: (data: unknown) => void) => host.onWorkspaceEvent(event, callback),
+    [host],
+  );
+  const { entries: logEntries, clearLog, withLog } = useOperationLog(
+    workspacePath,
+    subscribeToGitEvents,
+  );
+  const runningEntry = useMemo(
+    () => [...logEntries].reverse().find(entry => entry.status === 'running'),
+    [logEntries],
+  );
+  const observedRunningIdsRef = useRef(new Set<string>());
+  const [terminalPillEntry, setTerminalPillEntry] = useState<typeof runningEntry>();
+  const [operationClock, setOperationClock] = useState(Date.now());
+
+  useEffect(() => {
+    if (!runningEntry) return;
+    observedRunningIdsRef.current.add(runningEntry.id);
+    setOperationClock(Date.now());
+    const timer = window.setInterval(() => setOperationClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [runningEntry?.id]);
+
+  useEffect(() => {
+    const latest = logEntries[logEntries.length - 1];
+    if (!latest || latest.status === 'running' || !observedRunningIdsRef.current.has(latest.id)) return;
+    observedRunningIdsRef.current.delete(latest.id);
+    setTerminalPillEntry(latest);
+    if (latest.status !== 'success') return;
+    const timer = window.setTimeout(() => setTerminalPillEntry(undefined), 4000);
+    return () => window.clearTimeout(timer);
+  }, [logEntries]);
+
+  const statusPillEntry = runningEntry ?? terminalPillEntry;
+
+  const runningLatestLine = useMemo(() => {
+    if (!runningEntry?.output) return undefined;
+    const lines = runningEntry.output.split('\n').map(line => line.trim()).filter(Boolean);
+    return lines[lines.length - 1];
+  }, [runningEntry?.output]);
 
   // Changes tab: file mask filter (active value per-workspace, history shared globally)
   const [fileMaskEnabled, setFileMaskEnabled] = useState<boolean>(
@@ -553,7 +593,9 @@ export function GitLogPanel({ host }: PanelHostProps) {
               className={`git-tab-btn${activeTab === 'output' ? ' git-tab-btn--active' : ''}`}
               onClick={() => setActiveTab('output')}
             >
-              Output{logEntries.some(e => e.status === 'error') ? <span className="git-tab-dot git-tab-dot--error" /> : null}
+              Output
+              {runningEntry ? <span className="git-tab-running" /> : null}
+              {logEntries.some(e => e.status === 'error') ? <span className="git-tab-dot git-tab-dot--error" /> : null}
             </button>
           </div>
 
@@ -591,6 +633,29 @@ export function GitLogPanel({ host }: PanelHostProps) {
         )}
 
         <div className="git-log-toolbar-actions">
+          {statusPillEntry && (
+            <button
+              type="button"
+              className={`git-operation-status-pill git-operation-status-pill--${statusPillEntry.status}`}
+              onClick={() => {
+                setTerminalPillEntry(undefined);
+                setActiveTab('output');
+              }}
+              title={statusPillEntry.command}
+            >
+              {statusPillEntry.status === 'running' && <span className="git-output-spinner" />}
+              <span className="git-operation-status-label">
+                {statusPillEntry.status === 'running'
+                  ? `Running ${Math.max(0, Math.floor((operationClock - statusPillEntry.timestamp.getTime()) / 1000))}s`
+                  : statusPillEntry.status === 'success'
+                    ? `Completed${statusPillEntry.durationMs != null ? ` in ${(statusPillEntry.durationMs / 1000).toFixed(1)}s` : ''}`
+                    : `Failed${statusPillEntry.exitCode != null ? ` (exit ${statusPillEntry.exitCode})` : ''}`}
+              </span>
+              {statusPillEntry.status === 'running' && runningLatestLine && (
+                <span className="git-operation-status-line">{runningLatestLine}</span>
+              )}
+            </button>
+          )}
           {/* Action buttons */}
           <button
             className="git-log-action-btn"
@@ -598,7 +663,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
             disabled={!!actionLoading || isDetachedHead}
             title={isDetachedHead ? detachedHeadMessage : 'Push'}
           >
-            {actionLoading === 'push' ? '...' : '\u2191 Push'}
+            {'\u2191 Push'}
           </button>
           <div className="git-log-split-btn">
             <button
@@ -607,7 +672,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
               disabled={!!actionLoading || isDetachedHead}
               title={isDetachedHead ? detachedHeadMessage : `Pull (${pullStrategy})`}
             >
-              {actionLoading === 'pull' ? '...' : '\u2193 Pull'}
+              {'\u2193 Pull'}
             </button>
             <button
               className="git-log-action-btn git-log-split-btn-arrow"
@@ -649,7 +714,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
             disabled={!!actionLoading}
             title="Fetch"
           >
-            {actionLoading === 'fetch' ? '...' : 'Fetch'}
+            Fetch
           </button>
           <button
             className="git-log-action-btn git-log-action-btn--refresh"

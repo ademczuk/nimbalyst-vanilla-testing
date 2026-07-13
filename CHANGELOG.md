@@ -10,15 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- The Git extension now keeps a persistent, live command output history across panel and renderer reloads.
 - Tracker types can now be organized into manually ordered folders that stay in sync for everyone on a Nimbalyst Team project.
 - The Agent navigation icon now shows sessions awaiting input, running, or unread and opens a grouped attention list with a mark-all-read action.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- The Claude Agent model picker no longer lists duplicate "(1M)" rows — current models already run their full context window on their single row.
 - Completed tracker reference chips now show a checkmark and crossed-out text in documents and AI chats.
 - Mobile session sync now skips messages the mobile transcript never displays, cutting sync storage and traffic.
 
 ### Fixed
+- Very large AI sessions now open quickly instead of appearing to hang, and no longer slow down as your history grows.
 - PR mode now explains when a merge needs the GitHub CLI `workflow` scope and offers the recovery command instead of showing `gh api -X failed`.
 - Importing Mermaid diagrams into Excalidraw works again: flowcharts (including subgraphs) become editable shapes instead of failing or degrading to a broken image, and AI-added arrows no longer lose their labels.
 - Voice mode no longer stops listening while you are still speaking; the mic stays open until you finish or explicitly pause.
@@ -28,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stopping a running Codex session (including from mobile) now interrupts it immediately instead of leaving it stuck showing as running.
 - Answering an interactive prompt from mobile — approving a plan, granting a tool permission, or answering a question — now works across every agent instead of silently doing nothing on non-Claude-Code sessions.
 - Tracker status badges and custom columns no longer vanish after a synced update; they stay put instead of blanking out until the next reload.
+- A long queue of pending prompts now scrolls within a capped area instead of pushing the message input off screen.
 
 ### Removed
 <!-- Removed features go here -->

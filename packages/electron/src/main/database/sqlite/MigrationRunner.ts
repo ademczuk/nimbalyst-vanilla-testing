@@ -126,6 +126,11 @@ export function getMigrations(schemaDir: string): Migration[] {
       name: 'tracker_type_navigation',
       sqlFile: path.join(schemaDir, '0017_tracker_type_navigation.sql'),
     },
+    {
+      version: 18,
+      name: 'history_preedit_session_index',
+      sqlFile: path.join(schemaDir, '0018_history_preedit_session_index.sql'),
+    },
   ];
 }
 

@@ -37,7 +37,7 @@ import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStat
 import { isBedrockToolSearchError } from '@nimbalyst/runtime/ai/server/utils/errorDetection';
 import { resolveEffortLevel } from '@nimbalyst/runtime/ai/server/effortLevels';
 import type { RawDocumentContext, DocumentContextService } from '@nimbalyst/runtime';
-import { AISessionsRepository } from '@nimbalyst/runtime';
+import { AISessionsRepository, resolveClaudeCodeParentContextWindow } from '@nimbalyst/runtime';
 import { toolRegistry } from './tools';
 import { resolveExtensionAgentRef } from './providerResolution';
 import { getAgentProviderRegistry } from '../../extensions/AgentProviderRegistry';
@@ -2251,11 +2251,16 @@ export class MessageStreamingHandler {
                 newCostUSD += modelUsage[modelName].costUSD || 0;
               }
 
-              // Use the selected model's context window (resolved from model registry at session start).
-              // modelUsage from the SDK contains entries for both the parent model AND subagent models
-              // (e.g., Haiku 200k), and iteration order is not guaranteed, so extracting contextWindow
-              // from modelUsage would intermittently pick up a subagent's smaller window.
-              const contextWindowForDisplay = selectedModelContextWindow || currentUsage.contextWindow;
+              // Prefer the REAL per-model context window the CLI reports in
+              // modelUsage — the registry value is only a static seed and was
+              // wrong for models that changed window across CLI versions (the
+              // #825 "265k / 200k (132%)" bug). modelUsage also carries subagent
+              // entries (e.g. Haiku 200k) and iteration order isn't guaranteed,
+              // so resolveClaudeCodeParentContextWindow deterministically picks
+              // the PARENT model's window by matching the session's family.
+              // Fall back to the registry seed before the first result arrives.
+              const reportedContextWindow = resolveClaudeCodeParentContextWindow(sessionModelId, modelUsage);
+              const contextWindowForDisplay = reportedContextWindow || selectedModelContextWindow || currentUsage.contextWindow;
 
               const updatedUsage: NonNullable<SessionData['tokenUsage']> = {
                 inputTokens: currentUsage.inputTokens + newInputTokens,

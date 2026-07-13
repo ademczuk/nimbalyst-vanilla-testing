@@ -65,6 +65,59 @@
   align-items: center;
   gap: 4px;
   margin-left: auto;
+  min-width: 0;
+}
+
+.git-operation-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 360px;
+  height: 24px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--nim-primary) 45%, var(--nim-border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--nim-primary) 10%, var(--nim-bg-tertiary));
+  color: var(--nim-text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.git-operation-status-pill:hover {
+  border-color: var(--nim-primary);
+}
+
+.git-operation-status-pill--success {
+  border-color: color-mix(in srgb, var(--nim-success) 50%, var(--nim-border));
+}
+
+.git-operation-status-pill--success .git-operation-status-label {
+  color: var(--nim-success);
+}
+
+.git-operation-status-pill--error {
+  border-color: color-mix(in srgb, var(--nim-error) 55%, var(--nim-border));
+}
+
+.git-operation-status-pill--error .git-operation-status-label {
+  color: var(--nim-error);
+}
+
+.git-operation-status-label {
+  flex-shrink: 0;
+  color: var(--nim-primary);
+  font-weight: 600;
+}
+
+.git-operation-status-line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--nim-text-muted);
+  font-family: var(--nim-font-mono, monospace);
 }
 
 .git-log-toolbar-filters {
@@ -891,6 +944,16 @@
   background: var(--nim-error, #ef4444);
 }
 
+.git-tab-running {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--nim-primary);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: git-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
 /* Status bar "Show Details" link */
 .git-log-status-details-btn {
   background: none;
@@ -1389,6 +1452,10 @@
   border-left-color: var(--nim-primary);
 }
 
+.git-output-entry--interrupted {
+  border-left-color: var(--nim-warning, #fbbf24);
+}
+
 .git-output-entry-header {
   display: flex;
   align-items: baseline;
@@ -1578,6 +1645,10 @@
 
 .git-output-status--running {
   color: var(--nim-primary);
+}
+
+.git-output-status--interrupted {
+  color: var(--nim-warning, #fbbf24);
 }
 
 .git-output-spinner {

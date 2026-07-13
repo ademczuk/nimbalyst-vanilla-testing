@@ -45,6 +45,7 @@ import {
   CLAUDE_CODE_MODEL_LABELS,
   CLAUDE_CODE_VARIANTS_WITH_1M,
   CLAUDE_CODE_SAFE_FALLBACK_MODEL,
+  baseContextWindowForVariant,
 } from '../../modelConstants';
 import { isBedrockToolSearchError } from '../utils/errorDetection';
 import { AgentMessagesRepository } from '../../../storage/repositories/AgentMessagesRepository';
@@ -489,9 +490,11 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   }
 
   private resolveModelVariant(): string {
-    // Billing safety (#631 / NIM-848): when no explicit model is set, fall back
-    // to a STANDARD 200k model, never the 1M user-facing default. The `[1m]`
-    // beta must only ever be emitted for an explicitly-selected `-1m` model.
+    // Fallback safety (#631 / NIM-848): when no explicit model is set, fall back
+    // to plain `claude-code:opus`, never a `-1m` variant, so `[1m]` is only ever
+    // emitted for an explicitly-selected `-1m` model. On the current CLI this no
+    // longer changes cost for current-gen models (1M is flat-priced and `[1m]`
+    // is a no-op — GitHub #825), but it stays defensive for any legacy variant.
     return resolveClaudeCodeModelVariant(this.config.model, CLAUDE_CODE_SAFE_FALLBACK_MODEL);
   }
 
@@ -3734,17 +3737,20 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
     // Add models in desired order
     for (const variant of CLAUDE_CODE_VARIANTS) {
-      // Add base model (standard 200K context)
+      // Base model. Current-gen variants run 1M natively at a flat price, so
+      // their base window is 1M; legacy/haiku stay 200k (see
+      // baseContextWindowForVariant / GitHub #825).
       models.push({
         id: ModelIdentifier.create('claude-code', variant).combined,
         name: `Claude Agent · ${CLAUDE_CODE_MODEL_LABELS[variant]} ${CLAUDE_CODE_VARIANT_VERSIONS[variant]}`,
         provider: 'claude-code' as const,
         maxTokens: 8192,
-        contextWindow: 200000
+        contextWindow: baseContextWindowForVariant(variant)
       });
 
-      // Add 1M context variant if the variant supports it.
-      // 1M context is GA at standard pricing (March 2026).
+      // Add a separate 1M (`-1m`) row only for variants that still gate 1M
+      // behind the suffix. Current-gen variants are excluded — their base row is
+      // already 1M, so a `-1m` row would be a redundant duplicate.
       if ((CLAUDE_CODE_VARIANTS_WITH_1M as readonly string[]).includes(variant)) {
         models.push({
           id: ModelIdentifier.create('claude-code', `${variant}-1m`).combined,
