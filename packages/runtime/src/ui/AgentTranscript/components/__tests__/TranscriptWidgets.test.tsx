@@ -1126,6 +1126,32 @@ describe('GitCommitConfirmationWidget', () => {
     expect(screen.getAllByText('SKILL.md')).toHaveLength(2);
   });
 
+  it('renders names for directory staging entries', () => {
+    const message = makeToolMessage('git_commit_proposal', {
+      commitMessage: 'feat: stage generated directories',
+      filesToStage: [
+        { path: '.github/', status: 'added' },
+        { path: 'docs/', status: 'added' },
+        { path: 'src\\generated\\', status: 'added' },
+      ],
+    });
+
+    render(
+      <Wrapper>
+        <GitCommitConfirmationWidget
+          message={message}
+          isExpanded={false}
+          onToggle={() => {}}
+          sessionId="directory-paths"
+        />
+      </Wrapper>
+    );
+
+    expect(screen.getByText('.github')).toBeDefined();
+    expect(screen.getByText('docs')).toBeDefined();
+    expect(screen.getByText('generated')).toBeDefined();
+  });
+
   it('renders committed state from tool result', () => {
     const message = makeToolMessage(
       'git_commit_proposal',
