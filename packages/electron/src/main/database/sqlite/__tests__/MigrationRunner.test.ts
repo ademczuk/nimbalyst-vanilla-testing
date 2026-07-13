@@ -75,6 +75,7 @@ describe('runMigrations', () => {
     fs.writeFileSync(path.join(tmp, '0015_collab_local_origins_project_id.sql'), '-- noop\n');
     fs.writeFileSync(path.join(tmp, '0016_read_receipts.sql'), '-- noop\n');
     fs.writeFileSync(path.join(tmp, '0017_tracker_type_navigation.sql'), '-- noop\n');
+    fs.writeFileSync(path.join(tmp, '0018_history_preedit_session_index.sql'), '-- noop\n');
 
     const db = new FakeDb();
     // Hack: inject our own migration list via reflection-equivalent. Re-using
@@ -88,13 +89,13 @@ describe('runMigrations', () => {
     // a stand-in implementation; for now, test the file-backed path with the
     // bundled migrations.
     const result = runMigrations(db as unknown as import('better-sqlite3').Database, tmp);
-    expect(result.applied).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
+    expect(result.applied).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
     expect(result.skipped).toEqual([]);
 
     // Second invocation: nothing to apply, all skipped.
     const result2 = runMigrations(db as unknown as import('better-sqlite3').Database, tmp);
     expect(result2.applied).toEqual([]);
-    expect(result2.skipped).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
+    expect(result2.skipped).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
 
     // Anti-flake: unused locals lint silencer.
     void customs;
@@ -167,6 +168,10 @@ describe('runMigrations', () => {
     );
     fs.writeFileSync(
       path.join(tmp, '0017_tracker_type_navigation.sql'),
+      '-- noop\n',
+    );
+    fs.writeFileSync(
+      path.join(tmp, '0018_history_preedit_session_index.sql'),
       '-- noop\n',
     );
     const db = new FakeDb();
