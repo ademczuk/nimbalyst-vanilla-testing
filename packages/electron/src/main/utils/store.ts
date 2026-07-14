@@ -1591,6 +1591,11 @@ export interface SessionSyncConfig {
   // login order doesn't affect which index room sessions sync to.
   personalOrgId?: string;
   personalUserId?: string;
+  personalSyncProfiles?: Record<string, {
+    enabledProjects: string[];
+    docSyncEnabledProjects: string[];
+    preventSleepMode?: 'off' | 'always' | 'pluggedIn';
+  }>;
   // DEPRECATED: migrated to preventSleepMode
   preventSleepWhenSyncing?: boolean;
   // Prevent system sleep while sync is active (uses Electron powerSaveBlocker).

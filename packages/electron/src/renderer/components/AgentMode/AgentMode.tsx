@@ -561,6 +561,7 @@ export const AgentMode = forwardRef<AgentModeRef, AgentModeProps>(function Agent
         workspacePath={workspacePath}
         workstreamId={selectedWorkstream.id}
         workstreamType={selectedWorkstream.type}
+        isActive={isActive ?? false}
         onFileOpen={onFileOpen}
         onAddSessionToWorktree={dispatchAddSessionToWorktree}
         onCreateWorktreeSession={createWorktreeSession}

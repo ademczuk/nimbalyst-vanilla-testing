@@ -27,6 +27,7 @@ import { STYTCH_CONFIG, asPersonalJwt, asPersonalMemberId, type PersonalJwt, typ
 import { getSessionSyncConfig, setSessionSyncConfig } from '../utils/store';
 import { AnalyticsService } from './analytics/AnalyticsService';
 import { reconcilePersonalUserId } from './auth/personalUserIdReconcile';
+import { resetSilentMigrationScanState } from './SilentTeamEncryptionMigration';
 
 // Stytch types
 interface StytchUser {
@@ -850,19 +851,37 @@ export function getPersonalSessionJwt(): PersonalJwt | null {
   return jwt ? asPersonalJwt(jwt) : null;
 }
 
+/** Personal/mobile-sync JWT for an explicit signed-in account. */
+export function getPersonalSessionJwtForAccount(personalOrgId: string): PersonalJwt | null {
+  if (personalOrgId === primaryAccountId) return getPersonalSessionJwt();
+  const jwt = accounts.get(personalOrgId)?.sessionJwt;
+  return jwt ? asPersonalJwt(jwt) : null;
+}
+
 /**
  * Refresh the personal-org-scoped JWT via session exchange.
  * Called by SyncManager to keep the personal JWT fresh for session sync.
  */
-export async function refreshPersonalSession(serverUrl: string): Promise<boolean> {
+let inflightPersonalSessionRefresh: Promise<boolean> | null = null;
+
+export function refreshPersonalSession(serverUrl: string): Promise<boolean> {
+  if (inflightPersonalSessionRefresh) {
+    return inflightPersonalSessionRefresh;
+  }
+  inflightPersonalSessionRefresh = doRefreshPersonalSession(serverUrl).finally(() => {
+    inflightPersonalSessionRefresh = null;
+  });
+  return inflightPersonalSessionRefresh;
+}
+
+async function doRefreshPersonalSession(serverUrl: string): Promise<boolean> {
   const personalOrgId = authState.personalOrgId;
   if (!personalOrgId) {
     logger.main.warn('[StytchAuthService] Cannot refresh personal session: no personalOrgId');
     return false;
   }
 
-  const sessionToken = authState.sessionToken;
-  if (!sessionToken) {
+  if (!authState.sessionToken) {
     logger.main.warn('[StytchAuthService] Cannot refresh personal session: no session token');
     return false;
   }
@@ -921,7 +940,10 @@ export async function refreshPersonalSession(serverUrl: string): Promise<boolean
     await refreshSession(serverUrl);
     const httpUrl = serverUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
     const jwt = authState.sessionJwt;
-    if (!jwt) return false;
+    // /auth/refresh rotates the session token. The personal-org exchange must
+    // use the token returned by that refresh, not the token captured before it.
+    const sessionToken = authState.sessionToken;
+    if (!jwt || !sessionToken) return false;
 
     const response = await net.fetch(`${httpUrl}/api/teams/${personalOrgId}/switch`, {
       method: 'POST',
@@ -988,6 +1010,19 @@ export async function refreshPersonalSession(serverUrl: string): Promise<boolean
     logger.main.error('[StytchAuthService] Error refreshing personal session:', error);
     return false;
   }
+}
+
+/** Refresh and return a personal-org JWT for an explicit signed-in account. */
+export async function refreshPersonalSessionForAccount(
+  personalOrgId: string,
+): Promise<PersonalJwt | null> {
+  if (personalOrgId === primaryAccountId) {
+    const refreshed = await refreshPersonalSession(getSyncServerUrl());
+    return refreshed ? getPersonalSessionJwt() : null;
+  }
+
+  const refreshedJwt = await refreshSessionForAccount(personalOrgId);
+  return refreshedJwt ? asPersonalJwt(refreshedJwt) : null;
 }
 
 /**
@@ -1125,6 +1160,7 @@ export async function sendMagicLink(
  */
 export async function signOut(): Promise<void> {
   // Clear local state
+  resetSilentMigrationScanState();
   clearStytchCredentials();
   accounts.clear();
   primaryAccountId = null;
@@ -1214,8 +1250,12 @@ export async function addAccount(serverUrl?: string): Promise<{ success: boolean
  * deletes across all storage layers and deletes the Stytch member.
  * On success, clears local credentials and signs out.
  */
-export async function deleteAccount(serverUrl?: string): Promise<{ success: boolean; error?: string }> {
-  if (!authState.isAuthenticated || !authState.sessionJwt) {
+export async function deleteAccount(personalOrgId?: string, serverUrl?: string): Promise<{ success: boolean; error?: string }> {
+  const targetPersonalOrgId = personalOrgId ?? authState.personalOrgId ?? undefined;
+  const personalJwt = targetPersonalOrgId
+    ? getPersonalSessionJwtForAccount(targetPersonalOrgId)
+    : getPersonalSessionJwt();
+  if (!authState.isAuthenticated || !personalJwt) {
     return { success: false, error: 'Not authenticated' };
   }
 
@@ -1237,7 +1277,7 @@ export async function deleteAccount(serverUrl?: string): Promise<{ success: bool
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authState.sessionJwt}`,
+        'Authorization': `Bearer ${personalJwt}`,
       },
     });
 
@@ -1250,8 +1290,8 @@ export async function deleteAccount(serverUrl?: string): Promise<{ success: bool
     const data = await response.json() as { deleted: boolean };
     logger.main.info('[StytchAuthService] Account deletion response:', data);
 
-    // Clear local state (same as sign out)
-    await signOut();
+    if (targetPersonalOrgId) await removeAccount(targetPersonalOrgId);
+    else await signOut();
 
     logger.main.info('[StytchAuthService] Account deleted successfully');
     return { success: true };
@@ -1376,6 +1416,16 @@ async function doRefreshSession(serverUrl?: string): Promise<boolean> {
     // but we preserve the personal values for sync room IDs and encryption keys.
     const personalOrgId = authState.personalOrgId;
     const personalUserId = authState.personalUserId;
+    let personalSessionJwt = authState.personalSessionJwt;
+    try {
+      const jwtParts = data.session_jwt.split('.');
+      const payload = JSON.parse(Buffer.from(jwtParts[1], 'base64url').toString()) as { sub?: string };
+      if (payload.sub && personalUserId && payload.sub === personalUserId) {
+        personalSessionJwt = data.session_jwt;
+      }
+    } catch {
+      // Keep the existing personal JWT unless the refreshed token's scope is proven.
+    }
     updateAuthState({
       isAuthenticated: true,
       user: data.user_id ? {
@@ -1389,6 +1439,7 @@ async function doRefreshSession(serverUrl?: string): Promise<boolean> {
       orgId: refreshedOrgId,
       personalOrgId,
       personalUserId,
+      personalSessionJwt,
     });
 
     // Save updated credentials

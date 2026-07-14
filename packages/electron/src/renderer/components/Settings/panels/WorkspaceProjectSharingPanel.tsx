@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import { useDialogState } from '../../../contexts/DialogContext';
 import { DIALOG_IDS } from '../../../dialogs/registry';
@@ -7,6 +8,9 @@ import { AlphaBadge, SETTINGS_ALPHA_TOOLTIP } from '../../common/AlphaBadge';
 import { SecurityEncryptionSection } from './H2EncryptionMigration';
 import { MoveProjectWizard } from './MoveProjectWizard';
 import { MergeOrgWizard } from './MergeOrgWizard';
+import { ProjectAccessEditor } from './ProjectAccessEditor';
+import { openSettingsCommandAtom } from '../../../store/atoms/settingsNavigation';
+import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
 
 // ============================================================================
 // Types
@@ -57,15 +61,8 @@ interface OrgProjectSummary {
   name: string | null;
 }
 
-interface TeamPanelProps {
-  workspacePath?: string;
-  /**
-   * Epic H3 P3: when rendered in the Organization settings scope, the panel is
-   * keyed to this org (selected in the OrgSwitcher) rather than resolved from the
-   * active workspace's git remote. When unset, it falls back to workspace
-   * resolution (project scope / legacy).
-   */
-  orgId?: string;
+interface WorkspaceProjectSharingPanelProps {
+  workspacePath: string;
 }
 
 const AVATAR_COLORS = ['#60a5fa', '#a78bfa', '#4ade80', '#fbbf24', '#f472b6', '#34d399'];
@@ -407,6 +404,72 @@ function NoTeamState({ gitRemote, onCreateTeam, loading, adminOrgs, onAddToOrg, 
 // ============================================================================
 // Team Exists State
 // ============================================================================
+
+function ProjectScopedTeamExistsState({
+  team,
+  projects,
+  workspacePath,
+  adminOrgs,
+  localGitRemote,
+  onLinkProject,
+  onUnlinkProject,
+  onProjectMoved,
+}: {
+  team: TeamData;
+  projects: OrgProjectSummary[];
+  workspacePath: string;
+  adminOrgs: { orgId: string; name: string }[];
+  localGitRemote: string;
+  onLinkProject: () => void;
+  onUnlinkProject: () => void;
+  onProjectMoved: () => void;
+}) {
+  const openSettings = useSetAtom(openSettingsCommandAtom);
+  const selectOrganization = useSetAtom(selectedOrgIdAtom);
+  const [moving, setMoving] = useState(false);
+  const currentProject = team.teamProjectId
+    ? projects.find((project) => project.teamProjectId === team.teamProjectId)
+    : undefined;
+  const isAdmin = team.callerRole === 'admin' || team.callerRole === 'owner';
+  const destinationOrganizations = adminOrgs.filter((organization) => organization.orgId !== team.orgId);
+  const openOrganizationPage = (category: 'organization-members' | 'organization-projects' | 'organization-security') => {
+    selectOrganization(team.orgId);
+    openSettings({
+      category,
+      scope: 'organization',
+      destination: { scope: 'organization', category, orgId: team.orgId },
+      timestamp: Date.now(),
+    });
+  };
+
+  return (
+    <div className="attached-project-sharing-state" data-testid="attached-project-sharing-state">
+      <div className="project-identity-card rounded-lg border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)] p-4" data-testid="project-identity-card">
+        <div className="flex items-center gap-3"><MaterialSymbol icon="folder_shared" size={22} /><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold">{currentProject?.name || currentProject?.slug || team.name}</div><div className="truncate text-xs text-[var(--nim-text-muted)]">{team.name} · {team.callerRole || 'member'}</div></div></div>
+        <div className="mt-3 flex items-center gap-2 rounded bg-[var(--nim-bg)] px-3 py-2"><MaterialSymbol icon={team.gitRemoteHash ? 'link' : 'link_off'} size={15} /><span className="min-w-0 flex-1 truncate select-text font-mono text-xs text-[var(--nim-text-muted)]">{localGitRemote || 'No git remote linked'}</span>{isAdmin && (team.gitRemoteHash ? <button type="button" className="text-xs text-[var(--nim-text-muted)]" onClick={onUnlinkProject}>Unlink</button> : localGitRemote ? <button type="button" className="text-xs text-[var(--nim-link)]" onClick={onLinkProject}>Relink</button> : null)}</div>
+      </div>
+
+      <div className="project-organization-links my-4 flex flex-wrap gap-2" data-testid="project-organization-links">
+        <button type="button" className="rounded border border-[var(--nim-border)] px-3 py-1.5 text-xs hover:bg-[var(--nim-bg-hover)]" onClick={() => openOrganizationPage('organization-members')}>Organization members</button>
+        <button type="button" className="rounded border border-[var(--nim-border)] px-3 py-1.5 text-xs hover:bg-[var(--nim-bg-hover)]" onClick={() => openOrganizationPage('organization-projects')}>Organization projects</button>
+        <button type="button" className="rounded border border-[var(--nim-border)] px-3 py-1.5 text-xs hover:bg-[var(--nim-bg-hover)]" onClick={() => openOrganizationPage('organization-security')}>Encryption status</button>
+      </div>
+
+      {!currentProject ? (
+        <div className="project-sharing-needs-attention rounded-lg border border-[var(--nim-warning)] bg-[rgba(251,191,36,0.08)] p-4" data-testid="project-sharing-needs-attention"><div className="text-sm font-semibold text-[var(--nim-warning)]">Project attachment needs attention</div><p className="m-0 mt-1 text-xs text-[var(--nim-text-muted)]">The organization is known, but this workspace did not resolve to an explicit project id. Access editing is disabled rather than falling back to another project.</p></div>
+      ) : (
+        <><h3 className="m-0 mb-2 text-sm font-semibold">People with access</h3><ProjectAccessEditor orgId={team.orgId} projectId={currentProject.projectId} /></>
+      )}
+
+      {isAdmin && currentProject && destinationOrganizations.length > 0 && (
+        <div className="project-scoped-actions mt-4 border-t border-[var(--nim-border)] pt-4"><button type="button" className="rounded border border-[var(--nim-border)] px-3 py-1.5 text-xs hover:bg-[var(--nim-bg-hover)]" data-testid="move-current-project" onClick={() => setMoving(true)}>Move project…</button></div>
+      )}
+      {moving && currentProject && (
+        <MoveProjectWizard srcOrgId={team.orgId} project={{ projectId: currentProject.projectId, name: currentProject.name || currentProject.slug || 'Untitled project' }} destCandidates={destinationOrganizations} onClose={() => setMoving(false)} onMoved={() => { setMoving(false); onProjectMoved(); }} onUpdateEncryption={() => openOrganizationPage('organization-security')} />
+      )}
+    </div>
+  );
+}
 
 function TeamExistsState({ team, projects, workspacePath, adminOrgs, onInvite, onRemoveMember, onDeleteTeam, onLinkProject, onUnlinkProject, onProjectMoved, isAdmin, localGitRemote, fingerprints, myFingerprint, onVerifyMember, onRevokeTrust, onReshareKey, onUpdateRole }: {
   team: TeamData;
@@ -838,10 +901,10 @@ function InvitePendingState({ invite, onAccept, loading, gitRemote }: {
 }
 
 // ============================================================================
-// TeamPanel
+// WorkspaceProjectSharingPanel
 // ============================================================================
 
-export function TeamPanel({ workspacePath, orgId: orgScopeId }: TeamPanelProps) {
+export function WorkspaceProjectSharingPanel({ workspacePath }: WorkspaceProjectSharingPanelProps) {
   const [team, setTeam] = useState<TeamData | null>(null);
   const [pendingInvite, setPendingInvite] = useState<PendingInvite | null>(null);
   const [gitRemote, setGitRemote] = useState<string>('');
@@ -974,37 +1037,11 @@ export function TeamPanel({ workspacePath, orgId: orgScopeId }: TeamPanelProps) 
 
   // Load team data -- find team matching this workspace's git remote, or fall back to listing all teams
   const loadTeamData = useCallback(async () => {
-    // Epic H3 P3: Organization scope -- key off the selected org id, not the
-    // workspace. Resolve that specific team from the team list and load it.
-    if (orgScopeId) {
-      try {
-        const listResult = await (window as any).electronAPI.team.list();
-        const match = (listResult?.teams || []).find((t: any) => t.orgId === orgScopeId);
-        if (match) {
-          setPendingInvite(null);
-          await loadTeamDetails(match.orgId, match.name, match.gitRemoteHash, match.teamProjectId);
-        } else {
-          setTeam(null);
-        }
-      } catch (err) {
-        console.error('[TeamPanel] org-scope loadTeamData error:', err);
-        setTeam(null);
-      } finally {
-        setInitialLoading(false);
-      }
-      return;
-    }
-
-    if (!workspacePath) {
-      setInitialLoading(false);
-      return;
-    }
-
     try {
       // Find team by workspace git remote (per-project lookup).
       // This returns active teams OR pending invites that match this workspace.
       const findResult = await (window as any).electronAPI.team.findForWorkspace(workspacePath);
-      console.log('[TeamPanel] findForWorkspace result:', findResult);
+      console.log('[WorkspaceProjectSharingPanel] findForWorkspace result:', findResult);
       if (findResult.success && findResult.team) {
         const matchedTeam = findResult.team;
         const isPending = matchedTeam.membershipType && matchedTeam.membershipType !== 'active_member';
@@ -1030,7 +1067,7 @@ export function TeamPanel({ workspacePath, orgId: orgScopeId }: TeamPanelProps) 
       // Only show pending invites (not unrelated active teams) since
       // showing an unrelated team is confusing.
       const listResult = await (window as any).electronAPI.team.list();
-      console.log('[TeamPanel] team.list result:', listResult);
+      console.log('[WorkspaceProjectSharingPanel] team.list result:', listResult);
       if (listResult.success && listResult.teams && listResult.teams.length > 0) {
         const pendingTeams = listResult.teams.filter((t: any) => t.membershipType && t.membershipType !== 'active_member');
 
@@ -1047,17 +1084,17 @@ export function TeamPanel({ workspacePath, orgId: orgScopeId }: TeamPanelProps) 
         }
       }
 
-      console.log('[TeamPanel] No matching team for this workspace, showing create UI');
+      console.log('[WorkspaceProjectSharingPanel] No matching organization for this workspace, showing create UI');
       setPendingInvite(null);
       setTeam(null);
     } catch (err) {
-      console.error('[TeamPanel] loadTeamData error:', err);
+      console.error('[WorkspaceProjectSharingPanel] loadTeamData error:', err);
       setPendingInvite(null);
       setTeam(null);
     } finally {
       setInitialLoading(false);
     }
-  }, [workspacePath, orgScopeId, loadTeamDetails]);
+  }, [workspacePath, loadTeamDetails]);
 
   useEffect(() => {
     loadTeamData();
@@ -1369,7 +1406,11 @@ export function TeamPanel({ workspacePath, orgId: orgScopeId }: TeamPanelProps) 
 
   if (initialLoading) {
     return (
-      <div className="provider-panel flex flex-col items-center justify-center py-12">
+      <div
+        className="workspace-project-sharing-panel provider-panel flex flex-col items-center justify-center py-12"
+        data-component="WorkspaceProjectSharingPanel"
+        data-testid="workspace-project-sharing-panel"
+      >
         <span className="text-[13px] text-[var(--nim-text-muted)]">Loading team data...</span>
       </div>
     );
@@ -1378,7 +1419,11 @@ export function TeamPanel({ workspacePath, orgId: orgScopeId }: TeamPanelProps) 
   // Not authenticated - show sign-in prompt
   if (!stytchAuth.isAuthenticated) {
     return (
-      <div className="provider-panel flex flex-col">
+      <div
+        className="workspace-project-sharing-panel provider-panel flex flex-col"
+        data-component="WorkspaceProjectSharingPanel"
+        data-testid="workspace-project-sharing-panel"
+      >
         <div className="provider-panel-header mb-5 pb-4 border-b border-[var(--nim-border)]">
           <h3 className="provider-panel-title text-xl font-semibold leading-tight mb-1.5 text-[var(--nim-text)] flex items-center gap-2">
             Team
@@ -1410,7 +1455,11 @@ export function TeamPanel({ workspacePath, orgId: orgScopeId }: TeamPanelProps) 
     : null;
 
   return (
-    <div className="provider-panel flex flex-col">
+    <div
+      className="workspace-project-sharing-panel provider-panel flex flex-col"
+      data-component="WorkspaceProjectSharingPanel"
+      data-testid="workspace-project-sharing-panel"
+    >
       {/* Header */}
       <div className="provider-panel-header mb-5 pb-4 border-b border-[var(--nim-border)]">
         <h3 className="provider-panel-title text-xl font-semibold leading-tight mb-1.5 text-[var(--nim-text)] flex items-center gap-2">
@@ -1432,14 +1481,11 @@ export function TeamPanel({ workspacePath, orgId: orgScopeId }: TeamPanelProps) 
       {error && <ErrorBanner error={error} onDismiss={() => setError(null)} />}
 
       {team ? (
-        <TeamExistsState
+        <ProjectScopedTeamExistsState
           team={team}
           projects={projects}
           workspacePath={workspacePath}
           adminOrgs={adminOrgs}
-          onInvite={handleInvite}
-          onRemoveMember={handleRemoveMember}
-          onDeleteTeam={handleDeleteTeam}
           onLinkProject={handleLinkProject}
           onUnlinkProject={handleUnlinkProject}
           onProjectMoved={() => {
@@ -1447,14 +1493,7 @@ export function TeamPanel({ workspacePath, orgId: orgScopeId }: TeamPanelProps) 
             loadAdminOrgs();
             loadTeamDetails(team.orgId, team.name, team.gitRemoteHash, team.teamProjectId);
           }}
-          isAdmin={team.callerRole === 'admin' || team.callerRole === 'owner'}
           localGitRemote={gitRemote}
-          fingerprints={fingerprints}
-          myFingerprint={myFingerprint}
-          onVerifyMember={handleVerifyMember}
-          onRevokeTrust={handleRevokeTrust}
-          onReshareKey={handleReshareKey}
-          onUpdateRole={handleUpdateRole}
         />
       ) : pendingInvite ? (
         <InvitePendingState

@@ -39,33 +39,31 @@ export function UserMenuPopover({ onNavigateSettings, onClose, isProjectConnecte
       label: 'Application Settings',
       icon: 'person' as const,
       onClick: () => {
-        onNavigateSettings('user');
+        onNavigateSettings('application');
         onClose();
       },
     },
+    {
+      label: 'Personal Settings',
+      icon: 'account_circle' as const,
+      onClick: () => {
+        onNavigateSettings('personal', 'personal-accounts');
+        onClose();
+      },
+    },
+    ...(isProjectConnected ? [{
+      label: 'Organization Settings',
+      icon: 'corporate_fare' as const,
+      onClick: () => {
+        onNavigateSettings('organization', 'organization-members');
+        onClose();
+      },
+    }] : []),
     {
       label: 'Project Settings',
       icon: 'folder' as const,
       onClick: () => {
-        onNavigateSettings('project');
-        onClose();
-      },
-    },
-    // Show Team Settings when the workspace has a team / sync connection.
-    ...(isProjectConnected ? [{
-      label: 'Team Settings',
-      icon: 'group' as const,
-      onClick: () => {
-        onNavigateSettings('project', 'team');
-        onClose();
-      },
-    }] : []),
-    // Sync Settings -- always available (login and mobile sync are GA features)
-    {
-      label: 'Sync Settings',
-      icon: 'sync' as const,
-      onClick: () => {
-        onNavigateSettings('user', 'sync');
+        onNavigateSettings('project', 'project-sharing');
         onClose();
       },
     },
@@ -100,7 +98,7 @@ export function UserMenuPopover({ onNavigateSettings, onClose, isProjectConnecte
         <button
           className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-nim-tertiary cursor-pointer border-none bg-transparent text-left transition-colors duration-100"
           onClick={() => {
-            onNavigateSettings('user', 'sync');
+            onNavigateSettings('personal', 'personal-accounts');
             onClose();
           }}
           data-testid="user-menu-identity"

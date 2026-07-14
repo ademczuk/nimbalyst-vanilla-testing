@@ -40,6 +40,11 @@ describe('file path helpers', () => {
     expect(getFilePathBasename('packages/runtime/index.ts')).toBe('index.ts');
     expect(getFilePathBasename('packages\\runtime\\index.ts')).toBe('index.ts');
   });
+
+  it('gets directory names from paths with trailing separators', () => {
+    expect(getFilePathBasename('docs/')).toBe('docs');
+    expect(getFilePathBasename('packages\\runtime\\')).toBe('runtime');
+  });
 });
 
 describe('buildFileDirectoryTree', () => {

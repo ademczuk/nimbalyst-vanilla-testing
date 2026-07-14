@@ -40,6 +40,7 @@ import { parseCommandTokens, type CommandToken } from './commandPills/parseComma
 import { parseMentionTokens } from './commandPills/parseMentionTokens';
 import { HighlightOverlay, type OverlayToken } from './commandPills/HighlightOverlay';
 import { CommandPillPopover } from './commandPills/CommandPillPopover';
+import { canPersistWorkspaceHydratedState } from '../../utils/workspaceHydration';
 
 export interface AIInputRef {
   focus: () => void;
@@ -319,6 +320,9 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     const [isLoadingHeight, setIsLoadingHeight] = useState(true);
     const [isResizing, setIsResizing] = useState(false);
     const isResizingRef = useRef(false);
+    const heightLoadGenerationRef = useRef(0);
+    const loadedHeightWorkspaceRef = useRef<string | null>(null);
+    const heightChangedBeforeLoadRef = useRef(false);
     const resizeStartY = useRef<number>(0);
     const resizeStartHeight = useRef<number>(DEFAULT_MAX_PROMPT_HEIGHT);
 
@@ -336,22 +340,34 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
 
     // Load prompt box height from workspace state on mount
     useEffect(() => {
+      const loadGeneration = ++heightLoadGenerationRef.current;
+      loadedHeightWorkspaceRef.current = null;
+      heightChangedBeforeLoadRef.current = false;
+
       if (!workspacePath) {
+        setUserSetHeight(null);
         setIsLoadingHeight(false);
         return;
       }
 
+      setIsLoadingHeight(true);
+
       const loadHeight = async () => {
         try {
           const workspaceState = await window.electronAPI.invoke('workspace:get-state', workspacePath);
+          if (heightLoadGenerationRef.current !== loadGeneration) return;
           const savedHeight = workspaceState?.aiPanel?.promptBoxHeight;
-          if (savedHeight !== undefined) {
-            setUserSetHeight(savedHeight);
+          if (!heightChangedBeforeLoadRef.current) {
+            setUserSetHeight(savedHeight ?? null);
           }
+          loadedHeightWorkspaceRef.current = workspacePath;
         } catch (err) {
+          if (heightLoadGenerationRef.current !== loadGeneration) return;
           console.error('[AIInput] Failed to load prompt box height:', err);
         } finally {
-          setIsLoadingHeight(false);
+          if (heightLoadGenerationRef.current === loadGeneration) {
+            setIsLoadingHeight(false);
+          }
         }
       };
       loadHeight();
@@ -359,7 +375,13 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
 
     // Save prompt box height to workspace state when it changes
     useEffect(() => {
-      if (!workspacePath || isLoadingHeight) return;
+      if (!workspacePath) return;
+      if (!canPersistWorkspaceHydratedState(
+        workspacePath,
+        loadedHeightWorkspaceRef.current,
+        heightChangedBeforeLoadRef.current,
+      )) return;
+      if (isLoadingHeight && !heightChangedBeforeLoadRef.current) return;
 
       const saveHeight = async () => {
         try {
@@ -399,6 +421,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
           MIN_PROMPT_HEIGHT,
           Math.min(MAX_PROMPT_HEIGHT, resizeStartHeight.current + deltaY)
         );
+        heightChangedBeforeLoadRef.current = true;
         setUserSetHeight(newHeight);
       };
 

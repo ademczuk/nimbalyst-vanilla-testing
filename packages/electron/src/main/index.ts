@@ -180,6 +180,8 @@ import { windowStates, windows, resolveActiveWorkspacePath } from './window/wind
 import { getRecentItems } from './utils/store';
 import { registerOrgKeyHandlers, getOrgKey } from './services/OrgKeyService';
 import { registerDocumentSyncHandlers } from './ipc/DocumentSyncHandlers';
+import { registerCollabBackupHandlers } from './ipc/CollabBackupHandlers';
+import { flushPendingCollabBackups } from './services/CollabBackupService';
 import { registerBuiltinCollabContentAdapters } from './services/collabContentAdapterRegistration';
 import { registerCollabV3TestHandlers } from './ipc/CollabV3TestHandlers';
 import { getPermissionService } from './services/PermissionService';
@@ -1619,6 +1621,7 @@ app.whenReady().then(async () => {
     registerOrgKeyHandlers();
     registerBuiltinCollabContentAdapters();
     registerDocumentSyncHandlers();
+    registerCollabBackupHandlers();
     registerCollabV3TestHandlers();
     markEnd('ipc-handlers');
 
@@ -2756,6 +2759,7 @@ app.on('before-quit', async (event) => {
         // Save session state so the session is restored after restart
         try {
             await saveSessionState();
+            await flushPendingCollabBackups();
             console.log('[QUIT] Session state saved for restart');
         } catch (error) {
             console.error('[QUIT] Error saving session state for restart:', error);
@@ -2809,6 +2813,10 @@ app.on('before-quit', async (event) => {
 
     // Mark app as quitting to prevent interval operations
     isAppQuitting = true;
+
+    // Live collaboration backups are debounced. Flush the latest decrypted
+    // snapshots before renderer teardown so a quick quit cannot drop them.
+    await flushPendingCollabBackups();
 
     // Setup force quit timer - allow enough time for database backup + close
     // Database operations: backup (up to 5s) + close worker (up to 5s) + buffer (5s/3s)

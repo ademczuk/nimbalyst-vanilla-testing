@@ -1,3 +1,4 @@
+import type { JSX } from 'react';
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { VList, type VListHandle, type CacheSnapshot } from 'virtua';
 import type { TranscriptViewMessage, SessionData } from '../../../ai/server/types';

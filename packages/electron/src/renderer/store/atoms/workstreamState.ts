@@ -1066,6 +1066,7 @@ function schedulePersist(workstreamId: string): void {
   if (!currentWorkspacePath) {
     throw new Error('[workstreamState] Cannot persist - initWorkstreamState not called');
   }
+  const workspacePath = currentWorkspacePath;
 
   // Clear any existing timer for this workstream
   const existingTimer = persistTimers.get(workstreamId);
@@ -1082,12 +1083,12 @@ function schedulePersist(workstreamId: string): void {
       // console.log(`[workstreamState] Persisting workstream ${workstreamId}:`, JSON.stringify(state));
       const workspaceState = await window.electronAPI.invoke(
         'workspace:get-state',
-        currentWorkspacePath!
+        workspacePath
       );
 
       const existingStates = workspaceState?.workstreamStates ?? {};
 
-      const result = await window.electronAPI.invoke('workspace:update-state', currentWorkspacePath!, {
+      const result = await window.electronAPI.invoke('workspace:update-state', workspacePath, {
         workstreamStates: {
           ...existingStates,
           [workstreamId]: state,

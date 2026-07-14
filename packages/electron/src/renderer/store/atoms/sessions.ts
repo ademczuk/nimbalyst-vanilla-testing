@@ -429,6 +429,20 @@ export const sessionDraftInputAtom = atomFamily((_sessionId: string) =>
 );
 
 /**
+ * Whether the initial persisted draft has been resolved for this session.
+ * The input persistence effect must not mirror the default empty atom before
+ * this flips true. Local edits are allowed to persist while hydration is in
+ * flight and are protected from being overwritten by the eventual response.
+ */
+export const sessionDraftHydratedAtom = atomFamily((_sessionId: string) =>
+  atom<boolean>(false)
+);
+
+export function canPersistSessionDraft(hydrated: boolean, localModifiedAt: number): boolean {
+  return hydrated || localModifiedAt > 0;
+}
+
+/**
  * Per-session draft attachments.
  * File attachments being composed before sending.
  */
@@ -486,6 +500,7 @@ export const setSessionDraftInputAtom = atom(
   }) => {
     // 1. Set the atom for immediate display
     set(sessionDraftInputAtom(sessionId), draftInput);
+    set(sessionDraftHydratedAtom(sessionId), true);
 
     // 2. Persist to database if requested and workspacePath is provided
     if (persist && workspacePath && window.electronAPI) {
@@ -1683,6 +1698,8 @@ export const loadSessionDataAtom = atom(
     }
 
     set(sessionLoadingAtom(sessionId), true);
+    const draftWasHydrated = get(sessionDraftHydratedAtom(sessionId));
+    const draftModifiedAtStart = get(sessionDraftLocalModifiedAtAtom(sessionId));
 
     const loadPromise = (async () => {
     try {
@@ -1697,10 +1714,15 @@ export const loadSessionDataAtom = atom(
         // Set sessionStoreAtom - derived atoms (mode, model, archived) will automatically sync
         set(sessionStoreAtom(sessionId), sessionData);
 
-        // Initialize draft input if session has saved draft
-        if (sessionData.draftInput) {
-          set(sessionDraftInputAtom(sessionId), sessionData.draftInput);
+        // Seed the persisted draft only if no authoritative local/programmatic
+        // value existed and the user did not type while the load was in flight.
+        if (
+          !draftWasHydrated &&
+          get(sessionDraftLocalModifiedAtAtom(sessionId)) === draftModifiedAtStart
+        ) {
+          set(sessionDraftInputAtom(sessionId), sessionData.draftInput ?? '');
         }
+        set(sessionDraftHydratedAtom(sessionId), true);
 
         // Initialize workstream state if this is a worktree session
         // This ensures type='worktree' is set even when loading from DB
@@ -1955,8 +1977,10 @@ export const cleanupSessionAtom = atom(null, (get, set, sessionId: string) => {
   sessionHasPendingInteractivePromptAtom.remove(sessionId);
   sessionLastReadAtom.remove(sessionId);
   sessionDraftInputAtom.remove(sessionId);
+  sessionDraftHydratedAtom.remove(sessionId);
   sessionDraftAttachmentsAtom.remove(sessionId);
   sessionLastSubmitAtAtom.remove(sessionId);
+  sessionDraftLocalModifiedAtAtom.remove(sessionId);
   aiInputHistoryAtom.remove(sessionId);
   // Hierarchical session atoms
   sessionChildrenAtom.remove(sessionId);

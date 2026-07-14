@@ -193,7 +193,7 @@ export const SharedDocsHome: React.FC<SharedDocsHomeProps> = ({ onDocumentSelect
   const sortLabel = allSort === 'updated' ? 'Last updated' : allSort === 'name' ? 'Name' : 'Type';
 
   return (
-    <div className="shared-docs-home flex-1 overflow-y-auto px-8 py-6 select-text">
+    <div className="shared-docs-home flex-1 overflow-y-auto px-8 py-6 select-text bg-nim">
       <div className="max-w-[860px] mx-auto">
         <h1 className="m-0 text-[20px] font-semibold text-[var(--nim-text)]">Shared documents</h1>
         <p className="mt-0.5 mb-5 text-[13px] text-[var(--nim-text-faint)]">

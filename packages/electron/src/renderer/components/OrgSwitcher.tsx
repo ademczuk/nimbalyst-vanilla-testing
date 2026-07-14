@@ -4,7 +4,8 @@
  * the user see every org they're a member of, jumping to Settings → Org to
  * administer one.
  *
- * Orgs come from the team list (`team.list()`) plus the implicit personal org.
+ * Orgs come from the organization directory. Personal sync accounts are never
+ * organization entries.
  * The active org is resolved from the active workspace's matched team. This is
  * a 2-level model (Org → Project); "team" is the paid org flavor.
  *
@@ -27,7 +28,6 @@ interface OrgEntry {
   orgId: string;
   name: string;
   role: string;
-  flavor: 'personal' | 'team';
 }
 
 const api = () => (window as { electronAPI?: any }).electronAPI;
@@ -47,35 +47,51 @@ export function OrgSwitcher() {
   const [orgs, setOrgs] = useState<OrgEntry[]>([]);
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [pendingInviteCount, setPendingInviteCount] = useState(0);
+  const [pendingOrgId, setPendingOrgId] = useState<string | null>(null);
+
+  const [directoryNonce, setDirectoryNonce] = useState(0);
+  // Re-fetch the org directory when another surface mutates it (e.g. a delete
+  // or merge in the Danger Zone), so a removed org doesn't linger in the
+  // switcher until a manual reload (settings review finding).
+  useEffect(() => {
+    const onChanged = () => setDirectoryNonce((n) => n + 1);
+    window.addEventListener('nimbalyst:organizations-changed', onChanged);
+    return () => window.removeEventListener('nimbalyst:organizations-changed', onChanged);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const teamsRes = await api()?.team?.list();
-        const teams: Array<{ orgId: string; name: string; role?: string }> =
+        const teamsRes = await api()?.organization?.list();
+        const teams: Array<{ orgId: string; name: string; role?: string; membershipType?: string }> =
           teamsRes?.teams || (Array.isArray(teamsRes) ? teamsRes : []);
-        const entries: OrgEntry[] = [
-          { orgId: 'personal', name: 'Personal', role: 'owner', flavor: 'personal' },
-          ...teams.map((t) => ({ orgId: t.orgId, name: t.name, role: t.role || 'member', flavor: 'team' as const })),
-        ];
+        const entries: OrgEntry[] = teams
+          .filter((team) => !team.membershipType || team.membershipType === 'active_member')
+          .map((team) => ({ orgId: team.orgId, name: team.name, role: team.role || 'member' }));
+        const pending = teams.filter((team) => team.membershipType && team.membershipType !== 'active_member');
+        if (!cancelled) {
+          setPendingInviteCount(pending.length);
+          setPendingOrgId(pending[0]?.orgId ?? null);
+        }
         if (!cancelled) setOrgs(entries);
 
         if (activePath) {
           const found = await api()?.team?.findForWorkspace(activePath);
-          if (!cancelled) setActiveOrgId(found?.team?.orgId ?? 'personal');
+          if (!cancelled) setActiveOrgId(found?.team?.orgId ?? null);
         } else if (!cancelled) {
-          setActiveOrgId('personal');
+          setActiveOrgId(entries[0]?.orgId ?? null);
         }
       } catch {
         if (!cancelled) {
-          setOrgs([{ orgId: 'personal', name: 'Personal', role: 'owner', flavor: 'personal' }]);
-          setActiveOrgId('personal');
+          setOrgs([]);
+          setActiveOrgId(null);
         }
       }
     })();
     return () => { cancelled = true; };
-  }, [activePath]);
+  }, [activePath, directoryNonce]);
 
   const activeOrg = useMemo(
     () => orgs.find((o) => o.orgId === activeOrgId) ?? orgs[0] ?? null,
@@ -96,16 +112,21 @@ export function OrgSwitcher() {
 
   // Only meaningful once collaboration/orgs exist; hide if there's nothing but
   // the personal org and no teams (keeps the rail clean for solo users).
-  if (orgs.length <= 1) return null;
+  if (orgs.length === 0 && pendingInviteCount === 0) return null;
 
   // Epic H3 P3: org admin lives in the Organization settings scope, keyed to the
   // chosen org. Personal has no org admin surface, so we skip navigation there.
   const goToOrgSettings = (orgId?: string) => {
     setOpen(false);
     const target = orgId ?? activeOrg?.orgId;
-    if (!target || target === 'personal') return;
+    if (!target) return;
     setSelectedOrgId(target);
-    openSettings({ category: 'org', scope: 'organization', timestamp: Date.now() });
+    openSettings({
+      category: 'organization-members',
+      scope: 'organization',
+      destination: { scope: 'organization', category: 'organization-members', orgId: target },
+      timestamp: Date.now(),
+    });
   };
 
   return (
@@ -148,6 +169,14 @@ export function OrgSwitcher() {
                 {o.orgId === activeOrgId && <MaterialSymbol icon="check" size={14} className="text-[var(--nim-text-muted)]" />}
               </button>
             ))}
+            {pendingInviteCount > 0 && (
+              <button className="org-switcher-pending-invites w-full px-3 py-2 text-left text-xs text-[var(--nim-link)] hover:bg-[var(--nim-bg-secondary)]" data-testid="org-switcher-pending-invites" onClick={() => {
+                setOpen(false);
+                if (pendingOrgId) goToOrgSettings(pendingOrgId);
+              }}>
+                {pendingInviteCount} pending invitation{pendingInviteCount === 1 ? '' : 's'}
+              </button>
+            )}
             <div className="border-t border-[var(--nim-border)] mt-1 pt-1">
               <button
                 className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-[var(--nim-text-muted)] hover:bg-[var(--nim-bg-secondary)]"
@@ -155,6 +184,17 @@ export function OrgSwitcher() {
               >
                 <MaterialSymbol icon="settings" size={14} />
                 Manage organization…
+              </button>
+              <button
+                className="org-switcher-new-organization w-full flex items-center gap-2 px-3 py-2 text-[12px] text-[var(--nim-text-muted)] hover:bg-[var(--nim-bg-secondary)]"
+                data-testid="org-switcher-new-organization"
+                onClick={() => {
+                  setOpen(false);
+                  openSettings({ category: 'organization-members', scope: 'organization', timestamp: Date.now() });
+                }}
+              >
+                <MaterialSymbol icon="add" size={14} />
+                New organization
               </button>
             </div>
           </div>

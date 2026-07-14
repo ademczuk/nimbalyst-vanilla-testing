@@ -897,6 +897,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  // Plaintext recovery copies for collaborative content
+  collabBackup: {
+    contentChanged: (payload: {
+      workspacePath: string;
+      documentId: string;
+      documentType: string;
+      title?: string;
+      plaintext: string;
+      kind?: 'document' | 'body';
+    }) => ipcRenderer.invoke('collab-backup:content-changed', payload) as Promise<{ success: boolean; scheduled?: boolean; error?: string }>,
+    backupAll: (workspacePath: string) => ipcRenderer.invoke('collab-backup:backup-all', { workspacePath }) as Promise<any>,
+    list: (workspacePath: string) => ipcRenderer.invoke('collab-backup:list', { workspacePath }) as Promise<any>,
+    restore: (workspacePath: string, documentId: string, force?: boolean) => ipcRenderer.invoke('collab-backup:restore', { workspacePath, documentId, force }) as Promise<{ success: boolean; error?: string }>,
+  },
+
   // Document Sync (collaborative editing)
   documentSync: {
     open: (
@@ -1399,7 +1414,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     addAccount: () => ipcRenderer.invoke('stytch:add-account'),
     removeAccount: (personalOrgId: string) =>
       ipcRenderer.invoke('stytch:remove-account', personalOrgId),
-    deleteAccount: () => ipcRenderer.invoke('stytch:delete-account'),
+    deleteAccount: (personalOrgId?: string) => ipcRenderer.invoke('stytch:delete-account', personalOrgId),
     getSessionJwt: () => ipcRenderer.invoke('stytch:get-session-jwt'),
     refreshSession: () => ipcRenderer.invoke('stytch:refresh-session'),
     subscribeAuthState: () => ipcRenderer.invoke('stytch:subscribe-auth-state'),
@@ -1443,6 +1458,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getOrgKeyStatus: (orgId: string) => ipcRenderer.invoke('team:get-org-key-status', orgId),
     // Epic H2: current key-custody mode for the team (legacy-e2e | server-managed).
     getKeyCustodyStatus: (orgId: string) => ipcRenderer.invoke('team:get-key-custody-status', orgId) as Promise<{ success: boolean; mode?: 'legacy-e2e' | 'server-managed'; dekFingerprint?: string | null; error?: string }>,
+    getEncryptionMigrationStatus: (orgId: string) => ipcRenderer.invoke('team:get-encryption-migration-status', orgId) as Promise<{
+      success: boolean;
+      migration?:
+        | { status: 'migrating'; startedAt: string }
+        | { status: 'complete'; finishedAt: string }
+        | { status: 'stuck'; failedAt: string; message: string }
+        | null;
+    }>,
     listKeyEnvelopes: (orgId: string) => ipcRenderer.invoke('team:list-key-envelopes', orgId),
     setProjectIdentity: (orgId: string, workspacePath: string) => ipcRenderer.invoke('team:set-project-identity', orgId, workspacePath),
     clearProjectIdentity: (orgId: string) => ipcRenderer.invoke('team:clear-project-identity', orgId),
@@ -1456,6 +1479,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     autoWrapNewMembers: (orgId: string) => ipcRenderer.invoke('team:auto-wrap-new-members', orgId),
     // NIM-913: admin repair — force re-wrap the current org key for all members.
     rewrapAllMemberKeys: (orgId: string) => ipcRenderer.invoke('team:rewrap-all-member-keys', orgId),
+  },
+
+  // Typed organization facade. The legacy `team` bridge remains as a
+  // compatibility adapter while settings and older extensions migrate.
+  organization: {
+    list: () => ipcRenderer.invoke('team:list'),
+    get: (orgId: string) => ipcRenderer.invoke('team:get', orgId),
+    create: (input: { name: string; workspacePath?: string; sourcePersonalOrgId?: string }) =>
+      ipcRenderer.invoke('team:create', input.name, input.workspacePath, input.sourcePersonalOrgId),
+    acceptInvitation: (orgId: string) => ipcRenderer.invoke('team:accept-invite', orgId),
+    listMembers: (orgId: string) => ipcRenderer.invoke('team:list-members', orgId),
+    inviteMember: (orgId: string, email: string) => ipcRenderer.invoke('team:invite', orgId, email),
+    removeMember: (orgId: string, memberId: string) => ipcRenderer.invoke('team:remove-member', orgId, memberId),
+    updateMemberRole: (orgId: string, memberId: string, role: string) => ipcRenderer.invoke('team:update-role', orgId, memberId, role),
+    listProjects: (orgId: string) => ipcRenderer.invoke('team:list-projects', orgId),
+    addProject: (input: { orgId: string; workspacePath?: string; name?: string }) =>
+      ipcRenderer.invoke('team:add-project', input.orgId, input.workspacePath, input.name),
+    moveProject: (input: { sourceOrgId: string; projectId: string; destinationOrgId: string; dropMemberEmails?: string[] }) =>
+      ipcRenderer.invoke('team:move-project', input.sourceOrgId, input.projectId, input.destinationOrgId, input.dropMemberEmails),
+    deleteOrganization: (orgId: string) => ipcRenderer.invoke('team:delete', orgId),
+    getEncryptionStatus: (orgId: string) => ipcRenderer.invoke('team:get-key-custody-status', orgId),
+    getEncryptionMigrationStatus: (orgId: string) => ipcRenderer.invoke('team:get-encryption-migration-status', orgId),
   },
 
   // Epic H1: org / project access model. `canAccess` is the single client-side

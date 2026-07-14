@@ -9,6 +9,7 @@ import {
   releaseChannelAtom,
   type SyncConfig,
 } from '../../../store/atoms/appSettings';
+import { personalAccountsAtom, personalSyncProfilesAtom } from '../../../store/atoms/settingsDomains';
 
 /** Format a timestamp as relative time (e.g., "5 minutes ago") */
 function formatRelativeTime(timestamp: number): string {
@@ -69,11 +70,11 @@ interface StytchAuthState {
   } | null;
 }
 
-function SharingCallout() {
+function SharingCallout({ className = '' }: { className?: string }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)]">
+    <div className={`sync-mobile-section provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] ${className}`}>
       <div className="p-3.5 bg-nim-primary/8 border border-nim-primary/20 rounded-lg">
         <div className="flex items-start gap-2.5">
           <MaterialSymbol icon="share" size={18} className="text-[var(--nim-primary)] shrink-0 mt-0.5" />
@@ -110,7 +111,9 @@ function SharingCallout() {
   );
 }
 
-export function SyncPanel() {
+export type PersonalSyncSection = 'all' | 'accounts' | 'mobile' | 'devices';
+
+export function SyncPanel({ section = 'all' }: { section?: PersonalSyncSection }) {
   const posthog = usePostHog();
   const isDevelopment = import.meta.env.DEV;
 
@@ -141,14 +144,12 @@ export function SyncPanel() {
     user: null,
   });
 
-  // Multi-account state
-  interface AccountInfo {
-    personalOrgId: string;
-    personalUserId: string | null;
-    email: string | null;
-    isPrimary: boolean;
-  }
-  const [allAccounts, setAllAccounts] = useState<AccountInfo[]>([]);
+  // Personal account and profile state stay separate from organization state.
+  const [allAccounts, setAllAccounts] = useAtom(personalAccountsAtom);
+  const [, setPersonalSyncProfiles] = useAtom(personalSyncProfilesAtom);
+  useEffect(() => {
+    setPersonalSyncProfiles(config.personalSyncProfiles ?? {});
+  }, [config.personalSyncProfiles, setPersonalSyncProfiles]);
 
   // Account deletion state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -544,7 +545,7 @@ export function SyncPanel() {
     setDeleteError(null);
     posthog?.capture('account_deletion_confirmed');
     try {
-      const result = await window.electronAPI.stytch.deleteAccount();
+      const result = await window.electronAPI.stytch.deleteAccount(config.personalOrgId);
       if (result.success) {
         posthog?.capture('account_deletion_completed');
         setShowDeleteConfirm(false);
@@ -565,18 +566,50 @@ export function SyncPanel() {
   const syncedProjects = projects.filter(p => enabledProjects.includes(p.path));
   // Projects available to add (not yet synced)
   const availableProjects = projects.filter(p => !enabledProjects.includes(p.path));
+  const sectionClass = (target: Exclude<PersonalSyncSection, 'all'>) =>
+    section === 'all' || section === target ? '' : 'hidden';
+  const heading = section === 'accounts'
+    ? ['Accounts', 'Manage signed-in personal accounts and choose the one used for personal/mobile sync.']
+    : section === 'devices'
+      ? ['Devices', 'View devices paired to the active personal sync account.']
+      : ['Mobile App', 'Choose personal projects for mobile access. Personal sync remains zero-knowledge encrypted.'];
 
   return (
-    <div className="provider-panel flex flex-col">
+    <div className="personal-sync-panel provider-panel flex flex-col" data-component="SyncPanel" data-testid={`personal-sync-${section}`}>
       {/* Header */}
       <div className="provider-panel-header mb-5 pb-4 border-b border-[var(--nim-border)]">
-        <h3 className="provider-panel-title text-xl font-semibold leading-tight mb-1.5 text-[var(--nim-text)]">Account & Sync</h3>
+        <h3 className="provider-panel-title text-xl font-semibold leading-tight mb-1.5 text-[var(--nim-text)]">{section === 'all' ? 'Account & Sync' : heading[0]}</h3>
         <p className="provider-panel-description text-[13px] leading-relaxed text-[var(--nim-text-muted)]">
-          Access and control Nimbalyst from the mobile app.
-          Share sessions and documents via encrypted share links.
-          All data is end-to-end encrypted.
+          {section === 'all'
+            ? 'Access and control Nimbalyst from the mobile app. Personal sync data is end-to-end encrypted.'
+            : heading[1]}
         </p>
       </div>
+
+      {section === 'mobile' && config.personalSyncProfiles && Object.keys(config.personalSyncProfiles).length > 0 && (
+        <section className="personal-sync-profile-groups mb-4 rounded-lg border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)] p-3" data-testid="personal-sync-profile-groups">
+          <h4 className="m-0 mb-2 text-sm font-semibold">Projects by personal account</h4>
+          <div className="flex flex-col gap-2">
+            {Object.entries(config.personalSyncProfiles).map(([personalOrgId, profile]) => {
+              const account = allAccounts.find((candidate) => candidate.personalOrgId === personalOrgId);
+              const isActive = config.personalOrgId === personalOrgId;
+              return (
+                <article key={personalOrgId} className="personal-sync-profile-group rounded border border-[var(--nim-border)] bg-[var(--nim-bg)] p-2.5" data-testid="personal-sync-profile-group">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="truncate font-medium">{account?.email ?? personalOrgId}</span>
+                    <span className="text-[var(--nim-text-muted)]">{isActive ? 'Active sync account' : 'Profile retained'}</span>
+                  </div>
+                  <p className="m-0 mt-1 text-xs text-[var(--nim-text-muted)]">
+                    {profile.enabledProjects.length > 0
+                      ? profile.enabledProjects.map((projectPath) => projectPath.split(/[\\/]/).filter(Boolean).pop() ?? projectPath).join(', ')
+                      : 'No mobile projects selected'}
+                  </p>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Environment Toggle - Dev Only */}
       {/*{isDevelopment && (*/}
@@ -614,7 +647,7 @@ export function SyncPanel() {
       )}
 
       {/* Account Section */}
-      <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
+      <div className={`sync-account-section provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0 ${sectionClass('accounts')}`}>
         {stytchAuth.isAuthenticated && stytchAuth.user ? (
           <div className="flex flex-col gap-2">
             {/* Show all accounts if multiple, otherwise show primary */}
@@ -815,13 +848,13 @@ export function SyncPanel() {
 
       {/* Sharing Discovery Callout */}
       {stytchAuth.isAuthenticated && (
-        <SharingCallout />
+        <SharingCallout className={sectionClass('mobile')} />
       )}
 
 
       {/* Mobile App - compact card combining app info + QR pairing */}
       {stytchAuth.isAuthenticated && (
-          <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
+          <div className={`sync-mobile-section provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0 ${sectionClass('mobile')}`}>
             <h4 className="provider-panel-section-title text-[15px] font-semibold mb-3 text-[var(--nim-text)]">Mobile App</h4>
             <div className="flex gap-3.5 p-3.5 bg-nim-secondary rounded-lg">
               <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shrink-0">
@@ -878,14 +911,14 @@ export function SyncPanel() {
           </div>
       )}
       {pairError && (
-          <p className="mt-2 text-[12px] text-nim-error">
+          <p className={`sync-mobile-section mt-2 text-[12px] text-nim-error ${sectionClass('mobile')}`}>
             {pairError}
           </p>
       )}
 
       {/* Prevent sleep mode selector */}
       {config.enabled && (
-        <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
+        <div className={`sync-mobile-section provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0 ${sectionClass('mobile')}`}>
           <div className="flex items-center justify-between">
             <div className="flex-1 mr-3">
               <h4 className="text-[13px] font-medium text-nim m-0">Prevent sleep while syncing</h4>
@@ -919,7 +952,7 @@ export function SyncPanel() {
       )}
 
       {/* Synced Projects */}
-      <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
+      <div className={`sync-mobile-section provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0 ${sectionClass('mobile')}`}>
         <div className="flex items-center justify-between mb-2">
           <h4 className="provider-panel-section-title text-[15px] font-semibold text-[var(--nim-text)] m-0">Projects accessible on mobile</h4>
           {availableProjects.length > 0 && !showAddProject && (
@@ -1047,7 +1080,7 @@ export function SyncPanel() {
       </div>
 
       {/* Paired Devices */}
-      <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
+      <div className={`sync-devices-section provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0 ${sectionClass('devices')}`}>
         <h4 className="provider-panel-section-title text-[15px] font-semibold mb-3 text-[var(--nim-text)]">
           Devices
           <button
@@ -1091,7 +1124,7 @@ export function SyncPanel() {
       </div>
 
       {/* Encryption footer */}
-      <div className="provider-panel-section py-4">
+      <div className={`sync-mobile-section provider-panel-section py-4 ${sectionClass('mobile')}`}>
         <div className="p-3.5 bg-nim-secondary border border-nim rounded-lg">
           <div className="flex items-center gap-2 mb-2">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--nim-success, #22c55e)" strokeWidth="2" className="shrink-0">
@@ -1115,7 +1148,7 @@ export function SyncPanel() {
 
       {/* Delete Account */}
       {stytchAuth.isAuthenticated && (
-        <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
+        <div className={`sync-account-section provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0 ${sectionClass('accounts')}`}>
           <h4 className="provider-panel-section-title text-[15px] font-semibold mb-2 text-[var(--nim-text)]">Danger Zone</h4>
           {!showDeleteConfirm ? (
             <button
@@ -1131,7 +1164,7 @@ export function SyncPanel() {
           ) : (
             <div className="p-4 bg-nim-secondary rounded-lg border border-red-500/30">
               <p className="text-[13px] text-nim-muted m-0 mb-3">
-                This will permanently delete your account and all synced data, including sessions, shared links, and device pairings. This cannot be undone.
+                This will permanently delete the selected personal account{config.personalOrgId ? ` (${config.personalOrgId})` : ''} and its synced data, including sessions, shared links, and device pairings. Team organization data is separate. This cannot be undone.
               </p>
               <p className="text-[12px] text-nim-faint m-0 mb-2">
                 Type <strong className="text-nim">DELETE</strong> to confirm:
@@ -1179,7 +1212,7 @@ export function SyncPanel() {
 
       {/* Modals */}
       <QRPairingModal
-        isOpen={showQRModal}
+        isOpen={section !== 'accounts' && section !== 'devices' && showQRModal}
         onClose={() => setShowQRModal(false)}
         serverUrl={effectiveServerUrl}
         preventSleepMode={config.preventSleepMode ?? (config.preventSleepWhenSyncing ? 'always' : 'off')}

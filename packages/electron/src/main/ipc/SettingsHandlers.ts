@@ -47,13 +47,24 @@ import { SoundNotificationService } from '../services/SoundNotificationService';
 import { autoUpdaterService } from '../services/autoUpdater';
 import type { OnboardingState } from '../utils/store';
 import { getCredentials, resetCredentials, generateQRPairingPayload, isUsingSecureStorage } from '../services/CredentialService';
-import { onSyncStatusChange, updateSleepPrevention } from '../services/SyncManager';
+import {
+    isSyncProviderReady,
+    onSyncStatusChange,
+    triggerIncrementalSync,
+    updateSleepPrevention,
+} from '../services/SyncManager';
 import { getDocSyncStatusForWorkspace } from '../file/WorkspaceWatcher';
 import * as StytchAuth from '../services/StytchAuthService';
 import { getRestartSignalPath } from '../utils/appPaths';
 import { TrayManager } from '../tray/TrayManager';
 import { STYTCH_CONFIG } from '@nimbalyst/runtime';
 import { type EffortLevel, parseEffortLevel } from '@nimbalyst/runtime/ai/server/effortLevels';
+import { repositoryManager } from '../services/RepositoryManager';
+import {
+    migratePersonalSyncProfiles,
+    persistActivePersonalSyncProfile,
+    switchPersonalSyncProfile,
+} from '../services/PersonalSyncProfiles';
 
 // Track if we've subscribed to sync status changes
 let syncStatusListenerSetup = false;
@@ -835,16 +846,19 @@ export function registerSettingsHandlers() {
 
     // Session sync settings
     safeHandle('sync:get-config', () => {
-        return getSessionSyncConfig();
+        const config = getSessionSyncConfig();
+        if (!config) return config;
+        const migrated = migratePersonalSyncProfiles(config);
+        if (migrated !== config) setSessionSyncConfig(migrated);
+        return migrated;
     });
 
     safeHandle('sync:set-config', async (_event, config: SessionSyncConfig | null) => {
-        setSessionSyncConfig(config ?? undefined);
+        setSessionSyncConfig(config ? persistActivePersonalSyncProfile(config) : undefined);
         logger.store.info(`[SettingsHandlers] Session sync ${config?.enabled ? 'enabled' : 'disabled'}`);
 
         // Reinitialize sync with the new configuration
         try {
-            const { repositoryManager } = await import('../services/RepositoryManager');
             await repositoryManager.reinitializeSyncWithNewConfig();
         } catch (error) {
             logger.store.error('[SettingsHandlers] Failed to reinitialize sync:', error);
@@ -867,16 +881,14 @@ export function registerSettingsHandlers() {
         }
 
         // Update the persisted sync identity
-        setSessionSyncConfig({
-            ...currentConfig,
+        setSessionSyncConfig(switchPersonalSyncProfile(currentConfig, {
             personalOrgId: account.personalOrgId,
             personalUserId: account.personalUserId ?? undefined,
-        });
+        }));
         logger.store.info('[SettingsHandlers] Switched sync account to:', account.email, account.personalOrgId);
 
         // Reinitialize sync with the new identity
         try {
-            const { repositoryManager } = await import('../services/RepositoryManager');
             await repositoryManager.reinitializeSyncWithNewConfig();
         } catch (error) {
             logger.store.error('[SettingsHandlers] Failed to reinitialize sync after account switch:', error);
@@ -1129,7 +1141,6 @@ export function registerSettingsHandlers() {
         // If a project was enabled, trigger sync to push its sessions immediately
         if (enabled) {
             try {
-                const { triggerIncrementalSync, isSyncProviderReady } = await import('../services/SyncManager');
                 if (isSyncProviderReady()) {
                     // Provider exists - trigger incremental sync directly
                     triggerIncrementalSync().catch(err => {
@@ -1138,7 +1149,6 @@ export function registerSettingsHandlers() {
                 } else {
                     // Provider not ready yet (e.g. sync was just enabled) - reinitialize
                     // which will create the provider and run initial sync including this project
-                    const { repositoryManager } = await import('../services/RepositoryManager');
                     repositoryManager.reinitializeSyncWithNewConfig().catch(err => {
                         logger.store.error('[sync:toggle-project] Failed to reinitialize sync:', err);
                     });
@@ -1344,7 +1354,7 @@ export function registerSettingsHandlers() {
     });
 
     // Delete account and all associated data
-    safeHandle('stytch:delete-account', async () => {
+    safeHandle('stytch:delete-account', async (_event, personalOrgId?: string) => {
         ensureStytchInitialized();
         // Derive server URL same as other Stytch handlers
         const syncConfig = getSessionSyncConfig();
@@ -1356,7 +1366,7 @@ export function registerSettingsHandlers() {
         } else {
             serverUrl = 'wss://sync.nimbalyst.com';
         }
-        return StytchAuth.deleteAccount(serverUrl);
+        return StytchAuth.deleteAccount(personalOrgId, serverUrl);
     });
 
     // Get session JWT for server authentication

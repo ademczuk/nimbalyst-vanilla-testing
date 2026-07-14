@@ -3,6 +3,7 @@
  * Shows bugs, tasks, plans, and ideas across all documents in workspace
  */
 
+import type { JSX } from 'react';
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useFloating, offset, flip, shift, FloatingPortal } from '@floating-ui/react';
 import { useAtomValue } from 'jotai';
@@ -473,7 +474,7 @@ export function renderCell(
   setEditingCell: (cell: { itemId: string; field: 'status' | 'priority' | 'title' } | null) => void,
   editingTitle: string,
   setEditingTitle: (title: string) => void,
-  titleInputRef: React.RefObject<HTMLInputElement>,
+  titleInputRef: React.RefObject<HTMLInputElement | null>,
   handleFieldUpdate: (item: TrackerRecord, field: string, value: string) => void,
 ): React.ReactNode {
   // Resolve field values via schema roles (generic for any schema)

@@ -10,6 +10,7 @@
  * shared with the list via the `useTrackerRows` hook.
  */
 
+import type { JSX } from 'react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FloatingPortal } from '@floating-ui/react';
 import { useAtomValue } from 'jotai';
@@ -583,7 +584,7 @@ interface GridRowProps {
   setEditingCell: (cell: { itemId: string; field: 'status' | 'priority' | 'title' } | null) => void;
   editingTitle: string;
   setEditingTitle: (t: string) => void;
-  titleInputRef: React.RefObject<HTMLInputElement>;
+  titleInputRef: React.RefObject<HTMLInputElement | null>;
   handleFieldUpdate: (item: TrackerRecord, field: string, value: string) => Promise<void>;
   isItemEditable: (item: TrackerRecord) => boolean;
   handleRowClick: (item: TrackerRecord, index: number, e: React.MouseEvent) => void;

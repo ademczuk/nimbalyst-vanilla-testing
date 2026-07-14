@@ -4,10 +4,10 @@
  * Provides Claude with tools to view and edit Excalidraw diagrams.
  */
 
-import type { ExcalidrawElement } from '@excalidraw/excalidraw/types/element/types';
+import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import { convertToExcalidrawElements } from '@excalidraw/excalidraw';
 import { parseMermaidToExcalidraw } from '@excalidraw/mermaid-to-excalidraw';
-import type { BinaryFileData, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types/types';
+import type { BinaryFileData, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 
 /**
  * Get the Excalidraw editor API from the tool context.

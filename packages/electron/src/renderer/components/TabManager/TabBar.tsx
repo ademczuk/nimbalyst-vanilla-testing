@@ -85,7 +85,7 @@ interface TabItemProps {
   dragOverIndex: number | null;
   editingTabId: string | null;
   editingValue: string;
-  editInputRef: React.RefObject<HTMLInputElement>;
+  editInputRef: React.RefObject<HTMLInputElement | null>;
   onTabClick: (e: React.MouseEvent, tabId: string) => void;
   onCloseClick: (e: React.MouseEvent, tabId: string) => void;
   onContextMenu: (e: React.MouseEvent, tabId: string) => void;

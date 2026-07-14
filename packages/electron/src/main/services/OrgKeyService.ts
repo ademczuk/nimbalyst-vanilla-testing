@@ -24,6 +24,7 @@ import { getCollabSyncHttpUrl } from '../utils/collabSyncUrl';
 import { getSessionJwt, isAuthenticated } from './StytchAuthService';
 import { getOrgScopedJwt } from './TeamService';
 import { safeHandle } from '../utils/ipcRegistry';
+import { createTtlCache } from '../utils/asyncCache';
 
 // Re-export under the original local name so the many call sites in this
 // module don't churn. Canonical helper lives in utils/collabSyncUrl.ts.
@@ -712,16 +713,7 @@ export interface TeamKeyStatus {
   dekFingerprint: string | null;
 }
 
-/**
- * Fetch a team's key-custody status (Epic H2). The sync managers call this on
- * team-room open to pick their sync lane: `server-managed` skips the ECDH
- * unwrap entirely. Falls back to `legacy-e2e` on any error so a transient
- * failure never silently downgrades a legacy team's encryption.
- *
- * TEAM lane only — never call this for personal/mobile rooms (those stay
- * zero-knowledge and have no team DEK).
- */
-export async function fetchTeamKeyStatus(orgId: string, orgScopedJwt: string): Promise<TeamKeyStatus> {
+async function fetchTeamKeyStatusUncached(orgId: string, orgScopedJwt: string): Promise<TeamKeyStatus> {
   try {
     const data = await fetchApi(`/api/teams/${orgId}/key-status`, 'GET', undefined, orgScopedJwt) as {
       mode?: string; dekEpoch?: number | null; dekFingerprint?: string | null;
@@ -732,6 +724,36 @@ export async function fetchTeamKeyStatus(orgId: string, orgScopedJwt: string): P
     logger.main.warn('[OrgKeyService] fetchTeamKeyStatus failed for', orgId, '-- defaulting to legacy-e2e:', err);
     return { mode: 'legacy-e2e', dekEpoch: null, dekFingerprint: null };
   }
+}
+
+// Per-org TTL cache + single-flight for the key-status GET, mirroring the
+// org-key-fingerprint verify cache in DocumentSyncHandlers.ts. Every doc/
+// tracker room open on a team calls fetchTeamKeyStatus to pick its sync lane;
+// uncached, N rooms opening together fired N identical GETs (collab-open-
+// latency investigation, RC2). Invalidated on key-custody mode changes below.
+const TEAM_KEY_STATUS_TTL_MS = 60_000;
+const teamKeyStatusCache = createTtlCache<string, TeamKeyStatus>(TEAM_KEY_STATUS_TTL_MS);
+
+/** Drop the key-status cache for an org (or all orgs) after it may have changed server-side. */
+export function invalidateTeamKeyStatusCache(orgId?: string): void {
+  teamKeyStatusCache.invalidate(orgId);
+}
+
+/**
+ * Fetch a team's key-custody status (Epic H2). The sync managers call this on
+ * team-room open to pick their sync lane: `server-managed` skips the ECDH
+ * unwrap entirely. Falls back to `legacy-e2e` on any error so a transient
+ * failure never silently downgrades a legacy team's encryption.
+ *
+ * Cached per org for 60s (see `teamKeyStatusCache` above) -- the mode/epoch
+ * change only on an explicit migration cutover (`setTeamKeyCustodyMode`,
+ * which invalidates this cache), never as a side effect of a normal open.
+ *
+ * TEAM lane only — never call this for personal/mobile rooms (those stay
+ * zero-knowledge and have no team DEK).
+ */
+export async function fetchTeamKeyStatus(orgId: string, orgScopedJwt: string): Promise<TeamKeyStatus> {
+  return teamKeyStatusCache.get(orgId, () => fetchTeamKeyStatusUncached(orgId, orgScopedJwt));
 }
 
 /**
@@ -747,6 +769,7 @@ export async function setTeamKeyCustodyMode(
   orgScopedJwt: string,
 ): Promise<void> {
   await fetchApi(`/api/teams/${orgId}/set-key-custody-mode`, 'POST', { mode }, orgScopedJwt);
+  invalidateTeamKeyStatusCache(orgId);
   logger.main.info('[OrgKeyService] Set key custody mode for', orgId, '->', mode);
 }
 

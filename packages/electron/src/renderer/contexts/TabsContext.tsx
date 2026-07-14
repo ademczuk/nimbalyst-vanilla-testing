@@ -760,6 +760,42 @@ export function useTabsActions() {
   };
 }
 
+/**
+ * Own the application-menu tab navigation events for one active tab context.
+ * Modes stay mounted while hidden, so inactive contexts must not register.
+ */
+export function useTabNavigationShortcuts(isActive: boolean): void {
+  const context = useContext(TabsContext);
+  if (!context) {
+    throw new Error('useTabNavigationShortcuts must be used within a TabsProvider');
+  }
+
+  const { getSnapshot, switchTab } = context;
+
+  React.useEffect(() => {
+    if (!isActive) return;
+
+    const navigate = (offset: -1 | 1) => {
+      const snapshot = getSnapshot();
+      if (!snapshot.activeTabId || snapshot.tabOrder.length < 2) return;
+
+      const currentIndex = snapshot.tabOrder.indexOf(snapshot.activeTabId);
+      const targetTabId = snapshot.tabOrder[currentIndex + offset];
+      if (currentIndex >= 0 && targetTabId) {
+        switchTab(targetTabId);
+      }
+    };
+
+    const cleanupNext = window.electronAPI?.onNextTab?.(() => navigate(1));
+    const cleanupPrevious = window.electronAPI?.onPreviousTab?.(() => navigate(-1));
+
+    return () => {
+      cleanupNext?.();
+      cleanupPrevious?.();
+    };
+  }, [getSnapshot, isActive, switchTab]);
+}
+
 // Hook to check if there's an active tab (minimal subscription for conditional rendering)
 export function useHasActiveTab(): boolean {
   const context = useContext(TabsContext);

@@ -8,8 +8,8 @@
 
 import { useEffect, useRef, useCallback, useState, forwardRef } from 'react';
 import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw';
-import type { ExcalidrawElement } from '@excalidraw/excalidraw/types/element/types';
-import type { ExcalidrawImperativeAPI, AppState, BinaryFiles } from '@excalidraw/excalidraw/types/types';
+import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
+import type { ExcalidrawImperativeAPI, AppState, BinaryFiles } from '@excalidraw/excalidraw/types';
 import {
   useEditorLifecycle,
   useCollaborativeEditor,

@@ -246,10 +246,11 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 
 > **Encryption posture.** Team collaboration data (trackers, documents, doc-index
 > titles) is **encrypted in transit and at rest, isolated per team, and operated
-> by Nimbalyst**. Two custody modes per team:
-> `legacy-e2e` (client-side zero-knowledge ECDH; the original default) and
-> `server-managed` (Epic H2 — the server holds a per-team KMS-wrapped key and
-> encrypts at rest, enabling web/CLI/cloud-agent access). **Server-managed team
+> by Nimbalyst**. New teams use server-managed custody (Epic H2 — the server
+> holds a per-team KMS-wrapped key and encrypts at rest, enabling
+> web/CLI/cloud-agent access). Existing `legacy-e2e` teams are transitional and
+> migrate silently, one-way, after an org-wide local plaintext recovery sweep.
+> **Server-managed team
 > data is not zero-knowledge.** **Personal sync** (your desktop ↔ phone: sessions,
 > prompts, drafts, settings, personal index) **stays zero-knowledge** — the server
 > never holds those keys. Customers who require true zero-knowledge for team data
@@ -263,7 +264,9 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Team invite / join / role management
 - Personal org + team org separation
 - Multiple projects per organization — add another workspace to an existing org as its own tracker space (sharing the org's roster and encryption)
-- Organization settings scope (User | Organization | Project) keyed off the org switcher — members & roles, projects & access, security & encryption in one org-admin surface
+- Four-scope Settings information architecture (Application | Personal | Organizations | Project) with typed deep links, role-aware read-only organization pages, and explicit remote-project access targets
+- Organization administration without an open workspace — invitation inbox, account attribution, members/roles, projects, server-managed encryption status, billing placeholder, and role-gated lifecycle controls
+- Per-personal-account mobile-sync profiles — project and document selections are retained when switching the active zero-knowledge sync account, independently of team organization selection
 - Move a project to another organization — relocates its trackers, documents, history, and schemas into the destination, transfers member access by email (auto-invite for members not yet in the destination, with a per-person opt-out and seat-delta preview), and redirects the old location (server-managed orgs only)
 - Merge one organization into another — consolidates every project, unions the rosters (higher role wins), and optionally deletes the drained org
 - Shared document list
@@ -376,8 +379,10 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 
 ## Settings
 
-- Global: theme, AI providers, MCP servers, notifications, sync/account, shared links, advanced, beta features
-- Per-workspace: AI provider override, agent permissions, team, tracker config, extensions
+- Application: theme, AI providers, MCP servers, notifications, advanced, beta features, and extensions
+- Personal: signed-in accounts, active zero-knowledge mobile-sync profile, paired devices, and shared links
+- Organizations: invitation inbox, members and roles, projects, server-managed encryption status, billing placeholder, and danger-zone actions
+- Project: sharing/organization attachment, project access, AI provider overrides, agent permissions, tracker config, GitHub, and extensions
 - Tools & Token Cost panel: per-tool-group estimated context-token cost and load policy (eager / on-demand / conditional) across built-in, extension, and user MCP servers; trackers toggle inline; reachable from the AI panel's token meter ("Manage tools")
 - Claude Code: custom executable path, environment variables, effort slider, plan mode, auto-commit, extended context
 - Multi-account support (add/remove accounts, per-project binding)
@@ -403,6 +408,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Prompt quick open (Cmd+Shift+L)
 - Content search (Cmd+Shift+F)
 - Global semantic search (Cmd+Shift+O) — a Quick Open "Search" tab that finds any tracker or document by meaning (hybrid semantic + keyword), powered by the Nimbalyst Memory extension; appears only when that extension is enabled. Optionally indexes AI sessions too (off by default)
+- Shared team document quick open (Cmd+Shift+D) — a team-gated Quick Open tab with name filtering, unread/favorite cues, and direct navigation into Shared Documents
 - Mouse back/forward button support
 - Breadcrumb navigation
 - Customizable navigation gutter — hide/show any gutter icon (modes, extension panels, indicators) and drag-to-reorder within a group via a "Customize Gutter" popover (right-click the gutter) or right-click any icon to hide it; preferences are global across projects, and the account/settings button always stays visible

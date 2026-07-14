@@ -19,7 +19,7 @@
  * - REST calls with JWT auth to collabv3
  */
 
-import { net } from 'electron';
+import { BrowserWindow, net } from 'electron';
 import { createHash } from 'crypto';
 import { safeHandle } from '../utils/ipcRegistry';
 import { logger } from '../utils/logger';
@@ -27,15 +27,16 @@ import { getNormalizedGitRemote } from '../utils/gitUtils';
 import { resolveTeamForRemoteHash } from './teamProjectResolver';
 import { getCollabSyncHttpUrl } from '../utils/collabSyncUrl';
 import { assertJwtMatchesOrg, getJwtExp, AuthContextMismatchError } from './jwtOrg';
+import { createSingleFlight } from '../utils/asyncCache';
 import {
   getAccounts,
-  getSessionJwt,
-  getSessionJwtForAccount,
+  getPersonalSessionJwt,
+  getPersonalSessionJwtForAccount,
   getSessionToken,
   getSessionTokenForAccount,
   isAuthenticated,
-  refreshSession,
-  refreshSessionForAccount,
+  refreshPersonalSession,
+  refreshPersonalSessionForAccount,
   onAuthStateChange,
   updateSessionToken,
   getStytchUserId,
@@ -43,6 +44,7 @@ import {
   getPersonalOrgId,
   getPersonalUserId,
 } from './StytchAuthService';
+import { asTeamJwt, type PersonalJwt, type TeamJwt } from '@nimbalyst/runtime';
 import { getDatabase } from '../database/initialize';
 import {
   backfillProjection,
@@ -61,7 +63,6 @@ import { canAccess, type CanAccessInput, type AccessDatabase } from './OrgAccess
 import {
   getOrCreateIdentityKeyPair,
   uploadIdentityKeyToOrg,
-  generateAndStoreOrgKey,
   wrapOrgKeyForMember,
   uploadEnvelope,
   exportPublicKeyJwk,
@@ -78,13 +79,21 @@ import {
   markMemberVerified,
   fingerprintIdentityKey,
   fetchTeamKeyStatus,
+  setTeamKeyCustodyMode,
 } from './OrgKeyService';
 import { performKeyRotation, cleanupOrphanedDocuments, reEncryptTrackerFromLocal } from './KeyRotationService';
 // TrackerSyncManager already imports from this module (findTeamForWorkspace).
 // The cycle is safe because both sides only reference the imported symbols
 // inside function bodies, never at module-init time -- by the time
 // autoMatchTeamForWorkspace runs, both modules are fully loaded.
-import { ensureTrackerSyncForWorkspace } from './TrackerSyncManager';
+import { ensureTrackerSyncForWorkspace, migrateTeamToServerManaged } from './TrackerSyncManager';
+import { getCollabBackupService } from './CollabBackupService';
+import {
+  getSilentMigrationState,
+  initializeServerManagedOrganization,
+  runSilentTeamEncryptionMigrations,
+} from './SilentTeamEncryptionMigration';
+import { createTeamAuthBootstrap } from './TeamAuthBootstrap';
 
 // ============================================================================
 // Server URL Helper
@@ -100,7 +109,7 @@ const getCollabServerUrl = getCollabSyncHttpUrl;
 // Types
 // ============================================================================
 
-interface TeamDetails {
+export interface TeamDetails {
   orgId: string;
   name: string;
   gitRemoteHash: string | null;
@@ -123,6 +132,9 @@ interface TeamDetails {
    * absent for snapshots from worker versions predating the registry.
    */
   projects?: TeamProjectSummary[];
+  /** Personal account whose JWT discovered this membership. Public metadata only. */
+  sourcePersonalOrgId?: string;
+  sourceEmail?: string | null;
 }
 
 /**
@@ -195,12 +207,13 @@ interface TeamMember {
 // ============================================================================
 
 interface CachedOrgJwt {
-  jwt: string;
+  jwt: TeamJwt;
   expiresAt: number;
 }
 
 /** Cache of org-scoped JWTs. Key is orgId. */
 const orgJwtCache = new Map<string, CachedOrgJwt>();
+const orgJwtExchangeSingleFlight = createSingleFlight<string, TeamJwt>();
 
 /** Buffer before JWT exp to refresh early (60 seconds). */
 const JWT_REFRESH_BUFFER_MS = 60 * 1000;
@@ -224,12 +237,21 @@ export async function getOrgScopedJwt(
   orgId: string,
   accountOrgId?: string,
   forceRefresh = false,
-): Promise<string> {
+): Promise<TeamJwt> {
   // Check cache
   const cached = orgJwtCache.get(orgId);
   if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
     return cached.jwt;
   }
+
+  const exchangeKey = `${accountOrgId ?? 'primary'}:${orgId}`;
+  return orgJwtExchangeSingleFlight(exchangeKey, () => exchangeOrgScopedJwt(orgId, accountOrgId));
+}
+
+async function exchangeOrgScopedJwt(
+  orgId: string,
+  accountOrgId?: string,
+): Promise<TeamJwt> {
   // logger.main.info(`[TeamService] Org JWT cache miss for ${orgId}, exchanging session...`);
 
   // Need to exchange -- use the correct account's session token
@@ -245,13 +267,13 @@ export async function getOrgScopedJwt(
 
   // Use the correct account's JWT to authenticate the exchange request
   const personalJwt = accountOrgId
-    ? getSessionJwtForAccount(accountOrgId)
-    : getSessionJwt();
+    ? getPersonalSessionJwtForAccount(accountOrgId)
+    : getPersonalSessionJwt();
   if (!personalJwt) {
     throw new Error('Not authenticated. Sign in first.');
   }
 
-  const doExchange = async (jwt: string, token: string) =>
+  const doExchange = async (jwt: PersonalJwt, token: string) =>
     net.fetch(`${httpUrl}/api/teams/${orgId}/switch`, {
       method: 'POST',
       headers: {
@@ -271,18 +293,18 @@ export async function getOrgScopedJwt(
     let refreshed = false;
     try {
       if (accountOrgId) {
-        const freshJwt = await refreshSessionForAccount(accountOrgId);
+        const freshJwt = await refreshPersonalSessionForAccount(accountOrgId);
         refreshed = !!freshJwt;
       } else {
-        refreshed = await refreshSession();
+        refreshed = await refreshPersonalSession(httpUrl);
       }
     } catch {
       // Network error -- can't retry
     }
     if (refreshed) {
       const freshJwt = accountOrgId
-        ? getSessionJwtForAccount(accountOrgId)
-        : getSessionJwt();
+        ? getPersonalSessionJwtForAccount(accountOrgId)
+        : getPersonalSessionJwt();
       const freshToken = accountOrgId
         ? getSessionTokenForAccount(accountOrgId)
         : getSessionToken();
@@ -340,13 +362,14 @@ export async function getOrgScopedJwt(
 
   // Cache the org-scoped JWT (do NOT update global auth state -- the global
   // session JWT stays personal-org-scoped, only the token is shared)
+  const teamJwt = asTeamJwt(data.sessionJwt);
   orgJwtCache.set(orgId, {
-    jwt: data.sessionJwt,
+    jwt: teamJwt,
     expiresAt,
   });
 
   // logger.main.info('[TeamService] Obtained org-scoped JWT for:', orgId, 'expires in', Math.round((expiresAt - Date.now()) / 1000), 's');
-  return data.sessionJwt;
+  return teamJwt;
 }
 
 // ============================================================================
@@ -418,11 +441,32 @@ async function fetchTeamApi(path: string, method: string, body?: unknown, orgId?
   let jwt = orgId
     ? await getOrgScopedJwt(orgId)
     : accountOrgId
-      ? getSessionJwtForAccount(accountOrgId)
-      : getSessionJwt();
+      ? getPersonalSessionJwtForAccount(accountOrgId)
+      : getPersonalSessionJwt();
   if (!jwt) {
     logger.main.warn(`[TeamService] No JWT available (source: ${jwtSource})`);
     throw new Error('Not authenticated. Sign in first.');
+  }
+
+  // Personal JWTs are short-lived. Refresh before sending one that is already
+  // inside the same 60s safety window used by the org-JWT cache, so routine
+  // team discovery does not pay for an expected 401 on every expiry cycle.
+  if (!orgId) {
+    const exp = getJwtExp(jwt);
+    if (exp && (exp * 1000) - JWT_REFRESH_BUFFER_MS <= Date.now()) {
+      try {
+        if (accountOrgId) {
+          const freshJwt = await refreshPersonalSessionForAccount(accountOrgId);
+          if (freshJwt) jwt = freshJwt;
+        } else if (await refreshPersonalSession(getCollabServerUrl())) {
+          const freshJwt = getPersonalSessionJwt();
+          if (freshJwt) jwt = freshJwt;
+        }
+      } catch {
+        // Keep the current token and let the existing 401 recovery path make
+        // the final authentication decision.
+      }
+    }
   }
 
   let response = await makeRequest(jwt);
@@ -430,30 +474,32 @@ async function fetchTeamApi(path: string, method: string, body?: unknown, orgId?
   // On 401, retry once: refresh personal session or re-exchange org JWT
   if (response.status === 401) {
     if (accountOrgId && !orgId) {
-      // Non-primary account JWT rejected -- try refreshing the secondary account's session
+      // Refresh the account's PERSONAL lane. For the primary account the active
+      // Stytch session may currently be team-scoped, so a generic refresh is not
+      // sufficient to replace an expired personalSessionJwt.
       logger.main.info(`[TeamService] Got 401 on account JWT for ${accountOrgId}, attempting refresh...`);
-      const freshJwt = await refreshSessionForAccount(accountOrgId);
+      const freshJwt = await refreshPersonalSessionForAccount(accountOrgId);
       if (freshJwt) {
-        logger.main.info(`[TeamService] Secondary account ${accountOrgId} refreshed, retrying request...`);
+        logger.main.info(`[TeamService] Account ${accountOrgId} personal JWT refreshed, retrying request...`);
         response = await makeRequest(freshJwt);
       } else {
-        logger.main.warn(`[TeamService] Secondary account ${accountOrgId} refresh failed`);
+        logger.main.warn(`[TeamService] Account ${accountOrgId} personal JWT refresh failed`);
       }
     } else if (!orgId) {
       logger.main.info('[TeamService] Got 401 on personal JWT, refreshing session...');
       let refreshed = false;
       try {
-        refreshed = await refreshSession();
+        refreshed = await refreshPersonalSession(getCollabServerUrl());
       } catch {
         // Network error -- can't retry
       }
       if (refreshed) {
-        const freshJwt = getSessionJwt();
+        const freshJwt = getPersonalSessionJwt();
         if (freshJwt) {
           logger.main.info('[TeamService] Session refreshed, retrying request...');
           response = await makeRequest(freshJwt);
         } else {
-          logger.main.warn('[TeamService] Session refreshed but getSessionJwt() returned null');
+          logger.main.warn('[TeamService] Session refreshed but getPersonalSessionJwt() returned null');
         }
       } else {
         logger.main.warn('[TeamService] Session refresh failed, cannot retry');
@@ -521,13 +567,16 @@ function getMemberIdFromJwt(jwt: string): string | null {
  * List all teams the current user belongs to, across all signed-in accounts.
  * Queries each account's teams and deduplicates by orgId.
  */
-// Short-TTL cache: findTeamForWorkspace is fanned out from many sites
-// (workspace open, sync init, tracker init, body-doc service, etc.) and each
-// listTeams call hits /api/teams once per signed-in account. Without this,
-// opening a workspace can trigger a parallel HTTP storm and the same call
-// repeats every few hundred ms during init.
+// findTeamForWorkspace is fanned out from many sites (workspace open, sync
+// init, tracker init, body-doc service, etc.) and each listTeams call hits
+// /api/teams once per signed-in account. A short TTL just turned that into a
+// steady-state poll -- org/team membership changes ~never mid-session, so the
+// cache is long-lived and correctness comes from event-driven invalidation
+// (auth change, team join/leave/create/delete, manual refresh -- see
+// invalidateListTeamsCache() call sites) rather than a short expiry.
+// collab-open-latency investigation (RC4), 2026-07-14.
 let listTeamsCache: { promise: Promise<TeamDetails[]>; expiresAt: number } | null = null;
-const LIST_TEAMS_TTL_MS = 5000;
+const LIST_TEAMS_TTL_MS = 5 * 60_000;
 
 export function invalidateListTeamsCache(): void {
   listTeamsCache = null;
@@ -554,7 +603,11 @@ async function listTeams(): Promise<TeamDetails[]> {
       allAccounts.map(async (account) => {
         try {
           const data = await fetchTeamApi('/api/teams', 'GET', undefined, undefined, account.personalOrgId) as { teams: TeamDetails[] };
-          return data.teams || [];
+          return (data.teams || []).map((team) => ({
+            ...team,
+            sourcePersonalOrgId: account.personalOrgId,
+            sourceEmail: account.email,
+          }));
         } catch (err) {
           logger.main.error(`[TeamService] listTeams error for account ${account.email}:`, err);
           return [];
@@ -670,6 +723,28 @@ export async function findPendingInviteForWorkspace(workspacePath: string): Prom
   }
 }
 
+type FindForWorkspaceResult = { success: true; team: TeamDetails | null };
+
+async function findTeamOrPendingInviteForWorkspace(workspacePath: string): Promise<FindForWorkspaceResult> {
+  // Try active team match first
+  const team = await findTeamForWorkspace(workspacePath);
+  if (team) {
+    return { success: true, team };
+  }
+  // Also check for pending invites matching this workspace
+  const pendingInvite = await findPendingInviteForWorkspace(workspacePath);
+  if (pendingInvite) {
+    return { success: true, team: pendingInvite };
+  }
+  return { success: true, team: null };
+}
+
+// Collapses a burst of concurrent `team:find-for-workspace` IPC calls for the
+// same workspace (e.g. many tracker rooms opening at once) into one
+// findTeamForWorkspace/findPendingInviteForWorkspace run. collab-open-latency
+// investigation (RC4): these calls were seen staircasing 5-deep, 2.8-6.7s.
+const findForWorkspaceSingleFlight = createSingleFlight<string, FindForWorkspaceResult>();
+
 /**
  * Create a new team (Stytch org + D1 metadata + encryption key setup).
  * Returns the new team details. Does NOT modify global auth state.
@@ -691,35 +766,20 @@ async function createTeam(name: string, workspacePath?: string, accountOrgId?: s
 
   logger.main.info('[TeamService] Team created:', result.orgId, name);
 
-  // Set up encryption: identity key + org key + self-wrap
-  try {
-    const orgJwt = await getOrgScopedJwt(result.orgId, accountOrgId);
+  // Team collaboration is always server-managed. Never create a client-custodied
+  // team key for a new org; the personal/mobile zero-knowledge lane is separate.
+  await initializeServerManagedOrganization(result.orgId, {
+    setServerManaged: async (orgId) => {
+      const orgJwt = await getOrgScopedJwt(orgId, accountOrgId);
+      await setTeamKeyCustodyMode(orgId, 'server-managed', orgJwt);
+    },
+  });
+  logger.main.info('[TeamService] Server-managed encryption enabled for team:', result.orgId);
 
-    // 1. Ensure identity key pair exists
-    await getOrCreateIdentityKeyPair();
-
-    // 2. Upload public key to the new team org
-    await uploadIdentityKeyToOrg(orgJwt);
-
-    // 3. Generate org encryption key
-    await generateAndStoreOrgKey(result.orgId);
-
-    // 4. Post initial org key fingerprint to server
-    const initialFingerprint = getOrgKeyFingerprint(result.orgId);
-    if (initialFingerprint) {
-      await fetchTeamApi(`/api/teams/${result.orgId}/org-key-fingerprint`, 'PUT', { fingerprint: initialFingerprint }, result.orgId);
-    }
-
-    // 5. Wrap org key for self and upload envelope
-    const myPublicKeyJwk = await exportPublicKeyJwk();
-    const envelope = await wrapOrgKeyForMember(result.orgId, myPublicKeyJwk);
-    await uploadEnvelope(result.orgId, result.creatorMemberId, envelope, orgJwt);
-
-    logger.main.info('[TeamService] Encryption set up for team:', result.orgId);
-  } catch (err) {
-    // Team was created but encryption setup failed -- log but don't fail
-    logger.main.error('[TeamService] Encryption setup failed for team:', result.orgId, err);
-  }
+  // The new org must be visible to findTeamForWorkspace/listTeams immediately
+  // (e.g. the "Create Team" flow expects to route this workspace to it right
+  // away), not after the long listTeams TTL expires.
+  invalidateListTeamsCache();
 
   return {
     orgId: result.orgId,
@@ -816,6 +876,14 @@ async function moveProjectToOrg(
     projectId, destOrgId, dropMemberEmails,
   }, srcOrgId) as MoveResultSummary;
   logger.main.info('[TeamService] Project moved:', projectId, srcOrgId, '->', destOrgId, result);
+  try {
+    await getCollabBackupService().markSuperseded(
+      { orgId: srcOrgId, projectId },
+      { orgId: destOrgId, projectId: result.destTeamProjectId },
+    );
+  } catch (error) {
+    logger.main.warn('[TeamService] Could not mark pre-move collaboration backup as superseded', error);
+  }
   invalidateListTeamsCache();
   return result;
 }
@@ -832,6 +900,16 @@ async function mergeOrg(
     survivorOrgId, deleteDrained, dropMemberEmails,
   }, drainedOrgId) as MergeResultSummary;
   logger.main.info('[TeamService] Org merged:', drainedOrgId, '->', survivorOrgId, result);
+  try {
+    for (const project of result.movedProjects) {
+      await getCollabBackupService().markSuperseded(
+        { orgId: drainedOrgId, projectId: project.projectId },
+        { orgId: survivorOrgId, projectId: project.destTeamProjectId },
+      );
+    }
+  } catch (error) {
+    logger.main.warn('[TeamService] Could not mark pre-merge collaboration backups as superseded', error);
+  }
   invalidateListTeamsCache();
   return result;
 }
@@ -858,7 +936,10 @@ async function acceptInvite(orgId: string): Promise<TeamDetails> {
     logger.main.warn('[TeamService] Encryption setup after invite accept (non-fatal):', err);
   }
 
-  // 3. Fetch team details now that we're an active member
+  // 3. Fetch team details now that we're an active member. Invalidate first --
+  // with the long listTeams TTL, a pre-join cache entry would otherwise make
+  // this lookup miss the team we just joined.
+  invalidateListTeamsCache();
   const teams = await listTeams();
   const team = teams.find(t => t.orgId === orgId);
   if (!team) {
@@ -899,6 +980,12 @@ async function removeMember(orgId: string, memberId: string): Promise<void> {
   const orgJwt = await getOrgScopedJwt(orgId);
   const serverUrl = getCollabServerUrl();
 
+  if ((await fetchTeamKeyStatus(orgId, orgJwt)).mode === 'server-managed') {
+    await fetchTeamApi(`/api/teams/${orgId}/members/${memberId}`, 'DELETE', undefined, orgId);
+    logger.main.info('[TeamService] Member removed from server-managed organization:', memberId);
+    return;
+  }
+
   // Step 1: Rotate key and re-encrypt all data BEFORE removing the member.
   // If this fails, the member stays -- fail closed, not fail open.
   // IMPORTANT: Exclude the member being removed from the key distribution list.
@@ -932,6 +1019,7 @@ async function deleteTeam(orgId: string): Promise<void> {
   await fetchTeamApi(`/api/teams/${orgId}`, 'DELETE', undefined, orgId);
   // Clear cached org JWT since the org no longer exists
   orgJwtCache.delete(orgId);
+  invalidateListTeamsCache();
   logger.main.info('[TeamService] Team deleted:', orgId);
 }
 
@@ -1267,7 +1355,6 @@ export async function autoMatchTeamForWorkspace(workspacePath: string): Promise<
       });
 
       // Notify all renderer windows about the team match
-      const { BrowserWindow } = await import('electron');
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send('team:workspace-matched', {
           orgId: result.team.orgId,
@@ -1457,7 +1544,7 @@ export async function rewrapOrgKeyForAllMembers(
  * fetch failure for one team seeds that team with an empty roster rather than
  * aborting the whole sync.
  */
-export async function syncOrgProjectionFromServer(): Promise<{
+export async function syncOrgProjectionFromServer(knownTeams?: TeamDetails[]): Promise<{
   success: boolean;
   counts?: { orgs: number; projects: number; members: number; grants: number };
   error?: string;
@@ -1479,7 +1566,7 @@ export async function syncOrgProjectionFromServer(): Promise<{
       });
     }
 
-    const teams = await listTeams();
+    const teams = knownTeams ?? await listTeams();
     for (const team of teams) {
       let members: MemberInput[] = [];
       try {
@@ -1507,13 +1594,25 @@ export async function syncOrgProjectionFromServer(): Promise<{
     }
 
     const counts = await backfillProjection(db, orgs);
-    logger.main.info('[TeamService] org projection synced:', counts);
+    // logger.main.info('[TeamService] org projection synced:', counts);
     return { success: true, counts };
   } catch (err) {
     logger.main.error('[TeamService] syncOrgProjectionFromServer error:', err);
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
+
+const runAuthenticatedTeamBootstrap = createTeamAuthBootstrap(async () => {
+  try {
+    const teams = await listTeams();
+    await Promise.all([
+      syncOrgProjectionFromServer(teams),
+      scheduleSilentEncryptionMigrations(teams),
+    ]);
+  } catch (err) {
+    logger.main.warn('[TeamService] authenticated team bootstrap failed:', err);
+  }
+});
 
 /**
  * Resolve the viewer's per-org member id (Stytch member ids are org-scoped) by
@@ -1646,6 +1745,7 @@ export function registerTeamHandlers(): void {
   safeHandle('team:list', async () => {
     try {
       const teams = await listTeams();
+      scheduleSilentEncryptionMigrations(teams);
       return { success: true, teams };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -1654,17 +1754,7 @@ export function registerTeamHandlers(): void {
 
   safeHandle('team:find-for-workspace', async (_event, workspacePath: string) => {
     try {
-      // Try active team match first
-      const team = await findTeamForWorkspace(workspacePath);
-      if (team) {
-        return { success: true, team };
-      }
-      // Also check for pending invites matching this workspace
-      const pendingInvite = await findPendingInviteForWorkspace(workspacePath);
-      if (pendingInvite) {
-        return { success: true, team: pendingInvite };
-      }
-      return { success: true, team: null };
+      return await findForWorkspaceSingleFlight(workspacePath, () => findTeamOrPendingInviteForWorkspace(workspacePath));
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -1677,6 +1767,10 @@ export function registerTeamHandlers(): void {
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
+  });
+
+  safeHandle('team:get-encryption-migration-status', async (_event, orgId: string) => {
+    return { success: true, migration: getSilentMigrationState(orgId) };
   });
 
   safeHandle('team:create', async (_event, name: string, workspacePath?: string, accountOrgId?: string) => {
@@ -1905,7 +1999,10 @@ export function registerTeamHandlers(): void {
       if (!remote) {
         return { success: false, error: 'No git remote found for workspace' };
       }
-      const { database } = await import('../database/PGLiteDatabaseWorker');
+      const database = getDatabase();
+      if (!database) {
+        return { success: false, error: 'Database is not initialized' };
+      }
       const result = await reEncryptTrackerFromLocal(orgId, remote, orgJwt, serverUrl, workspacePath, database);
       return { success: true, ...result };
     } catch (error) {
@@ -1915,15 +2012,37 @@ export function registerTeamHandlers(): void {
 
   // Epic H1: populate the local org/project/membership projection independently
   // of a workspace team match, so `canAccess` resolves correctly even before (or
-  // without) opening a matched workspace. Runs once now (no-op until auth + db
-  // are ready) and again whenever auth becomes available (login / token refresh
-  // on launch). Idempotent + best-effort.
-  syncOrgProjectionFromServer().catch(err =>
-    logger.main.warn('[TeamService] launch org projection sync failed:', err));
+  // without) opening a matched workspace. onAuthStateChange immediately supplies
+  // the current state, so this also covers launch. Keep the whole authenticated
+  // bootstrap single-flight: team API requests can refresh a token, and that
+  // refresh emits a re-entrant authenticated state before the request completes.
   onAuthStateChange((authState) => {
+    // Any auth transition (sign-in, sign-out, account switch, token refresh)
+    // can change which orgs the caller's JWTs are valid for -- drop the long-
+    // lived listTeams cache so the next read reflects it instead of serving
+    // a pre-transition snapshot for the rest of the TTL window.
+    invalidateListTeamsCache();
     if (authState.isAuthenticated) {
-      syncOrgProjectionFromServer().catch(err =>
-        logger.main.warn('[TeamService] auth-change org projection sync failed:', err));
+      void runAuthenticatedTeamBootstrap();
     }
   });
+}
+
+async function scheduleSilentEncryptionMigrations(teams: TeamDetails[]): Promise<void> {
+  try {
+    const result = await runSilentTeamEncryptionMigrations(teams, {
+      getStatus: async (orgId) => {
+        const orgJwt = await getOrgScopedJwt(orgId);
+        return (await fetchTeamKeyStatus(orgId, orgJwt)).mode;
+      },
+      migrate: async (orgId) => {
+        await migrateTeamToServerManaged(orgId);
+      },
+    });
+    if (result.attempted > 0) {
+      logger.main.info('[TeamService] Silent encryption migration scan complete', result);
+    }
+  } catch (error) {
+    logger.main.warn('[TeamService] Silent encryption migration scan failed', error);
+  }
 }

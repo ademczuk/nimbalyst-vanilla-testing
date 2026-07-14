@@ -8,6 +8,7 @@
  * explicit in-app confirm step (no silent one-click merge).
  */
 
+import type { JSX } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import { FloatingPortal, useFloatingMenu } from '../../hooks/useFloatingMenu';

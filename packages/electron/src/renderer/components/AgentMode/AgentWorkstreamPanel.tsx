@@ -92,6 +92,7 @@ export interface AgentWorkstreamPanelProps {
   workspacePath: string;
   workstreamId: string;
   workstreamType: WorkstreamType;
+  isActive: boolean;
   onFileOpen?: (filePath: string) => Promise<void>;
   onAddSessionToWorktree?: (worktreeId: string) => Promise<void>;
   onCreateWorktreeSession?: (worktreeId: string) => Promise<string | null>;
@@ -670,6 +671,7 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
   workspacePath,
   workstreamId,
   workstreamType,
+  isActive,
   onFileOpen,
   onAddSessionToWorktree,
   onCreateWorktreeSession,
@@ -1302,7 +1304,7 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
                 workstreamId={workstreamId}
                 workspacePath={workspacePath}
                 basePath={worktreePath || workspacePath}
-                isActive={true}
+                isActive={isActive}
                 onSwitchToAgentMode={onSwitchToAgentMode}
                 onOpenSessionInChat={onOpenSessionInChat}
                 onTabDoubleClick={toggleEditorMaximized}

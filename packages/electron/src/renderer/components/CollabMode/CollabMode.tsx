@@ -12,7 +12,7 @@ import React, { useCallback, useState, useEffect, useRef, useMemo, forwardRef, u
 import { useAtomValue } from 'jotai';
 import { store } from '@nimbalyst/runtime/store';
 import { CollabSidebar } from './CollabSidebar';
-import { TabsProvider, useTabsActions, useTabs, type TabData } from '../../contexts/TabsContext';
+import { TabsProvider, useTabsActions, useTabs, useTabNavigationShortcuts, type TabData } from '../../contexts/TabsContext';
 import { TabManager } from '../TabManager/TabManager';
 import { TabContent } from '../TabContent/TabContent';
 import { ChatSidebar } from '../ChatSidebar';
@@ -146,6 +146,7 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
 }, ref) {
   const tabsActions = useTabsActions();
   const { tabs, activeTabId } = useTabs();
+  useTabNavigationShortcuts(isActive);
   const pendingDoc = useAtomValue(pendingCollabDocumentAtom);
   const sharedDocuments = useAtomValue(sharedDocumentsAtom);
   const [restored, setRestored] = useState(false);

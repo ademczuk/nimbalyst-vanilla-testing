@@ -73,8 +73,11 @@ import {
   settingsInitialCategoryAtom,
   settingsInitialScopeAtom,
   settingsKeyAtom,
+  settingsDestinationAtom,
   setSettingsInitialCategoryAtom,
   setSettingsInitialScopeAtom,
+  setSettingsDestinationAtom,
+  navigateSettingsInPlaceAtom,
   incrementSettingsKeyAtom,
   clearSettingsNavigationAtom,
   openSettingsCommandAtom,
@@ -472,19 +475,11 @@ export default function App() {
   const setRailActivePath = useSetAtom(activeWorkspacePathAtom);
   // NOTE: fileTree, sidebarWidth, isNewFileDialogOpen, newFileDirectory, isHistoryDialogOpen moved to EditorMode
   // NOTE: Navigation dialogs (QuickOpen, SessionQuickOpen, PromptQuickOpen, ProjectQuickOpen) are now managed by DialogProvider
-  // NOTE: isAIChatCollapsed, aiChatWidth moved to EditorMode for workspace mode
-  // These are kept for potential single-file mode or agent mode use
-  const [isAIChatCollapsed, setIsAIChatCollapsed] = useState(false);
-  const [aiChatWidth, setAIChatWidth] = useState<number>(350);
   // NOTE: KeyboardShortcutsDialog, DiscordInvitation, FeedbackIntakeDialog, ApiKeyDialog are now managed by DialogProvider
   // NOTE: WindowsClaudeCodeWarning now managed by DialogProvider via useOnboarding hook
-  const [isAIChatStateLoaded, setIsAIChatStateLoaded] = useState(false);
-  // Planning mode for AI sidebar (Claude Code safety). Default ON
-  const [aiPlanningModeEnabled, setAIPlanningModeEnabled] = useState<boolean>(true);
   // Force show trust toast (when user wants to change permission mode)
   const [forceShowTrustToast, setForceShowTrustToast] = useState(false);
   const [sessionToLoad, setSessionToLoad] = useState<{ sessionId: string; workspacePath?: string } | null>(null);
-  const [currentAISessionId, setCurrentAISessionId] = useState<string | null>(null);
   // NOTE: diffError and projectSelection are now managed by DialogProvider
 
   // NOTE: UnifiedOnboarding state now managed by DialogProvider via useOnboarding hook
@@ -496,8 +491,11 @@ export default function App() {
   const settingsInitialCategory = useAtomValue(settingsInitialCategoryAtom);
   const settingsInitialScope = useAtomValue(settingsInitialScopeAtom);
   const settingsKey = useAtomValue(settingsKeyAtom);
+  const settingsDestination = useAtomValue(settingsDestinationAtom);
+  const navigateSettingsInPlace = useSetAtom(navigateSettingsInPlaceAtom);
   const setSettingsInitialCategory = useSetAtom(setSettingsInitialCategoryAtom);
   const setSettingsInitialScope = useSetAtom(setSettingsInitialScopeAtom);
+  const setSettingsDestination = useSetAtom(setSettingsDestinationAtom);
   const incrementSettingsKey = useSetAtom(incrementSettingsKeyAtom);
   const clearSettingsNavigation = useSetAtom(clearSettingsNavigationAtom);
   const [marketplaceInstallRequest, setMarketplaceInstallRequest] = useState<{
@@ -594,15 +592,13 @@ export default function App() {
         },
         // Settings deep link helpers
         openAgentPermissions: () => {
-          setSettingsInitialCategory('agent-permissions');
-          setSettingsInitialScope('project');
-          incrementSettingsKey();
+          // In-place nav clears any stale deep-link destination so it can't
+          // override this scope/category (settings review finding).
+          navigateSettingsInPlace({ category: 'project-agent-permissions', scope: 'project' });
           setTimeout(() => setActiveMode('settings'), 0);
         },
-        openSettings: (category?: any, scope?: 'user' | 'project') => {
-          if (category) setSettingsInitialCategory(category);
-          if (scope) setSettingsInitialScope(scope);
-          incrementSettingsKey();
+        openSettings: (category?: any, scope?: 'application' | 'personal' | 'organization' | 'project') => {
+          navigateSettingsInPlace({ category, scope });
           setTimeout(() => setActiveMode('settings'), 0);
         },
         // Expose DocumentModelRegistry for multi-editor coordination tests
@@ -713,23 +709,6 @@ export default function App() {
         console.error('[App] Failed to load workspace state:', error);
       });
   }, [workspacePath, setDiffTreeGroupByDirectory, setAgentFileScopeMode, hydrateFileGutterCollapsed]);
-
-  // Save active mode when it changes
-  useEffect(() => {
-    // console.log('[App Layout] Active mode changed to:', activeMode, 'workspacePath:', workspacePath);
-
-    if (!workspacePath || !window.electronAPI?.invoke) return;
-
-    const updates = { activeMode };
-    // console.log('[App Layout] Saving updates:', JSON.stringify(updates));
-    window.electronAPI.invoke('workspace:update-state', workspacePath, updates)
-      .then((result) => {
-        // console.log('[App Layout] Successfully saved active mode:', activeMode, 'result:', result);
-      })
-      .catch(error => {
-        console.error('[ContentMode] Failed to save active mode:', error);
-      });
-  }, [activeMode, workspacePath]);
 
   // Initialize tracker panel state from workspace state
   useEffect(() => {
@@ -916,11 +895,6 @@ export default function App() {
   // NOTE: useHMRStateRestoration removed - no longer needed now that TabEditor
   // manages all editor state and useTabs persists tabs to localStorage. During HMR, tabs will
   // be restored from localStorage and editors recreated from tab content.
-
-  // Prepare AI chat state loading
-  useEffect(() => {
-    setIsAIChatStateLoaded(false);
-  }, []);
 
   // NOTE: Sidebar width loading moved to EditorMode
 
@@ -1123,10 +1097,12 @@ export default function App() {
         }));
       },
       restoreSettings: (state) => {
-        // Switch to settings mode and select the category
-        setSettingsInitialCategory(state.category as any);
-        setSettingsInitialScope(state.scope);
-        incrementSettingsKey();
+        // Switch to settings mode and select the category. In-place nav clears
+        // any stale deep-link destination so restored scope/category holds.
+        navigateSettingsInPlace({
+          category: state.category as any,
+          scope: state.scope === 'user' ? 'application' : state.scope,
+        });
       },
     });
   }, []);
@@ -1141,8 +1117,12 @@ export default function App() {
     if (!openSettingsCommand || openSettingsCommand.timestamp === openSettingsCommandProcessedRef.current) return;
     openSettingsCommandProcessedRef.current = openSettingsCommand.timestamp;
 
-    setSettingsInitialCategory(openSettingsCommand.category);
-    if (openSettingsCommand.scope) setSettingsInitialScope(openSettingsCommand.scope);
+    const destination = openSettingsCommand.destination;
+    setSettingsDestination(destination);
+    setSettingsInitialCategory(destination?.category ?? openSettingsCommand.category);
+    if (destination?.scope ?? openSettingsCommand.scope) {
+      setSettingsInitialScope(destination?.scope ?? openSettingsCommand.scope);
+    }
     incrementSettingsKey();
     setTimeout(() => setActiveMode('settings'), 0);
 
@@ -1159,7 +1139,7 @@ export default function App() {
       };
       setTimeout(tryScroll, 50);
     }
-  }, [openSettingsCommand, setSettingsInitialCategory, setSettingsInitialScope, incrementSettingsKey]);
+  }, [openSettingsCommand, setSettingsDestination, setSettingsInitialCategory, setSettingsInitialScope, incrementSettingsKey]);
 
   // Custom event dispatched by the runtime-side CodexAuthRequiredWidget. Lives
   // in renderer because the widget cannot reach the renderer's jotai store
@@ -1169,7 +1149,7 @@ export default function App() {
       const detail = (event as CustomEvent<{ anchor?: string }>).detail;
       store.set(openSettingsCommandAtom, {
         category: 'openai-codex',
-        scope: 'user',
+        scope: 'application',
         anchor: detail?.anchor ?? 'codex-auth-section',
         timestamp: Date.now(),
       });
@@ -1623,30 +1603,9 @@ export default function App() {
     return () => window.removeEventListener('open-ai-session', handleOpenAiSession as unknown as EventListener);
   }, [activeMode]);
 
-  // Save AI Chat state when it changes (but only after initial load)
-  useEffect(() => {
-    if (!workspacePath || !workspaceMode || !isAIChatStateLoaded) return;
-    if (!window.electronAPI?.invoke) return;
-
-    const saveAIChatState = async () => {
-      try {
-        const aiPanelState = {
-          collapsed: isAIChatCollapsed,
-          width: aiChatWidth,
-          currentSessionId: currentAISessionId || undefined,
-          planningModeEnabled: aiPlanningModeEnabled,
-        };
-        if (LOG_CONFIG.AI_CHAT_STATE) console.log('[AI_CHAT] Saving AI Chat state:', aiPanelState);
-        await window.electronAPI.invoke('workspace:update-state', workspacePath, {
-          aiPanel: aiPanelState
-        });
-      } catch (error) {
-        console.error('[AI_CHAT] Failed to save AI Chat state:', error);
-      }
-    };
-
-    saveAIChatState();
-  }, [isAIChatCollapsed, aiChatWidth, currentAISessionId, aiPlanningModeEnabled, isAIChatStateLoaded, workspacePath, workspaceMode]);
+  // AI chat layout persistence is owned by EditorMode's workspace-keyed atoms.
+  // Do not mirror the legacy App-local values here: they are not reset on rail
+  // switches and can overwrite the newly active project's persisted layout.
 
   // Handle QuickOpen file selection - delegates to EditorMode and switches mode if needed
   const handleQuickOpenFileSelect = useCallback(async (filePath: string) => {
@@ -1791,23 +1750,6 @@ export default function App() {
   }, [isMultiProjectMode, railActivePath, workspacePath]);
 
 
-  // Mode-aware tab navigation handlers
-  const handleNextTab = () => {
-    if (activeMode === 'agent') {
-      agentModeRef.current?.nextTab?.();
-    } else {
-      editorModeRef.current?.tabs?.nextTab?.();
-    }
-  };
-
-  const handlePreviousTab = () => {
-    if (activeMode === 'agent') {
-      agentModeRef.current?.previousTab?.();
-    } else {
-      editorModeRef.current?.tabs?.previousTab?.();
-    }
-  };
-
   // Set up IPC listeners
   // IPC handlers hook - sets up all IPC communication with main process
   useIPCHandlers({
@@ -1824,9 +1766,6 @@ export default function App() {
     handleWorkspaceFileSelect,
     openWelcomeTab,
     openFeedback: handleOpenFeedback,
-    handleNextTab,
-    handlePreviousTab,
-
     // State
     activeMode,
 
@@ -1835,12 +1774,8 @@ export default function App() {
     setWorkspaceMode,
     setWorkspacePath,
     setWorkspaceName,
-    setIsAIChatCollapsed,
-    setAIChatWidth,
-    setIsAIChatStateLoaded,
     setSessionToLoad,
     setIsKeyboardShortcutsDialogOpen: () => {}, // Unused - KeyboardShortcutsDialog now managed by DialogProvider
-    setAIPlanningMode: setAIPlanningModeEnabled,
     setTheme,
 
     // Refs
@@ -2157,16 +2092,14 @@ export default function App() {
           setActiveMode('settings');
         }}
         onNavigateSettings={(scope, category) => {
-          if (category) setSettingsInitialCategory(category);
-          setSettingsInitialScope(scope);
-          incrementSettingsKey();
+          // In-place nav clears any stale deep-link destination so it can't
+          // override this scope/category (settings review finding).
+          navigateSettingsInPlace({ category, scope });
           setTimeout(() => setActiveMode('settings'), 0);
         }}
         onOpenPermissions={() => {
           // Deep link to agent permissions settings
-          setSettingsInitialCategory('agent-permissions');
-          setSettingsInitialScope('project');
-          incrementSettingsKey(); // Force SettingsView remount
+          navigateSettingsInPlace({ category: 'project-agent-permissions', scope: 'project' });
           setTimeout(() => setActiveMode('settings'), 0);
         }}
         onOpenFeedback={handleOpenFeedback}
@@ -2407,6 +2340,7 @@ export default function App() {
                   workspaceName={workspaceName}
                   initialCategory={settingsInitialCategory}
                   initialScope={settingsInitialScope}
+                  initialDestination={settingsDestination}
                   marketplaceInstallRequest={marketplaceInstallRequest}
                   onMarketplaceInstallRequestHandled={clearMarketplaceInstallRequest}
                   onClose={() => {
@@ -2476,7 +2410,7 @@ export default function App() {
       <ProjectTrustToast
         workspacePath={workspacePath}
         onOpenSettings={() => {
-          setSettingsInitialCategory('agent-permissions');
+          setSettingsInitialCategory('project-agent-permissions');
           setSettingsInitialScope('project');
           incrementSettingsKey();
           setTimeout(() => setActiveMode('settings'), 0);

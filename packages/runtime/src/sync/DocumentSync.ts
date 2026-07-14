@@ -218,6 +218,14 @@ export class DocumentSyncProvider {
   private pendingCompactionId: string | null = null;
   private compactionAckTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly COMPACTION_ACK_TIMEOUT_MS = 10_000;
+  /**
+   * Resolver for an in-flight `forceReplaceServerState` awaiting its
+   * `docCompactAck`. Distinct from routine compaction (which is fire-and-forget)
+   * because the recovery caller must know whether the server accepted the
+   * replacement snapshot.
+   */
+  private forceReplaceWaiter: { clientCompactId: string; resolve: (accepted: boolean) => void } | null = null;
+  private forceReplaceCounter = 0;
 
   /**
    * True once ANY snapshot/update/broadcast failed to decode and was skipped
@@ -359,6 +367,11 @@ export class DocumentSyncProvider {
     this.clearReplayAckTimer();
     this.clearCompactionAckTimer();
     this.pendingCompactionId = null;
+    if (this.forceReplaceWaiter) {
+      const waiter = this.forceReplaceWaiter;
+      this.forceReplaceWaiter = null;
+      waiter.resolve(false);
+    }
     this.connecting = false;
     this.suppressReconnect = true;
     this.requeueInflightPendingUpdate();
@@ -939,6 +952,7 @@ export class DocumentSyncProvider {
       // sync responses (checking just the last `msg` would miss earlier pages).
       const serverIsEmpty = Y.encodeStateAsUpdate(this.ydoc).byteLength <= 2;
       this.config.onFirstSyncComplete?.(serverIsEmpty);
+      this.notifyContentChanged();
 
       if (this.reviewGateEnabled) {
         this.reviewedStateVector = Y.encodeStateVector(this.ydoc);
@@ -996,6 +1010,7 @@ export class DocumentSyncProvider {
     }
 
     this.config.onRemoteUpdate?.(REMOTE_ORIGIN);
+    this.notifyContentChanged();
   }
 
   private async handleAwarenessBroadcast(
@@ -1038,6 +1053,7 @@ export class DocumentSyncProvider {
       ) {
         return;
       }
+      this.notifyContentChanged();
       this.enqueuePendingLocalUpdate(update);
       if (this.ws && this.ws.readyState === WebSocket.OPEN && this.synced) {
         await this.replayPendingUpdate();
@@ -1051,6 +1067,17 @@ export class DocumentSyncProvider {
   private teardownUpdateObserver(): void {
     this.updateObserverDispose?.();
     this.updateObserverDispose = null;
+  }
+
+  private notifyContentChanged(): void {
+    // Never persist a state assembled after any undecodable server payload;
+    // it is necessarily incomplete and must not become a recovery source.
+    if (this.skippedUndecodablePayload) return;
+    try {
+      this.config.onContentChanged?.(this.ydoc);
+    } catch (err) {
+      console.warn('[DocumentSync] Content-change callback failed:', err);
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -1566,6 +1593,67 @@ export class DocumentSyncProvider {
     }
   }
 
+  /**
+   * Deliberately replace the server's authoritative state for this room with the
+   * CURRENT local Y.Doc, dropping every prior server row -- including rows this
+   * client could not decrypt. This is the recovery override for a room whose
+   * server state became undecryptable (backup review HIGH finding 1): after a
+   * plaintext backup is applied into the otherwise-empty Y.Doc, this promotes it
+   * to the sole authoritative snapshot via `docCompact(replacesUpTo = lastSeq)`.
+   *
+   * Unlike routine compaction it bypasses the `hasUndecodedContent()` guard --
+   * that guard protects against ACCIDENTALLY burying unreadable rows, but here
+   * discarding them is the whole point. It still refuses an empty snapshot so a
+   * blank Y.Doc can never wipe a room. Resolves true once the server acks.
+   */
+  async forceReplaceServerState(timeoutMs = 15_000): Promise<boolean> {
+    if (this.destroyed) throw new Error('Cannot force-replace a destroyed room provider');
+    if (!this.synced) throw new Error('Cannot force-replace before the room has synced');
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('Cannot force-replace while the room is disconnected');
+    }
+
+    // Let any just-applied local content reach the server first, so
+    // `replacesUpTo` covers it and no racing incremental update re-introduces a
+    // sequence above the replacement snapshot.
+    await this.waitForPendingWrites(timeoutMs);
+
+    const stateBytes = Y.encodeStateAsUpdate(this.ydoc);
+    // An empty Y.Doc encodes to ~2 bytes; never let it wipe the room.
+    if (stateBytes.byteLength <= 2) {
+      throw new Error('Refusing to force-replace the room with an empty document');
+    }
+
+    const { encrypted, iv } = await this.encryptForWire(stateBytes);
+    const clientCompactId = `force-replace-${this.lastSeq}-${this.config.userId}-${this.forceReplaceCounter++}`;
+
+    const acked = new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.forceReplaceWaiter?.clientCompactId === clientCompactId) {
+          this.forceReplaceWaiter = null;
+          if (this.pendingCompactionId === clientCompactId) this.pendingCompactionId = null;
+          resolve(false);
+        }
+      }, timeoutMs);
+      this.forceReplaceWaiter = {
+        clientCompactId,
+        resolve: (accepted) => { clearTimeout(timer); resolve(accepted); },
+      };
+    });
+
+    this.pendingCompactionId = clientCompactId;
+    this.send({
+      type: 'docCompact',
+      encryptedState: encrypted,
+      iv,
+      replacesUpTo: this.lastSeq,
+      clientCompactId,
+      orgKeyFingerprint: this.wireOrgKeyFingerprint,
+    });
+
+    return acked;
+  }
+
   private handleCompactionAck(msg: Extract<DocServerMessage, { type: 'docCompactAck' }>): void {
     if (msg.clientCompactId && msg.clientCompactId !== this.pendingCompactionId) {
       return;
@@ -1574,6 +1662,13 @@ export class DocumentSyncProvider {
     this.clearCompactionAckTimer();
     this.pendingCompactionId = null;
     this.lastCompactionAttemptAt = Date.now();
+
+    const waiter = this.forceReplaceWaiter;
+    if (waiter && (!msg.clientCompactId || waiter.clientCompactId === msg.clientCompactId)) {
+      this.forceReplaceWaiter = null;
+      waiter.resolve(!!msg.accepted);
+    }
+
     if (!msg.accepted) {
       console.warn(
         `[DocumentSync] Compaction rejected: ${msg.error?.code ?? 'unknown'} ${msg.error?.message ?? ''}`.trim()

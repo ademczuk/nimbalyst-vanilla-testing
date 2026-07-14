@@ -1080,6 +1080,7 @@ export class TeamSyncProvider {
       if (!this.destroyed) {
         this.connect().catch(err => {
           console.error('[TeamSync] Reconnect failed:', err);
+          this.scheduleReconnect();
         });
       }
     }, jittered);

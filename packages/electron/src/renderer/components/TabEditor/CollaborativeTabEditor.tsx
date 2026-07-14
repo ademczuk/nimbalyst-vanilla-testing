@@ -68,7 +68,7 @@ import type { CustomEditorRegistration } from '../CustomEditors/types';
 import { useCollabLocalOrigin } from '../../hooks/useCollabLocalOrigin';
 import { markDocViewed } from '../../hooks/useDocUnread';
 import { recordDocOpened } from '../../store/atoms/collabDiscovery';
-import { getCollabContentAdapter } from '@nimbalyst/collab-adapters';
+import { exportCollabRecoveryPlaintext, getCollabContentAdapter } from '@nimbalyst/collab-adapters';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
 import { FilePathBreadcrumb } from '../common/FilePathBreadcrumb';
 import { UnifiedEditorHeaderBar } from './UnifiedEditorHeaderBar';
@@ -462,6 +462,27 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
       userId: activeConfig.userId,
       documentId: activeConfig.documentId,
       createWebSocket: activeConfig.createWebSocket,
+      onContentChanged: (yDoc) => {
+        const adapter = getCollabContentAdapter(activeConfig.documentType ?? 'markdown');
+        if (!adapter) return;
+        try {
+          const plaintext = exportCollabRecoveryPlaintext(adapter, yDoc);
+          if (plaintext === null) {
+            console.warn('[CollaborativeTabEditor] Backup skipped: adapter export is not UTF-8 plaintext');
+            return;
+          }
+          void window.electronAPI.collabBackup.contentChanged({
+            workspacePath: activeConfig.workspacePath,
+            documentId: activeConfig.documentId,
+            documentType: activeConfig.documentType ?? 'markdown',
+            title: activeConfig.title,
+            plaintext,
+            kind: 'document',
+          });
+        } catch (error) {
+          console.warn('[CollaborativeTabEditor] Backup serialization failed:', error);
+        }
+      },
       onStatusChange: (status) => {
         console.log('[CollaborativeTabEditor] Status change:', status);
         // Write to Jotai atom -- only CollabStatusBar re-renders
@@ -644,14 +665,12 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
 
   const markdownConfig = useMemo(() => ({
     onUploadAsset: (file: File) => assetService.uploadFile(file),
-    onAssetReferencesRemoved: (removedUris: string[]) => {
-      // Fire-and-forget; main deletes exactly the URIs the plugin saw
-      // disappear (never the full server set), so we can't accidentally
-      // delete a peer's still-live attachment.
-      void assetService.notifyAssetReferencesRemoved(removedUris).catch(err => {
-        console.warn('[CollaborativeTabEditor] gc-assets failed', err);
-      });
-    },
+    // NIM-1683: intentionally do NOT wire onAssetReferencesRemoved. Deleting an
+    // asset the moment it leaves the *current* editor state is data-loss --
+    // revision history and undo / cut-paste still reference the same
+    // `collab-asset://` URI. Asset lifetime is tied to document lifetime; the
+    // server reclaims all of a doc's blobs only when the document itself is
+    // deleted. Leaving this unset keeps the asset-GC extension idle.
   }), [assetService]);
 
   // Create a minimal EditorHost for collaboration mode

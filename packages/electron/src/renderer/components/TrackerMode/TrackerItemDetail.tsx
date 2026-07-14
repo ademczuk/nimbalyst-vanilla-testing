@@ -702,6 +702,7 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
     bodyCacheMarkdown,
   } = useTrackerContentCollab({
     itemId,
+    title: item?.issueKey || (item ? getRecordTitle(item) : itemId),
     workspacePath,
     syncMode,
     teamMemberCount: teamMembers.length,

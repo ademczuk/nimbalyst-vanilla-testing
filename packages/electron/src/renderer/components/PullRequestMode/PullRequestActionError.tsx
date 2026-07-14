@@ -1,3 +1,4 @@
+import type { JSX } from 'react';
 import { useState } from 'react';
 
 export const GH_WORKFLOW_SCOPE_REFRESH_COMMAND = 'gh auth refresh -h github.com -s workflow';

@@ -8,6 +8,7 @@
  * - Unified storage in JSONB
  */
 
+import type { JSX } from 'react';
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import {

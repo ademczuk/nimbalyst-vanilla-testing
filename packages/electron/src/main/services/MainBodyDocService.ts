@@ -28,11 +28,13 @@ import {
   type DocumentSyncStatus,
 } from '@nimbalyst/runtime/sync';
 import { HeadlessBodyNodes, getEditorTransformers, $convertFromEnhancedMarkdownString } from '@nimbalyst/runtime/editor';
+import { exportCollabRecoveryPlaintext, getCollabContentAdapter } from '@nimbalyst/collab-adapters';
 import { $getRoot } from 'lexical';
 import { logger } from '../utils/logger';
 import { getCollabSyncWsUrl } from '../utils/collabSyncUrl';
 import { findTeamForWorkspace, getOrgScopedJwt } from './TeamService';
 import { getOrgKey, getOrgKeyFingerprint, fetchAndUnwrapOrgKey, fetchTeamKeyStatus } from './OrgKeyService';
+import { getCollabBackupService } from './CollabBackupService';
 
 const IDLE_TTL_MS = 30_000;
 const MAX_WARM_ENTRIES = 25;
@@ -113,6 +115,23 @@ async function resolveConfig(
     // authoritative. Empty is fine.
     userId: '',
     documentId,
+    onContentChanged: (yDoc) => {
+      const adapter = getCollabContentAdapter('markdown');
+      if (!adapter) return;
+      const plaintext = exportCollabRecoveryPlaintext(adapter, yDoc);
+      if (plaintext === null) return;
+      getCollabBackupService().onContentChanged({
+        documentId,
+        orgId: team.orgId,
+        projectId: team.teamProjectId ?? null,
+        documentType: 'markdown',
+        title: itemId,
+        relativePath: null,
+        kind: 'body',
+        extension: adapter.fileExtensions[0] ?? '.md',
+        getPlaintext: () => plaintext,
+      });
+    },
     // Node's bundled global WebSocket is unavailable on older Electron
     // versions; use the `ws` package consistently with TrackerSyncManager.
     createWebSocket: ((url: string) => new WebSocket(url)) as unknown as DocumentSyncConfig['createWebSocket'],

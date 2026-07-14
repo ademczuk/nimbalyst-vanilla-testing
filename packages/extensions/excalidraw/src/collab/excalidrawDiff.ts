@@ -15,8 +15,8 @@
 import type {
   ExcalidrawElement,
   NonDeletedExcalidrawElement,
-} from '@excalidraw/excalidraw/types/element/types';
-import type { BinaryFileData, BinaryFiles } from '@excalidraw/excalidraw/types/types';
+} from '@excalidraw/excalidraw/element/types';
+import type { BinaryFileData, BinaryFiles } from '@excalidraw/excalidraw/types';
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import * as Y from 'yjs';
 import { moveArrayItem } from './excalidrawHelpers';

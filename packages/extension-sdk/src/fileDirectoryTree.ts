@@ -12,7 +12,7 @@ export function normalizeFilePath(filePath: string): string {
 }
 
 export function getFilePathBasename(filePath: string): string {
-  const normalizedPath = normalizeFilePath(filePath);
+  const normalizedPath = normalizeFilePath(filePath).replace(/\/+$/, '');
   return normalizedPath.slice(normalizedPath.lastIndexOf('/') + 1);
 }
 

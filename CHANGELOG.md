@@ -10,28 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- In a shared document, typing `@` now suggests other shared documents and inserts a team-styled link that opens the referenced shared document.
+- Settings now separates Application, Personal, Organizations, and Project management, including per-account mobile-sync profiles, organization administration without an open workspace, explicit project access controls, and project-level MCP server configuration.
 - The Git extension now keeps a persistent, live command output history across panel and renderer reloads.
 - Tracker types can now be organized into manually ordered folders that stay in sync for everyone on a Nimbalyst Team project.
 - The Agent navigation icon now shows sessions awaiting input, running, or unread and opens a grouped attention list with a mark-all-read action.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Team encryption is now server-managed for new organizations; legacy organizations migrate silently only after local plaintext collaboration backups succeed, with recovery markers retained if post-cutover verification fails.
 - The Claude Agent model picker no longer lists duplicate "(1M)" rows — current models already run their full context window on their single row.
 - Completed tracker reference chips now show a checkmark and crossed-out text in documents and AI chats.
 - Mobile session sync now skips messages the mobile transcript never displays, cutting sync storage and traffic.
+- Codex is now enabled by default and the Claude Code CLI is now opt-in; existing choices are preserved.
 
 ### Fixed
+- Next Tab and Previous Tab now navigate the active mode, including Shared Docs, without changing hidden tabs in another mode.
+- Attachments in shared documents no longer disappear after an image is moved, deleted-and-undone, or edited by a collaborator — images now stay put for everyone.
 - Very large AI sessions now open quickly instead of appearing to hang, and no longer slow down as your history grows.
 - PR mode now explains when a merge needs the GitHub CLI `workflow` scope and offers the recovery command instead of showing `gh api -X failed`.
 - Importing Mermaid diagrams into Excalidraw works again: flowcharts (including subgraphs) become editable shapes instead of failing or degrading to a broken image, and AI-added arrows no longer lose their labels.
 - Voice mode no longer stops listening while you are still speaking; the mic stays open until you finish or explicitly pause.
 - Shared-document comments now live in the text-selection toolbar instead of overlapping it.
 - MCP servers disabled in Settings no longer load in Claude Code (SDK) sessions; the disable toggle now governs both the CLI and SDK paths.
-- Directory grouping now handles Windows paths consistently across session edits, commit proposals, and Git history.
+- Directory grouping and commit-proposal folder labels now handle Windows and trailing-separator paths consistently across change views.
 - Stopping a running Codex session (including from mobile) now interrupts it immediately instead of leaving it stuck showing as running.
 - Answering an interactive prompt from mobile — approving a plan, granting a tool permission, or answering a question — now works across every agent instead of silently doing nothing on non-Claude-Code sessions.
 - Tracker status badges and custom columns no longer vanish after a synced update; they stay put instead of blanking out until the next reload.
 - A long queue of pending prompts now scrolls within a capped area instead of pushing the message input off screen.
+- Opening several shared documents or tracker items at once no longer repeats team-resolution and encryption-status lookups for each one, removing redundant network round trips from the open path.
+- Restarting with several AI tabs or windows open no longer repeats slash-command and shared-link lookups for each one, removing redundant scans and network round trips from startup.
 
 ### Removed
 <!-- Removed features go here -->

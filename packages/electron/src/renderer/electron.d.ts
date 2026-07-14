@@ -143,6 +143,34 @@ interface SemanticSearchResult {
 }
 
 interface ElectronAPI {
+  team: {
+    getKeyCustodyStatus: (orgId: string) => Promise<{ success: boolean; mode?: 'legacy-e2e' | 'server-managed'; error?: string }>;
+    getEncryptionMigrationStatus?: (orgId: string) => Promise<{
+      success: boolean;
+      migration?:
+        | { status: 'migrating'; startedAt: string }
+        | { status: 'complete'; finishedAt: string }
+        | { status: 'stuck'; failedAt: string; message: string }
+        | null;
+    }>;
+    [method: string]: any;
+  };
+  organization: {
+    list: () => Promise<any>;
+    get: (orgId: string) => Promise<any>;
+    create: (input: { name: string; workspacePath?: string; sourcePersonalOrgId?: string }) => Promise<any>;
+    acceptInvitation: (orgId: string) => Promise<any>;
+    listMembers: (orgId: string) => Promise<any>;
+    inviteMember: (orgId: string, email: string) => Promise<any>;
+    removeMember: (orgId: string, memberId: string) => Promise<any>;
+    updateMemberRole: (orgId: string, memberId: string, role: string) => Promise<any>;
+    listProjects: (orgId: string) => Promise<any>;
+    addProject: (input: { orgId: string; workspacePath?: string; name?: string }) => Promise<any>;
+    moveProject: (input: { sourceOrgId: string; projectId: string; destinationOrgId: string; dropMemberEmails?: string[] }) => Promise<any>;
+    deleteOrganization: (orgId: string) => Promise<any>;
+    getEncryptionStatus: (orgId: string) => Promise<any>;
+    getEncryptionMigrationStatus: (orgId: string) => Promise<any>;
+  };
   // Global semantic search (nimbalyst-memory). Empty/false when memory is off.
   semanticSearch: {
     isAvailable: (workspacePath: string) => Promise<boolean>;
@@ -610,7 +638,7 @@ interface ElectronAPI {
     signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
     sendMagicLink: (email: string) => Promise<{ success: boolean; error?: string }>;
     signOut: () => Promise<{ success: boolean }>;
-    deleteAccount: () => Promise<{ success: boolean; error?: string }>;
+    deleteAccount: (personalOrgId?: string) => Promise<{ success: boolean; error?: string }>;
     getSessionJwt: () => Promise<string | null>;
     refreshSession: () => Promise<boolean>;
     subscribeAuthState: () => Promise<any>;
@@ -891,6 +919,34 @@ interface ElectronAPI {
     // Legacy API (deprecated)
     /** @deprecated Use terminal.create instead */
     createSession: (workspacePath: string, options?: { cwd?: string; worktreeId?: string; worktreePath?: string }) => Promise<{ success: boolean; sessionId: string; error?: string }>;
+  };
+
+  // Plaintext recovery copies for collaborative content
+  collabBackup: {
+    contentChanged: (payload: {
+      workspacePath: string;
+      documentId: string;
+      documentType: string;
+      title?: string;
+      plaintext: string;
+      kind?: 'document' | 'body';
+    }) => Promise<{ success: boolean; scheduled?: boolean; error?: string }>;
+    backupAll: (workspacePath: string) => Promise<{
+      success: boolean;
+      orgId: string;
+      projectId: string | null;
+      total: number;
+      backedUp: number;
+      skipped: number;
+      failures: Array<{ documentId: string; error: string }>;
+    }>;
+    list: (workspacePath: string) => Promise<{
+      orgId: string;
+      projectId: string | null;
+      updatedAt: string;
+      documents: Record<string, unknown>;
+    } | null>;
+    restore: (workspacePath: string, documentId: string, force?: boolean) => Promise<{ success: boolean; error?: string }>;
   };
 
   // Document Sync (collaborative editing)

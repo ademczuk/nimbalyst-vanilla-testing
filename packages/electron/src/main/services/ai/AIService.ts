@@ -489,7 +489,7 @@ export class AIService {
                 testStatus: "idle",
               },
               'openai-codex': {
-                enabled: false,
+                enabled: true,
                 testStatus: "idle",
                 installStatus: "not-installed",
               },
