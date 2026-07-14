@@ -1389,6 +1389,16 @@ async function doRefreshSession(serverUrl?: string): Promise<boolean> {
     // but we preserve the personal values for sync room IDs and encryption keys.
     const personalOrgId = authState.personalOrgId;
     const personalUserId = authState.personalUserId;
+    let personalSessionJwt = authState.personalSessionJwt;
+    try {
+      const jwtParts = data.session_jwt.split('.');
+      const payload = JSON.parse(Buffer.from(jwtParts[1], 'base64url').toString()) as { sub?: string };
+      if (payload.sub && personalUserId && payload.sub === personalUserId) {
+        personalSessionJwt = data.session_jwt;
+      }
+    } catch {
+      // Keep the existing personal JWT unless the refreshed token's scope is proven.
+    }
     updateAuthState({
       isAuthenticated: true,
       user: data.user_id ? {
@@ -1402,6 +1412,7 @@ async function doRefreshSession(serverUrl?: string): Promise<boolean> {
       orgId: refreshedOrgId,
       personalOrgId,
       personalUserId,
+      personalSessionJwt,
     });
 
     // Save updated credentials
