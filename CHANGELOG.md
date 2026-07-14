@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- In a shared document, typing `@` now suggests other shared documents and inserts a team-styled link that opens the referenced shared document.
 - Settings now separates Application, Personal, Organizations, and Project management, including per-account mobile-sync profiles, organization administration without an open workspace, and explicit project access controls.
 - The Git extension now keeps a persistent, live command output history across panel and renderer reloads.
 - Tracker types can now be organized into manually ordered folders that stay in sync for everyone on a Nimbalyst Team project.
