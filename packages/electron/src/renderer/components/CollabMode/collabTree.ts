@@ -27,6 +27,77 @@ export interface CollabTreeDocumentNode {
 
 export type CollabTreeNode = CollabTreeFolderNode | CollabTreeDocumentNode;
 
+export interface CollabFolderOption {
+  folderId: string | null;
+  name: string;
+  depth: number;
+}
+
+const compareFolderNames = (left: SharedFolder, right: SharedFolder): number => {
+  const byName = left.name.localeCompare(right.name, undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+  return byName || left.folderId.localeCompare(right.folderId);
+};
+
+/**
+ * Build the Root-first location list used by the collab create dialog.
+ * Missing parents are treated as root. A final visited-set pass keeps every
+ * folder selectable even if corrupt data contains a parent cycle.
+ */
+export function flattenCollabFolderOptions(folders: SharedFolder[]): CollabFolderOption[] {
+  const foldersById = new Map(folders.map(folder => [folder.folderId, folder]));
+  const childrenByParentId = new Map<string | null, SharedFolder[]>();
+
+  for (const folder of foldersById.values()) {
+    const parentId = folder.parentFolderId ?? null;
+    const effectiveParentId = parentId !== folder.folderId && foldersById.has(parentId ?? '')
+      ? parentId
+      : null;
+    const siblings = childrenByParentId.get(effectiveParentId) ?? [];
+    siblings.push(folder);
+    childrenByParentId.set(effectiveParentId, siblings);
+  }
+
+  for (const siblings of childrenByParentId.values()) {
+    siblings.sort(compareFolderNames);
+  }
+
+  const options: CollabFolderOption[] = [{ folderId: null, name: 'Root', depth: 0 }];
+  const visited = new Set<string>();
+  const appendFolder = (folder: SharedFolder, depth: number) => {
+    if (visited.has(folder.folderId)) return;
+    visited.add(folder.folderId);
+    options.push({ folderId: folder.folderId, name: folder.name, depth });
+    for (const child of childrenByParentId.get(folder.folderId) ?? []) {
+      appendFolder(child, depth + 1);
+    }
+  };
+
+  for (const rootFolder of childrenByParentId.get(null) ?? []) {
+    appendFolder(rootFolder, 0);
+  }
+
+  for (const remainingFolder of [...foldersById.values()].sort(compareFolderNames)) {
+    appendFolder(remainingFolder, 0);
+  }
+
+  return options;
+}
+
+/**
+ * Resolve the create target when opening the dialog. `undefined` means there
+ * is no folder context menu, while `null` is an explicit Root target (used by
+ * legacy folder rows that have no first-class folder id).
+ */
+export function resolveCollabCreateTargetFolderId(
+  contextFolderId: string | null | undefined,
+  selectedFolderId: string | null | undefined,
+): string | null {
+  return contextFolderId === undefined ? (selectedFolderId ?? null) : contextFolderId;
+}
+
 export function normalizeCollabPath(value: string | null | undefined): string {
   if (!value) return '';
   return value

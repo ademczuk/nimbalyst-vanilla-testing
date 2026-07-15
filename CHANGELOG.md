@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Shared document and folder creation now lets you choose any shared folder or Root as the destination.
+- Shared documents now have a recoverable Trash with empty-document cleanup, restore, manual purge, and automatic 30-day removal.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

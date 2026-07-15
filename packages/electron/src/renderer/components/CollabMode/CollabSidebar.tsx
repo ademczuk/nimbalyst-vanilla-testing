@@ -4,12 +4,14 @@ import { useAtom, useAtomValue } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import { InputModal } from '../InputModal';
 import { WorkspaceSummaryHeader } from '../WorkspaceSummaryHeader';
+import { CollabCreateItemDialog } from './CollabCreateItemDialog';
 import { useFloatingMenu, FloatingPortal, virtualElement } from '../../hooks/useFloatingMenu';
 import {
   sharedDocumentsAtom,
+  allSharedDocumentsAtom,
   sharedFoldersAtom,
   teamSyncStatusAtom,
-  removeSharedDocument,
+  trashSharedDocument,
   updateSharedDocumentTitle,
   moveSharedDocument,
   createSharedFolder,
@@ -36,6 +38,7 @@ import {
   getCollabParentPath,
   joinCollabPath,
   normalizeCollabPath,
+  resolveCollabCreateTargetFolderId,
   type CollabTreeNode,
 } from './collabTree';
 import { registerDocumentInIndex } from '../../store/atoms/collabDocuments';
@@ -98,6 +101,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
 }) => {
   const posthog = usePostHog();
   const sharedDocuments = useAtomValue(sharedDocumentsAtom);
+  const allSharedDocuments = useAtomValue(allSharedDocumentsAtom);
   const sharedFolders = useAtomValue(sharedFoldersAtom);
   const teamSyncStatus = useAtomValue(teamSyncStatusAtom);
   const teamOrgId = useAtomValue(activeTeamOrgIdAtom);
@@ -131,6 +135,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreateDocumentOpen, setIsCreateDocumentOpen] = useState(false);
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
+  const [createTargetFolderId, setCreateTargetFolderId] = useState<string | null>(null);
   const [documentToRename, setDocumentToRename] = useState<SharedDocument | null>(null);
   const [hasLoadedState, setHasLoadedState] = useState(false);
   const [loadedWorkspacePath, setLoadedWorkspacePath] = useState<string | null>(null);
@@ -404,11 +409,9 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
     if (!contextMenu) return;
 
     if (contextMenu.node.type === 'document') {
-      if (!canMutateMetadata('delete this document')) return;
+      if (!canMutateMetadata('move this document to Trash')) return;
       const { document } = contextMenu.node;
-      if (window.confirm(`Delete shared document "${getCollabNodeName(document.title) || document.title}"?`)) {
-        removeSharedDocument(document.documentId);
-      }
+      trashSharedDocument(document.documentId);
       setContextMenu(null);
       return;
     }
@@ -420,7 +423,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
 
     const subtreeFolderIds = new Set(collectFolderSubtree(sharedFolders, folderId));
     const folderCount = subtreeFolderIds.size - 1; // exclude the folder itself
-    const docCount = sharedDocuments.filter(
+    const docCount = allSharedDocuments.filter(
       d => d.parentFolderId && subtreeFolderIds.has(d.parentFolderId)
     ).length;
 
@@ -437,7 +440,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
       }
     }
     setContextMenu(null);
-  }, [canMutateMetadata, contextMenu, sharedFolders, sharedDocuments, selectedFolderId, posthog]);
+  }, [canMutateMetadata, contextMenu, sharedFolders, allSharedDocuments, selectedFolderId, posthog]);
 
   const handleCopyFolderLink = useCallback(async (folderId: string) => {
     if (!teamOrgId) {
@@ -570,16 +573,25 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
   }, [pendingCollabFolder, folderById, folderPathById, setPendingCollabFolder]);
 
   const getCreationBaseFolderId = useCallback((): string | null => {
-    if (contextMenu?.node.type === 'folder') return contextMenu.node.folderId ?? null;
-    return selectedFolderId;
+    const contextFolderId = contextMenu?.node.type === 'folder'
+      ? (contextMenu.node.folderId ?? null)
+      : undefined;
+    return resolveCollabCreateTargetFolderId(contextFolderId, selectedFolderId);
   }, [contextMenu, selectedFolderId]);
+
+  const openCreateDialog = useCallback((kind: 'document' | 'folder') => {
+    setCreateTargetFolderId(getCreationBaseFolderId());
+    if (kind === 'document') setIsCreateDocumentOpen(true);
+    else setIsCreateFolderOpen(true);
+    setContextMenu(null);
+  }, [getCreationBaseFolderId]);
 
   const handleCreateFolder = useCallback(async (folderName: string) => {
     if (!canMutateMetadata('create folders')) return;
     const name = folderName.trim();
     if (!name) return;
 
-    const parentId = getCreationBaseFolderId();
+    const parentId = createTargetFolderId;
     const parentPath = parentId ? (folderPathById.get(parentId) ?? '') : '';
     const nextPath = joinCollabPath(parentPath, name);
     if (existingPaths.has(nextPath)) {
@@ -599,14 +611,14 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
     setSelectedFolderId(folderId);
     setIsCreateFolderOpen(false);
     setContextMenu(null);
-  }, [canMutateMetadata, existingPaths, getCreationBaseFolderId, folderPathById, posthog]);
+  }, [canMutateMetadata, createTargetFolderId, existingPaths, folderPathById, posthog]);
 
   const handleCreateDocument = useCallback(async (documentName: string) => {
     if (!canMutateMetadata('create documents')) return;
     const name = documentName.trim();
     if (!name) return;
 
-    const parentId = getCreationBaseFolderId();
+    const parentId = createTargetFolderId;
     const parentPath = parentId ? (folderPathById.get(parentId) ?? '') : '';
     // Dual-write: the title carries the full path so un-upgraded clients still
     // render the tree, while parentFolderId is the authoritative placement.
@@ -644,7 +656,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
     setIsCreateDocumentOpen(false);
     setContextMenu(null);
     onDocumentSelect(document);
-  }, [canMutateMetadata, existingPaths, getCreationBaseFolderId, folderPathById, onDocumentSelect]);
+  }, [canMutateMetadata, createTargetFolderId, existingPaths, folderPathById, onDocumentSelect]);
 
   const handleRenameDocument = useCallback(async (documentName: string) => {
     if (!documentToRename) return;
@@ -992,10 +1004,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
               type="button"
               className="workspace-action-button bg-transparent border-none p-1.5 cursor-pointer rounded text-[var(--nim-text-faint)] flex items-center justify-center transition-all duration-200 relative hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)]"
               title="New document"
-              onClick={() => {
-                setIsCreateDocumentOpen(true);
-                setContextMenu(null);
-              }}
+              onClick={() => openCreateDialog('document')}
             >
               <MaterialSymbol icon="note_add" size={16} />
             </button>
@@ -1003,10 +1012,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
               type="button"
               className="workspace-action-button bg-transparent border-none p-1.5 cursor-pointer rounded text-[var(--nim-text-faint)] flex items-center justify-center transition-all duration-200 relative hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)]"
               title="New folder"
-              onClick={() => {
-                setIsCreateFolderOpen(true);
-                setContextMenu(null);
-              }}
+              onClick={() => openCreateDialog('folder')}
             >
               <MaterialSymbol icon="create_new_folder" size={16} />
             </button>
@@ -1252,7 +1258,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
               <button
                 type="button"
                 className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded border-none bg-transparent cursor-pointer transition-colors text-left text-nim hover:bg-nim-hover"
-                onClick={() => setIsCreateDocumentOpen(true)}
+                onClick={() => openCreateDialog('document')}
               >
                 <MaterialSymbol icon="note_add" size={18} />
                 <span>New Document</span>
@@ -1260,7 +1266,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
               <button
                 type="button"
                 className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded border-none bg-transparent cursor-pointer transition-colors text-left text-nim hover:bg-nim-hover"
-                onClick={() => setIsCreateFolderOpen(true)}
+                onClick={() => openCreateDialog('folder')}
               >
                 <MaterialSymbol icon="create_new_folder" size={18} />
                 <span>New Folder</span>
@@ -1462,7 +1468,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
                 onClick={handleDelete}
               >
                 <MaterialSymbol icon="delete" size={18} />
-                <span>Delete</span>
+                <span>Move to Trash</span>
               </button>
             </>
           )}
@@ -1470,12 +1476,12 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
         </FloatingPortal>
       )}
 
-      <InputModal
+      <CollabCreateItemDialog
         isOpen={isCreateDocumentOpen}
-        title="New Shared Document"
-        placeholder="Document name"
-        defaultValue=""
-        confirmLabel="Create"
+        kind="document"
+        folders={sharedFolders}
+        targetFolderId={createTargetFolderId}
+        onTargetFolderChange={setCreateTargetFolderId}
         onConfirm={handleCreateDocument}
         onCancel={() => {
           setIsCreateDocumentOpen(false);
@@ -1483,12 +1489,12 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
         }}
       />
 
-      <InputModal
+      <CollabCreateItemDialog
         isOpen={isCreateFolderOpen}
-        title="New Shared Folder"
-        placeholder="Folder name"
-        defaultValue=""
-        confirmLabel="Create"
+        kind="folder"
+        folders={sharedFolders}
+        targetFolderId={createTargetFolderId}
+        onTargetFolderChange={setCreateTargetFolderId}
         onConfirm={handleCreateFolder}
         onCancel={() => {
           setIsCreateFolderOpen(false);
