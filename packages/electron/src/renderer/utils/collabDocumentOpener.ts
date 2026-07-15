@@ -48,6 +48,8 @@ export interface CollabDocumentConfig {
   /** Optional extra query appended to revision-history HTTP requests. */
   urlExtraQuery?: string;
   userId: string;
+  /** Stable local account identity used to partition encrypted replicas. */
+  accountId: string;
   /** Human-readable display name (first+last from Stytch, falls back to email). */
   userName?: string;
   /** User's email address. */
@@ -379,18 +381,32 @@ export async function resolveCollabConfigForUri(
   documentId: string,
   title?: string,
   documentType?: string,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<CollabDocumentConfig | null> {
   if (!window.electronAPI?.documentSync) return null;
 
-  // Already resolved
-  const existing = collabConfigRegistry.get(uri);
-  if (existing) return existing;
+  if (options.forceRefresh) {
+    // Key rotation must bypass both URI and document-id aliases. Otherwise a
+    // freshly resolved cache key can still be populated with the old CryptoKey.
+    for (const [registeredUri, config] of collabConfigRegistry) {
+      if (
+        config.workspacePath === workspacePath &&
+        config.documentId === documentId
+      ) {
+        collabConfigRegistry.delete(registeredUri);
+      }
+    }
+  } else {
+    // Already resolved
+    const existing = collabConfigRegistry.get(uri);
+    if (existing) return existing;
 
-  // A seed/export/re-upload caller may only know the documentId (its URI is
-  // `collab://seed/<documentId>`); reuse the config resolved when the doc was
-  // opened rather than re-running the IPC resolution.
-  const byDocument = findCollabConfigByDocumentId(workspacePath, documentId);
-  if (byDocument) return byDocument;
+    // A seed/export/re-upload caller may only know the documentId (its URI is
+    // `collab://seed/<documentId>`); reuse the config resolved when the doc was
+    // opened rather than re-running the IPC resolution.
+    const byDocument = findCollabConfigByDocumentId(workspacePath, documentId);
+    if (byDocument) return byDocument;
+  }
 
   try {
     const result = await window.electronAPI.documentSync.open(
@@ -405,7 +421,7 @@ export async function resolveCollabConfigForUri(
       return null;
     }
 
-    const { orgId, title: resolvedTitle, orgKeyBase64, legacyOrgKeyBase64, legacyOrgKeysBase64, orgKeyFingerprint, serverUrl, userId, userName, userEmail, pendingUpdateBase64 } = result.config;
+    const { orgId, title: resolvedTitle, orgKeyBase64, legacyOrgKeyBase64, legacyOrgKeysBase64, orgKeyFingerprint, serverUrl, accountId, userId, userName, userEmail, pendingUpdateBase64 } = result.config;
     const resolvedDocumentType = documentType ?? result.config.documentType;
     const serverManaged = result.config.keyCustody === 'server-managed';
     const documentKey = serverManaged ? undefined : await importOrgKeyFromBase64(orgKeyBase64);
@@ -429,6 +445,7 @@ export async function resolveCollabConfigForUri(
       legacyDocumentKeys,
       orgKeyFingerprint,
       serverUrl,
+      accountId,
       userId,
       userName,
       userEmail,
@@ -495,7 +512,7 @@ export async function openCollabDocumentViaIPC(options: {
     throw new Error(result.error || 'Failed to resolve collaborative document config');
   }
 
-  const { orgId, documentId, title, orgKeyBase64, legacyOrgKeyBase64, legacyOrgKeysBase64, serverUrl, userId, userName, userEmail, pendingUpdateBase64 } = result.config;
+  const { orgId, documentId, title, orgKeyBase64, legacyOrgKeyBase64, legacyOrgKeysBase64, serverUrl, accountId, userId, userName, userEmail, pendingUpdateBase64 } = result.config;
   const documentType = options.documentType ?? result.config.documentType;
   const serverManaged = result.config.keyCustody === 'server-managed';
 
@@ -526,6 +543,7 @@ export async function openCollabDocumentViaIPC(options: {
     legacyDocumentKey: legacyDocumentKeys[0],
     legacyDocumentKeys,
     serverUrl,
+    accountId,
     userId,
     userName,
     userEmail,

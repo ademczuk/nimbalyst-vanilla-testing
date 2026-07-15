@@ -65,6 +65,7 @@ import {
     persistActivePersonalSyncProfile,
     switchPersonalSyncProfile,
 } from '../services/PersonalSyncProfiles';
+import { purgeOfflineCollabAccounts } from '../services/CollabOfflineAccountLifecycle';
 
 // Track if we've subscribed to sync status changes
 let syncStatusListenerSetup = false;
@@ -1323,8 +1324,27 @@ export function registerSettingsHandlers() {
     });
 
     // Sign out (all accounts)
-    safeHandle('stytch:sign-out', async () => {
+    safeHandle('stytch:sign-out', async (_event, forceOfflinePurge = false) => {
         ensureStytchInitialized();
+        const accountIds = StytchAuth.getAccounts()
+            .map((account) => account.personalUserId)
+            .filter((accountId): accountId is string => !!accountId);
+        try {
+            const purge = await purgeOfflineCollabAccounts(accountIds, {
+                force: forceOfflinePurge,
+            });
+            if (!purge.purged) {
+                return {
+                    success: false,
+                    requiresOfflinePurgeConfirmation: true,
+                    pendingDocumentCount: purge.pendingDocumentCount,
+                };
+            }
+        } catch (error) {
+            // Authentication must remain usable even when the local database
+            // is unavailable. A failed purge preserves the local rows/key.
+            logger.main.warn('[stytch:sign-out] Offline collaboration purge failed; preserving local data', error);
+        }
         await StytchAuth.signOut();
         return { success: true };
     });
@@ -1347,8 +1367,31 @@ export function registerSettingsHandlers() {
     });
 
     // Remove a specific account by personalOrgId
-    safeHandle('stytch:remove-account', async (_event, personalOrgId: string) => {
+    safeHandle('stytch:remove-account', async (
+        _event,
+        personalOrgId: string,
+        forceOfflinePurge = false,
+    ) => {
         ensureStytchInitialized();
+        const accountId = StytchAuth.getAccounts()
+            .find((account) => account.personalOrgId === personalOrgId)
+            ?.personalUserId;
+        if (accountId) {
+            try {
+                const purge = await purgeOfflineCollabAccounts([accountId], {
+                    force: forceOfflinePurge,
+                });
+                if (!purge.purged) {
+                    return {
+                        success: false,
+                        requiresOfflinePurgeConfirmation: true,
+                        pendingDocumentCount: purge.pendingDocumentCount,
+                    };
+                }
+            } catch (error) {
+                logger.main.warn('[stytch:remove-account] Offline collaboration purge failed; preserving local data', error);
+            }
+        }
         await StytchAuth.removeAccount(personalOrgId);
         return { success: true };
     });

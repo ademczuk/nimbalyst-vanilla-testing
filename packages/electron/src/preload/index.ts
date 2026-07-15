@@ -1,6 +1,17 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {ClaudeForWindowsInstallation} from "../main/services/CLIManager.ts";
 import type { GhCliStatus } from '../main/services/GhCliDetector.ts';
+import type {
+  AppendLocalReplicaUpdateInput,
+  AppendRemoteReplicaUpdatesInput,
+  LoadedLocalReplica,
+  LocalReplicaIdentity,
+  LocalReplicaOutboxEntry,
+  LocalReplicaOutboxState,
+  LocalReplicaPendingOutbox,
+  LocalReplicaStorageUsage,
+  ReplaceLocalReplicaSnapshotInput,
+} from '@nimbalyst/runtime/sync';
 
 // Nimbalyst is an IDE-like application with many concurrent IPC listeners:
 // - File watching, git status, AI sessions, terminals, extensions, etc.
@@ -930,6 +941,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
           orgKeyBase64: string;
           orgKeyFingerprint?: string;
           serverUrl: string;
+          accountId: string;
           userId: string;
           userName?: string;
           userEmail?: string;
@@ -949,6 +961,90 @@ contextBridge.exposeInMainWorld('electronAPI', {
         documentId,
         pendingUpdateBase64,
       }) as Promise<{ success: boolean; error?: string }>,
+    replicaLoad: (workspacePath: string, identity: LocalReplicaIdentity) =>
+      ipcRenderer.invoke('document-sync:replica-load', { workspacePath, identity }) as Promise<LoadedLocalReplica | null>,
+    replicaAppendLocal: (workspacePath: string, input: AppendLocalReplicaUpdateInput) =>
+      ipcRenderer.invoke('document-sync:replica-append-local', { workspacePath, input }) as Promise<void>,
+    onReplicaLocalUpdate: (callback: (payload: {
+      identity: LocalReplicaIdentity;
+      updateId: string;
+      update: Uint8Array;
+    }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: {
+        identity: LocalReplicaIdentity;
+        updateId: string;
+        update: Uint8Array;
+      }) => callback(payload);
+      ipcRenderer.on('document-sync:replica-local-update', handler);
+      return () => ipcRenderer.removeListener('document-sync:replica-local-update', handler);
+    },
+    replicaAppendRemote: (workspacePath: string, input: AppendRemoteReplicaUpdatesInput) =>
+      ipcRenderer.invoke('document-sync:replica-append-remote', { workspacePath, input }) as Promise<void>,
+    replicaSetOutboxState: (
+      workspacePath: string,
+      identity: LocalReplicaIdentity,
+      batchIds: string[],
+      state: LocalReplicaOutboxState,
+      lastErrorCode?: string | null,
+    ) => ipcRenderer.invoke('document-sync:replica-set-outbox-state', {
+      workspacePath, identity, batchIds, state, lastErrorCode,
+    }) as Promise<void>,
+    replicaClaimOutbox: (
+      workspacePath: string,
+      identity: LocalReplicaIdentity,
+      batchIds: string[],
+    ) => ipcRenderer.invoke('document-sync:replica-claim-outbox', {
+      workspacePath, identity, batchIds,
+    }) as Promise<boolean>,
+    replicaLoadOutbox: (
+      workspacePath: string,
+      identity: LocalReplicaIdentity,
+    ) => ipcRenderer.invoke('document-sync:replica-load-outbox', {
+      workspacePath, identity,
+    }) as Promise<LocalReplicaOutboxEntry[]>,
+    replicaRecordOutboxError: (
+      workspacePath: string,
+      identity: LocalReplicaIdentity,
+      batchIds: string[],
+      errorCode: string,
+    ) => ipcRenderer.invoke('document-sync:replica-record-outbox-error', {
+      workspacePath, identity, batchIds, errorCode,
+    }) as Promise<void>,
+    replicaAckOutbox: (
+      workspacePath: string,
+      identity: LocalReplicaIdentity,
+      batchIds: string[],
+      serverSequence: number,
+    ) => ipcRenderer.invoke('document-sync:replica-ack-outbox', {
+      workspacePath, identity, batchIds, serverSequence,
+    }) as Promise<void>,
+    replicaReplaceSnapshot: (workspacePath: string, input: ReplaceLocalReplicaSnapshotInput) =>
+      ipcRenderer.invoke('document-sync:replica-replace-snapshot', { workspacePath, input }) as Promise<boolean>,
+    replicaMarkIncomplete: (workspacePath: string, identity: LocalReplicaIdentity) =>
+      ipcRenderer.invoke('document-sync:replica-mark-incomplete', { workspacePath, identity }) as Promise<void>,
+    replicaMarkComplete: (workspacePath: string, identity: LocalReplicaIdentity) =>
+      ipcRenderer.invoke('document-sync:replica-mark-complete', { workspacePath, identity }) as Promise<void>,
+    replicaQuarantine: (workspacePath: string, identity: LocalReplicaIdentity, reason: string) =>
+      ipcRenderer.invoke('document-sync:replica-quarantine', { workspacePath, identity, reason }) as Promise<void>,
+    replicaResetForCleanHydration: (workspacePath: string, identity: LocalReplicaIdentity) =>
+      ipcRenderer.invoke('document-sync:replica-reset-clean-hydration', { workspacePath, identity }) as Promise<void>,
+    replicaDiscard: (workspacePath: string, identity: LocalReplicaIdentity) =>
+      ipcRenderer.invoke('document-sync:replica-discard', { workspacePath, identity }) as Promise<void>,
+    replicaPurgeAccount: (workspacePath: string, accountId: string) =>
+      ipcRenderer.invoke('document-sync:replica-purge-account', { workspacePath, accountId }) as Promise<void>,
+    replicaPurgeOrg: (workspacePath: string, accountId: string, orgId: string) =>
+      ipcRenderer.invoke('document-sync:replica-purge-org', { workspacePath, accountId, orgId }) as Promise<void>,
+    replicaStorageUsage: (workspacePath: string, accountId: string) =>
+      ipcRenderer.invoke('document-sync:replica-storage-usage', { workspacePath, accountId }) as Promise<LocalReplicaStorageUsage>,
+    replicaListPendingOutboxes: (workspacePath: string, accountId?: string) =>
+      ipcRenderer.invoke('document-sync:replica-list-pending-outboxes', { workspacePath, accountId }) as Promise<LocalReplicaPendingOutbox[]>,
+    setReplicaProviderAttached: (
+      identity: LocalReplicaIdentity,
+      attachmentId: string,
+      attached: boolean,
+    ) => ipcRenderer.invoke('document-sync:replica-provider-attached', {
+      identity, attachmentId, attached,
+    }) as Promise<void>,
     seedSharedDocument: (
       workspacePath: string,
       documentId: string,
@@ -1211,6 +1307,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         success: boolean;
         assetId?: string;
         uri?: string;
+        queued?: boolean;
         error?: string;
       }>,
     migrateLocalAssets: (payload: {
@@ -1410,10 +1507,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     signInWithGoogle: () => ipcRenderer.invoke('stytch:sign-in-google'),
     sendMagicLink: (email: string) =>
       ipcRenderer.invoke('stytch:send-magic-link', email),
-    signOut: () => ipcRenderer.invoke('stytch:sign-out'),
+    signOut: (forceOfflinePurge = false) =>
+      ipcRenderer.invoke('stytch:sign-out', forceOfflinePurge),
     addAccount: () => ipcRenderer.invoke('stytch:add-account'),
-    removeAccount: (personalOrgId: string) =>
-      ipcRenderer.invoke('stytch:remove-account', personalOrgId),
+    removeAccount: (personalOrgId: string, forceOfflinePurge = false) =>
+      ipcRenderer.invoke('stytch:remove-account', personalOrgId, forceOfflinePurge),
     deleteAccount: (personalOrgId?: string) => ipcRenderer.invoke('stytch:delete-account', personalOrgId),
     getSessionJwt: () => ipcRenderer.invoke('stytch:get-session-jwt'),
     refreshSession: () => ipcRenderer.invoke('stytch:refresh-session'),

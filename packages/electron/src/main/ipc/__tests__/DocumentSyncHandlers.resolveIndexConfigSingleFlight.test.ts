@@ -1,11 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { fetchTeamKeyStatusMock, findTeamForWorkspaceMock, safeHandleMock, handlers } = vi.hoisted(() => {
+const {
+  appendLocalUpdateMock,
+  browserWindowsMock,
+  drainCoordinatorMock,
+  estimateLocalAppendBytesMock,
+  fetchTeamKeyStatusMock,
+  findTeamForWorkspaceMock,
+  handlers,
+  listPendingOutboxesMock,
+  prepareForAppendMock,
+  safeHandleMock,
+} = vi.hoisted(() => {
   const handlers = new Map<string, (...args: any[]) => any>();
   return {
+    appendLocalUpdateMock: vi.fn(),
+    browserWindowsMock: vi.fn(),
+    drainCoordinatorMock: {
+      getAttachedSenderIds: vi.fn(),
+      isProviderAttached: vi.fn(),
+    },
+    estimateLocalAppendBytesMock: vi.fn(),
     fetchTeamKeyStatusMock: vi.fn(),
     findTeamForWorkspaceMock: vi.fn(),
     handlers,
+    listPendingOutboxesMock: vi.fn(),
+    prepareForAppendMock: vi.fn(),
     safeHandleMock: vi.fn((channel: string, handler: (...args: any[]) => any) => {
       handlers.set(channel, handler);
     }),
@@ -13,7 +33,11 @@ const { fetchTeamKeyStatusMock, findTeamForWorkspaceMock, safeHandleMock, handle
 });
 
 vi.mock('electron', () => ({
-  BrowserWindow: class {},
+  BrowserWindow: class {
+    static getAllWindows() {
+      return browserWindowsMock();
+    }
+  },
   dialog: {},
   net: { fetch: vi.fn() },
 }));
@@ -35,6 +59,7 @@ vi.mock('../../services/StytchAuthService', () => ({
   getUserEmail: vi.fn(() => 'user@test.com'),
   getAuthState: vi.fn(() => ({ user: { name: { first_name: 'Test', last_name: 'User' } } })),
   getPersonalOrgId: vi.fn(() => 'personal-1'),
+  getPersonalUserId: vi.fn(() => 'account-a'),
   getPersonalSessionJwt: vi.fn(() => 'personal-jwt'),
   refreshPersonalSession: vi.fn(async () => false),
 }));
@@ -72,7 +97,18 @@ vi.mock('../../protocols/collabAssetProtocol', () => ({}));
 vi.mock('../../services/CollabAssetUploader', () => ({}));
 vi.mock('../../services/markdownAssetScanner', () => ({}));
 vi.mock('../../services/CollabLocalOriginService', () => ({}));
-vi.mock('../collabContentAdapterRegistration', () => ({}));
+vi.mock('../../services/collabContentAdapterRegistration', () => ({}));
+vi.mock('../../services/CollabDocumentReplicaStore', () => ({
+  getCollabDocumentReplicaStore: () => ({
+    appendLocalUpdate: appendLocalUpdateMock,
+    estimateLocalAppendBytes: estimateLocalAppendBytesMock,
+    prepareForAppend: prepareForAppendMock,
+    listPendingOutboxes: listPendingOutboxesMock,
+  }),
+}));
+vi.mock('../../services/CollabOutboxDrainerService', () => ({
+  getCollabOutboxDrainCoordinator: () => drainCoordinatorMock,
+}));
 
 import { registerDocumentSyncHandlers } from '../DocumentSyncHandlers';
 
@@ -82,8 +118,24 @@ describe('document-sync:resolve-index-config single-flight (RC4)', () => {
     findTeamForWorkspaceMock.mockReset();
     fetchTeamKeyStatusMock.mockReset();
     fetchTeamKeyStatusMock.mockResolvedValue({ mode: 'server-managed', dekEpoch: 1, dekFingerprint: 'fp' });
+    listPendingOutboxesMock.mockReset();
+    listPendingOutboxesMock.mockResolvedValue([]);
 
     registerDocumentSyncHandlers();
+  });
+
+  it('always scopes pending-outbox enumeration to the active account', async () => {
+    const handler = handlers.get('document-sync:replica-list-pending-outboxes');
+    expect(handler).toBeTruthy();
+
+    await expect(
+      handler!(null, { workspacePath: '/workspace/one' }),
+    ).resolves.toEqual([]);
+    expect(listPendingOutboxesMock).toHaveBeenCalledWith('account-a');
+
+    await expect(
+      handler!(null, { workspacePath: '/workspace/one', accountId: 'account-b' }),
+    ).rejects.toThrow('Local replica account does not match the active account');
   });
 
   it('collapses N concurrent calls for the same workspace into one findTeamForWorkspace resolution', async () => {
@@ -129,5 +181,104 @@ describe('document-sync:resolve-index-config single-flight (RC4)', () => {
     await handler(null, { workspacePath: '/workspace/one' });
 
     expect(findTeamForWorkspaceMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('document-sync:replica-append-local fan-out', () => {
+  beforeEach(() => {
+    handlers.clear();
+    appendLocalUpdateMock.mockReset().mockResolvedValue(undefined);
+    prepareForAppendMock.mockReset().mockResolvedValue(undefined);
+    estimateLocalAppendBytesMock.mockReset().mockReturnValue(128);
+    drainCoordinatorMock.getAttachedSenderIds.mockReset().mockReturnValue([8]);
+    drainCoordinatorMock.isProviderAttached.mockReset().mockReturnValue(false);
+    registerDocumentSyncHandlers();
+  });
+
+  it('fans out only after durable append and excludes the sender', async () => {
+    const senderSend = vi.fn();
+    const siblingSend = vi.fn();
+    const unattachedSend = vi.fn();
+    browserWindowsMock.mockReturnValue([
+      { webContents: { id: 7, isDestroyed: () => false, send: senderSend } },
+      { webContents: { id: 8, isDestroyed: () => false, send: siblingSend } },
+      { webContents: { id: 9, isDestroyed: () => false, send: unattachedSend } },
+    ]);
+    const input = {
+      identity: {
+        accountId: 'account-a',
+        orgId: 'org-a',
+        documentId: 'document-a',
+      },
+      documentType: 'markdown',
+      updateId: 'local-update-1',
+      update: new Uint8Array([1, 2, 3]),
+      snapshotGeneration: 4,
+    };
+
+    await handlers.get('document-sync:replica-append-local')!(
+      { sender: { id: 7 } },
+      { workspacePath: '/workspace', input },
+    );
+
+    expect(prepareForAppendMock).toHaveBeenCalledWith(
+      'account-a',
+      128,
+      expect.any(Function),
+    );
+    expect(appendLocalUpdateMock).toHaveBeenCalledWith(input);
+    expect(prepareForAppendMock.mock.invocationCallOrder[0]).toBeLessThan(
+      appendLocalUpdateMock.mock.invocationCallOrder[0],
+    );
+    expect(drainCoordinatorMock.getAttachedSenderIds).toHaveBeenCalledWith(
+      input.identity,
+      7,
+    );
+    expect(senderSend).not.toHaveBeenCalled();
+    expect(unattachedSend).not.toHaveBeenCalled();
+    expect(siblingSend).toHaveBeenCalledWith(
+      'document-sync:replica-local-update',
+      {
+        identity: input.identity,
+        updateId: input.updateId,
+        update: input.update,
+      },
+    );
+    expect(appendLocalUpdateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      siblingSend.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('does not append or fan out when pre-append budget admission fails', async () => {
+    const siblingSend = vi.fn();
+    browserWindowsMock.mockReturnValue([
+      { webContents: { id: 8, isDestroyed: () => false, send: siblingSend } },
+    ]);
+    prepareForAppendMock.mockRejectedValueOnce(
+      new Error('LOCAL_REPLICA_STORAGE_BUDGET_EXCEEDED'),
+    );
+
+    await expect(
+      handlers.get('document-sync:replica-append-local')!(
+        { sender: { id: 7 } },
+        {
+          workspacePath: '/workspace',
+          input: {
+            identity: {
+              accountId: 'account-a',
+              orgId: 'org-a',
+              documentId: 'document-a',
+            },
+            documentType: 'markdown',
+            updateId: 'rejected-before-commit',
+            update: new Uint8Array([4]),
+            snapshotGeneration: 4,
+          },
+        },
+      ),
+    ).rejects.toThrow('LOCAL_REPLICA_STORAGE_BUDGET_EXCEEDED');
+
+    expect(appendLocalUpdateMock).not.toHaveBeenCalled();
+    expect(siblingSend).not.toHaveBeenCalled();
   });
 });

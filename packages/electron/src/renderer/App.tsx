@@ -112,6 +112,7 @@ import { initFileChangeListeners } from './store/listeners/fileChangeListeners';
 import { initMcpListeners } from './store/listeners/mcpListeners';
 import { initMenuCommandListeners } from './store/listeners/menuCommandListeners';
 import { initNetworkAvailabilityListeners } from './store/listeners/networkAvailabilityListeners';
+import { initCollabReplicaListeners } from './store/listeners/collabReplicaListeners';
 import { initNotificationListeners } from './store/listeners/notificationListeners';
 import { initExtensionPermissionListeners } from './store/listeners/extensionPermissionListeners';
 import { initPermissionListeners } from './store/listeners/permissionListeners';
@@ -337,6 +338,7 @@ export default function App() {
     const cleanupWalkthrough = initWalkthroughListeners();
     const cleanupWakeup = initWakeupListeners();
     const cleanupNetworkAvailability = initNetworkAvailabilityListeners();
+    const cleanupCollabReplicas = initCollabReplicaListeners();
     return () => {
       cleanupActionPrompts?.();
       cleanupAiCommands?.();
@@ -366,6 +368,7 @@ export default function App() {
       cleanupWalkthrough?.();
       cleanupWakeup?.();
       cleanupNetworkAvailability?.();
+      cleanupCollabReplicas?.();
     };
   }, []);
 

@@ -105,6 +105,17 @@ export interface DocSyncResponseMessage {
   hasMore: boolean;
   cursor: number;
   /**
+   * Persisted sequence high-watermark for the room. Optional only for
+   * compatibility with servers that predate the explicit head contract.
+   */
+  serverHead?: number;
+  /**
+   * Whether the room has ever accepted document state. This remains true when
+   * compaction has pruned the transport update rows. Optional only for
+   * compatibility with older servers.
+   */
+  serverHasState?: boolean;
+  /**
    * The room-authed userId of whoever applied the most recent content update,
    * and when (server clock, ms). Plaintext metadata (the writer identity is not
    * secret to team members; the content stays encrypted). Used to tell a user
@@ -168,6 +179,8 @@ export interface DocErrorMessage {
   type: 'error';
   code: string;
   message: string;
+  /** Present when the error rejects a specific client-originated update. */
+  clientUpdateId?: string;
 }
 
 // ============================================================================

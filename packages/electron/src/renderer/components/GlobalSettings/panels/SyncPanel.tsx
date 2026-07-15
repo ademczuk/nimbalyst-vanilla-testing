@@ -10,6 +10,7 @@ import {
   type SyncConfig,
 } from '../../../store/atoms/appSettings';
 import { personalAccountsAtom, personalSyncProfilesAtom } from '../../../store/atoms/settingsDomains';
+import { useDialog } from '../../../contexts/DialogContext';
 
 /** Format a timestamp as relative time (e.g., "5 minutes ago") */
 function formatRelativeTime(timestamp: number): string {
@@ -115,6 +116,7 @@ export type PersonalSyncSection = 'all' | 'accounts' | 'mobile' | 'devices';
 
 export function SyncPanel({ section = 'all' }: { section?: PersonalSyncSection }) {
   const posthog = usePostHog();
+  const { confirm } = useDialog();
   const isDevelopment = import.meta.env.DEV;
 
   // Sync config from Jotai atom
@@ -510,9 +512,21 @@ export function SyncPanel({ section = 'all' }: { section?: PersonalSyncSection }
 
   const handleSignOut = async () => {
     if (!window.electronAPI?.stytch) return;
-    posthog?.capture('sync_sign_out');
     try {
-      await window.electronAPI.stytch.signOut();
+      let result = await window.electronAPI.stytch.signOut();
+      if (result.requiresOfflinePurgeConfirmation) {
+        const count = result.pendingDocumentCount ?? 0;
+        const approved = await confirm({
+          title: 'Delete unsynced offline work?',
+          message: `You have unsynced offline edits or attachments in ${count} ${count === 1 ? 'document' : 'documents'}. Signing out will permanently delete that local work.`,
+          confirmLabel: 'Sign out and delete',
+          cancelLabel: 'Cancel',
+          destructive: true,
+        });
+        if (!approved) return;
+        result = await window.electronAPI.stytch.signOut(true);
+      }
+      if (result.success) posthog?.capture('sync_sign_out');
     } catch (err) {
       console.error('Sign out error:', err);
     }
@@ -530,10 +544,24 @@ export function SyncPanel({ section = 'all' }: { section?: PersonalSyncSection }
 
   const handleRemoveAccount = async (personalOrgId: string) => {
     if (!window.electronAPI?.stytch?.removeAccount) return;
-    posthog?.capture('sync_remove_account');
     try {
-      await window.electronAPI.stytch.removeAccount(personalOrgId);
-      loadAccounts();
+      let result = await window.electronAPI.stytch.removeAccount(personalOrgId);
+      if (result.requiresOfflinePurgeConfirmation) {
+        const count = result.pendingDocumentCount ?? 0;
+        const approved = await confirm({
+          title: 'Remove account and delete unsynced work?',
+          message: `This account has unsynced offline edits or attachments in ${count} ${count === 1 ? 'document' : 'documents'}. Removing it will permanently delete that local work.`,
+          confirmLabel: 'Remove and delete',
+          cancelLabel: 'Cancel',
+          destructive: true,
+        });
+        if (!approved) return;
+        result = await window.electronAPI.stytch.removeAccount(personalOrgId, true);
+      }
+      if (result.success) {
+        posthog?.capture('sync_remove_account');
+        loadAccounts();
+      }
     } catch (err) {
       console.error('Remove account error:', err);
     }

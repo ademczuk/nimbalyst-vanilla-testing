@@ -279,6 +279,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Durable Objects per entity (session, document, tracker, team, index)
 - **Extension-provided collab editors** — SDK `useCollaborativeEditor` hook lets any extension (Excalidraw, CSV spreadsheet, DatamodelLM shipped; others can opt in via `collaboration.supported` manifest flag) share its file type to team with real-time multi-client editing, cursors, and selection
 - **Client-side snapshot compaction** — connected clients periodically send `docCompact` so initial sync stays fast as edit history grows (single-elector by lowest userId)
+- **Offline-first shared documents** — device-key-encrypted Yjs replicas, durable body and attachment outboxes, cache-first `collab-asset://` resolution, separate replica/asset LRU budgets, and honest unavailable-asset placeholders. Always on (no flag).
 
 ## Tracker System
 

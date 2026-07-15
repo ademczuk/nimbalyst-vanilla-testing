@@ -637,7 +637,11 @@ interface ElectronAPI {
     isAuthenticated: () => Promise<boolean>;
     signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
     sendMagicLink: (email: string) => Promise<{ success: boolean; error?: string }>;
-    signOut: () => Promise<{ success: boolean }>;
+    signOut: (forceOfflinePurge?: boolean) => Promise<{
+      success: boolean;
+      requiresOfflinePurgeConfirmation?: boolean;
+      pendingDocumentCount?: number;
+    }>;
     deleteAccount: (personalOrgId?: string) => Promise<{ success: boolean; error?: string }>;
     getSessionJwt: () => Promise<string | null>;
     refreshSession: () => Promise<boolean>;
@@ -652,7 +656,12 @@ interface ElectronAPI {
       isPrimary: boolean;
     }>>;
     addAccount: () => Promise<{ success: boolean; error?: string }>;
-    removeAccount: (personalOrgId: string) => Promise<{ success: boolean; error?: string }>;
+    removeAccount: (personalOrgId: string, forceOfflinePurge?: boolean) => Promise<{
+      success: boolean;
+      error?: string;
+      requiresOfflinePurgeConfirmation?: boolean;
+      pendingDocumentCount?: number;
+    }>;
   };
 
   // Extensions API
@@ -971,6 +980,7 @@ interface ElectronAPI {
         legacyOrgKeysBase64?: string[];
         orgKeyFingerprint?: string;
         serverUrl: string;
+        accountId: string;
         userId: string;
         userName?: string;
         userEmail?: string;
@@ -987,6 +997,91 @@ interface ElectronAPI {
       success: boolean;
       error?: string;
     }>;
+    replicaLoad: (
+      workspacePath: string,
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+    ) => Promise<import('@nimbalyst/runtime/sync').LoadedLocalReplica | null>;
+    replicaAppendLocal: (
+      workspacePath: string,
+      input: import('@nimbalyst/runtime/sync').AppendLocalReplicaUpdateInput,
+    ) => Promise<void>;
+    onReplicaLocalUpdate: (callback: (payload: {
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity;
+      updateId: string;
+      update: Uint8Array;
+    }) => void) => () => void;
+    replicaAppendRemote: (
+      workspacePath: string,
+      input: import('@nimbalyst/runtime/sync').AppendRemoteReplicaUpdatesInput,
+    ) => Promise<void>;
+    replicaSetOutboxState: (
+      workspacePath: string,
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+      batchIds: string[],
+      state: import('@nimbalyst/runtime/sync').LocalReplicaOutboxState,
+      lastErrorCode?: string | null,
+    ) => Promise<void>;
+    replicaClaimOutbox: (
+      workspacePath: string,
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+      batchIds: string[],
+    ) => Promise<boolean>;
+    replicaLoadOutbox: (
+      workspacePath: string,
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+    ) => Promise<import('@nimbalyst/runtime/sync').LocalReplicaOutboxEntry[]>;
+    replicaRecordOutboxError: (
+      workspacePath: string,
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+      batchIds: string[],
+      errorCode: string,
+    ) => Promise<void>;
+    replicaAckOutbox: (
+      workspacePath: string,
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+      batchIds: string[],
+      serverSequence: number,
+    ) => Promise<void>;
+    replicaReplaceSnapshot: (
+      workspacePath: string,
+      input: import('@nimbalyst/runtime/sync').ReplaceLocalReplicaSnapshotInput,
+    ) => Promise<boolean>;
+    replicaMarkIncomplete: (
+      workspacePath: string,
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+    ) => Promise<void>;
+    replicaMarkComplete: (
+      workspacePath: string,
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+    ) => Promise<void>;
+    replicaQuarantine: (
+      workspacePath: string,
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+      reason: string,
+    ) => Promise<void>;
+    replicaResetForCleanHydration: (
+      workspacePath: string,
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+    ) => Promise<void>;
+    replicaDiscard: (
+      workspacePath: string,
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+    ) => Promise<void>;
+    replicaPurgeAccount: (workspacePath: string, accountId: string) => Promise<void>;
+    replicaPurgeOrg: (workspacePath: string, accountId: string, orgId: string) => Promise<void>;
+    replicaStorageUsage: (
+      workspacePath: string,
+      accountId: string,
+    ) => Promise<import('@nimbalyst/runtime/sync').LocalReplicaStorageUsage>;
+    replicaListPendingOutboxes: (
+      workspacePath: string,
+      accountId?: string,
+    ) => Promise<import('@nimbalyst/runtime/sync').LocalReplicaPendingOutbox[]>;
+    setReplicaProviderAttached: (
+      identity: import('@nimbalyst/runtime/sync').LocalReplicaIdentity,
+      attachmentId: string,
+      attached: boolean,
+    ) => Promise<void>;
     seedSharedDocument: (
       workspacePath: string,
       documentId: string,
@@ -1200,7 +1295,7 @@ interface ElectronAPI {
       fileBytes: ArrayBuffer;
       mimeType: string;
       fileName: string;
-    }) => Promise<{ success: boolean; assetId?: string; uri?: string; error?: string }>;
+    }) => Promise<{ success: boolean; assetId?: string; uri?: string; queued?: boolean; error?: string }>;
     migrateLocalAssets: (payload: {
       workspacePath: string;
       orgId: string;

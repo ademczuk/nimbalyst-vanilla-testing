@@ -327,6 +327,7 @@ export function useTrackerContentCollab({
       acquisition?.release();
       acquisition = null;
       syncProviderRef.current = null;
+      collabProviderRef.current?.destroy();
       collabProviderRef.current = null;
       setStatus('disconnected');
     };

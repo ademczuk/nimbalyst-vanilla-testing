@@ -73,6 +73,44 @@ export {
   createDocumentSyncProvider,
 } from './DocumentSync';
 
+export { LocalDocumentReplica } from './LocalDocumentReplica';
+export {
+  OutboxDrainer,
+  OutboxWriteRejectedError,
+  isConfirmedOutboxRevocationCode,
+} from './OutboxDrainer';
+export type {
+  OutboxDrainBatch,
+  OutboxDrainSendResult,
+  OutboxDrainTransport,
+  OutboxDrainerOptions,
+  OutboxDrainResult,
+} from './OutboxDrainer';
+export type {
+  LocalDocumentReplicaOptions,
+  LocalReplicaCompactionOptions,
+  LocalDocumentReplicaState,
+  ApplyRemoteReplicaUpdate,
+  LocalReplicaReplayBatch,
+} from './LocalDocumentReplica';
+export { DEFAULT_LOCAL_REPLICA_COMPACTION } from './LocalDocumentReplica';
+export type {
+  LocalReplicaIdentity,
+  LocalReplicaCompleteness,
+  LocalReplicaUpdateSource,
+  LocalReplicaOutboxState,
+  LocalDocumentReplicaOutboxState,
+  LocalReplicaUpdate,
+  LocalReplicaOutboxEntry,
+  LocalReplicaPendingOutbox,
+  LoadedLocalReplica,
+  AppendLocalReplicaUpdateInput,
+  AppendRemoteReplicaUpdatesInput,
+  ReplaceLocalReplicaSnapshotInput,
+  LocalReplicaStorageUsage,
+  LocalReplicaStore,
+} from './LocalReplicaStore';
+
 export {
   isValidCollabDocumentId,
   encodeDocumentRoomId,

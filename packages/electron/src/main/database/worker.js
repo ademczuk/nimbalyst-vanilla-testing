@@ -396,6 +396,8 @@ class PGLiteWorker {
         return await this.queryReadOnly(message);
       case 'exec':
         return await this.exec(message);
+      case 'transaction':
+        return await this.transaction(message);
       case 'close':
         return await this.close(message);
       case 'getStats':
@@ -2781,6 +2783,125 @@ class PGLiteWorker {
       console.error('[PGLite Worker] Failed to create tracker_type_navigation table:', error);
       throw error;
     }
+
+    // Migration: encrypted offline-first Yjs replicas (schema version 19).
+    // Mirror of SQLite migration 0019_collab_document_replicas.sql.
+    try {
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS collab_document_replicas (
+          account_id TEXT NOT NULL,
+          org_id TEXT NOT NULL,
+          document_id TEXT NOT NULL,
+          document_type TEXT NOT NULL,
+          encoding_version INTEGER NOT NULL DEFAULT 1,
+          encrypted_snapshot BYTEA,
+          snapshot_generation INTEGER NOT NULL DEFAULT 0,
+          last_server_seq BIGINT NOT NULL DEFAULT 0,
+          completeness TEXT NOT NULL DEFAULT 'complete'
+            CHECK (completeness IN ('complete', 'incomplete', 'corrupt')),
+          snapshot_checksum TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_accessed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (account_id, org_id, document_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS collab_document_replica_updates (
+          update_id TEXT PRIMARY KEY,
+          account_id TEXT NOT NULL,
+          org_id TEXT NOT NULL,
+          document_id TEXT NOT NULL,
+          encrypted_update BYTEA NOT NULL,
+          source TEXT NOT NULL CHECK (source IN ('local', 'remote', 'server-snapshot')),
+          server_sequence BIGINT,
+          snapshot_generation INTEGER NOT NULL DEFAULT 0,
+          encoding_version INTEGER NOT NULL DEFAULT 1,
+          update_checksum TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          FOREIGN KEY (account_id, org_id, document_id)
+            REFERENCES collab_document_replicas(account_id, org_id, document_id)
+            ON DELETE CASCADE
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_collab_replica_updates_server_seq
+          ON collab_document_replica_updates(account_id, org_id, document_id, server_sequence)
+          WHERE server_sequence IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_collab_replica_updates_tail
+          ON collab_document_replica_updates(account_id, org_id, document_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS collab_document_outbox (
+          batch_id TEXT PRIMARY KEY,
+          account_id TEXT NOT NULL,
+          org_id TEXT NOT NULL,
+          document_id TEXT NOT NULL,
+          encrypted_update BYTEA NOT NULL,
+          encoding_version INTEGER NOT NULL DEFAULT 1,
+          update_checksum TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'queued'
+            CHECK (state IN ('queued', 'inflight', 'rejected')),
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          last_error_code TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          FOREIGN KEY (account_id, org_id, document_id)
+            REFERENCES collab_document_replicas(account_id, org_id, document_id)
+            ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_collab_document_outbox_drain
+          ON collab_document_outbox(account_id, state, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_collab_document_replicas_retention
+          ON collab_document_replicas(account_id, last_accessed_at);
+
+        ALTER TABLE collab_document_replicas
+          ADD COLUMN IF NOT EXISTS staged_encrypted_snapshot BYTEA;
+        ALTER TABLE collab_document_replicas
+          ADD COLUMN IF NOT EXISTS staged_snapshot_generation INTEGER;
+        ALTER TABLE collab_document_replicas
+          ADD COLUMN IF NOT EXISTS staged_snapshot_checksum TEXT;
+        ALTER TABLE collab_document_replicas
+          ADD COLUMN IF NOT EXISTS staged_encoding_version INTEGER;
+        ALTER TABLE collab_document_replicas
+          ADD COLUMN IF NOT EXISTS staged_snapshot_token TEXT;
+        ALTER TABLE collab_document_replicas
+          ADD COLUMN IF NOT EXISTS snapshot_commit_token TEXT;
+        ALTER TABLE collab_document_replicas
+          ADD COLUMN IF NOT EXISTS quarantine_reason TEXT;
+        ALTER TABLE collab_document_replicas
+          ADD COLUMN IF NOT EXISTS quarantined_at TIMESTAMPTZ;
+
+        CREATE TABLE IF NOT EXISTS collab_document_assets (
+          account_id TEXT NOT NULL,
+          org_id TEXT NOT NULL,
+          document_id TEXT NOT NULL,
+          asset_id TEXT NOT NULL,
+          encrypted_asset BYTEA NOT NULL,
+          encoding_version INTEGER NOT NULL DEFAULT 1,
+          asset_checksum TEXT NOT NULL,
+          plaintext_size BIGINT NOT NULL,
+          upload_state TEXT NOT NULL DEFAULT 'cached'
+            CHECK (upload_state IN ('cached', 'queued', 'inflight', 'rejected')),
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          last_error_code TEXT,
+          next_attempt_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_accessed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (account_id, org_id, document_id, asset_id)
+        );
+        ALTER TABLE collab_document_assets
+          ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
+        DROP INDEX IF EXISTS idx_collab_document_assets_drain;
+        CREATE INDEX idx_collab_document_assets_drain
+          ON collab_document_assets(account_id, upload_state, next_attempt_at, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_collab_document_assets_retention
+          ON collab_document_assets(account_id, last_accessed_at);
+      `);
+      console.log('[PGLite Worker] collab document replica tables created successfully');
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to create collab document replica tables:', error);
+      throw error;
+    }
   }
 
   async query(message) {
@@ -2814,6 +2935,33 @@ class PGLiteWorker {
         id: message.id,
         success: true,
         execMs
+      };
+    } finally {
+      this.activeOps--;
+    }
+  }
+
+  async transaction(message) {
+    if (!this.db) throw new Error('Database not initialized');
+    const statements = message.payload?.statements;
+    if (!Array.isArray(statements) || statements.length === 0) {
+      throw new Error('transaction requires at least one statement');
+    }
+    this.activeOps++;
+    try {
+      const execStart = performance.now();
+      await this.db.transaction(async (tx) => {
+        for (const statement of statements) {
+          if (!statement || typeof statement.sql !== 'string') {
+            throw new Error('transaction statement sql must be a string');
+          }
+          await tx.query(statement.sql, statement.params);
+        }
+      });
+      return {
+        id: message.id,
+        success: true,
+        execMs: performance.now() - execStart,
       };
     } finally {
       this.activeOps--;

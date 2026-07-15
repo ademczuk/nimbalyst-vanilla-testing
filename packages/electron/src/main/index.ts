@@ -171,7 +171,7 @@ import { AnalyticsService } from "./services/analytics/AnalyticsService.ts";
 import { registerAnalyticsHandlers } from "./ipc/AnalyticsHandlers.ts";
 import { registerFeatureUsageHandlers } from "./ipc/FeatureUsageHandlers.ts";
 import { FeatureUsageService, FEATURES } from "./services/FeatureUsageService.ts";
-import { shutdownStytchAuth, handleAuthCallback, isAuthenticated } from './services/StytchAuthService';
+import { shutdownStytchAuth, handleAuthCallback, isAuthenticated, getPersonalUserId } from './services/StytchAuthService';
 import { registerTrackerSyncHandlers, initializeTrackerSync } from './services/TrackerSyncManager';
 import { initTrackerSchemaService, updateTrackerSchemaWorkspace } from './services/TrackerSchemaService';
 import { initTrackerNavigationService } from './services/TrackerNavigationService';
@@ -180,6 +180,9 @@ import { windowStates, windows, resolveActiveWorkspacePath } from './window/wind
 import { getRecentItems } from './utils/store';
 import { registerOrgKeyHandlers, getOrgKey } from './services/OrgKeyService';
 import { registerDocumentSyncHandlers } from './ipc/DocumentSyncHandlers';
+import { getCollabOutboxDrainCoordinator } from './services/CollabOutboxDrainerService';
+import { getCollabAssetOutboxDrainCoordinator } from './services/CollabAssetOutboxDrainCoordinator';
+import { getCollabAssetStore } from './services/CollabAssetStore';
 import { registerCollabBackupHandlers } from './ipc/CollabBackupHandlers';
 import { flushPendingCollabBackups } from './services/CollabBackupService';
 import { registerBuiltinCollabContentAdapters } from './services/collabContentAdapterRegistration';
@@ -1360,6 +1363,8 @@ app.whenReady().then(async () => {
     installCollabAssetProtocolHandler({
         getOrgKey,
         getOrgScopedJwt,
+        getAccountId: getPersonalUserId,
+        assetStore: getCollabAssetStore(),
         getCollabHttpUrl: () => {
             const config = getSessionSyncConfig();
             const isDev = process.env.NODE_ENV !== 'production';
@@ -1621,6 +1626,8 @@ app.whenReady().then(async () => {
     registerOrgKeyHandlers();
     registerBuiltinCollabContentAdapters();
     registerDocumentSyncHandlers();
+    getCollabOutboxDrainCoordinator().start();
+    getCollabAssetOutboxDrainCoordinator().start();
     registerCollabBackupHandlers();
     registerCollabV3TestHandlers();
     markEnd('ipc-handlers');
@@ -2726,6 +2733,8 @@ app.on('activate', () => {
 
 // Before quit handler
 app.on('before-quit', async (event) => {
+    getCollabOutboxDrainCoordinator().stop();
+    getCollabAssetOutboxDrainCoordinator().stop();
     console.log('[QUIT] before-quit event triggered');
 
     // If auto-updater is updating, don't prevent quit
