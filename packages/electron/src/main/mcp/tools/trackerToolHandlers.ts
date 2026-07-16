@@ -19,6 +19,7 @@ import {
 import { isTrackerSyncActive, syncTrackerItem } from '../../services/TrackerSyncManager';
 import { applyHeadlessBodyMarkdown } from '../../services/MainBodyDocService';
 import { applyRelationshipFieldWrites } from '../../services/tracker/relationshipFieldWrite';
+import { appendActivity } from '../../services/tracker/trackerActivity';
 import { extractItemCustomFields } from '../../services/tracker/trackerRowCustomFields';
 import { nestRelationshipFieldsIntoCustomFields, readStoredFieldValue } from '../../services/tracker/relationshipFieldStorage';
 import { isRelationshipField } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
@@ -167,31 +168,6 @@ function buildTrackerSchemaValidationError(
 //   - The NIM-436 guard is intentionally absent: the cost-benefit landed in
 //     favor of MCP being able to author descriptions in any sync mode, and
 //     the BodyDocCache will eventually mediate writes through the Y.Doc.
-
-/** Append an activity entry to a tracker item's data.activity array */
-function appendActivity(
-  data: Record<string, any>,
-  authorIdentity: any,
-  action: string,
-  details?: { field?: string; oldValue?: string; newValue?: string }
-): void {
-  const activity = data.activity || [];
-  activity.push({
-    id: `activity_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    authorIdentity,
-    action,
-    field: details?.field,
-    oldValue: details?.oldValue,
-    newValue: details?.newValue,
-    timestamp: Date.now(),
-  });
-  // Keep activity log bounded (last 100 entries)
-  if (activity.length > 100) {
-    data.activity = activity.slice(-100);
-  } else {
-    data.activity = activity;
-  }
-}
 
 /**
  * Read linkedTrackerItemIds from a raw ai_sessions.metadata column value.

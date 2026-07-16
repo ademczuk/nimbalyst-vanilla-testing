@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Tracker history now records manual field and content edits.
 - Pasted markdown links in shared documents now stay clickable instead of becoming literal text.
 - Marking shared documents as read now stays cleared through delayed sync updates, sidebar reopen, and restart.
 - Share to Team now refreshes its folder picker when opened, so newly created, renamed, or moved shared folders appear immediately.
