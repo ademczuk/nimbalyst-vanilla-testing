@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Claude Agent sessions now expose an `Extended: On` / `Extended: Off` selector next to the effort selector for supported Opus/Sonnet variants, letting you turn off extended thinking per session to reduce latency and token use. Extended thinking stays on by default.
 - Star tracker items and filter the list by Favorites, Recently Viewed, and Edited by Others.
 - Launch an isolated worktree session directly from a tracker item.
 - Text and code files such as TypeScript, HTML, Swift, and Python can now be shared and co-edited with live cursors.
@@ -77,10 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tracker item popovers are clearer and easier to scan.
 
 ### Fixed
+- Commit proposals now remain bound to their native worktree and preserve unrelated staged or unstaged changes.
 - Next Tab and Previous Tab now navigate the active mode, including Shared Docs, without changing hidden tabs in another mode.
 - Attachments in shared documents no longer disappear after an image is moved, deleted-and-undone, or edited by a collaborator — images now stay put for everyone.
 - Very large AI sessions now open quickly instead of appearing to hang, and no longer slow down as your history grows.
 - PR mode now explains when a merge needs the GitHub CLI `workflow` scope and offers the recovery command instead of showing `gh api -X failed`.
+- Queued prompts that were delivered but never answered (app quit or interrupt mid-turn) now show a visible failed state with a retry hint instead of being silently marked completed (#783, #790).
 - Importing Mermaid diagrams into Excalidraw works again: flowcharts (including subgraphs) become editable shapes instead of failing or degrading to a broken image, and AI-added arrows no longer lose their labels.
 - Voice mode no longer stops listening while you are still speaking; the mic stays open until you finish or explicitly pause.
 - Shared-document comments now live in the text-selection toolbar instead of overlapping it.
