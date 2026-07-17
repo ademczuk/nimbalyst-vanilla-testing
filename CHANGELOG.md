@@ -10,12 +10,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Star tracker items and filter the list by Favorites, Recently Viewed, and Edited by Others.
+- Launch an isolated worktree session directly from a tracker item.
+- Text and code files such as TypeScript, HTML, Swift, and Python can now be shared and co-edited with live cursors.
+- Tracker items and other sessions mentioned in the chat transcript are now clickable, opening the item or session directly.
+- Cmd+O file search now finds team shared files and opens them collaboratively.
+- Shared document and folder creation now lets you choose any shared folder or Root as the destination.
+- Create diagrams, data models, spreadsheets, mockups, and more directly as shared documents.
+- Shared documents now have a recoverable Trash with empty-document cleanup, restore, manual purge, and automatic 30-day removal.
+- Feature tracker items now have a "Won't Do" status for work decided against.
+- Built-in tracker types can now be customized per workspace -- add, rename, or remove statuses, tweak labels, icons, and colors, or add fields -- and reset back to their defaults at any time.
+- Sign in with multiple accounts and switch between them from the account switcher in the sidebar.
+- Sharing sessions and projects now lets you choose which account owns the share.
+- A dedicated organization window for the member roster, invites, and project sharing, opened from the organization switcher or account menu.
+- iOS: sign in with multiple accounts and switch between them.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Settings is reorganized into Application, Account, and Project sections, with organization management moved to a dedicated window.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Commit with AI in a worktree no longer sweeps in ignored files like node_modules when an untracked folder is present, so it proposes only the files you actually changed.
+- Team shared documents and trackers no longer show as locked ("No encryption key available") after a network change or brief server outage.
+- Embedded spreadsheets and code editors in the chat transcript no longer steal focus and scroll-jump the transcript back to themselves.
+- Tracker sidebar counts now match the filtered list and Kanban views.
+- Tracker history now records manual field and content edits.
+- Pasted markdown links in shared documents now stay clickable instead of becoming literal text.
+- Marking shared documents as read now stays cleared through delayed sync updates, sidebar reopen, and restart.
+- Share to Team now refreshes its folder picker when opened, so newly created, renamed, or moved shared folders appear immediately.
+- Shared documents no longer disappear from the collaboration folder tree during sync or reconnect.
+- Shared document and folder names no longer briefly go blank in the collaboration folder tree during sync or reconnect.
+- Images pasted into a shared document from a web browser now persist after a refresh instead of disappearing.
+- Cmd+Y now opens history for the currently focused shared document instead of the last local document.
+- Inline charts and screenshots the assistant shows in chat now render again instead of failing with a schema error.
 
 ### Removed
 <!-- Removed features go here -->
@@ -42,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 - Team encryption is now server-managed for new organizations; legacy organizations migrate silently only after local plaintext collaboration backups succeed, with recovery markers retained if post-cutover verification fails.
 - The Claude Agent model picker no longer lists duplicate "(1M)" rows — current models already run their full context window on their single row.
-- Completed tracker reference chips now show a checkmark and crossed-out text in documents and AI chats.
+- Tracker reference chips now show live workflow-state badges and cross out completed items in documents and AI chats.
 - Mobile session sync now skips messages the mobile transcript never displays, cutting sync storage and traffic.
 - Codex is now enabled by default and the Claude Code CLI is now opt-in; existing choices are preserved.
 - The Git log panel gains improved search and panel controls.

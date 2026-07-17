@@ -88,6 +88,7 @@ import { mergeAISettings, getAIProviderOverridesWithWorktreeFallback } from '../
 import { DocumentContextService, type RawDocumentContext, type PreparedDocumentContext } from '@nimbalyst/runtime';
 import { getMessageSyncHandler, getSyncProvider, isDesktopTrulyAway } from '../SyncManager';
 import { applyRemoteReadReceipt } from '../../ipc/ReadReceiptHandlers';
+import { applyRemoteTrackerPersonalState } from '../../ipc/TrackerPersonalStateHandlers';
 import { normalizeCodexProviderConfig, omitModelsField, stripTransientProviderFields } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 import { isFileInWorkspaceOrWorktree, resolveProjectPath } from '../../utils/workspaceDetection';
 import { SessionFilesRepository } from '@nimbalyst/runtime';
@@ -1050,6 +1051,12 @@ export class AIService {
       if (syncProvider.onReadReceipt) {
         syncProvider.onReadReceipt((receipt) => {
           void applyRemoteReadReceipt(receipt);
+        });
+      }
+
+      if (syncProvider.onTrackerPersonalState) {
+        syncProvider.onTrackerPersonalState((change) => {
+          void applyRemoteTrackerPersonalState(change);
         });
       }
 
