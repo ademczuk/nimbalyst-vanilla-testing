@@ -171,6 +171,15 @@ describe('buildSdkOptions env-key hardening', () => {
     expect(options.env.CLAUDE_CODE_ENTRYPOINT).toBe('cli');
   });
 
+  it('forwards an explicit high effort selection instead of using the CLI default', async () => {
+    const { options } = await buildSdkOptions(
+      makeDeps({ config: { effortLevel: 'high' } }),
+      makeParams()
+    );
+
+    expect(options.env.CLAUDE_CODE_EFFORT_LEVEL).toBe('high');
+  });
+
   it('disables SDK extended thinking for supported Claude Agent models', async () => {
     const { options } = await buildSdkOptions(
       makeDeps({ config: { thinkingMode: 'disabled' } }),
