@@ -311,31 +311,31 @@ describe('TrackerSchemaService builtin override via patch', () => {
   });
 
   it('writes <type>.patch.yaml and registers the resolved builtin override', async () => {
-    // 'feature' is a builtin; adding a status via patch must NOT be refused and
+    // 'task' is a builtin; adding a status via patch must NOT be refused and
     // must resolve against the live builtin (keeping its shipped options).
-    const before = statusOptionValues(service, 'feature');
+    const before = statusOptionValues(service, 'task');
     expect(before).toContain('to-do');
     expect(before).not.toContain('archived');
 
     const result = await service.upsertWorkspaceTrackerSchemaPatch(workspacePath, {
-      type: 'feature',
+      type: 'task',
       fields: [
         { name: 'status', options: { set: [{ value: 'archived', label: 'Archived', icon: 'inventory_2' }] } },
       ],
     });
 
-    expect(path.basename(result.filePath)).toBe('feature.patch.yaml');
+    expect(path.basename(result.filePath)).toBe('task.patch.yaml');
     // On-disk artifact is a small delta, not a full snapshot.
     const onDisk = await fs.readFile(result.filePath, 'utf-8');
-    expect(onDisk).toContain('type: feature');
+    expect(onDisk).toContain('type: task');
     expect(onDisk).toContain('archived');
     expect(onDisk).not.toContain('displayNamePlural'); // not a full schema copy
 
     // Registry now holds the resolved model: shipped options + the new one.
-    const after = statusOptionValues(service, 'feature');
+    const after = statusOptionValues(service, 'task');
     expect(after).toContain('to-do');
     expect(after).toContain('archived');
-    expect(service.isBuiltinTrackerSchema('feature')).toBe(true);
+    expect(service.isBuiltinTrackerSchema('task')).toBe(true);
   });
 
   it('re-resolves a patch on load and reports the override', async () => {
@@ -356,17 +356,17 @@ describe('TrackerSchemaService builtin override via patch', () => {
 
   it('resets a patch override back to the builtin default', async () => {
     await service.upsertWorkspaceTrackerSchemaPatch(workspacePath, {
-      type: 'feature',
+      type: 'task',
       fields: [{ name: 'status', options: { set: [{ value: 'archived', label: 'Archived' }] } }],
     });
-    expect(statusOptionValues(service, 'feature')).toContain('archived');
+    expect(statusOptionValues(service, 'task')).toContain('archived');
 
-    const reset = await service.resetWorkspaceTrackerSchemaOverride(workspacePath, 'feature');
+    const reset = await service.resetWorkspaceTrackerSchemaOverride(workspacePath, 'task');
     expect(reset.reset).toBe(true);
 
     // Builtin restored: the patched option is gone.
-    expect(statusOptionValues(service, 'feature')).not.toContain('archived');
-    const after = await service.getWorkspaceTrackerSchemaOverride(workspacePath, 'feature');
+    expect(statusOptionValues(service, 'task')).not.toContain('archived');
+    const after = await service.getWorkspaceTrackerSchemaOverride(workspacePath, 'task');
     expect(after.overridden).toBe(false);
   });
 });
@@ -401,19 +401,19 @@ describe('TrackerSchemaService reset propagates a tombstone', () => {
 
   it('tombstones the mirror row so the reset reaches the team', async () => {
     await service.upsertWorkspaceTrackerSchemaPatch(workspacePath, {
-      type: 'feature',
+      type: 'task',
       fields: [{ name: 'status', options: { set: [{ value: 'archived', label: 'Archived' }] } }],
     });
 
-    const reset = await service.resetWorkspaceTrackerSchemaOverride(workspacePath, 'feature');
+    const reset = await service.resetWorkspaceTrackerSchemaOverride(workspacePath, 'task');
     expect(reset.reset).toBe(true);
     // The tombstone is what propagates the reset (pending delete → pushed → peers
     // restore the builtin). Without it the stale override row keeps syncing.
-    expect(removeMock).toHaveBeenCalledWith(workspacePath, 'feature');
+    expect(removeMock).toHaveBeenCalledWith(workspacePath, 'task');
   });
 
   it('does not tombstone when there was no override to reset', async () => {
-    const reset = await service.resetWorkspaceTrackerSchemaOverride(workspacePath, 'feature');
+    const reset = await service.resetWorkspaceTrackerSchemaOverride(workspacePath, 'task');
     expect(reset.reset).toBe(false);
     expect(removeMock).not.toHaveBeenCalled();
   });
@@ -505,16 +505,16 @@ describe('TrackerSchemaService remote schema sync apply', () => {
 
   it('applies a synced BUILTIN override on a peer, and a tombstone restores the builtin', async () => {
     // A resolved-snapshot override for a builtin arrives from the admin. The peer
-    // must register it over the builtin (feature gains an extra status), keeping
+    // must register it over the builtin (task gains an extra status), keeping
     // isBuiltin true; a later tombstone restores the shipped builtin.
     const overrideModel = JSON.stringify({
-      type: 'feature',
-      displayName: 'Feature',
-      displayNamePlural: 'Features',
-      icon: 'rocket_launch',
-      color: '#10b981',
+      type: 'task',
+      displayName: 'Task',
+      displayNamePlural: 'Tasks',
+      icon: 'task_alt',
+      color: '#2563eb',
       modes: { inline: true, fullDocument: false },
-      idPrefix: 'feat',
+      idPrefix: 'tsk',
       idFormat: 'ulid',
       sync: { mode: 'shared', scope: 'project' },
       fields: [
@@ -532,25 +532,25 @@ describe('TrackerSchemaService remote schema sync apply', () => {
     });
 
     const applied = await service.applyRemoteWorkspaceTrackerSchemaDef(workspacePath, {
-      type: 'feature',
+      type: 'task',
       model: overrideModel,
       syncId: 10,
     });
     expect(applied.applied).toBe(true);
-    expect(service.isBuiltinTrackerSchema('feature')).toBe(true);
-    const featureModel = service.getTrackerSchema('feature') as unknown as { fields: any[] };
-    const values = featureModel.fields.find((f) => f.name === 'status')?.options?.map((o: any) => o.value);
+    expect(service.isBuiltinTrackerSchema('task')).toBe(true);
+    const taskModel = service.getTrackerSchema('task') as unknown as { fields: any[] };
+    const values = taskModel.fields.find((f) => f.name === 'status')?.options?.map((o: any) => o.value);
     expect(values).toContain('archived');
 
     // Tombstone (reset from the admin) restores the shipped builtin.
     const del = await service.applyRemoteWorkspaceTrackerSchemaDef(workspacePath, {
-      type: 'feature',
+      type: 'task',
       model: null,
       syncId: 11,
     });
     expect(del).toEqual({ applied: true, deleted: true });
-    expect(service.isBuiltinTrackerSchema('feature')).toBe(true);
-    const restored = service.getTrackerSchema('feature') as unknown as { fields: any[] };
+    expect(service.isBuiltinTrackerSchema('task')).toBe(true);
+    const restored = service.getTrackerSchema('task') as unknown as { fields: any[] };
     const restoredValues = restored.fields.find((f) => f.name === 'status')?.options?.map((o: any) => o.value);
     expect(restoredValues).not.toContain('archived');
   });

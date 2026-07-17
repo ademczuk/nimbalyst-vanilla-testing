@@ -127,6 +127,15 @@ describe('ShareToTeamDialog folder refresh', () => {
 
     await waitFor(() => expect(refreshSharedFolders).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByText('Specs /')).toBeTruthy());
+    // The reopen's async refresh re-seeds selection; until it settles the confirm
+    // button is disabled (hasInitializedSelection === false) even though the stale
+    // selection already renders "Specs /". Wait for it to be enabled before clicking,
+    // otherwise the click is a no-op and onConfirm is never called.
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: 'Share to Team' }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Share to Team' }));
     expect(onConfirm).toHaveBeenCalledWith({
       folderId: 'specs',

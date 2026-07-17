@@ -19,7 +19,7 @@ import type { CollaborativeDocumentTypeDescriptor } from '../services/Collaborat
 export interface AccountInfo {
   personalOrgId: string;
   email: string | null;
-  isPrimary: boolean;
+  isSyncAccount: boolean;
 }
 
 export interface CreateTeamData {
@@ -27,6 +27,12 @@ export interface CreateTeamData {
   suggestedName: string;
   accounts: AccountInfo[];
   onCreateTeam: (name: string, accountOrgId?: string) => void;
+}
+
+export function getDefaultCreateTeamAccountId(accounts: AccountInfo[]): string {
+  return accounts.find((account) => account.isSyncAccount)?.personalOrgId
+    ?? accounts[0]?.personalOrgId
+    ?? '';
 }
 
 export interface ShareToTeamData {
@@ -50,9 +56,8 @@ function CreateTeamDialogWrapper({
   data: CreateTeamData;
 }) {
   const [teamName, setTeamName] = useState(data.suggestedName);
-  const primaryAccount = data.accounts.find((a) => a.isPrimary);
   const [selectedAccountOrgId, setSelectedAccountOrgId] = useState(
-    primaryAccount?.personalOrgId ?? data.accounts[0]?.personalOrgId ?? ''
+    getDefaultCreateTeamAccountId(data.accounts),
   );
 
   if (!isOpen) return null;
@@ -102,17 +107,26 @@ function CreateTeamDialogWrapper({
               <label className="block text-[12px] font-medium text-[var(--nim-text-muted)] mb-1.5">
                 Account
               </label>
-              <select
-                value={selectedAccountOrgId}
-                onChange={(e) => setSelectedAccountOrgId(e.target.value)}
-                className="w-full px-3 py-2 border border-[var(--nim-border)] rounded-md bg-[var(--nim-bg-secondary)] text-[var(--nim-text)] text-[13px] outline-none focus:border-[var(--nim-primary)] cursor-pointer"
-              >
+              <div className="create-team-account-picker flex flex-col gap-2">
                 {data.accounts.map((account) => (
-                  <option key={account.personalOrgId} value={account.personalOrgId}>
-                    {account.email || account.personalOrgId}
-                  </option>
+                  <label key={account.personalOrgId} className={`create-team-account-option flex cursor-pointer items-center gap-2 rounded-md border p-2.5 ${
+                    selectedAccountOrgId === account.personalOrgId
+                      ? 'border-[var(--nim-primary)] bg-[color-mix(in_srgb,var(--nim-primary)_8%,transparent)]'
+                      : 'border-[var(--nim-border)] bg-[var(--nim-bg-secondary)]'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="create-team-account"
+                      checked={selectedAccountOrgId === account.personalOrgId}
+                      onChange={() => setSelectedAccountOrgId(account.personalOrgId)}
+                    />
+                    <span className="min-w-0 flex-1 truncate select-text text-[13px] text-[var(--nim-text)]">
+                      {account.email || account.personalOrgId}
+                    </span>
+                    {account.isSyncAccount && <span className="text-[10px] text-[var(--nim-text-muted)]">Used for sync</span>}
+                  </label>
                 ))}
-              </select>
+              </div>
               <div className="text-[11px] text-[var(--nim-text-disabled)] mt-1">
                 The team will be created under this account.
               </div>

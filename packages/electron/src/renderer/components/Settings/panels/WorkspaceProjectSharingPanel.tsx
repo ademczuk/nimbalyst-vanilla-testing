@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import { useDialogState } from '../../../contexts/DialogContext';
 import { DIALOG_IDS } from '../../../dialogs/registry';
@@ -9,8 +8,6 @@ import { SecurityEncryptionSection } from './H2EncryptionMigration';
 import { MoveProjectWizard } from './MoveProjectWizard';
 import { MergeOrgWizard } from './MergeOrgWizard';
 import { ProjectAccessEditor } from './ProjectAccessEditor';
-import { openSettingsCommandAtom } from '../../../store/atoms/settingsNavigation';
-import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
 
 // ============================================================================
 // Types
@@ -37,6 +34,8 @@ interface TeamData {
   members: TeamMember[];
   callerRole: string;
   membershipType?: string;
+  boundPersonalOrgId?: string;
+  boundAccountEmail?: string | null;
 }
 
 interface PendingInvite {
@@ -312,22 +311,15 @@ export function ProjectScopedTeamExistsState({
   onUnlinkProject: () => void;
   onProjectMoved: () => void;
 }) {
-  const openSettings = useSetAtom(openSettingsCommandAtom);
-  const selectOrganization = useSetAtom(selectedOrgIdAtom);
   const [moving, setMoving] = useState(false);
   const currentProject = team.teamProjectId
     ? projects.find((project) => project.teamProjectId === team.teamProjectId)
     : undefined;
   const isAdmin = team.callerRole === 'admin' || team.callerRole === 'owner';
   const destinationOrganizations = adminOrgs.filter((organization) => organization.orgId !== team.orgId);
-  const openOrganizationPage = (category: 'organization-members' | 'organization-projects' | 'organization-security') => {
-    selectOrganization(team.orgId);
-    openSettings({
-      category,
-      scope: 'organization',
-      destination: { scope: 'organization', category, orgId: team.orgId },
-      timestamp: Date.now(),
-    });
+  // Org administration opens in its own window (2026-07-17 decision-log correction).
+  const openTeamSurface = () => {
+    void (window as any).electronAPI?.team?.openManagementWindow({ orgId: team.orgId, workspacePath });
   };
 
   return (
@@ -337,10 +329,12 @@ export function ProjectScopedTeamExistsState({
         <div className="mt-3 flex items-center gap-2 rounded bg-[var(--nim-bg)] px-3 py-2"><MaterialSymbol icon={team.gitRemoteHash ? 'link' : 'link_off'} size={15} /><span className="min-w-0 flex-1 truncate select-text font-mono text-xs text-[var(--nim-text-muted)]">{localGitRemote || 'No git remote linked'}</span>{isAdmin && (team.gitRemoteHash ? <button type="button" className="text-xs text-[var(--nim-text-muted)]" onClick={onUnlinkProject}>Unlink</button> : localGitRemote ? <button type="button" className="text-xs text-[var(--nim-link)]" onClick={onLinkProject}>Relink</button> : null)}</div>
       </div>
 
+      <div className="workspace-organization-account-chain mt-3 select-text rounded-md border border-[var(--nim-border)] bg-[var(--nim-bg)] px-3 py-2 text-xs text-[var(--nim-text-muted)]" data-testid="workspace-organization-account-chain">
+        {workspacePath.split(/[\\/]/).filter(Boolean).pop() ?? workspacePath} → {team.name} → {team.boundAccountEmail ?? team.boundPersonalOrgId ?? 'bound account'}
+      </div>
+
       <div className="project-organization-links my-4 flex flex-wrap gap-2" data-testid="project-organization-links">
-        <button type="button" className="rounded border border-[var(--nim-border)] px-3 py-1.5 text-xs hover:bg-[var(--nim-bg-hover)]" onClick={() => openOrganizationPage('organization-members')}>Organization members</button>
-        <button type="button" className="rounded border border-[var(--nim-border)] px-3 py-1.5 text-xs hover:bg-[var(--nim-bg-hover)]" onClick={() => openOrganizationPage('organization-projects')}>Organization projects</button>
-        <button type="button" className="rounded border border-[var(--nim-border)] px-3 py-1.5 text-xs hover:bg-[var(--nim-bg-hover)]" onClick={() => openOrganizationPage('organization-security')}>Encryption status</button>
+        <button type="button" className="rounded border border-[var(--nim-border)] px-3 py-1.5 text-xs hover:bg-[var(--nim-bg-hover)]" onClick={openTeamSurface}>Open Team</button>
       </div>
 
       {!currentProject ? (
@@ -353,7 +347,7 @@ export function ProjectScopedTeamExistsState({
         <div className="project-scoped-actions mt-4 border-t border-[var(--nim-border)] pt-4"><button type="button" className="rounded border border-[var(--nim-border)] px-3 py-1.5 text-xs hover:bg-[var(--nim-bg-hover)]" data-testid="move-current-project" onClick={() => setMoving(true)}>Move project…</button></div>
       )}
       {moving && currentProject && (
-        <MoveProjectWizard srcOrgId={team.orgId} project={{ projectId: currentProject.projectId, name: currentProject.name || currentProject.slug || 'Untitled project' }} destCandidates={destinationOrganizations} onClose={() => setMoving(false)} onMoved={() => { setMoving(false); onProjectMoved(); }} onUpdateEncryption={() => openOrganizationPage('organization-security')} />
+        <MoveProjectWizard srcOrgId={team.orgId} project={{ projectId: currentProject.projectId, name: currentProject.name || currentProject.slug || 'Untitled project' }} destCandidates={destinationOrganizations} onClose={() => setMoving(false)} onMoved={() => { setMoving(false); onProjectMoved(); }} onUpdateEncryption={openTeamSurface} />
       )}
     </div>
   );
@@ -500,7 +494,7 @@ export function WorkspaceProjectSharingPanel({ workspacePath }: WorkspaceProject
   // Load team data for an orgId: fetch members and projects. Team custody is
   // server-managed, so there is no per-member key-envelope trust to compute
   // (NIM-1779/C2: the envelope-based trust + re-share UI was removed).
-  const loadTeamDetails = useCallback(async (orgId: string, teamName: string, teamGitRemoteHash: string | null, teamProjectId?: string | null) => {
+  const loadTeamDetails = useCallback(async (orgId: string, teamName: string, teamGitRemoteHash: string | null, teamProjectId?: string | null, boundPersonalOrgId?: string) => {
     const membersResult = await (window as any).electronAPI.team.listMembers(orgId);
     if (!membersResult.success) return;
 
@@ -517,6 +511,7 @@ export function WorkspaceProjectSharingPanel({ workspacePath }: WorkspaceProject
       invitedAt: m.status === 'pending' ? 'recently' : undefined,
     }));
 
+    const accounts = await window.electronAPI.stytch.getAccounts();
     setTeam({
       orgId,
       name: teamName,
@@ -525,6 +520,8 @@ export function WorkspaceProjectSharingPanel({ workspacePath }: WorkspaceProject
       teamProjectId: teamProjectId ?? null,
       members,
       callerRole: membersResult.callerRole || 'member',
+      boundPersonalOrgId,
+      boundAccountEmail: accounts.find((account) => account.personalOrgId === boundPersonalOrgId)?.email ?? null,
     });
 
     // Epic H3 P0/A: list every project in this org (fire-and-forget).
@@ -561,7 +558,7 @@ export function WorkspaceProjectSharingPanel({ workspacePath }: WorkspaceProject
 
         // Active team match
         setPendingInvite(null);
-        await loadTeamDetails(matchedTeam.orgId, matchedTeam.name, matchedTeam.gitRemoteHash, matchedTeam.teamProjectId);
+        await loadTeamDetails(matchedTeam.orgId, matchedTeam.name, matchedTeam.gitRemoteHash, matchedTeam.teamProjectId, matchedTeam.boundPersonalOrgId);
         return;
       }
 
@@ -604,7 +601,7 @@ export function WorkspaceProjectSharingPanel({ workspacePath }: WorkspaceProject
 
   const handleCreateTeam = async () => {
     // Load accounts to show picker if multiple are signed in
-    let accounts: Array<{ personalOrgId: string; email: string | null; isPrimary: boolean }> = [];
+    let accounts: Array<{ personalOrgId: string; email: string | null; isSyncAccount: boolean }> = [];
     try {
       accounts = await (window as any).electronAPI.stytch.getAccounts() || [];
     } catch {

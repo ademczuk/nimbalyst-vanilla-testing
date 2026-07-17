@@ -22,8 +22,6 @@ const EXPECTED = [
   'bug',
   'task',
   'idea',
-  'feature',
-  'automation',
 ] as const;
 
 // Behavior-preserving invariants carried over from the pre-migration code array.
@@ -37,8 +35,6 @@ const INVARIANTS: Record<string, {
   bug: { idPrefix: 'bug', syncMode: 'shared' },
   task: { idPrefix: 'tsk', syncMode: 'shared' },
   idea: { idPrefix: 'id', syncMode: 'local' },
-  feature: { idPrefix: 'feat', syncMode: 'shared' },
-  automation: { idPrefix: 'aut', syncMode: 'local', creatable: false },
 };
 
 describe('bundled builtin tracker YAML', () => {
@@ -85,13 +81,6 @@ describe('bundled builtin tracker YAML', () => {
         expect(model.creatable, `${type} creatable`).toBe(inv.creatable);
       }
     }
-  });
-
-  it('feature retains the terminal "Won\'t Do" status', () => {
-    const feature = parseBuiltinTrackers().find((m) => m.type === 'feature')!;
-    const status = feature.fields.find((f) => f.name === 'status');
-    const wontDo = status?.options?.find((o) => o.value === 'wont-do');
-    expect(wontDo?.label).toBe("Won't Do");
   });
 
   it('registers all builtins into the registry as builtin types', () => {

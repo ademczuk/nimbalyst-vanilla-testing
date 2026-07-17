@@ -20,9 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared documents now have a recoverable Trash with empty-document cleanup, restore, manual purge, and automatic 30-day removal.
 - Feature tracker items now have a "Won't Do" status for work decided against.
 - Built-in tracker types can now be customized per workspace -- add, rename, or remove statuses, tweak labels, icons, and colors, or add fields -- and reset back to their defaults at any time.
+- Sign in with multiple accounts and switch between them from the account switcher in the sidebar.
+- Sharing sessions and projects now lets you choose which account owns the share.
+- A dedicated organization window for the member roster, invites, and project sharing, opened from the organization switcher or account menu.
+- iOS: sign in with multiple accounts and switch between them.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Settings is reorganized into Application, Account, and Project sections, with organization management moved to a dedicated window.
 
 ### Fixed
 <!-- Bug fixes go here -->

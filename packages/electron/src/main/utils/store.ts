@@ -489,7 +489,7 @@ export interface WorkspaceState {
   issueKeyPrefix?: string;
   // Account identity bound to this workspace (personalOrgId).
   // Set once when the workspace is first synced. Different workspaces can use different accounts.
-  // Defaults to the primary account if not set.
+  // Defaults to the account selected for personal sync if not set.
   accountId?: string;
   // Hidden gutter buttons (navigation sidebar)
   hiddenGutterButtons?: string[];

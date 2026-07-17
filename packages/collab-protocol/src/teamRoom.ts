@@ -450,7 +450,8 @@ export interface MemberInfo {
   /**
    * The member's personal org id, used to address their PersonalIndexRoom
    * (`org:{personalOrgId}:user:{userId}:index`) for inbox-event fanout.
-   * Null until the member's client announces it via `announcePersonalOrg`.
+   * Recorded authoritatively at team create/invite acceptance. Older members
+   * may be repaired once by `announcePersonalOrg` when this value is null.
    */
   personalOrgId?: string | null;
 }

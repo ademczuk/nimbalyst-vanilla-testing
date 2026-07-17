@@ -161,6 +161,11 @@ export function getMigrations(schemaDir: string): Migration[] {
       name: 'tracker_personal_state',
       sqlFile: path.join(schemaDir, '0024_tracker_personal_state.sql'),
     },
+    {
+      version: 25,
+      name: 'account_org_bindings',
+      sqlFile: path.join(schemaDir, '0025_account_org_bindings.sql'),
+    },
   ];
 }
 

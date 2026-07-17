@@ -133,8 +133,11 @@ import { initWakeupListeners } from './store/listeners/wakeupListener';
 import { TrackerMode } from './components/TrackerMode';
 import { PullRequestMode } from './components/PullRequestMode';
 import { CollabMode, type CollabModeRef } from './components/CollabMode';
+import { TeamManagementApp } from './components/TeamMode';
 import { TerminalBottomPanel } from './components/TerminalBottomPanel';
 import { ProjectRail } from './components/ProjectRail';
+import { AccountExpiryBanner } from './components/Accounts/AccountExpiryBanner';
+import { organizationDirectoryAtom, personalAccountsAtom } from './store/atoms/settingsDomains';
 import {
   activeWorkspacePathAtom,
   multiProjectModeAtom,
@@ -456,6 +459,12 @@ export default function App() {
     return <DeveloperDashboard />;
   }
 
+  // Org management is a dedicated window, not a mode inside the project window
+  // (2026-07-17 decision-log correction). TeamManagementApp sets its own title.
+  if (windowMode === 'team-management') {
+    return <TeamManagementApp />;
+  }
+
   // IMPORTANT: These are refs, not state, to prevent re-renders when the active file changes.
   // Window title and other side effects are updated imperatively via editorModeRef.
   const currentFilePathRef = useRef<string | null>(null);
@@ -529,6 +538,8 @@ export default function App() {
   // Window mode - which view is active (files, agent, settings)
   const activeMode = useAtomValue(windowModeAtom);
   const developerMode = useAtomValue(developerModeAtom);
+  const personalAccounts = useAtomValue(personalAccountsAtom);
+  const organizationDirectory = useAtomValue(organizationDirectoryAtom);
   const setActiveMode = useSetAtom(setWindowModeAtom);
   const toggleAgentCollapsed = useSetAtom(toggleSessionHistoryCollapsedAtom);
   const updateDeveloperSettings = useSetAtom(setDeveloperFeatureSettingsAtom);
@@ -601,7 +612,7 @@ export default function App() {
           navigateSettingsInPlace({ category: 'project-agent-permissions', scope: 'project' });
           setTimeout(() => setActiveMode('settings'), 0);
         },
-        openSettings: (category?: any, scope?: 'application' | 'personal' | 'organization' | 'project') => {
+        openSettings: (category?: any, scope?: 'application' | 'account' | 'project') => {
           navigateSettingsInPlace({ category, scope });
           setTimeout(() => setActiveMode('settings'), 0);
         },
@@ -1120,7 +1131,11 @@ export default function App() {
         // any stale deep-link destination so restored scope/category holds.
         navigateSettingsInPlace({
           category: state.category as any,
-          scope: state.scope === 'user' ? 'application' : state.scope,
+          scope: state.scope === 'user' || state.scope === 'organization'
+            ? 'application'
+            : state.scope === 'personal'
+              ? 'account'
+              : state.scope,
         });
       },
     });
@@ -2144,6 +2159,11 @@ export default function App() {
 
       {/* Right: Main content area + Bottom Panel */}
       <div data-layout="main-column-container" className="flex-1 flex flex-col overflow-hidden">
+        <AccountExpiryBanner
+          accounts={personalAccounts}
+          organizations={organizationDirectory}
+          onReconnect={(account) => dialogRef.current?.open(DIALOG_IDS.ACCOUNT_LOGIN, { mode: 'reauth', account })}
+        />
         {/* Top: Main content (sidebar + editor/agent + AI chat) */}
         <div data-layout="top-content-row" className="flex-1 flex flex-row min-h-0">
           {/* Center: Editor/Agent/Settings area */}
