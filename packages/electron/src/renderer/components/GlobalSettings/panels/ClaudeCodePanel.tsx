@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useAtomValue } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 import { activeWorkspacePathAtom } from '../../../store/atoms/openProjects';
 import { ProviderConfig, Model } from '../../Settings/SettingsView';
 import {ClaudeForWindowsInstallation} from "../../../../main/services/CLIManager.ts";
 import {usePostHog} from "posthog-js/react";
-import { useSetting, useSetSetting } from '../../../hooks/useSetting';
+import { hiddenGutterItemsAtom, toggleGutterItemHiddenAtom } from '../../../store/atoms/appSettings';
 import { SettingsToggle, ToggleSwitch } from '../SettingsToggle';
 
 // Built-in SDK version (injected at build time via electron.vite.config.ts define)
@@ -158,9 +158,14 @@ export function ClaudeCodePanel({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
 
-  // Usage indicator setting
-  const usageIndicatorEnabled = useSetting('ai.showUsageIndicator');
-  const setUsageIndicatorEnabled = useSetSetting('ai.showUsageIndicator');
+  // Usage indicator visibility (rail gutter is the single source of truth --
+  // see NavigationGutter's "Show Claude Usage" / "Customize Gutter…" restore
+  // affordances, which read the same hiddenGutterItems set this toggle does).
+  const hiddenGutterItems = useAtomValue(hiddenGutterItemsAtom);
+  const toggleGutterItemHidden = useSetAtom(toggleGutterItemHiddenAtom);
+  const usageIndicatorEnabled = !hiddenGutterItems.includes('claude-usage');
+  const setUsageIndicatorEnabled = (checked: boolean) =>
+    toggleGutterItemHidden({ id: 'claude-usage', hidden: !checked });
 
   // Custom Claude executable path. In project scope, `customClaudeCodePath` reflects the
   // workspace override (empty string when no override is set, inheriting the global value);

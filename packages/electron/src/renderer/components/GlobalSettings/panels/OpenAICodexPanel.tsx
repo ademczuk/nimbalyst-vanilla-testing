@@ -2,8 +2,12 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { ProviderConfig, Model } from '../../Settings/SettingsView';
 import { SettingsToggle } from '../SettingsToggle';
-import { useSetting, useSetSetting } from '../../../hooks/useSetting';
-import { getProviderConfigAtom, setProviderConfigAtom } from '../../../store/atoms/appSettings';
+import {
+  getProviderConfigAtom,
+  setProviderConfigAtom,
+  hiddenGutterItemsAtom,
+  toggleGutterItemHiddenAtom,
+} from '../../../store/atoms/appSettings';
 
 interface OpenAICodexPanelProps {
   config: ProviderConfig;
@@ -34,8 +38,14 @@ export function OpenAICodexPanel({
   config,
   onToggle,
 }: OpenAICodexPanelProps) {
-  const usageIndicatorEnabled = useSetting('ai.showCodexUsageIndicator');
-  const setUsageIndicatorEnabled = useSetSetting('ai.showCodexUsageIndicator');
+  // Usage indicator visibility (rail gutter is the single source of truth --
+  // see NavigationGutter's "Show Codex Usage" / "Customize Gutter…" restore
+  // affordances, which read the same hiddenGutterItems set this toggle does).
+  const hiddenGutterItems = useAtomValue(hiddenGutterItemsAtom);
+  const toggleGutterItemHidden = useSetAtom(toggleGutterItemHiddenAtom);
+  const usageIndicatorEnabled = !hiddenGutterItems.includes('codex-usage');
+  const setUsageIndicatorEnabled = (checked: boolean) =>
+    toggleGutterItemHidden({ id: 'codex-usage', hidden: !checked });
 
   const acpConfigAtom = useMemo(() => getProviderConfigAtom('openai-codex-acp'), []);
   const acpConfig = useAtomValue(acpConfigAtom);
