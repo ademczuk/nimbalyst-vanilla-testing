@@ -529,12 +529,13 @@ export function getAdditionalDirectoriesForWorkspace(
   options?: { includeSiblingWorktrees?: boolean },
 ): string[] {
   const additionalDirs = new Set<string>();
+  const workspaceIdentity = resolveWorktreeIdentity(workspacePath);
   const projectPath = resolveProjectPath(workspacePath);
 
   // If this is a worktree, add the parent project directory so the agent can
   // read shared configs (.claude/settings.json, package.json) and reach the
   // shared .git common dir for operations like `git rebase --continue`.
-  if (isWorktreePath(workspacePath)) {
+  if (workspaceIdentity.isWorktree) {
     additionalDirs.add(projectPath);
   }
 
@@ -548,7 +549,7 @@ export function getAdditionalDirectoriesForWorkspace(
   if (options?.includeSiblingWorktrees !== false) {
     const siblingWorktrees = listSiblingWorktreePaths(projectPath);
     for (const siblingPath of siblingWorktrees) {
-      if (siblingPath !== workspacePath) {
+      if (siblingPath !== workspaceIdentity.canonical) {
         additionalDirs.add(siblingPath);
       }
     }
