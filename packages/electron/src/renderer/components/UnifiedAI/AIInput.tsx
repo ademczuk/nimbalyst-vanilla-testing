@@ -17,9 +17,7 @@ import { pendingVoiceCommandAtom, voiceActiveSessionIdAtom, type PendingVoiceCom
 import { ContextUsageDisplay } from './ContextUsageDisplay';
 import { ActionPromptsDropdown } from './ActionPromptsDropdown';
 import type { ActionPrompt } from '../../store/atoms/actionPrompts';
-import { MockupAnnotationIndicator } from './MockupAnnotationIndicator';
-import { TextSelectionIndicator } from './TextSelectionIndicator';
-import { EditorContextIndicator } from './EditorContextIndicator';
+import { SelectionChips } from './SelectionChips';
 import {
   MemoryPromptIndicator,
   MemorySaveButton,
@@ -118,7 +116,6 @@ interface AIInputProps {
 
   // Mockup annotation indicator support
   currentFilePath?: string;
-  lastUserMessageTimestamp?: number | null;
 
   // Test ID for E2E testing
   testId?: string;
@@ -185,7 +182,6 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     onQueue,
     queueCount = 0,
     currentFilePath,
-    lastUserMessageTimestamp,
     testId,
     onLaunchActionInNewSession,
   }, ref) => {
@@ -1355,22 +1351,11 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
           />
         )}
 
-        {/* Mockup annotation indicator - shown when there are new annotations */}
-        <MockupAnnotationIndicator
+        {/* Unified removable selection chips: text selection, mockup
+            annotations, and extension-provided items (node-like editors).
+            Each chip has an × so the user can drop it from the next prompt. */}
+        <SelectionChips
           currentFilePath={currentFilePath}
-          lastUserMessageTimestamp={lastUserMessageTimestamp ?? null}
-        />
-
-        {/* Text selection indicator - shown when text is selected in the editor */}
-        <TextSelectionIndicator
-          currentFilePath={currentFilePath}
-          lastUserMessageTimestamp={lastUserMessageTimestamp ?? null}
-        />
-
-        {/* Editor context indicator - shown when extension pushes context */}
-        <EditorContextIndicator
-          currentFilePath={currentFilePath}
-          lastUserMessageTimestamp={lastUserMessageTimestamp ?? null}
         />
 
         {/* Inline controls row - hidden in memory mode */}

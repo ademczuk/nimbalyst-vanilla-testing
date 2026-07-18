@@ -94,6 +94,7 @@ A concise reference of all features in the product. Keep this up to date as feat
 - Turn summary ("Finished in Xm Ys, N files +N -N")
 - File `@` mention in input
 - Image attachment support
+- Selection chips above the input showing what will be sent as context (selected text, mockup annotations, and extension-provided items from node-like editors such as Excalidraw); each chip has an × to drop it from the prompt, and node-like editors can report multiple selections at once
 - Queued prompts display
 - Slash command typeahead
 - Action prompts dropdown in composer (reusable prompt presets defined in `nimbalyst-local/ai-actions.md`; pick to insert verbatim into the draft, with undo support)

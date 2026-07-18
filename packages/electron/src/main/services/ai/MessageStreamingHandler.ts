@@ -1252,6 +1252,7 @@ export class MessageStreamingHandler {
         textSelectionTimestamp: documentContext.textSelectionTimestamp,
         mockupSelection: (documentContext as any).mockupSelection,
         mockupDrawing: (documentContext as any).mockupDrawing,
+        editorContextItems: (documentContext as any).editorContextItems,
       } : undefined;
 
       const { documentContext: preparedContext, userMessageAdditions } = this.svc.documentContextService.prepareContext(

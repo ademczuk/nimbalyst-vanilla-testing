@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- The AI chat now shows what you have selected as removable chips -- including multiple shapes at once from node-like editors such as Excalidraw -- and you can remove any selection so it is not sent to the model.
 - Claude Agent sessions now expose an `Extended: On` / `Extended: Off` selector next to the effort selector for supported Opus/Sonnet variants, letting you turn off extended thinking per session to reduce latency and token use. Extended thinking stays on by default.
 - Star tracker items and filter the list by Favorites, Recently Viewed, and Edited by Others.
 - Launch an isolated worktree session directly from a tracker item.

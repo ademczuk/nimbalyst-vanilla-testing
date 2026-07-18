@@ -43,6 +43,7 @@ import { activeTipIdAtom } from '../../tips/atoms';
 import { supportsWorkspaceSlashCommands } from '../Typeahead/slashCommandAutocomplete';
 import type { TextSelection } from './TextSelectionIndicator';
 import { type SerializableDocumentContext } from '../../hooks/useDocumentContext';
+import { serializeEditorContextItemsForIpc } from './editorContextSerialization';
 import { isClaudeCliTerminalSession } from './claudeCliInputRouting';
 import { diffTreeGroupByDirectoryAtom, setDiffTreeGroupByDirectoryAtom } from '../../store/atoms/projectState';
 import {
@@ -278,8 +279,7 @@ function serializeDocumentContext(
     textSelectionTimestamp: documentContext.textSelectionTimestamp,
     mockupSelection: documentContext.mockupSelection,
     mockupDrawing: documentContext.mockupDrawing,
-    editorContext: documentContext.editorContext,
-    editorContextTimestamp: documentContext.editorContextTimestamp,
+    editorContextItems: serializeEditorContextItemsForIpc(documentContext.editorContextItems),
   };
 }
 
@@ -2070,13 +2070,6 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
   const enableAttachments = true;
   const enableHistoryNavigation = true;
 
-  // Last user message timestamp for mockup annotation indicator
-  const lastUserMessageTimestamp = React.useMemo(() => {
-    const userMessages = messages.filter(m => m.type === 'user_message');
-    if (userMessages.length === 0) return null;
-    return userMessages[userMessages.length - 1].createdAt?.getTime() || null;
-  }, [messages]);
-
   // Extra content rendered in the empty-session panel: an inline contextual
   // tip (any provider) above the slash command suggestions (claude-code
   // only). InlineTipDisplay registers itself with TipProvider so tips only
@@ -2628,7 +2621,6 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
         onQueue={handleQueue}
         queueCount={queuedPrompts.length}
         currentFilePath={currentFilePath}
-        lastUserMessageTimestamp={lastUserMessageTimestamp}
         onLaunchActionInNewSession={handleLaunchActionInNewSession}
       />
     </div>
