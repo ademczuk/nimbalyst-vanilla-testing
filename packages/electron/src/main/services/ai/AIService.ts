@@ -90,7 +90,8 @@ import { getMessageSyncHandler, getSyncProvider, isDesktopTrulyAway } from '../S
 import { applyRemoteReadReceipt } from '../../ipc/ReadReceiptHandlers';
 import { applyRemoteTrackerPersonalState } from '../../ipc/TrackerPersonalStateHandlers';
 import { normalizeCodexProviderConfig, omitModelsField, stripTransientProviderFields } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
-import { isFileInWorkspaceOrWorktree } from '../../utils/workspaceDetection';
+import { isFileInWorkspaceOrWorktree, resolveProjectPath } from '../../utils/workspaceDetection';
+import { inferWorktreePathFromFilePath, inferWorktreePathFromCommand } from './worktreeInference';
 import { SessionFilesRepository } from '@nimbalyst/runtime';
 import { buildToolPermissionResponseRecord } from './claudeCliToolPermission';
 import * as fs from 'fs';
@@ -4038,36 +4039,11 @@ export class AIService {
   }
 
   private inferWorktreePathFromFilePath(workspacePath: string, filePath: string): string | null {
-    if (!workspacePath || !filePath) return null;
-    const normalizedWorkspace = path.normalize(workspacePath);
-    const normalizedFile = path.normalize(filePath);
-    const worktreePrefix = `${normalizedWorkspace}_worktrees${path.sep}`;
-    if (!normalizedFile.startsWith(worktreePrefix)) return null;
-
-    const remainder = normalizedFile.slice(worktreePrefix.length);
-    const worktreeName = remainder.split(path.sep)[0];
-    if (!worktreeName || worktreeName.includes('..')) return null;
-
-    const worktreePath = path.resolve(path.join(`${normalizedWorkspace}_worktrees`, worktreeName));
-    if (!worktreePath.startsWith(worktreePrefix.slice(0, -1))) return null;
-    return worktreePath;
+    return inferWorktreePathFromFilePath(workspacePath, filePath);
   }
 
   private inferWorktreePathFromCommand(command: string | undefined, workspacePath: string): string | null {
-    if (!command || !workspacePath) return null;
-    const normalizedWorkspace = path.normalize(workspacePath);
-    const worktreePrefix = `${normalizedWorkspace}_worktrees${path.sep}`;
-    const normalizedCommand = command.replace(/\\/g, path.sep);
-    const idx = normalizedCommand.indexOf(worktreePrefix);
-    if (idx === -1) return null;
-
-    const after = normalizedCommand.slice(idx + worktreePrefix.length);
-    const worktreeName = after.split(/[\s'"\r\n\\/]/)[0];
-    if (!worktreeName || worktreeName.includes('..')) return null;
-
-    const result = path.resolve(path.join(`${normalizedWorkspace}_worktrees`, worktreeName));
-    if (!result.startsWith(worktreePrefix.slice(0, -1))) return null;
-    return result;
+    return inferWorktreePathFromCommand(command, workspacePath);
   }
 
   /**
@@ -4082,18 +4058,27 @@ export class AIService {
   private async adoptWorktreeForSession(
     session: SessionData,
     worktreePath: string,
-    _event: Electron.IpcMainInvokeEvent
+    event: Electron.IpcMainInvokeEvent
   ): Promise<void> {
     if (!worktreePath || session.worktreePath === worktreePath) {
       return;
     }
 
-    // A path observed in model output is attribution data, never authority to
-    // retarget a session. Native worktree sessions are born with their binding;
-    // a mis-started session must stop and be recreated rather than adopted.
-    logger.main.warn('[AIService] Ignoring inferred worktree path for session:', {
+    const worktreeProjectPath = resolveProjectPath(worktreePath);
+    const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
+    await AISessionsRepository.updateMetadata(session.id, {
+      worktreePath,
+      worktreeProjectPath,
+    });
+
+    session.worktreePath = worktreePath;
+    session.worktreeProjectPath = worktreeProjectPath;
+    await this.hooklessWatcher.ensureForSession(session.id, worktreePath);
+
+    logger.main.info('[AIService] Adopted worktree path for session:', {
       sessionId: session.id,
       worktreePath,
+      worktreeProjectPath,
     });
   }
 

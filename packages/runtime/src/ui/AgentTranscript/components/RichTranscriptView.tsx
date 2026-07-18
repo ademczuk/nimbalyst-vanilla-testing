@@ -2311,6 +2311,7 @@ export const RichTranscriptView = React.forwardRef<
             onOpenSession={onOpenSession}
             onCompact={onCompact}
             provider={provider}
+            workspacePath={workspacePath}
           />
         </div>
 

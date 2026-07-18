@@ -77,7 +77,7 @@ describe('resolveProjectPath', () => {
     // (not a linked-worktree .git FILE) means this is its own project.
     const literalProject = path.join(tmpRoot, 'my_app_worktrees', 'folder');
     fs.mkdirSync(path.join(literalProject, '.git'), { recursive: true });
-    expect(resolveProjectPath(literalProject)).toBe(fs.realpathSync.native(literalProject));
+    expect(resolveProjectPath(literalProject)).toBe(literalProject);
   });
 
   it('does not treat a git submodule as a worktree', () => {
@@ -92,7 +92,7 @@ describe('resolveProjectPath', () => {
     fs.mkdirSync(submodulePath, { recursive: true });
     fs.writeFileSync(path.join(submodulePath, '.git'), `gitdir: ${moduleDir}\n`);
 
-    expect(resolveProjectPath(submodulePath)).toBe(fs.realpathSync.native(submodulePath));
+    expect(resolveProjectPath(submodulePath)).toBe(submodulePath);
   });
 
   it('fails closed (returns the input unchanged) for a forged .git file pointing at another project\'s worktree registration', () => {
@@ -112,7 +112,7 @@ describe('resolveProjectPath', () => {
       `gitdir: ${path.join(victim, '.git', 'worktrees', 'real')}\n`,
     );
 
-    expect(resolveProjectPath(attackerDir)).toBe(fs.realpathSync.native(attackerDir));
+    expect(resolveProjectPath(attackerDir)).toBe(attackerDir);
   });
 
   it('fails closed for a path that does not exist on disk', () => {
@@ -243,7 +243,7 @@ describe('getAdditionalDirectoriesForWorkspace', () => {
     const dirs = getAdditionalDirectoriesForWorkspace(cwd);
     expect(dirs.sort()).toEqual([
       fs.realpathSync.native(projectPath),
-      path.join(worktreesDir, 'swift-falcon'),
+      path.join(fs.realpathSync.native(worktreesDir), 'swift-falcon'),
     ].sort());
     // The current worktree itself must not appear -- it is already the
     // workingDirectory, and re-listing it would just add noise.
