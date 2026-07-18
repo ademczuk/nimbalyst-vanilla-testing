@@ -222,6 +222,9 @@ interface AppStoreSchema {
   // One-shot migration flag: per-project hiddenGutterButtons unioned into the
   // global hiddenGutterItems key above.
   gutterButtonsMigratedToGlobal?: boolean;
+  // One-shot migration flag: ai-settings' ai.show*UsageIndicator (no rail
+  // restore affordance) folded into hiddenGutterItems above (which has one).
+  usageIndicatorsMigratedToGutter?: boolean;
   // Extension marketplace install tracking
   marketplaceInstalls?: Record<string, MarketplaceInstallRecord>;
   // Multi-project rail: opt-in flag to host multiple projects in a single
@@ -2567,6 +2570,40 @@ export function runMigrations(currentVersion: string): void {
       logger.store.warn('[Migrations] Failed to migrate hiddenGutterButtons to global:', err);
     }
     getAppStore().set('gutterButtonsMigratedToGlobal', true);
+  }
+
+  // One-shot, version-independent migration: the usage-indicator "Disable"
+  // buttons (Claude/Codex/Gemini) used to write ai.show*UsageIndicator, an
+  // ai-settings boolean with no rail-side restore affordance -- only
+  // hiddenGutterItems (NavigationGutter's right-click "Show X" / "Customize
+  // Gutter…" / "Show All") has one. Fold any indicator a user had already
+  // disabled into hiddenGutterItems so it (a) stays hidden across the
+  // upgrade and (b) becomes restorable from the rail. Flag-guarded so it
+  // runs once and doesn't fight a later re-enable from the rail.
+  if (!getAppStore().get('usageIndicatorsMigratedToGutter')) {
+    try {
+      const aiSettings = getAiSettingsStore();
+      const disabledIndicatorGutterIds: Array<[string, string]> = [
+        ['showUsageIndicator', 'claude-usage'],
+        ['showCodexUsageIndicator', 'codex-usage'],
+        ['showGeminiUsageIndicator', 'gemini-usage'],
+      ];
+      const hidden = new Set<string>(getAppStore().get('hiddenGutterItems') ?? []);
+      let changed = false;
+      for (const [settingKey, gutterId] of disabledIndicatorGutterIds) {
+        if (aiSettings.get(settingKey) === false && !hidden.has(gutterId)) {
+          hidden.add(gutterId);
+          changed = true;
+        }
+      }
+      if (changed) {
+        logger.store.info('[Migrations] Migrating disabled usage indicator setting(s) into hiddenGutterItems');
+        getAppStore().set('hiddenGutterItems', Array.from(hidden));
+      }
+    } catch (err) {
+      logger.store.warn('[Migrations] Failed to migrate usage indicator visibility to gutter:', err);
+    }
+    getAppStore().set('usageIndicatorsMigratedToGutter', true);
   }
 
   // Same version - no migration needed
