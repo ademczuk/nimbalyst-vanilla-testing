@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- PR review diffs and controls now follow the active theme without unreadable backgrounds behind operator characters.
 - Extensions can now write binary files without corrupting their contents.
 - Session summaries now end with any unanswered interactive question so pending user input is not lost in the recap.
 - Switching themes no longer freezes the window for several seconds when documents with code blocks are open.

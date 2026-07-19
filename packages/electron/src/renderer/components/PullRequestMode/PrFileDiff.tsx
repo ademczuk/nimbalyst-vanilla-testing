@@ -7,7 +7,7 @@
  * virtualizes cleanly in the collapsed-diff stream.
  *
  * Syntax highlighting is produced by refractor (Prism) and colored by the
- * GitHub-style token palette in `prFileDiff.css`.
+ * active Nimbalyst theme in `prFileDiff.css`.
  */
 
 import type { JSX } from 'react';
@@ -20,7 +20,6 @@ import './prFileDiff.css';
 
 interface PrFileDiffProps {
   file: PullRequestFileRow;
-  isDark: boolean;
   /** 'unified' (stacked, GitHub default) or 'split' (side-by-side). */
   viewType?: 'unified' | 'split';
 }
@@ -132,7 +131,7 @@ function buildUnifiedDiff(file: PullRequestFileRow): string | null {
   return `${header.join('\n')}\n${patch}`;
 }
 
-export function PrFileDiff({ file, isDark, viewType = 'unified' }: PrFileDiffProps): JSX.Element {
+export function PrFileDiff({ file, viewType = 'unified' }: PrFileDiffProps): JSX.Element {
   const parsed = useMemo(() => {
     const unified = buildUnifiedDiff(file);
     if (!unified) return { hunks: null as HunkData[] | null, diffType: 'modify' as const, error: null as string | null };
@@ -177,7 +176,7 @@ export function PrFileDiff({ file, isDark, viewType = 'unified' }: PrFileDiffPro
   }
 
   return (
-    <div className={`pr-diff-view ${isDark ? 'pr-diff-view--dark' : ''}`}>
+    <div className="pr-diff-view">
       <Diff viewType={viewType} diffType={parsed.diffType} hunks={parsed.hunks} tokens={tokens}>
         {(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
       </Diff>
