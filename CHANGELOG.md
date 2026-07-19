@@ -10,13 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
-- Filter AI session history to workstreams and their child sessions with the virtual `#workstreams` tag.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.70.0] - 2026-07-19
+
+
+### Added
+<!-- New features go here -->
 - The AI chat now shows what you have selected as removable chips -- including multiple shapes at once from node-like editors such as Excalidraw -- and you can remove any selection so it is not sent to the model.
-- Claude Agent sessions now expose an `Extended: On` / `Extended: Off` selector next to the effort selector for supported Opus/Sonnet variants, letting you turn off extended thinking per session to reduce latency and token use. Extended thinking stays on by default.
+- Claude Agent sessions expose an `Extended: On` / `Extended: Off` selector (developer mode) next to the effort selector for supported Opus/Sonnet variants, so you can turn off extended thinking per session to reduce latency and token use. It stays on by default.
+- Switch AI models from the keyboard directly in the chat input.
 - Star tracker items and filter the list by Favorites, Recently Viewed, and Edited by Others.
 - Launch an isolated worktree session directly from a tracker item.
 - Text and code files such as TypeScript, HTML, Swift, and Python can now be shared and co-edited with live cursors.
-- Tracker items and other sessions mentioned in the chat transcript are now clickable, opening the item or session directly.
+- Tracker items and other sessions mentioned in the chat transcript are now clickable, opening the item or session directly, and tracker reference pills show live workflow status.
 - Cmd+O file search now finds team shared files and opens them collaboratively.
 - Shared document and folder creation now lets you choose any shared folder or Root as the destination.
 - Create diagrams, data models, spreadsheets, mockups, and more directly as shared documents.
@@ -60,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Images pasted into a shared document from a web browser now persist after a refresh instead of disappearing.
 - Cmd+Y now opens history for the currently focused shared document instead of the last local document.
 - Inline charts and screenshots the assistant shows in chat now render again instead of failing with a schema error.
+- The UI no longer stalls for seconds during heavy AI file editing across multiple sessions.
 
 ### Removed
 <!-- Removed features go here -->
