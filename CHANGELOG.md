@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Hidden Tracker and PR Review modes now pause background work while preserving their state, and extension editors stay available without eagerly loading every extension.
 - Settings is reorganized into Application, Account, and Project sections, with organization management moved to a dedicated window.
 - Logging in to your Claude subscription now opens the terminal in your current project folder.
 - Hiding, showing, or reordering navigation gutter icons now updates every open window immediately instead of after a reload.

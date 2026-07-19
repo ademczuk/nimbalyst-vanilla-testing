@@ -1976,6 +1976,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Generic IPC methods for services that need them
+  captureHeapSnapshot: (): Promise<{ path: string; sizeBytes: number }> =>
+    ipcRenderer.invoke('heap-snapshot:capture'),
   invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args),
   send: (channel: string, ...args: any[]) => ipcRenderer.send(channel, ...args),
   on: (channel: string, callback: (...args: any[]) => void) => {
