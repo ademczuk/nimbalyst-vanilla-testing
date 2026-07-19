@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Filter AI session history to workstreams and their child sessions with the virtual `#workstreams` tag.
 - The AI chat now shows what you have selected as removable chips -- including multiple shapes at once from node-like editors such as Excalidraw -- and you can remove any selection so it is not sent to the model.
 - Claude Agent sessions now expose an `Extended: On` / `Extended: Off` selector next to the effort selector for supported Opus/Sonnet variants, letting you turn off extended thinking per session to reduce latency and token use. Extended thinking stays on by default.
 - Star tracker items and filter the list by Favorites, Recently Viewed, and Edited by Others.
@@ -37,10 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- CLI: repeating `--field key=value` for the same key now collects the values into an array, so multi-value fields can be written from `nim tracker create`/`update` (previously only the last value was kept).
+- OpenCode no longer stays disabled for the rest of the session when its server is slow to start; a slow start now retries or adopts the ready server, and a missing OpenCode CLI reports a clear error.
+- PR review diffs and controls now follow the active theme without unreadable backgrounds behind operator characters.
 - Extensions can now write binary files without corrupting their contents.
 - Session summaries now end with any unanswered interactive question so pending user input is not lost in the recap.
 - Switching themes no longer freezes the window for several seconds when documents with code blocks are open.
 - Usage indicators (Claude, Codex, Gemini) hidden from the navigation gutter can now be restored by right-clicking the gutter.
+- Codex sessions now reap owned child process trees and release idle or archived providers, preventing orphan Git and MCP processes from accumulating.
 - Commit with AI in a worktree no longer sweeps in ignored files like node_modules when an untracked folder is present, so it proposes only the files you actually changed.
 - Team shared documents and trackers no longer show as locked ("No encryption key available") after a network change or brief server outage.
 - Embedded spreadsheets and code editors in the chat transcript no longer steal focus and scroll-jump the transcript back to themselves.
