@@ -398,6 +398,7 @@ interface ElectronAPI {
   settingsSet: (key: string, value: unknown) => Promise<{ ok: true }>;
   settingsDelete: (key: string) => Promise<{ ok: true }>;
   onSettingsChanged: (callback: (payload: { key: string; value: unknown }) => void) => () => void;
+  onAppSettingsChanged: (callback: (payload: { key: string; value: unknown }) => void) => () => void;
 
   getAISettings: () => Promise<any>;
   saveAISettings: (settings: any) => Promise<void>;

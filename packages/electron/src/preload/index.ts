@@ -529,6 +529,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('settings:changed', handler);
     return () => ipcRenderer.removeListener('settings:changed', handler);
   },
+  // Generic app-settings store writes broadcast app-settings:changed to every
+  // OTHER window so cross-window state (e.g. navigation-gutter customization)
+  // stays in lockstep without a reload.
+  onAppSettingsChanged: (callback: (payload: { key: string; value: unknown }) => void) => {
+    const handler = (_event: any, payload: { key: string; value: unknown }) => callback(payload);
+    ipcRenderer.on('app-settings:changed', handler);
+    return () => ipcRenderer.removeListener('app-settings:changed', handler);
+  },
 
   getAISettings: () => ipcRenderer.invoke('ai:getSettings'),
   saveAISettings: (settings: any) => ipcRenderer.invoke('ai:saveSettings', settings),
@@ -1968,6 +1976,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Generic IPC methods for services that need them
+  captureHeapSnapshot: (): Promise<{ path: string; sizeBytes: number }> =>
+    ipcRenderer.invoke('heap-snapshot:capture'),
   invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args),
   send: (channel: string, ...args: any[]) => ipcRenderer.send(channel, ...args),
   on: (channel: string, callback: (...args: any[]) => void) => {

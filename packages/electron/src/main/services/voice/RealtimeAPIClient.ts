@@ -1093,7 +1093,7 @@ Your job is to be a voice relay, not to interpret or improve the user's requests
         {
           type: 'function',
           name: 'get_session_summary',
-          description: 'Get a summary of the current AI session. Returns information about the session name, message counts, duration, and recent topics discussed. Use this when the user asks about what has been discussed or wants a recap.',
+          description: 'Get a summary of the current AI session. Returns the session name, message counts, duration, recent topics, and any pending user question as the final section. Use this when the user asks what has been discussed or wants a recap.',
           parameters: {
             type: 'object',
             properties: {},

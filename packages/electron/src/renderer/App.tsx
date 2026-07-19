@@ -5,7 +5,7 @@ import './hooks/useExtensionInputGuard';
 // Side-effect: ensure atomFamily registry is initialized and window.__atomFamilyStats is set
 import './store/debug/atomFamilyRegistry';
 
-import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import React, { Activity, useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { usePostHog } from 'posthog-js/react';
 import { logger } from './utils/logger';
@@ -2280,14 +2280,20 @@ export default function App() {
                 activeMode === 'tracker' && !isFullscreenPanelActive ? 'flex' : 'hidden'
               }`}
             >
-              {workspacePath && (
-                <TrackerMode
-                  workspacePath={workspacePath}
-                  workspaceName={workspaceName || ''}
-                  isActive={activeMode === 'tracker'}
-                  onSwitchToFilesMode={() => setActiveMode('files')}
-                />
-              )}
+              {/* Activity defers hidden-tree updates to background priority and
+                  unmounts effects while hidden; React state and DOM (scroll,
+                  selection) are preserved. The wrapper div's hidden class still
+                  controls layout. */}
+              <Activity mode={activeMode === 'tracker' && !isFullscreenPanelActive ? 'visible' : 'hidden'}>
+                {workspacePath && (
+                  <TrackerMode
+                    workspacePath={workspacePath}
+                    workspaceName={workspaceName || ''}
+                    isActive={activeMode === 'tracker'}
+                    onSwitchToFilesMode={() => setActiveMode('files')}
+                  />
+                )}
+              </Activity>
             </div>
 
             {/* PR Review Mode - always mounted, visibility controlled by display */}
@@ -2299,14 +2305,18 @@ export default function App() {
                   : 'hidden'
               }`}
             >
-              {workspacePath && developerMode && (
-                <PullRequestMode
-                  workspacePath={workspacePath}
-                  workspaceName={workspaceName || ''}
-                  isActive={activeMode === 'pr-review'}
-                  onSwitchToFilesMode={() => setActiveMode('files')}
-                />
-              )}
+              <Activity
+                mode={activeMode === 'pr-review' && developerMode && !isFullscreenPanelActive ? 'visible' : 'hidden'}
+              >
+                {workspacePath && developerMode && (
+                  <PullRequestMode
+                    workspacePath={workspacePath}
+                    workspaceName={workspaceName || ''}
+                    isActive={activeMode === 'pr-review'}
+                    onSwitchToFilesMode={() => setActiveMode('files')}
+                  />
+                )}
+              </Activity>
             </div>
 
             {/* Collab Mode - always mounted, visibility controlled by display */}

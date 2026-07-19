@@ -23,6 +23,8 @@ import { TabEditorErrorBoundary } from '../TabEditorErrorBoundary';
 import { logger } from '../../utils/logger';
 import { useTabsActions, type TabData, notifyDirtyStateChange, isTrackerTabPath } from '../../contexts/TabsContext';
 import { TrackerResourceEditor } from '../AgentMode/TrackerResourceEditor';
+import { SharedDocsListView } from '../CollabMode/SharedDocsListView';
+import { isSharedHomeTab } from '../CollabMode/sharedHomeTab';
 import { isCollabUri, parseCollabUri } from '../../utils/collabUri';
 import {
   getCollabConfig,
@@ -134,6 +136,13 @@ const TabContentComponent: React.FC<TabContentProps> = ({
     // Tracker resources don't load from disk -- the tracker body is owned by
     // TrackerItemDetail (PGLite or collaborative Y.Doc).
     if (isTrackerTabPath(filePath)) {
+      return '';
+    }
+
+    // The Shared Docs Home tab is a virtual surface with no backing content;
+    // short-circuit before the generic virtual:// loader (which would call
+    // documentService.loadVirtual and fail).
+    if (isSharedHomeTab(filePath)) {
       return '';
     }
 
@@ -276,6 +285,31 @@ const TabContentComponent: React.FC<TabContentProps> = ({
     containerRef.current.appendChild(element);
 
     const root = createRoot(element);
+
+    // Shared Docs Home tab: a self-contained list view over the shared-doc
+    // index. No save/dirty/getContent wiring; opening a row hands off via
+    // pendingCollabDocumentAtom (see SharedDocsListView).
+    if (isSharedHomeTab(tab.filePath)) {
+      root.render(
+        <JotaiProvider store={store}>
+          <TabEditorErrorBoundary
+            filePath={tab.filePath}
+            fileName={tab.fileName}
+            onRetry={() => {
+              removeTabEditor(tab.id);
+              createTabEditor(tab, content);
+            }}
+            onClose={() => {
+              propsRef.current.onTabClose?.(tab.id);
+            }}
+          >
+            <SharedDocsListView workspacePath={propsRef.current.workspaceId ?? ''} />
+          </TabEditorErrorBoundary>
+        </JotaiProvider>
+      );
+      tabInstancesRef.current.set(tab.id, { root, element, tabData: tab, content });
+      return;
+    }
 
     // Tracker resource tabs render the tracker detail host, not a file editor.
     // No save/dirty/getContent wiring — the tracker owns its own persistence

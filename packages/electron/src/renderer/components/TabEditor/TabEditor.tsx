@@ -43,8 +43,8 @@ import { customEditorRegistry, CustomEditorWrapper } from '../CustomEditors';
 import { logger } from '../../utils/logger';
 import { createEditorHost } from './createEditorHost';
 import type { EditorHost, DiffConfig, ProjectFileWriteReceipt, EditorHostFileSystem } from '@nimbalyst/runtime';
-import { createExtensionStorage } from '@nimbalyst/runtime';
-import { setEditorContext, clearEditorContext } from '../../stores/editorContextStore';
+import { createExtensionStorage, createElementVisibilityTracker } from '@nimbalyst/runtime';
+import { setEditorContext, setEditorContextItems, clearEditorContext } from '../../stores/editorContextStore';
 import { store, editorHasUnacceptedChangesAtom, makeEditorKey } from '@nimbalyst/runtime/store';
 import { historyDialogFileAtom } from '../../store';
 import { UnifiedEditorHeaderBar } from './UnifiedEditorHeaderBar';
@@ -335,6 +335,10 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   // Refs for EditorHost stability - these allow editorHost to access current values without recreating
   const themeRef = useRef(theme);
   const isActiveRef = useRef(isActive);
+  // On-screen visibility (tab display toggles AND hidden modes) — observed via
+  // IntersectionObserver on the container; backs host.visible/onVisibilityChanged.
+  const visibleRef = useRef(true);
+  const visibilityCallbacksRef = useRef(new Set<(visible: boolean) => void>());
   const sourceModeRef = useRef(sourceMode);
   // Whether current editor supports source mode toggle (markdown or custom editors that declare it)
   const supportsSourceModeRef = useRef(isMarkdown || customEditorSupportsSourceMode);
@@ -2121,6 +2125,13 @@ export const TabEditor: React.FC<TabEditorProps> = ({
       },
       // Use getter that accesses ref for value that can change but shouldn't recreate host
       get isActive() { return isActiveRef.current; },
+      getVisible: () => visibleRef.current,
+      subscribeToVisibilityChanges: (callback: (visible: boolean) => void): (() => void) => {
+        visibilityCallbacksRef.current.add(callback);
+        return () => {
+          visibilityCallbacksRef.current.delete(callback);
+        };
+      },
       workspaceId,
 
       // Read file content from disk (text)
@@ -2456,6 +2467,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
       onEditorContextChanged: (context) => {
         setEditorContext(filePath, context);
       },
+      onEditorContextItemsChanged: (items) => {
+        setEditorContextItems(filePath, items);
+      },
 
       // ============ MENU ITEMS ============
       onMenuItemsChanged: (items) => {
@@ -2495,6 +2509,22 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   // 2. Playwright/synthetic Cmd+S: keydown bubbles up to this container's onKeyDown.
   // Both call handleManualSave via ref to avoid stale closures.
   const editorContainerRef = useRef<HTMLDivElement>(null);
+
+  // Track on-screen visibility of this editor and fan out to host subscribers.
+  useEffect(() => {
+    const el = editorContainerRef.current;
+    if (!el) return;
+    const tracker = createElementVisibilityTracker(el);
+    visibleRef.current = tracker.getVisible();
+    const unsubscribe = tracker.subscribe((visible) => {
+      visibleRef.current = visible;
+      visibilityCallbacksRef.current.forEach((cb) => cb(visible));
+    });
+    return () => {
+      unsubscribe();
+      tracker.disconnect();
+    };
+  }, []);
   const handleManualSaveRef = useRef(handleManualSave);
   handleManualSaveRef.current = handleManualSave;
 

@@ -369,6 +369,7 @@ export function createCollabExtensionHost(
     storage,
 
     setEditorContext(): void {},
+    setEditorContextItems(): void {},
     registerEditorAPI(): void {},
     registerMenuItems(): void {},
 

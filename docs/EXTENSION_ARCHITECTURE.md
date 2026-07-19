@@ -39,6 +39,31 @@ interface EditorHost {
 
 This contract ensures that extensions integrate seamlessly with tabs, dirty indicators, file watching, and AI edit streaming regardless of the underlying editor technology.
 
+### Reporting the current selection to the chat
+
+An editor can tell the AI chat what the user currently has selected. The chat renders each selection as a removable chip above the input, and includes the non-dismissed items' descriptions in the next prompt.
+
+```typescript
+// Node-like editors (diagrams, CAD, electronics): report one item per selected node.
+host.setEditorContextItems(
+  selectedNodes.map((n) => ({
+    id: n.id,                                   // stable id; lets the user dismiss one item
+    label: `${n.type} ${n.id.slice(0, 4)}`,     // chip text
+    description: `A ${n.type} at (${n.x}, ${n.y}).`, // goes into the prompt
+    icon: 'category',                            // optional Material Symbols icon
+    data: n,                                     // optional structured payload
+    includeData: false,                          // opt in to inline `data` as JSON (default off)
+  }))
+);
+
+// Call with null/[] when nothing is selected. A new push resets any dismissals.
+host.setEditorContextItems(null);
+```
+
+`setEditorContext({ label, description })` remains as a single-item convenience that maps to one `EditorContextItem`. Prefer `setEditorContextItems` for editors where more than one thing can be selected. Both flow to SDK/API providers (`claude`, `claude-code`); the selection is cleared automatically when the tab closes.
+
+Structured `data` is opt-in and must be JSON-serializable. The host strips it unless `includeData` is true, and safely omits cyclic, non-JSON, or payloads larger than 32 KiB. Descriptions should therefore remain sufficient on their own.
+
 ## AI Tool Document Access
 
 AI tools do not automatically get editor access just because a tool call has a

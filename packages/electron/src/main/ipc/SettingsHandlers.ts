@@ -152,8 +152,18 @@ export function registerSettingsHandlers() {
         return getAppSetting(key);
     });
 
-    safeHandle('app-settings:set', (_event, key: string, value: unknown) => {
+    safeHandle('app-settings:set', (event, key: string, value: unknown) => {
         setAppSetting(key, value);
+        // Broadcast to every OTHER window so cross-window state (e.g.
+        // navigation-gutter customization) stays in lockstep without a reload.
+        // Exclude the sender: it already applied the change locally before
+        // invoking, and re-applying its own write would be redundant.
+        const payload = { key, value };
+        for (const win of BrowserWindow.getAllWindows()) {
+            if (win.isDestroyed()) continue;
+            if (win.webContents.id === event.sender.id) continue;
+            win.webContents.send('app-settings:changed', payload);
+        }
     });
 
     // Spellcheck toggle - controls Chromium's built-in spellchecker for all windows

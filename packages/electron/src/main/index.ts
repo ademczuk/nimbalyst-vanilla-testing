@@ -189,6 +189,7 @@ import { registerCollabBackupHandlers } from './ipc/CollabBackupHandlers';
 import { flushPendingCollabBackups } from './services/CollabBackupService';
 import { registerBuiltinCollabContentAdapters } from './services/collabContentAdapterRegistration';
 import { registerCollabV3TestHandlers } from './ipc/CollabV3TestHandlers';
+import { registerHeapSnapshotHandlers } from './ipc/HeapSnapshotHandlers';
 import { getPermissionService } from './services/PermissionService';
 import { ClaudeSettingsManager } from './services/ClaudeSettingsManager';
 import { TrayManager } from './tray/TrayManager';
@@ -1634,6 +1635,7 @@ app.whenReady().then(async () => {
     getCollabAssetOutboxDrainCoordinator().start();
     registerCollabBackupHandlers();
     registerCollabV3TestHandlers();
+    registerHeapSnapshotHandlers();
     markEnd('ipc-handlers');
 
     // Initialize system tray for session status visibility

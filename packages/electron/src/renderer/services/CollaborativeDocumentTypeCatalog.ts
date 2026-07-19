@@ -183,7 +183,22 @@ function getMenuIcon(
 function defaultExtensionSource(): CollaborativeCatalogExtensionSource {
   const loader = getExtensionLoader();
   return {
-    getLoadedExtensions: () => loader.getLoadedExtensions(),
+    getLoadedExtensions: () => {
+      const loaded = loader.getLoadedExtensions();
+      const availableEditors = loader.getCustomEditors();
+      const deferred = loader.getDeferredExtensions().map(({ manifest }) => ({
+        manifest,
+        enabled: true,
+        module: {
+          components: Object.fromEntries(
+            availableEditors
+              .filter(editor => editor.extensionId === manifest.id)
+              .map(editor => [editor.contribution.component, editor.component]),
+          ),
+        },
+      }));
+      return [...loaded, ...deferred];
+    },
     subscribe: listener => loader.subscribe(listener),
   };
 }

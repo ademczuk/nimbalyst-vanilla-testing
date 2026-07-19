@@ -40,13 +40,45 @@ import type {
   VoiceContextProvider,
 } from './types';
 import type { CollabContentAdapter } from '@nimbalyst/extension-sdk';
+import type { EditorHostProps } from '@nimbalyst/extension-sdk';
 import { registerVoiceContextProvider } from './VoiceContextProviderRegistry';
 import { MONACO_BASE_THEMES } from '@nimbalyst/extension-sdk';
 import { getExtensionPlatformService } from './ExtensionPlatformService';
 import { registerThemeContribution } from '../editor/themes/registry';
 import { registerCollabContentAdapter } from '@nimbalyst/collab-adapters';
+import { createDeferredExtensionEditor } from './DeferredExtensionEditor';
 
 const MANIFEST_FILENAME = 'manifest.json';
+
+const DEFERRED_EDITOR_MANIFEST_KEYS = new Set([
+  'customEditors',
+  'fileIcons',
+  'newFileMenu',
+  'configuration',
+]);
+
+/**
+ * Slice-1 eligibility: the extension may contain editor code plus contribution
+ * data that the host can consume directly from manifest.json. Any other
+ * non-empty contribution keeps the extension eager until that surface has a
+ * manifest-backed activation proxy of its own.
+ */
+export function shouldDeferExtensionBundle(manifest: ExtensionManifest): boolean {
+  const contributions = manifest.contributions;
+  if (!contributions?.customEditors?.length) return false;
+
+  for (const [key, value] of Object.entries(contributions)) {
+    if (DEFERRED_EDITOR_MANIFEST_KEYS.has(key)) continue;
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) {
+      continue;
+    }
+    return false;
+  }
+
+  return true;
+}
 
 /**
  * Validation result with detailed error information
@@ -828,7 +860,7 @@ function createExtensionContext(
   const services: ExtensionServices = {
     filesystem: {
       readFile: async (p: string) => platformService.readFile(await resolvePath(p)),
-      writeFile: async (p: string, content: string) =>
+      writeFile: async (p: string, content: string | Uint8Array) =>
         platformService.writeFile(await resolvePath(p), content),
       fileExists: async (p: string) => platformService.fileExists(await resolvePath(p)),
       findFiles: async (pattern: string) => {
@@ -1130,7 +1162,11 @@ function createAPICompatibilityProxy(
  */
 export class ExtensionLoader {
   private loadedExtensions = new Map<string, LoadedExtension>();
+  private deferredExtensions = new Map<string, DiscoveredExtension>();
+  private loadingExtensions = new Map<string, Promise<ExtensionLoadResult>>();
+  private deferredEditorComponents = new Map<string, ComponentType<EditorHostProps>>();
   private listeners = new Set<() => void>();
+  private loadSequence = 0;
 
   /**
    * Discover all extensions in both user and built-in extensions directories
@@ -1215,11 +1251,117 @@ export class ExtensionLoader {
     return discovered;
   }
 
+  /** Register an enabled editor-only extension without evaluating its bundle. */
+  registerDeferredExtension(discovered: DiscoveredExtension): void {
+    const extensionId = discovered.manifest.id;
+    if (this.loadedExtensions.has(extensionId)) return;
+    this.deferredExtensions.set(extensionId, discovered);
+    console.info(
+      `[ExtensionLoader] Deferred ${extensionId} until first editor use`,
+    );
+    this.notifyListeners();
+  }
+
+  /** Enabled extensions whose manifests are registered but modules are inert. */
+  getDeferredExtensions(): DiscoveredExtension[] {
+    return Array.from(this.deferredExtensions.values());
+  }
+
+  getExtensionManifest(extensionId: string): ExtensionManifest | undefined {
+    return this.loadedExtensions.get(extensionId)?.manifest
+      ?? this.deferredExtensions.get(extensionId)?.manifest;
+  }
+
+  getExtensionLoadState(extensionId: string): 'deferred' | 'loading' | 'loaded' | 'unknown' {
+    if (this.loadedExtensions.has(extensionId)) return 'loaded';
+    if (this.loadingExtensions.has(extensionId)) return 'loading';
+    if (this.deferredExtensions.has(extensionId)) return 'deferred';
+    return 'unknown';
+  }
+
+  /** Activate a deferred extension, sharing one in-flight attempt across callers. */
+  async activateDeferredExtension(
+    extensionId: string,
+    trigger: string,
+  ): Promise<LoadedExtension> {
+    const loaded = this.loadedExtensions.get(extensionId);
+    if (loaded) return loaded;
+
+    const discovered = this.deferredExtensions.get(extensionId);
+    if (!discovered) {
+      throw new Error(`Extension ${extensionId} is not registered for deferred loading`);
+    }
+
+    const result = await this.loadExtension(discovered, trigger);
+    if (!result.success) throw new Error(result.error);
+    return result.extension;
+  }
+
+  private getDeferredEditorComponent(
+    discovered: DiscoveredExtension,
+    contribution: CustomEditorContribution,
+  ): ComponentType<EditorHostProps> {
+    const key = `${discovered.manifest.id}:${contribution.component}`;
+    const existing = this.deferredEditorComponents.get(key);
+    if (existing) return existing;
+
+    const component = createDeferredExtensionEditor({
+      extensionId: discovered.manifest.id,
+      extensionName: discovered.manifest.name,
+      componentName: contribution.component,
+      load: async (trigger) => {
+        const extension = await this.activateDeferredExtension(
+          discovered.manifest.id,
+          trigger,
+        );
+        const editor = extension.module.components?.[contribution.component];
+        if (!editor) {
+          throw new Error(
+            `Extension ${discovered.manifest.id} did not export editor component '${contribution.component}'`,
+          );
+        }
+        return editor as ComponentType<EditorHostProps>;
+      },
+    });
+    this.deferredEditorComponents.set(key, component);
+    return component;
+  }
+
   /**
    * Load an extension from a discovered extension
    */
   async loadExtension(
-    discovered: DiscoveredExtension
+    discovered: DiscoveredExtension,
+    trigger = 'direct',
+  ): Promise<ExtensionLoadResult> {
+    const extensionId = discovered.manifest.id;
+    const pending = this.loadingExtensions.get(extensionId);
+    if (pending) return pending;
+
+    const order = ++this.loadSequence;
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    console.info(
+      `[ExtensionLoader] Load #${order} start ${extensionId} (trigger=${trigger})`,
+    );
+
+    const loadPromise = this.performLoadExtension(discovered);
+    this.loadingExtensions.set(extensionId, loadPromise);
+
+    try {
+      const result = await loadPromise;
+      const finishedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      console.info(
+        `[ExtensionLoader] Load #${order} ${result.success ? 'complete' : 'failed'} ${extensionId} ` +
+          `(trigger=${trigger}, elapsedMs=${(finishedAt - startedAt).toFixed(1)})`,
+      );
+      return result;
+    } finally {
+      this.loadingExtensions.delete(extensionId);
+    }
+  }
+
+  private async performLoadExtension(
+    discovered: DiscoveredExtension,
   ): Promise<ExtensionLoadResult> {
     const { path: extensionPath, manifest } = discovered;
 
@@ -1358,6 +1500,7 @@ export class ExtensionLoader {
 
       // Store the loaded extension
       this.loadedExtensions.set(manifest.id, loaded);
+      this.deferredExtensions.delete(manifest.id);
       this.notifyListeners();
 
       // console.info(
@@ -1380,6 +1523,11 @@ export class ExtensionLoader {
   async unloadExtension(extensionId: string): Promise<void> {
     const loaded = this.loadedExtensions.get(extensionId);
     if (!loaded) {
+      if (this.deferredExtensions.delete(extensionId)) {
+        this.notifyListeners();
+        console.info(`[ExtensionLoader] Unregistered deferred extension: ${extensionId}`);
+        return;
+      }
       console.warn(
         `[ExtensionLoader] Cannot unload ${extensionId}: not loaded`
       );
@@ -1456,6 +1604,10 @@ export class ExtensionLoader {
     if (loaded) {
       loaded.enabled = false;
       this.notifyListeners();
+      return;
+    }
+    if (this.deferredExtensions.delete(extensionId)) {
+      this.notifyListeners();
     }
   }
 
@@ -1479,12 +1631,12 @@ export class ExtensionLoader {
   getCustomEditors(): Array<{
     extensionId: string;
     contribution: CustomEditorContribution;
-    component: React.ComponentType<unknown>;
+    component: ComponentType<EditorHostProps>;
   }> {
     const editors: Array<{
       extensionId: string;
       contribution: CustomEditorContribution;
-      component: React.ComponentType<unknown>;
+      component: ComponentType<EditorHostProps>;
     }> = [];
 
     for (const loaded of this.loadedExtensions.values()) {
@@ -1499,13 +1651,27 @@ export class ExtensionLoader {
           editors.push({
             extensionId: loaded.manifest.id,
             contribution,
-            component: component as React.ComponentType<unknown>,
+            component: component as ComponentType<EditorHostProps>,
           });
         } else {
           console.warn(
             `[ExtensionLoader] Extension ${loaded.manifest.id} declares custom editor component '${contribution.component}' but does not export it`
           );
         }
+      }
+    }
+
+    for (const discovered of this.deferredExtensions.values()) {
+      const contributions = discovered.manifest.contributions?.customEditors || [];
+      for (const contribution of contributions) {
+        editors.push({
+          extensionId: discovered.manifest.id,
+          contribution,
+          component: this.getDeferredEditorComponent(
+            discovered,
+            contribution,
+          ),
+        });
       }
     }
 
@@ -1558,6 +1724,16 @@ export class ExtensionLoader {
       for (const item of menuItems) {
         contributions.push({
           extensionId: loaded.manifest.id,
+          contribution: item,
+        });
+      }
+    }
+
+    for (const deferred of this.deferredExtensions.values()) {
+      const menuItems = deferred.manifest.contributions?.newFileMenu || [];
+      for (const item of menuItems) {
+        contributions.push({
+          extensionId: deferred.manifest.id,
           contribution: item,
         });
       }
@@ -1836,7 +2012,7 @@ export class ExtensionLoader {
   findEditorForExtension(fileExtension: string): {
     extensionId: string;
     contribution: CustomEditorContribution;
-    component: React.ComponentType<unknown>;
+    component: ComponentType<EditorHostProps>;
   } | undefined {
     const editors = this.getCustomEditors();
 
@@ -1971,7 +2147,10 @@ export class ExtensionLoader {
    * Unload all extensions
    */
   async unloadAll(): Promise<void> {
-    const extensionIds = Array.from(this.loadedExtensions.keys());
+    const extensionIds = Array.from(new Set([
+      ...this.loadedExtensions.keys(),
+      ...this.deferredExtensions.keys(),
+    ]));
     for (const id of extensionIds) {
       await this.unloadExtension(id);
     }
@@ -1984,7 +2163,10 @@ export class ExtensionLoader {
    *
    * If the extension is already loaded, it will be unloaded first.
    */
-  async loadExtensionFromPath(extensionPath: string): Promise<ExtensionLoadResult> {
+  async loadExtensionFromPath(
+    extensionPath: string,
+    trigger = 'path-load',
+  ): Promise<ExtensionLoadResult> {
     const platformService = getExtensionPlatformService();
 
     try {
@@ -2018,6 +2200,9 @@ export class ExtensionLoader {
       if (this.loadedExtensions.has(manifest.id)) {
         console.info(`[ExtensionLoader] Unloading existing extension ${manifest.id} before reload`);
         await this.unloadExtension(manifest.id);
+      } else if (this.deferredExtensions.delete(manifest.id)) {
+        console.info(`[ExtensionLoader] Replacing deferred extension ${manifest.id} for dev reload`);
+        this.notifyListeners();
       }
 
       // Create discovered extension object and load
@@ -2026,7 +2211,7 @@ export class ExtensionLoader {
         manifest,
       };
 
-      return await this.loadExtension(discovered);
+      return await this.loadExtension(discovered, trigger);
     } catch (error) {
       return {
         success: false,
@@ -2043,17 +2228,18 @@ export class ExtensionLoader {
    */
   async reloadExtension(extensionId: string): Promise<ExtensionLoadResult> {
     const loaded = this.loadedExtensions.get(extensionId);
-    if (!loaded) {
+    const deferred = this.deferredExtensions.get(extensionId);
+    if (!loaded && !deferred) {
       return {
         success: false,
         error: `Extension ${extensionId} is not loaded`,
       };
     }
 
-    const extensionPath = loaded.context.extensionPath;
+    const extensionPath = loaded?.context.extensionPath ?? deferred!.path;
     console.info(`[ExtensionLoader] Reloading extension ${extensionId} from ${extensionPath}`);
 
-    return await this.loadExtensionFromPath(extensionPath);
+    return await this.loadExtensionFromPath(extensionPath, 'reload');
   }
 }
 
@@ -2183,13 +2369,25 @@ export async function initializeExtensions(): Promise<void> {
         toLoad.push(ext);
       }
 
-      console.info(`[ExtensionLoader] Loading ${toLoad.length} extension(s) in parallel...`);
+      const eager: typeof toLoad = [];
+      for (const ext of toLoad) {
+        if (shouldDeferExtensionBundle(ext.manifest)) {
+          loader.registerDeferredExtension(ext);
+        } else {
+          eager.push(ext);
+        }
+      }
+
+      console.info(
+        `[ExtensionLoader] Registered ${toLoad.length - eager.length} deferred editor extension(s); ` +
+          `loading ${eager.length} eager extension(s) in parallel...`,
+      );
       const results = await Promise.allSettled(
-        toLoad.map(async (ext) => {
+        eager.map(async (ext) => {
           console.info(
             `[ExtensionLoader] Loading ${ext.manifest.name} v${ext.manifest.version}...`
           );
-          const result = await loader.loadExtension(ext);
+          const result = await loader.loadExtension(ext, 'startup:eager');
           if (!result.success) {
             console.error(`[ExtensionLoader] Failed to load ${ext.manifest.id}:`, result.error);
           }
@@ -2200,7 +2398,7 @@ export async function initializeExtensions(): Promise<void> {
       // Log any unexpected rejections (loadExtension itself shouldn't throw, but be safe)
       for (let i = 0; i < results.length; i++) {
         if (results[i].status === 'rejected') {
-          console.error(`[ExtensionLoader] Extension ${toLoad[i].manifest.id} threw during load:`, (results[i] as PromiseRejectedResult).reason);
+          console.error(`[ExtensionLoader] Extension ${eager[i].manifest.id} threw during load:`, (results[i] as PromiseRejectedResult).reason);
         }
       }
 

@@ -956,6 +956,7 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
       storage,
 
       setEditorContext(): void {},
+      setEditorContextItems(): void {},
 
       registerEditorAPI(): void {},
 

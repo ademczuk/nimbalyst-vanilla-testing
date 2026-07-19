@@ -3,6 +3,7 @@
  */
 
 import type { ToolDefinition } from '../tools';
+import type { EditorContextItem } from '@nimbalyst/extension-sdk';
 import type { EffortLevel, ThinkingMode } from './effortLevels';
 import type { ToolResult } from './protocols/ProtocolInterface';
 import { ModelIdentifier } from './ModelIdentifier';
@@ -35,6 +36,10 @@ export interface DocumentContext {
       };
   textSelection?: string;  // Just the selected text (filePath is already on document context)
   textSelectionTimestamp?: number | null;  // For staleness detection
+
+  // Extension-provided selected items from node-like editors (diagrams, CAD,
+  // electronics). Already filtered to non-dismissed items by the renderer.
+  editorContextItems?: EditorContextItem[];
 
   // AI mode at time of message submission (planning vs agent vs auto)
   mode?: 'planning' | 'agent' | 'auto';

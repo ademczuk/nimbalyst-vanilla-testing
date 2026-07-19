@@ -162,7 +162,7 @@ function setupExtensionDevListeners(): void {
 
     try {
       const loader = getExtensionLoader();
-      const result = await loader.loadExtensionFromPath(data.extensionPath);
+      const result = await loader.loadExtensionFromPath(data.extensionPath, 'dev-reload');
 
       if (result.success) {
         console.log(`[ExtensionSystem] Successfully reloaded extension ${data.extensionId}`);
@@ -413,8 +413,9 @@ function setupExtensionStatusListener(): void {
     try {
       const loader = getExtensionLoader();
       const extension = loader.getExtension(data.extensionId);
+      const manifest = extension?.manifest ?? loader.getExtensionManifest(data.extensionId);
 
-      if (!extension) {
+      if (!manifest) {
         // Extension not found - use send instead of invoke since main uses ipcMain.once
         electronAPI.send(data.responseChannel, {
           error: 'Extension not found',
@@ -424,15 +425,16 @@ function setupExtensionStatusListener(): void {
       }
 
       // Get extension manifest for contributions info
-      const manifest = extension.manifest;
       const contributions = {
         customEditors: manifest.contributions?.customEditors || [],
         aiTools: manifest.contributions?.aiTools || [],
         newFileMenu: manifest.contributions?.newFileMenu || [],
       };
 
-      // Extension is loaded if we found it
-      const status = extension.enabled ? 'loaded' : 'disabled';
+      const loadState = loader.getExtensionLoadState(data.extensionId);
+      const status = extension
+        ? (extension.enabled ? 'loaded' : 'disabled')
+        : loadState;
 
       // Use send instead of invoke since main uses ipcMain.once
       electronAPI.send(data.responseChannel, {

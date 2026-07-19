@@ -36,9 +36,8 @@ import {
   type SharedDocument,
 } from '../../store/atoms/collabDocuments';
 import { hydrateCollabDiscovery } from '../../store/atoms/collabDiscovery';
-import { SharedDocsHome } from './SharedDocsHome';
+import { SHARED_HOME_TAB_URI, SHARED_HOME_TAB_TITLE, isSharedHomeTab } from './sharedHomeTab';
 import { isCollabUri, parseCollabUri } from '../../utils/collabUri';
-import { MaterialSymbol } from '@nimbalyst/runtime';
 import {
   getCollabNodeName,
   getSharedDocumentDisplayName,
@@ -173,9 +172,12 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
   const [chatWidth, setChatWidth] = useState(COLLAB_CHAT_DEFAULT);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState(false);
-  // Discovery hub overlay: shown over open tabs when the user clicks "Home".
-  // With no tabs, the hub is the empty state and this flag is irrelevant.
-  const [showHome, setShowHome] = useState(false);
+
+  // The Shared Docs Home is a singleton virtual tab (NIM-1790). Opening it
+  // dedupes by URI, so this focuses the existing tab if present.
+  const openSharedHomeTab = useCallback((switchToTab = true) => {
+    tabsActions.addTab(SHARED_HOME_TAB_URI, '', switchToTab, SHARED_HOME_TAB_TITLE);
+  }, [tabsActions]);
 
   // Refs for sidebar resize drag (avoids re-renders during drag)
   const sidebarDragRef = useRef({ startX: 0, startWidth: 0, latestWidth: sidebarWidth });
@@ -360,8 +362,6 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
   }, [isEditorMaximized, sidebarCollapsed, chatCollapsed, clearEditorMaximized]);
 
   const handleDocumentSelect = useCallback(async (doc: SharedDocument, initialContent?: string) => {
-    // Opening a doc dismisses the discovery hub overlay.
-    setShowHome(false);
     // Check if already open as a tab
     const existingTab = tabs.find((tab) => {
       if (!isCollabUri(tab.filePath)) return false;
@@ -577,6 +577,33 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
     handleDocumentSelect(docToOpen, pendingDoc.initialContent);
   }, [pendingDoc, isActive, handleDocumentSelect]);
 
+  // Ensure the singleton Shared Docs Home tab exists once restore settles, so
+  // the shared area always lands on the list-view home (replaces the old
+  // empty-state card hub). Switch to it only when nothing else is open.
+  useEffect(() => {
+    if (!restored) return;
+    const snapshot = tabsActions.getSnapshot();
+    const hasHome = Array.from(snapshot.tabs.values()).some((t) => isSharedHomeTab(t.filePath));
+    if (!hasHome) {
+      openSharedHomeTab(snapshot.tabs.size === 0);
+    }
+  }, [restored, openSharedHomeTab, tabsActions]);
+
+  // Reopen the home tab if the user closes the last remaining tab, so the
+  // shared area never falls back to a blank pane.
+  useEffect(() => {
+    if (!restored) return;
+    if (tabs.length === 0) {
+      openSharedHomeTab(true);
+    }
+  }, [restored, tabs.length, openSharedHomeTab]);
+
+  const activeTabIsHome = useMemo(() => {
+    if (!activeTabId) return false;
+    const tab = tabs.find((t) => t.id === activeTabId);
+    return tab ? isSharedHomeTab(tab.filePath) : false;
+  }, [activeTabId, tabs]);
+
   const handleTabClose = useCallback((tabId: string) => {
     tabsActions.removeTab(tabId);
   }, [tabsActions]);
@@ -611,8 +638,8 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
               workspacePath={workspacePath}
               onDocumentSelect={handleDocumentSelect}
               activeDocumentId={activeCollabDocumentId}
-              onShowHome={() => setShowHome(true)}
-              homeActive={showHome || !hasTabs}
+              onShowHome={() => openSharedHomeTab(true)}
+              homeActive={activeTabIsHome}
             />
           </div>
 
@@ -630,50 +657,29 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
         </>
       )}
 
-      {/* Center: Tabs + editor */}
+      {/* Center: Tabs + editor. The Shared Docs Home is itself a (singleton)
+          tab now, so the tab strip is always present. */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-        {hasTabs ? (
+        {hasTabs && (
           <TabManager
             onTabClose={handleTabClose}
-            onNewTab={() => {}}
+            onNewTab={() => openSharedHomeTab(true)}
             isActive={isActive}
             onToggleAIChat={toggleChatCollapsed}
             isAIChatCollapsed={chatCollapsed}
             onTabDoubleClick={toggleEditorMaximized}
           >
-            <>
-              <TabContent
-                workspaceId={workspacePath}
-                onTabClose={handleTabClose}
-                onGetContentReady={handleGetContentReady}
-              />
-              {/* Discovery hub overlay — reachable while tabs are open.
-                  Rendered as a sibling so TabContent is never re-mounted. */}
-              {showHome && (
-                <div className="collab-home-overlay absolute inset-0 z-20 flex flex-col bg-nim">
-                  <div className="flex items-center justify-end px-3 py-1.5 border-b border-nim shrink-0">
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 text-[12px] text-nim-muted hover:text-nim bg-transparent border-none cursor-pointer px-2 py-1 rounded hover:bg-nim-hover"
-                      onClick={() => setShowHome(false)}
-                      title="Back to editor"
-                    >
-                      <MaterialSymbol icon="close" size={16} />
-                      Back to editor
-                    </button>
-                  </div>
-                  <SharedDocsHome workspacePath={workspacePath} onDocumentSelect={handleDocumentSelect} />
-                </div>
-              )}
-            </>
+            <TabContent
+              workspaceId={workspacePath}
+              onTabClose={handleTabClose}
+              onGetContentReady={handleGetContentReady}
+            />
           </TabManager>
-        ) : (
-          /* No tabs open: the discovery hub is the full-bleed empty state */
-          <SharedDocsHome workspacePath={workspacePath} onDocumentSelect={handleDocumentSelect} />
         )}
       </div>
 
-      {/* Right: AI Chat sidebar (resizable via ChatSidebar built-in handle, collapsible) */}
+      {/* Right: AI Chat sidebar (resizable via ChatSidebar built-in handle,
+          collapsible). Shown on every tab, including the Shared Docs Home. */}
       {hasTabs && (
         <ChatSidebar
           workspacePath={workspacePath}

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- The AI chat now shows what you have selected as removable chips -- including multiple shapes at once from node-like editors such as Excalidraw -- and you can remove any selection so it is not sent to the model.
 - Claude Agent sessions now expose an `Extended: On` / `Extended: Off` selector next to the effort selector for supported Opus/Sonnet variants, letting you turn off extended thinking per session to reduce latency and token use. Extended thinking stays on by default.
 - Star tracker items and filter the list by Favorites, Recently Viewed, and Edited by Others.
 - Launch an isolated worktree session directly from a tracker item.
@@ -18,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cmd+O file search now finds team shared files and opens them collaboratively.
 - Shared document and folder creation now lets you choose any shared folder or Root as the destination.
 - Create diagrams, data models, spreadsheets, mockups, and more directly as shared documents.
+- The shared documents home is now a sortable list view -- browse by All, Favorites, Unread, Recently opened, Shared with me, or Shared by me, filter by type, people, or folder, and sort any column.
 - Shared documents now have a recoverable Trash with empty-document cleanup, restore, manual purge, and automatic 30-day removal.
 - Feature tracker items now have a "Won't Do" status for work decided against.
 - Built-in tracker types can now be customized per workspace -- add, rename, or remove statuses, tweak labels, icons, and colors, or add fields -- and reset back to their defaults at any time.
@@ -28,17 +30,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Hidden Tracker and PR Review modes now pause background work while preserving their state, and extension editors stay available without eagerly loading every extension.
 - Settings is reorganized into Application, Account, and Project sections, with organization management moved to a dedicated window.
 - Logging in to your Claude subscription now opens the terminal in your current project folder.
+- Hiding, showing, or reordering navigation gutter icons now updates every open window immediately instead of after a reload.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Extensions can now write binary files without corrupting their contents.
+- Session summaries now end with any unanswered interactive question so pending user input is not lost in the recap.
+- Switching themes no longer freezes the window for several seconds when documents with code blocks are open.
 - Usage indicators (Claude, Codex, Gemini) hidden from the navigation gutter can now be restored by right-clicking the gutter.
 - Commit with AI in a worktree no longer sweeps in ignored files like node_modules when an untracked folder is present, so it proposes only the files you actually changed.
 - Team shared documents and trackers no longer show as locked ("No encryption key available") after a network change or brief server outage.
 - Embedded spreadsheets and code editors in the chat transcript no longer steal focus and scroll-jump the transcript back to themselves.
 - Tracker sidebar counts now match the filtered list and Kanban views.
 - Tracker history now records manual field and content edits.
+- Copying an image from a shared document now places the actual image on the clipboard, and images can be copied via right-click.
 - Pasted markdown links in shared documents now stay clickable instead of becoming literal text.
 - Marking shared documents as read now stays cleared through delayed sync updates, sidebar reopen, and restart.
 - Share to Team now refreshes its folder picker when opened, so newly created, renamed, or moved shared folders appear immediately.

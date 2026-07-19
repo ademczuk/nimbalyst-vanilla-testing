@@ -1136,6 +1136,11 @@ export class MetaAgentService {
         `Tool scope: ${result.toolScope} (this child had NO ${denied}). Any claim it ran, built, or tested anything is false; "Files modified" above is the complete list of files it changed.`,
       );
     }
+    if (result.errorMessage) {
+      lines.push(`Error: ${result.errorMessage}`);
+    }
+    // Keep the actionable prompt last so the parent session cannot miss the
+    // question beneath ordinary recap or error text.
     if (result.pendingPrompt) {
       lines.push('');
       lines.push(`ACTION REQUIRED: This session is blocked on an interactive prompt.`);
@@ -1170,9 +1175,6 @@ export class MetaAgentService {
         }
         lines.push(`  response: { "approved": true }`);
       }
-    }
-    if (result.errorMessage) {
-      lines.push(`Error: ${result.errorMessage}`);
     }
     return lines.join('\n');
   }

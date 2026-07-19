@@ -28,6 +28,7 @@ import type { NewFileType, ExtensionFileType } from '../NewFileMenu';
 import { contributionToExtensionFileType } from '../NewFileMenu';
 import { WorkspaceHistoryDialog } from '../WorkspaceHistoryDialog';
 import { getTextSelection } from '../UnifiedAI/TextSelectionIndicator';
+import { getActiveEditorContextItems } from '../../stores/editorContextStore';
 import {
   collabConnectionStatusAtom,
   hasCollabUnsyncedChanges,
@@ -799,7 +800,8 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
       mockupDrawing: fileType === 'mockup' ? (window as any).__mockupDrawing : undefined,
       mockupAnnotationTimestamp: fileType === 'mockup' ? (window as any).__mockupAnnotationTimestamp : undefined,
       textSelection,
-      textSelectionTimestamp: textSelection?.timestamp
+      textSelectionTimestamp: textSelection?.timestamp,
+      editorContextItems: getActiveEditorContextItems(filePath),
     };
   }, []);
 
@@ -1400,6 +1402,7 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
             onToggleCollapse={() => setIsAIChatCollapsed(prev => !prev)}
             width={aiChatWidth}
             onWidthChange={setAIChatWidth}
+            documentContext={{ filePath: currentFilePath || '' }}
             getDocumentContext={getDocumentContext}
             onFileOpen={handleWorkspaceFileSelect}
             onSwitchToAgentMode={onSwitchToAgentMode ? (sid?: string) => onSwitchToAgentMode(undefined, sid) : undefined}
