@@ -92,7 +92,13 @@ interface TabsContextValue {
   getSnapshot: () => TabsStore;
 
   // Actions (don't trigger re-renders in caller)
-  addTab: (filePath: string, content?: string, switchToTab?: boolean, displayName?: string) => string | null;
+  addTab: (
+    filePath: string,
+    content?: string,
+    switchToTab?: boolean,
+    displayName?: string,
+    initialState?: Pick<TabData, 'isPinned'>,
+  ) => string | null;
   removeTab: (tabId: string) => void;
   switchTab: (tabId: string) => void;
   updateTab: (tabId: string, updates: Partial<TabData>) => void;
@@ -315,6 +321,7 @@ export function TabsProvider({
     content: string = '',
     switchToTab: boolean = true,
     displayName?: string,
+    initialState?: Pick<TabData, 'isPinned'>,
   ): string | null => {
     const store = slotRef.current.store;
 
@@ -351,7 +358,7 @@ export function TabsProvider({
       fileName,
       content,
       isDirty: false,
-      isPinned: false,
+      isPinned: initialState?.isPinned ?? false,
       isVirtual: filePath.startsWith('virtual://'),
       kind: isTracker ? 'tracker' : 'file',
       trackerItemId: isTracker ? filePath.slice(TRACKER_TAB_PREFIX.length) : undefined,

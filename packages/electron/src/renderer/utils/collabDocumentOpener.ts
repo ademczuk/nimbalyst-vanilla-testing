@@ -191,9 +191,16 @@ export function findCollabConfigByDocumentId(
  * });
  */
 export function openCollabDocument(options: CollabDocumentConfig & {
-  addTab: (filePath: string, content?: string, switchToTab?: boolean, displayName?: string) => string | null;
+  addTab: (
+    filePath: string,
+    content?: string,
+    switchToTab?: boolean,
+    displayName?: string,
+    initialState?: { isPinned: boolean },
+  ) => string | null;
+  isPinned?: boolean;
 }): string {
-  const { addTab, ...config } = options;
+  const { addTab, isPinned, ...config } = options;
   const uri = buildCollabUri(config.orgId, config.documentId);
 
   // Store config for TabContent to retrieve
@@ -202,12 +209,13 @@ export function openCollabDocument(options: CollabDocumentConfig & {
   try {
     // Add the tab with its display name in the same store transaction. Content
     // is empty because CollaborationPlugin hydrates from Y.Doc.
-    const tabId = addTab(
-      uri,
-      '',
-      true,
-      getSharedDocumentDisplayName(config.displayPath || config.title, config.documentId),
+    const displayName = getSharedDocumentDisplayName(
+      config.displayPath || config.title,
+      config.documentId,
     );
+    const tabId = isPinned === undefined
+      ? addTab(uri, '', true, displayName)
+      : addTab(uri, '', true, displayName, { isPinned });
     if (!tabId) {
       throw new Error(`Tab creation returned no tab ID for collaborative document ${config.documentId}`);
     }
@@ -569,7 +577,14 @@ export async function openCollabDocumentViaIPC(options: {
   metadataVersion?: 2;
   fileExtension?: string;
   editorId?: string;
-  addTab: (filePath: string, content?: string, switchToTab?: boolean, displayName?: string) => string | null;
+  isPinned?: boolean;
+  addTab: (
+    filePath: string,
+    content?: string,
+    switchToTab?: boolean,
+    displayName?: string,
+    initialState?: { isPinned: boolean },
+  ) => string | null;
 }): Promise<string> {
   if (!window.electronAPI?.documentSync) {
     throw new Error('Document sync API not available. Is the app fully loaded?');
@@ -618,6 +633,7 @@ export async function openCollabDocumentViaIPC(options: {
     metadataVersion: options.metadataVersion,
     fileExtension: options.fileExtension,
     editorId: options.editorId,
+    isPinned: options.isPinned,
     keyCustody: serverManaged ? 'server-managed' : 'legacy-e2e',
     documentKey,
     legacyDocumentKey: legacyDocumentKeys[0],
