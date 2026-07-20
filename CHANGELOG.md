@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- RTL text typed in the chat composer now displays on the right again; the detected direction is mirrored onto the composer's visible-text overlay, which a transparent-textarea refactor had left stuck on LTR.
 
 ### Removed
 <!-- Removed features go here -->
