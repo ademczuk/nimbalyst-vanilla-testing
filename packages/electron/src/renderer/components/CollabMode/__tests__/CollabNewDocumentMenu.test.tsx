@@ -45,7 +45,7 @@ function descriptor(
 afterEach(cleanup);
 
 describe('Shared New catalog menu', () => {
-  it('enables exactly the first-wave types and keeps later types visible with reasons', () => {
+  it('shows only document types that support collaborative creation', () => {
     const ready = [
       descriptor('markdown', 'Markdown', '.md', true),
       descriptor('excalidraw', 'Excalidraw Diagram', '.excalidraw', true),
@@ -62,7 +62,7 @@ describe('Shared New catalog menu', () => {
     virtualTab.creation = undefined;
 
     const items = buildSharedNewDocumentMenuItems([...ready, code, laterExtension, virtualTab]);
-    expect(items.filter(item => !item.disabledReason).map(item => item.descriptor.documentType)).toEqual([
+    expect(items.map(item => item.descriptor.documentType)).toEqual([
       'markdown',
       'calc.md',
       'csv',
@@ -71,19 +71,12 @@ describe('Shared New catalog menu', () => {
       'mockup.html',
       'mockupproject',
     ]);
-    expect(items.filter(item => item.disabledReason).map(item => item.descriptor.documentType)).toEqual([
-      'mindmap',
-      'code',
-    ]);
     expect(items.some(item => item.descriptor.documentType === 'browser')).toBe(false);
 
     const onSelect = vi.fn();
     render(<CollabNewDocumentMenu items={items} onSelect={onSelect} />);
-    const codeButton = screen.getByRole('menuitem', { name: /Text \/ Code/ });
-    expect(codeButton.hasAttribute('disabled')).toBe(true);
-    expect(codeButton.textContent).toContain('pending collaborative support');
-    fireEvent.click(codeButton);
-    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.queryByRole('menuitem', { name: /Text \/ Code/ })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /Mind Map/ })).toBeNull();
     fireEvent.click(screen.getByRole('menuitem', { name: /Excalidraw Diagram/ }));
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ documentType: 'excalidraw' }));
   });

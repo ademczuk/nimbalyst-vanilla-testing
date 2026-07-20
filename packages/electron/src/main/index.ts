@@ -128,6 +128,7 @@ import { SessionWakeupScheduler } from './services/SessionWakeupScheduler';
 import { getSessionWakeupsStore } from './services/RepositoryManager';
 import { ExtensionDevService } from './services/ExtensionDevService';
 import { MetaAgentService } from './services/MetaAgentService';
+import { notificationService } from './services/NotificationService';
 // SuperLoopProgressService import removed - server disabled (leaking into non-super-loop sessions)
 import { registerMockupHandlers } from './ipc/MockupHandlers';
 import { registerOffscreenEditorHandlers } from './ipc/OffscreenEditorHandlers';
@@ -2332,7 +2333,10 @@ app.whenReady().then(async () => {
 
     try {
         const metaAgentService = MetaAgentService.getInstance();
-        await metaAgentService.start(aiService);
+        await metaAgentService.start(
+            aiService,
+            (options) => notificationService.showNotificationWithResult(options),
+        );
     } catch (error) {
         logger.mcp.error('Failed to start meta-agent MCP server:', error);
     }

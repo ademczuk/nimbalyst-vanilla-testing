@@ -9,7 +9,11 @@ const mocks = vi.hoisted(() => ({
   notificationIsSupported: vi.fn(() => true),
   notificationShow: vi.fn(),
   notificationOn: vi.fn(),
+  notificationRemoveListener: vi.fn(),
   notificationClose: vi.fn(),
+  notificationListeners: new Map<string, (...args: unknown[]) => void>(),
+  notificationOutcome: 'show' as 'show' | 'failed' | 'none',
+  notificationFailure: 'OS rejected notification',
   osNotificationsEnabled: vi.fn(() => true),
   notifyWhenFocusedEnabled: vi.fn(() => false),
   sessionBlockedNotificationsEnabled: vi.fn(() => true),
@@ -23,8 +27,31 @@ vi.mock('electron', () => {
       mocks.notificationConstructor(options);
     }
 
-    on = mocks.notificationOn;
-    show = mocks.notificationShow;
+    on(event: string, listener: (...args: unknown[]) => void) {
+      mocks.notificationOn(event, listener);
+      mocks.notificationListeners.set(event, listener);
+      return this;
+    }
+
+    removeListener(event: string, listener: (...args: unknown[]) => void) {
+      mocks.notificationRemoveListener(event, listener);
+      if (mocks.notificationListeners.get(event) === listener) {
+        mocks.notificationListeners.delete(event);
+      }
+      return this;
+    }
+
+    show() {
+      mocks.notificationShow();
+      queueMicrotask(() => {
+        if (mocks.notificationOutcome === 'show') {
+          mocks.notificationListeners.get('show')?.({});
+        } else if (mocks.notificationOutcome === 'failed') {
+          mocks.notificationListeners.get('failed')?.({}, mocks.notificationFailure);
+        }
+      });
+    }
+
     close = mocks.notificationClose;
   }
 
@@ -73,6 +100,9 @@ describe('NotificationService agent notifications', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.browserWindows = [];
+    mocks.notificationListeners.clear();
+    mocks.notificationOutcome = 'show';
+    mocks.notificationFailure = 'OS rejected notification';
     mocks.notificationIsSupported.mockReturnValue(true);
     mocks.osNotificationsEnabled.mockReturnValue(true);
     mocks.notifyWhenFocusedEnabled.mockReturnValue(false);
@@ -155,5 +185,50 @@ describe('NotificationService agent notifications', () => {
       timeoutType: 'default',
     }));
     expect(mocks.notificationShow).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports failure when Electron emits the failed outcome', async () => {
+    mocks.notificationOutcome = 'failed';
+
+    const result = await notificationService.showNotificationWithResult({
+      title: 'Agent needs attention',
+      body: 'Smoke test',
+      sessionId: 'session-1',
+      workspacePath: '/workspace',
+      provider: 'agent',
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      attempted: true,
+      shown: false,
+      skippedReason: 'error',
+      error: 'OS rejected notification',
+    });
+  });
+
+  it('reports an unconfirmed outcome instead of claiming the notification was shown', async () => {
+    vi.useFakeTimers();
+    mocks.notificationOutcome = 'none';
+
+    try {
+      const resultPromise = notificationService.showNotificationWithResult({
+        title: 'Agent needs attention',
+        body: 'Smoke test',
+        sessionId: 'session-1',
+        workspacePath: '/workspace',
+        provider: 'agent',
+      });
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(resultPromise).resolves.toMatchObject({
+        success: false,
+        attempted: true,
+        shown: false,
+        skippedReason: 'confirmation_timeout',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

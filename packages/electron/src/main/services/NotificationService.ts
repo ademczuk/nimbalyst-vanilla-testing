@@ -9,6 +9,8 @@ import { logger } from '../utils/logger';
 import { isOSNotificationsEnabled, isNotifyWhenFocusedEnabled, isSessionBlockedNotificationsEnabled } from '../utils/store';
 import { findWindowByWorkspace } from '../window/WindowManager';
 
+const NOTIFICATION_OUTCOME_TIMEOUT_MS = 2_000;
+
 export interface NotificationOptions {
   title: string;
   body: string;
@@ -31,6 +33,7 @@ export type NotificationSkippedReason =
   | 'unsupported'
   | 'app_focused'
   | 'session_visible'
+  | 'confirmation_timeout'
   | 'error';
 
 export interface NotificationResult {
@@ -179,35 +182,79 @@ class NotificationService {
         this.handleNotificationClick(options);
       });
 
-      // Handle notification errors
-      notification.on('failed', (event, error) => {
-        logger.main.error('[NotificationService] Notification failed:', error);
-      });
-
       // Track notification
       if (options.sessionId) {
         this.activeNotifications.set(options.sessionId, notification);
       }
 
-      // Show the notification
-      notification.show();
+      return await new Promise<NotificationResult>((resolve) => {
+        let settled = false;
+        let outcomeTimeout: NodeJS.Timeout | null = null;
 
-      // logger.main.info('[NotificationService] Notification shown:', {
-      //   title: options.title,
-      //   sessionId: options.sessionId,
-      // });
+        const settle = (result: NotificationResult) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          if (outcomeTimeout) {
+            clearTimeout(outcomeTimeout);
+          }
+          notification.removeListener('show', handleShown);
+          notification.removeListener('failed', handleFailed);
+          if (
+            !result.shown &&
+            options.sessionId &&
+            this.activeNotifications.get(options.sessionId) === notification
+          ) {
+            this.activeNotifications.delete(options.sessionId);
+          }
+          resolve(result);
+        };
 
-      // Log additional debug info
-      // logger.main.info('[NotificationService] Notification object created:', {
-      //   hasIcon: !!notification,
-      //   title: options.title,
-      //   bodyLength: options.body.length,
-      // });
-      return {
-        ...baseResult(),
-        attempted: true,
-        shown: true,
-      };
+        const handleShown = () => {
+          settle({
+            ...baseResult(),
+            attempted: true,
+            shown: true,
+          });
+        };
+
+        const handleFailed = (_event: unknown, error: string) => {
+          logger.main.error('[NotificationService] Notification failed:', error);
+          settle({
+            ...baseResult(),
+            success: false,
+            attempted: true,
+            skippedReason: 'error',
+            error,
+          });
+        };
+
+        notification.on('show', handleShown);
+        notification.on('failed', handleFailed);
+        outcomeTimeout = setTimeout(() => {
+          settle({
+            ...baseResult(),
+            success: false,
+            attempted: true,
+            skippedReason: 'confirmation_timeout',
+            error: 'Timed out waiting for the OS notification outcome',
+          });
+        }, NOTIFICATION_OUTCOME_TIMEOUT_MS);
+
+        try {
+          notification.show();
+        } catch (error) {
+          logger.main.error('[NotificationService] Error showing notification:', error);
+          settle({
+            ...baseResult(),
+            success: false,
+            attempted: true,
+            skippedReason: 'error',
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
     } catch (error) {
       logger.main.error('[NotificationService] Error showing notification:', error);
       return {

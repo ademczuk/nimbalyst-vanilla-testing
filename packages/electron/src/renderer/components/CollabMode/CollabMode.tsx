@@ -156,7 +156,7 @@ async function loadCollabLayout(workspacePath: string): Promise<CollabLayout> {
 /**
  * Inner component that has access to TabsProvider context.
  */
-const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function CollabModeInner({
+export const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function CollabModeInner({
   workspacePath,
   isActive,
   onFileOpen,
@@ -478,7 +478,8 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
     }
   }, [sharedDocuments, sharedFolders, tabs, tabsActions]);
 
-  // Persist open document entries (id + documentType) whenever tabs change.
+  // Persist open document entries, including tab order and pinned state,
+  // whenever tabs change.
   // documentType is required at restore time so the right editor is mounted;
   // without it CollaborativeTabEditor falls back to markdown for everything
   // and renders an Excalidraw / mockup Y.Doc as blank.
@@ -508,6 +509,7 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
             fileExtension: document?.fileExtension,
             editorId: document?.editorId,
             displayPath,
+            isPinned: t.isPinned,
           };
         } catch {
           return null;
@@ -543,6 +545,7 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
             metadataVersion: entry.metadataVersion,
             fileExtension: entry.fileExtension,
             editorId: entry.editorId,
+            isPinned: entry.isPinned,
             addTab: tabsActions.addTab,
           });
         } catch (err) {

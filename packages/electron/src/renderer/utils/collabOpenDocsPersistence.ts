@@ -18,6 +18,8 @@
 export interface PersistedCollabEntry {
   documentId: string;
   documentType: string;
+  /** Tab-strip presentation state; entry order is the persisted tab order. */
+  isPinned?: boolean;
   /** Last-known server-backed logical path. Warm fallback until index sync. */
   displayPath?: string;
   metadataVersion?: 2;
@@ -105,6 +107,7 @@ export function readEntriesFromState(
       .map((entry) => ({
         documentId: entry.documentId,
         documentType: entry.documentType,
+        ...(typeof entry.isPinned === 'boolean' ? { isPinned: entry.isPinned } : {}),
         ...(entry.metadataVersion === 2 ? { metadataVersion: 2 as const } : {}),
         ...(typeof entry.fileExtension === 'string' && entry.fileExtension.trim()
           ? { fileExtension: entry.fileExtension }

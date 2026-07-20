@@ -18,6 +18,7 @@ import { AIService } from './ai/AIService';
 import { setMetaAgentToolFns } from '../mcp/metaAgentServer';
 import { computeNotificationSignature } from './metaAgentNotificationSignature';
 import { extractMessageText, extractUserPrompts } from './metaAgentMessageText';
+import type { NotificationOptions, NotificationResult } from './NotificationService';
 
 type SessionStatusValue = 'idle' | 'running' | 'waiting_for_input' | 'error' | 'interrupted';
 type PromptType = 'permission_request' | 'ask_user_question_request' | 'exit_plan_mode_request';
@@ -121,6 +122,10 @@ interface NotifyUserArgs {
   urgency?: 'normal' | 'critical' | 'low';
 }
 
+type ShowNotificationWithResult = (
+  options: NotificationOptions
+) => Promise<NotificationResult>;
+
 export class MetaAgentService {
   private static instance: MetaAgentService | null = null;
   private starting: Promise<void> | null = null;
@@ -131,6 +136,7 @@ export class MetaAgentService {
   private unsubscribeStateListener: (() => void) | null = null;
   private notificationSignatures = new Map<string, string>();
   private ipcHandlersRegistered = false;
+  private showNotificationWithResult: ShowNotificationWithResult | null = null;
 
   private constructor() {}
 
@@ -164,7 +170,10 @@ export class MetaAgentService {
     });
   }
 
-  public async start(aiService: AIService): Promise<void> {
+  public async start(
+    aiService: AIService,
+    showNotificationWithResult: ShowNotificationWithResult
+  ): Promise<void> {
     if (this.started) {
       return;
     }
@@ -176,6 +185,7 @@ export class MetaAgentService {
 
     this.starting = (async () => {
       this.aiService = aiService;
+      this.showNotificationWithResult = showNotificationWithResult;
       this.sessionManager = new SessionManager();
       await this.sessionManager.initialize();
 
@@ -240,6 +250,7 @@ export class MetaAgentService {
     this.unsubscribeStateListener?.();
     this.unsubscribeStateListener = null;
     this.notificationSignatures.clear();
+    this.showNotificationWithResult = null;
     // No standalone HTTP server to tear down (Phase 7); the injected toolFns are
     // process-lifetime singletons.
     this.serverPort = null;
@@ -961,9 +972,12 @@ export class MetaAgentService {
       throw new Error(`Session ${targetSessionId} not found`);
     }
 
+    if (!this.showNotificationWithResult) {
+      throw new Error('Notification delivery is not initialized');
+    }
+
     const boundedBody = body.length > 1000 ? `${body.slice(0, 997)}...` : body;
-    const { notificationService } = await import('./NotificationService');
-    const result = await notificationService.showNotificationWithResult({
+    const result = await this.showNotificationWithResult({
       title: title.length > 120 ? `${title.slice(0, 117)}...` : title,
       body: boundedBody,
       sessionId: targetSessionId,

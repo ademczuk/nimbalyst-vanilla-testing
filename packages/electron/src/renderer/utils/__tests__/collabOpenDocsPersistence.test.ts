@@ -27,6 +27,7 @@ interface MockState {
     metadataVersion?: 2;
     fileExtension?: string;
     editorId?: string;
+    isPinned?: boolean;
   }>;
 }
 
@@ -99,6 +100,18 @@ describe('collabOpenDocsPersistence', () => {
     expect(await loadOpenCollabDocs('/ws')).toEqual(entries);
     expect(harness.getState().openCollabDocumentEntries?.[0]?.displayPath)
       .toBe('Specs/Auth/Architecture Plan');
+  });
+
+  it('round-trips pinned state without changing persisted tab order', async () => {
+    const entries = [
+      { documentId: 'pinned-doc', documentType: 'markdown', isPinned: true },
+      { documentId: 'regular-doc', documentType: 'markdown', isPinned: false },
+    ];
+    installMockElectronAPI();
+
+    await persistOpenCollabDocs('/ws', entries);
+
+    expect(await loadOpenCollabDocs('/ws')).toEqual(entries);
   });
 
   it('migrates legacy openCollabDocumentIds: string[] as markdown entries', () => {

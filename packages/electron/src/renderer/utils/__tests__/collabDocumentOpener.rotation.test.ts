@@ -47,6 +47,33 @@ describe('collab document key rotation resolution', () => {
     );
   });
 
+  it('restores a collaborative tab with its persisted pinned state', () => {
+    const addTab = vi.fn(() => 'tab-1');
+
+    openCollabDocument({
+      workspacePath,
+      orgId: 'org-a',
+      documentId: 'pinned-doc',
+      title: 'Pinned document',
+      documentType: 'markdown',
+      keyCustody: 'server-managed',
+      serverUrl: 'ws://sync',
+      accountId: 'account-a',
+      userId: 'user-a',
+      getJwt: async () => 'token',
+      addTab,
+      isPinned: true,
+    });
+
+    expect(addTab).toHaveBeenCalledWith(
+      expect.stringContaining(':doc:pinned-doc'),
+      '',
+      true,
+      'Pinned document',
+      { isPinned: true },
+    );
+  });
+
   it('keeps late display metadata in the registered config for index gaps', () => {
     const addTab = vi.fn(() => 'tab-1');
     const displayDocumentId = 'doc-display';
