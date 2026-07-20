@@ -353,9 +353,39 @@ function updateAccountCredentials(personalOrgId: string, update: Partial<StoredS
 }
 
 /**
- * Notify all listeners of auth state change.
+ * A signature of the *observable* auth identity -- everything a listener acts on
+ * (auth/user/org), excluding the volatile session token + JWTs that rotate on
+ * every refresh. Used to suppress no-op re-notifications (NIM-1828).
  */
-function notifyAuthStateChange(): void {
+function authStateSignature(state: StytchAuthState): string {
+  return JSON.stringify([
+    state.isAuthenticated,
+    state.user?.user_id ?? null,
+    state.orgId,
+    state.personalOrgId,
+    state.personalUserId,
+  ]);
+}
+
+/** Signature of the last state actually broadcast to listeners. */
+let lastNotifiedSignature: string | null = null;
+
+/**
+ * Notify all listeners of auth state change.
+ *
+ * By default this is deduped on the observable identity signature: a session
+ * refresh that only rotates the token/JWT (same user + org) does NOT wake
+ * listeners. Emitting on every token rotation drove an app-wide `team:list`
+ * IPC storm via the renderer auth listener (NIM-1828). Pass `force` for changes
+ * that listeners care about but that aren't captured by the singleton identity
+ * (e.g. a non-sync account's session status changing).
+ */
+function notifyAuthStateChange(force = false): void {
+  const signature = authStateSignature(authState);
+  if (!force && signature === lastNotifiedSignature) {
+    return;
+  }
+  lastNotifiedSignature = signature;
   const state = { ...authState };
   authStateListeners.forEach(listener => {
     try {
@@ -890,7 +920,10 @@ function markAccountSessionExpired(personalOrgId: string | null | undefined): vo
       } : authState.user,
     });
   } else {
-    notifyAuthStateChange();
+    // A non-sync account's session expired: the singleton identity is unchanged,
+    // so force the notification past the identity dedupe (NIM-1828) -- listeners
+    // that surface per-account status (getAccounts) still need to refresh.
+    notifyAuthStateChange(true);
   }
 }
 

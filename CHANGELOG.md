@@ -20,6 +20,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 <!-- Removed features go here -->
 
+## [0.70.1] - 2026-07-20
+
+
+### Added
+<!-- New features go here -->
+- Shared spreadsheets now show live collaborator presence: each person's selected cell is outlined in their color, and the cell they're editing is highlighted with their name.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- Text you select in an editor again reliably appears as a removable chip in the AI chat and is sent with your prompt -- including after the editor reloads, in shared documents, in agent-session editor tabs, for selected cells in shared spreadsheets, and for selected screens in mockups.
+- RTL Support no longer flattens transcript headings or strips spacing and layout from other Markdown blocks.
+- Opening a shared code or calc-sheet document no longer intermittently fails to connect for collaboration.
+- Shared documents stay visible after reloading a window instead of occasionally rendering blank.
+- Scrolling long virtualized lists such as the sessions list no longer crashes the app under React 19.
+- Rapid auth-state changes no longer trigger a storm of background team-list refreshes.
+- Sorting the sessions list by created date no longer crashes the app, and a bad saved sort preference can no longer lock you out of a workspace.
+- Archiving a workstream now archives its child sessions too, so they no longer linger as active sessions; existing orphaned children are cleaned up on next launch.
+- Oversized or corrupted session metadata is now cleaned up on startup again instead of silently failing, so affected databases stop growing.
+
+### Removed
+<!-- Removed features go here -->
+
 ## [0.70.0] - 2026-07-19
 
 

@@ -293,11 +293,16 @@ export const TabEditor: React.FC<TabEditorProps> = ({
     setSourceMode(false); // Reset source mode when switching files
   }, [filePath]);
 
+
   // Refs for stable access in timers/callbacks
   const contentRef = useRef(initialContent);
   const isDirtyRef = useRef(false);
   const getContentFnRef = useRef<(() => string) | null>(null);
   const editorRef = useRef<any>(null);
+  // The live editor instance as STATE (mirrors editorRef.current). Selection
+  // tracking depends on this so it re-registers when the editor remounts; a ref
+  // alone doesn't trigger the effect and left the listener on a dead instance.
+  const [editorInstance, setEditorInstance] = useState<any>(null);
   const initialContentRef = useRef(initialContent);
   const lastSaveTimeRef = useRef<number | null>(null);
   const lastSavedContentRef = useRef<string>(initialContent);
@@ -425,12 +430,19 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   useEffect(() => {
     // Clear selection when tab becomes inactive (switching to different file)
     if (!isActive) {
-      clearTextSelection();
+      clearTextSelection(filePath);
       return undefined;
     }
 
-    // Wait for editor to be ready
-    if (!isEditorReady || !editorRef.current) {
+    // Bind against the LIVE editor instance (state), not editorRef.current.
+    // The Lexical/Monaco editor can remount after the tab is already "ready"
+    // (extension reload, diff-mode swap, theme change) — each remount produces
+    // a NEW editor instance and re-fires onEditorReady. Because `editorInstance`
+    // is a dependency of this effect, we re-register the selection listener on
+    // the new instance. Keying on the ref instead left the listener attached to
+    // the destroyed editor, so selections silently stopped reaching the AI
+    // "+ selection" context after the first remount.
+    if (!isEditorReady || !editorInstance) {
       return undefined;
     }
 
@@ -439,12 +451,12 @@ export const TabEditor: React.FC<TabEditorProps> = ({
 
     // For Lexical editor (markdown in rich text mode)
     if (isMarkdown && !sourceMode) {
-      const editor = editorRef.current;
+      const editor = editorInstance;
       if (editor?.registerUpdateListener) {
         // When tab becomes active, clear any stale selection state
         // The Lexical SelectionAlwaysOnDisplay plugin may show a visual selection,
         // but we want a clean slate - user must re-select to use "+ selection" feature
-        clearTextSelection();
+        clearTextSelection(filePath);
 
         const unregister = editor.registerUpdateListener(() => {
           // Only update selection if the editor has focus
@@ -472,11 +484,11 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                 if (selectedText && selectedText.trim().length > 0) {
                   setTextSelection(selectedText, filePath);
                 } else {
-                  clearTextSelection();
+                  clearTextSelection(filePath);
                 }
               } else {
                 // User clicked in editor without selection - clear it
-                clearTextSelection();
+                clearTextSelection(filePath);
               }
             });
           }, 150); // 150ms debounce
@@ -486,7 +498,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             clearTimeout(debounceTimer);
           }
           unregister();
-          clearTextSelection();
+          clearTextSelection(filePath);
         };
       }
       return undefined;
@@ -494,10 +506,10 @@ export const TabEditor: React.FC<TabEditorProps> = ({
 
     // For Monaco editor (code files or markdown/custom editor in source mode)
     if (!isMarkdown || sourceMode) {
-      const monacoEditor = editorRef.current?.editor;
+      const monacoEditor = editorInstance?.editor;
       if (monacoEditor?.onDidChangeCursorSelection) {
         // When tab becomes active, clear any stale selection state
-        clearTextSelection();
+        clearTextSelection(filePath);
 
         const disposable = monacoEditor.onDidChangeCursorSelection(() => {
           // Only update selection if the editor has focus
@@ -523,12 +535,12 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                 if (selectedText && selectedText.trim().length > 0) {
                   setTextSelection(selectedText, filePath);
                 } else {
-                  clearTextSelection();
+                  clearTextSelection(filePath);
                 }
               }
             } else {
               // User clicked in editor without selection - clear it
-              clearTextSelection();
+              clearTextSelection(filePath);
             }
           }, 150); // 150ms debounce
         });
@@ -537,12 +549,12 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             clearTimeout(debounceTimer);
           }
           disposable.dispose();
-          clearTextSelection();
+          clearTextSelection(filePath);
         };
       }
     }
     return undefined;
-  }, [isActive, isEditorReady, isMarkdown, sourceMode, filePath]);
+  }, [isActive, isEditorReady, isMarkdown, sourceMode, filePath, editorInstance]);
 
   // CRITICAL FIX RC7: On component mount or file path change, check if there are pending AI edits
   // that should show diffs. This handles the case where a tab is closed and reopened.
@@ -2440,6 +2452,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
 
         // Reset editor ready state so the pending diff check can run after new editor mounts
         setIsEditorReady(false);
+        setEditorInstance(null);
         // Reset the pending tags check flag so it runs again after the new editor mounts
         hasCheckedForPendingTagsRef.current = false;
         setSourceMode(!currentlyInSourceMode);
@@ -2669,6 +2682,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                     }}
                     onEditorReady={(editorWrapper) => {
                       editorRef.current = editorWrapper;
+                      setEditorInstance(editorWrapper);
                       setIsEditorReady(true);
                     }}
                   />
@@ -2810,6 +2824,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                   collaborationConfig={personalSyncConfig || undefined}
                   onEditorReady={(editor) => {
                     editorRef.current = editor;
+                    setEditorInstance(editor);
                     setIsEditorReady(true);
                     // Force FixedTabHeaderRegistry to re-evaluate after editor remounts
                     setTimeout(() => {
@@ -2865,6 +2880,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                 onEditorReady={(editorWrapper) => {
                   // For Monaco, we get a wrapper with editor, setContent, getContent
                   editorRef.current = editorWrapper;
+                  setEditorInstance(editorWrapper);
                   setIsEditorReady(true);
                 }}
               />
@@ -2923,6 +2939,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                 onEditorReady={(editorWrapper) => {
                   // For Monaco, we get a wrapper with editor, setContent, getContent, showDiff, etc.
                   editorRef.current = editorWrapper;
+                  setEditorInstance(editorWrapper);
                   setIsEditorReady(true);
                 }}
                 onDiffChangeCountUpdate={(count) => {

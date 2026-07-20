@@ -70,6 +70,12 @@ export const SelectionChips: React.FC<SelectionChipsProps> = ({ currentFilePath 
   const otherChips: Chip[] = [];
 
   // --- Extension-provided items (node-like editors, multi-selection) ---
+  // Strictly scope to the panel's active document. Every mode that can hold a
+  // selection passes its active doc path (Files: active tab; Collab: active
+  // collab tab). Without an explicit, matching path we show nothing rather than
+  // falling back to the most-recent entry — that fallback leaked a previous
+  // mode's selection (e.g. a collab spreadsheet's cells) into an unrelated
+  // panel after a mode switch.
   const entry = currentFilePath ? getEditorContextEntry(currentFilePath) : null;
   let dismissedCount = 0;
   if (entry) {
@@ -90,6 +96,10 @@ export const SelectionChips: React.FC<SelectionChipsProps> = ({ currentFilePath 
   }
 
   // --- Text selection (single) ---
+  // Scope strictly to the panel's active document (same reasoning as the
+  // extension items above): show the selection only when it belongs to the doc
+  // this panel is focused on, so a selection made in another mode does not leak
+  // into an unrelated chat panel after a mode switch.
   const textSelection = getTextSelection();
   const textMatchesFile =
     !!textSelection &&
@@ -104,7 +114,7 @@ export const SelectionChips: React.FC<SelectionChipsProps> = ({ currentFilePath 
       icon: 'text_select_start',
       label: 'Selection',
       tooltip: `Selected text will be included: "${preview}"`,
-      onRemove: clearTextSelection,
+      onRemove: () => clearTextSelection(),
     });
   }
 

@@ -47,6 +47,8 @@ import {
 } from './collabTree';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
 import type { SerializableDocumentContext } from '../../hooks/useDocumentContext';
+import { getTextSelection } from '../UnifiedAI/TextSelectionIndicator';
+import { getActiveEditorContextItems } from '../../stores/editorContextStore';
 
 interface CollabModeProps {
   workspacePath: string;
@@ -217,10 +219,24 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
       }
     }
 
+    // Include the current text selection so the agent gets the "+ selection"
+    // context, but only if it belongs to this collab document. Mirrors
+    // EditorMode.getDocumentContext for regular files.
+    const textSelectionData = getTextSelection();
+    const textSelection = textSelectionData && textSelectionData.filePath === activeTab.filePath
+      ? textSelectionData
+      : undefined;
+
     return {
       filePath: activeTab.filePath,
       fileType: 'collab-markdown',
       content,
+      textSelection,
+      textSelectionTimestamp: textSelection?.timestamp,
+      // Extension-provided selection context (e.g. a spreadsheet's selected
+      // cells) for the active collab document. Mirrors EditorMode; without it a
+      // collaborative spreadsheet's "+ selection" never reaches the agent.
+      editorContextItems: getActiveEditorContextItems(activeTab.filePath),
     };
   }, []);
 
@@ -604,6 +620,17 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
     return tab ? isSharedHomeTab(tab.filePath) : false;
   }, [activeTabId, tabs]);
 
+  // File path of the active collab document, so the chat panel scopes its
+  // "+ selection" chips to the doc the user is actually looking at. Without a
+  // currentFilePath the chip row falls back to "most recent" and leaks a stale
+  // selection from a previously-active tab (e.g. a spreadsheet's cells still
+  // showing after switching to a markdown doc). Empty for the Shared Docs Home.
+  const activeCollabFilePath = useMemo(() => {
+    if (!activeTabId) return '';
+    const tab = tabs.find((t) => t.id === activeTabId);
+    return tab && isCollabUri(tab.filePath) ? tab.filePath : '';
+  }, [activeTabId, tabs]);
+
   const handleTabClose = useCallback((tabId: string) => {
     tabsActions.removeTab(tabId);
   }, [tabsActions]);
@@ -686,6 +713,7 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
           isActive={isActive}
           isCollapsed={chatCollapsed}
           onToggleCollapse={toggleChatCollapsed}
+          documentContext={{ filePath: activeCollabFilePath }}
           getDocumentContext={getDocumentContext}
           onFileOpen={async (filePath) => onFileOpen(filePath)}
           width={chatWidth}

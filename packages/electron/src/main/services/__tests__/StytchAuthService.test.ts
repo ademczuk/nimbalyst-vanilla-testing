@@ -56,6 +56,7 @@ import {
   getSyncAccount,
   handleAuthCallback,
   initializeStytchAuth,
+  onAuthStateChange,
   refreshPersonalSession,
   refreshSession,
   setSyncAccount,
@@ -183,6 +184,81 @@ describe('StytchAuthService personal JWT refresh', () => {
 
     await expect(refreshPersonalSession('https://sync.example')).resolves.toBe(true);
     expect(getPersonalSessionJwt()).toBe(freshPersonalJwt);
+  });
+});
+
+describe('StytchAuthService auth-state-change dedupe (NIM-1828)', () => {
+  beforeEach(async () => {
+    await signOut();
+    files.clear();
+    fetchMock.mockReset();
+  });
+
+  it('does not re-emit auth-state-change when a refresh only rotates the token', async () => {
+    const personalUserId = 'member-personal';
+    const personalOrgId = 'org-personal';
+    const initialJwt = createJwt({
+      sub: personalUserId,
+      exp: Math.floor(Date.now() / 1000) + 300,
+    });
+    const rotatedJwt = createJwt({
+      sub: personalUserId,
+      exp: Math.floor(Date.now() / 1000) + 600,
+    });
+
+    await handleAuthCallback({
+      sessionToken: 'initial-session-token',
+      sessionJwt: initialJwt,
+      userId: personalUserId,
+      orgId: personalOrgId,
+    });
+
+    // Subscribe AFTER sign-in. onAuthStateChange fires once immediately with the
+    // current (authenticated) snapshot; count only emissions after that.
+    const listener = vi.fn();
+    onAuthStateChange(listener);
+    expect(listener).toHaveBeenCalledTimes(1);
+    listener.mockClear();
+
+    // Refresh returns the SAME identity (user_id + org_id) but a rotated token/JWT.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        session_token: 'rotated-session-token',
+        session_jwt: rotatedJwt,
+        user_id: personalUserId,
+        org_id: personalOrgId,
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      }),
+    });
+
+    await expect(refreshSession('https://sync.example')).resolves.toBe(true);
+
+    // The token really rotated...
+    expect(getPersonalSessionJwt()).toBe(rotatedJwt);
+    // ...but the observable identity did not, so listeners must NOT be re-notified.
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('still emits auth-state-change when the identity actually changes', async () => {
+    const initialJwt = createJwt({
+      sub: 'member-a',
+      exp: Math.floor(Date.now() / 1000) + 300,
+    });
+    await handleAuthCallback({
+      sessionToken: 'token-a',
+      sessionJwt: initialJwt,
+      userId: 'member-a',
+      orgId: 'org-a',
+    });
+
+    const listener = vi.fn();
+    onAuthStateChange(listener);
+    listener.mockClear();
+
+    // Sign out is a real identity transition (authenticated -> not).
+    await signOut();
+    expect(listener).toHaveBeenCalled();
   });
 });
 

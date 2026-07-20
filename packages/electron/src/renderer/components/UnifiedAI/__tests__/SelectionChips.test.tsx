@@ -9,15 +9,16 @@ import {
   getActiveEditorContextItems,
   setEditorContextItems,
 } from '../../../stores/editorContextStore';
-
 const FILE = '/test/diagram.excalidraw';
 const OTHER_FILE = '/test/other.excalidraw';
+const COLLAB_FILE = 'collab://org:o:doc:shared.md';
 
 afterEach(() => {
   cleanup();
   clearTextSelection();
   clearEditorContext(FILE);
   clearEditorContext(OTHER_FILE);
+  clearEditorContext(COLLAB_FILE);
   delete (window as any).__mockupFilePath;
   delete (window as any).__mockupSelectedElement;
   delete (window as any).__mockupDrawing;
@@ -33,6 +34,30 @@ describe('SelectionChips', () => {
     expect(screen.getByText('Selection')).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText('Remove Selection from context'));
+    expect(screen.queryByText('Selection')).toBeNull();
+  });
+
+  it('does not show a selection when the panel has no currentFilePath (prevents cross-mode leak)', () => {
+    // A panel with no active document (e.g. the agent chat with no editor tab)
+    // must NOT surface a selection made in another mode. Strict scoping: no
+    // currentFilePath -> no chip, even if a selection is stored.
+    render(<SelectionChips />);
+    act(() => setTextSelection('selected text', COLLAB_FILE));
+    expect(screen.queryByText('Selection')).toBeNull();
+  });
+
+  it('shows the selection when currentFilePath matches the selection file', () => {
+    render(<SelectionChips currentFilePath={COLLAB_FILE} />);
+    expect(screen.queryByText('Selection')).toBeNull();
+
+    act(() => setTextSelection('selected text', COLLAB_FILE));
+    expect(screen.getByText('Selection')).toBeTruthy();
+  });
+
+  it('does not show a selection belonging to a different file when currentFilePath is set', () => {
+    render(<SelectionChips currentFilePath={FILE} />);
+
+    act(() => setTextSelection('selection from another doc', OTHER_FILE));
     expect(screen.queryByText('Selection')).toBeNull();
   });
 
@@ -61,6 +86,28 @@ describe('SelectionChips', () => {
     render(<SelectionChips currentFilePath={FILE} />);
     expect(screen.getByText('Current file')).toBeTruthy();
     expect(screen.queryByText('Other file')).toBeNull();
+  });
+
+  it('shows a collab spreadsheet cell selection when the panel is scoped to that doc', () => {
+    // A collaborative spreadsheet publishes its selected-cell context keyed by
+    // the collab doc path; the collab chat panel scopes to that same path.
+    act(() => {
+      setEditorContextItems(COLLAB_FILE, [{ id: 'c1', label: 'Cells A1:B2', description: '4 cells' }]);
+    });
+
+    render(<SelectionChips currentFilePath={COLLAB_FILE} />);
+    expect(screen.getByText('Cells A1:B2')).toBeTruthy();
+  });
+
+  it('does not leak an extension selection into a panel with no currentFilePath', () => {
+    // Regression: switching from collab (spreadsheet) to agent mode must not
+    // carry the spreadsheet's cell chip into the agent panel.
+    act(() => {
+      setEditorContextItems(COLLAB_FILE, [{ id: 'c1', label: 'Cells A1:B2', description: '4 cells' }]);
+    });
+
+    render(<SelectionChips />);
+    expect(screen.queryByText('Cells A1:B2')).toBeNull();
   });
 
   it('collapses large groups and can expand them', () => {
