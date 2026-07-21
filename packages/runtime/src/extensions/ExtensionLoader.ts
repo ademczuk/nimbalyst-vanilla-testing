@@ -58,14 +58,36 @@ const DEFERRED_EDITOR_MANIFEST_KEYS = new Set([
 ]);
 
 /**
+ * True when any custom editor declares collaborative (Share-to-Team) support.
+ *
+ * Collaborative editors register their `CollabContentAdapter` inside
+ * `activate()`. The collab document-type catalog is queried in the shared-docs
+ * list and Share flow *before* any editor mounts, so a deferred extension --
+ * which only activates on editor mount -- would have no registered codec and
+ * its type would be reported unshareable. Such extensions must stay eager so
+ * the adapter is registered at startup. See NIM-1983.
+ */
+function declaresCollaborativeEditor(manifest: ExtensionManifest): boolean {
+  return Boolean(
+    manifest.contributions?.customEditors?.some(
+      editor => editor.collaboration?.supported === true,
+    ),
+  );
+}
+
+/**
  * Slice-1 eligibility: the extension may contain editor code plus contribution
  * data that the host can consume directly from manifest.json. Any other
  * non-empty contribution keeps the extension eager until that surface has a
  * manifest-backed activation proxy of its own.
+ *
+ * Editors that declare collaboration support are always eager, regardless of
+ * their other contributions, so their collab codec registers at startup.
  */
 export function shouldDeferExtensionBundle(manifest: ExtensionManifest): boolean {
   const contributions = manifest.contributions;
   if (!contributions?.customEditors?.length) return false;
+  if (declaresCollaborativeEditor(manifest)) return false;
 
   for (const [key, value] of Object.entries(contributions)) {
     if (DEFERRED_EDITOR_MANIFEST_KEYS.has(key)) continue;

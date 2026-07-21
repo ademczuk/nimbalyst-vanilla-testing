@@ -135,6 +135,7 @@ import { PullRequestMode } from './components/PullRequestMode';
 import { CollabMode, type CollabModeRef } from './components/CollabMode';
 import { TeamManagementApp } from './components/TeamMode';
 import { TerminalBottomPanel } from './components/TerminalBottomPanel';
+import { SessionLaunchPopup } from './components/UnifiedAI/SessionLaunchPopup';
 import { ProjectRail } from './components/ProjectRail';
 import { AccountExpiryBanner } from './components/Accounts/AccountExpiryBanner';
 import { organizationDirectoryAtom, personalAccountsAtom } from './store/atoms/settingsDomains';
@@ -2230,7 +2231,10 @@ export default function App() {
                   />
                 </TabsProvider>
               ) : (
-                <WorkspaceWelcome workspaceName="Open a workspace to get started" />
+                <WorkspaceWelcome
+                  workspaceName="Open a workspace to get started"
+                  hasWorkspace={false}
+                />
               )}
             </div>
 
@@ -2432,6 +2436,7 @@ export default function App() {
 
       {/* KeyboardShortcutsDialog, ApiKeyDialog, ProjectSelectionDialog, ErrorDialog are now managed by DialogProvider */}
       <GlobalHistoryDialog theme={theme === 'auto' ? 'dark' : theme} workspacePath={workspacePath || undefined} />
+      <SessionLaunchPopup workspacePath={workspacePath} />
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         title={confirmDialog.options.title}

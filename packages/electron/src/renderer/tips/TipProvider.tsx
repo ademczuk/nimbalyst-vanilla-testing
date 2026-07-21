@@ -37,6 +37,7 @@ import { errorNotificationService } from '../services/ErrorNotificationService';
 import { worktreesFeatureAvailableAtom } from '../store/atoms/appSettings';
 import { emptyTranscriptVisibleCountAtom } from './atoms';
 import type { FeatureUsageRecord } from '../../shared/featureUsage';
+import { tipTargetsScreen } from './filesEmptyTipSelection';
 
 /**
  * Safety-net re-evaluation interval. Tips are evaluated immediately when the
@@ -227,7 +228,7 @@ export function TipProvider({ children, currentMode, workspacePath }: TipProvide
     const eligible = tips
       .filter((tip) => {
         if (!shouldShowTip(state, tip)) return false;
-        const screenMatch = tip.trigger.screen === '*' || tip.trigger.screen === mode;
+        const screenMatch = tipTargetsScreen(tip, mode);
         if (!screenMatch) return false;
         if (!tip.trigger.condition(triggerContext)) return false;
         return true;

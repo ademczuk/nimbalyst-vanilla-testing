@@ -10,19 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Launch a new AI session from any workspace mode with Cmd+Shift+N; the draggable composer runs it in the background without navigating away and resets for the next launch.
 - Agents can send local system notifications to get your attention when you step away.
 - Start a new AI review session from any pull request with the review command prefilled.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- The agent permissions dialog and navigation indicator now present four clearer autonomy levels, defaulting to Agent-verified.
 - Updated the bundled marketplace catalog with 18 extension releases, including Electronics Studio and new Replicad CAD tools.
 - Inline tracker references now show the item type, key, live title, workflow state, and owner, with completed titles crossed out.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Claude Agent sessions reduce two observed prompt-cache invalidation paths around session-tag updates and early tool calls; broader context-overhead validation remains in progress.
+- New agent sessions no longer hang on a spinner that never resolves when git status stalls; the session list stays responsive instead of requiring an app restart.
+- Pending permission review buttons now scroll to the correct approval prompt instead of doing nothing.
 - RTL text typed in the chat composer now displays on the right again; the detected direction is mirrored onto the composer's visible-text overlay, which a transparent-textarea refactor had left stuck on LTR.
 - Pinned Shared Documents tabs now keep their pinned state and tab order after a window reload or app restart.
 - Answering a question prompt in a Codex (GPT) session now reliably resumes the turn, on desktop and from the mobile app, instead of appearing to submit but hanging.
+- The user menu again links to Application and Project settings, which the account menu redesign had dropped.
+- Spreadsheet documents (CSV, TSV, and calc sheets) can now be shared as collaborative documents instead of being reported as unsupported.
+- The New Session button in the files chat panel no longer gets cut off on a narrow panel, and you can now start a new session from the session menu too.
+- Claude Code (CLI) sessions created for a worktree now run inside that worktree, so their edits land on the worktree branch instead of the main branch.
 
 ### Removed
 <!-- Removed features go here -->

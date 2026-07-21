@@ -11,9 +11,9 @@ import {
 } from '@nimbalyst/runtime/ai/server/types';
 import type { UpdateSessionMetadataPayload } from '@nimbalyst/runtime/ai/adapters/sessionStore';
 import path from "path";
-import { existsSync } from "fs";
 import { BrowserWindow } from 'electron';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
+import { getCachedUncommittedFiles } from '../utils/gitUncommittedFiles';
 import { parseJsonObjectColumn } from '../utils/jsonColumn';
 import type { SessionCreateResult } from '../../shared/ipc/types';
 import { TrayManager } from '../tray/TrayManager';
@@ -34,21 +34,6 @@ const analyticsService = AnalyticsService.getInstance();
 
 // Track if handlers are registered to prevent double registration
 let handlersRegistered = false;
-
-// ============================================================
-// Git Status Cache
-// Caches uncommitted file sets to avoid repeated git status calls
-// when multiple components request session lists simultaneously.
-// In-flight dedup so concurrent callers share one git status invocation.
-// ============================================================
-interface GitStatusCache {
-    uncommittedFiles: Set<string>;
-    timestamp: number;
-}
-
-const gitStatusCache = new Map<string, GitStatusCache>();
-const gitStatusInFlight = new Map<string, Promise<Set<string>>>();
-const GIT_STATUS_CACHE_TTL_MS = 5000; // 5 second cache
 
 // ============================================================
 // Session Files Cache
@@ -219,54 +204,6 @@ export function invalidateSessionFilesCache(workspacePath: string): void {
     sessionEditorsCache.delete(workspacePath);
 }
 
-/**
- * Get uncommitted files with caching.
- * Avoids spawning git status multiple times in rapid succession.
- */
-async function getCachedUncommittedFiles(workspacePath: string): Promise<Set<string>> {
-    // Non-git workspaces have no uncommitted files
-    if (!existsSync(path.join(workspacePath, '.git'))) {
-        return new Set();
-    }
-
-    const cached = gitStatusCache.get(workspacePath);
-    if (cached && Date.now() - cached.timestamp < GIT_STATUS_CACHE_TTL_MS) {
-        return cached.uncommittedFiles;
-    }
-
-    const inFlight = gitStatusInFlight.get(workspacePath);
-    if (inFlight) return inFlight;
-
-    const queryPromise = (async () => {
-        const simpleGit = (await import('simple-git')).default;
-        const git = simpleGit(workspacePath);
-        const status = await git.status();
-
-        const uncommittedFiles = new Set([
-            ...status.modified,
-            ...status.created,
-            ...status.not_added,
-            ...status.deleted,
-            ...status.renamed.map(r => r.to),
-            ...status.staged
-        ]);
-
-        gitStatusCache.set(workspacePath, {
-            uncommittedFiles,
-            timestamp: Date.now()
-        });
-
-        return uncommittedFiles;
-    })();
-
-    gitStatusInFlight.set(workspacePath, queryPromise);
-    try {
-        return await queryPromise;
-    } finally {
-        gitStatusInFlight.delete(workspacePath);
-    }
-}
-
 export async function registerSessionHandlers() {
     if (handlersRegistered) {
         console.log('[SessionHandlers] Handlers already registered, skipping');
@@ -307,6 +244,7 @@ export async function registerSessionHandlers() {
                 provider,
                 model,
                 title: session.title || 'Untitled',
+                mode: session.mode || 'agent',
                 workspaceId: workspaceId,
                 providerConfig: session.providerConfig,
                 providerSessionId: session.providerSessionId,

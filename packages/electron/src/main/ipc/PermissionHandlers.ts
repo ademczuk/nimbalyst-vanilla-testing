@@ -274,7 +274,7 @@ export function registerPermissionHandlers(): void {
     }
   });
 
-  // Toggle the "Allow All" auto-mode classifier opt-in (issue #628)
+  // Toggle the "Allow All" automatic-review opt-in (issue #628)
   // NOTE: Resolves worktree paths to parent project
   safeHandle('permissions:setAllowAllUsesClassifier', async (_event, workspacePath: string, enabled: boolean) => {
     if (!workspacePath) {

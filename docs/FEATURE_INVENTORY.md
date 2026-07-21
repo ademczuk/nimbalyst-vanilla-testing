@@ -37,6 +37,7 @@ A concise reference of all features in the product. Keep this up to date as feat
 ## AI Sessions
 
 - Session creation, naming, archiving, deletion
+- Launch a new session from any workspace mode with the reusable composer popup (Cmd+Shift+N), including model/mode controls, mentions, slash commands, and attachments
 - Session search with full-text index (Cmd+L)
 - Session pinning
 - Session branching / forking
@@ -433,6 +434,8 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 
 - Unified onboarding wizard
 - Walkthrough guide system (multi-step floating guides)
+- Contextual tips system (targeted tip cards: floating, empty-transcript inline, and Files empty state; All Tips dialog)
+- Files-mode empty state with New file and Ask-the-agent action cards, example prompt chips, and rotating tips
 - Help tooltips (hover, keyed by data-testid)
 - Keyboard shortcuts dialog (Cmd+?)
 - Community channels popup (Discord, YouTube, LinkedIn, X, TikTok, Instagram)

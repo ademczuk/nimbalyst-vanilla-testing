@@ -23,6 +23,7 @@ import { useResizeDragShield } from '../../hooks/useResizeDragShield';
 
 export interface ChatSidebarRef {
   focusInput: () => void;
+  insertPrompt: (text: string) => void;
   loadSession: (sessionId: string) => void;
 }
 
@@ -60,6 +61,8 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
 }, ref) => {
   const transcriptRef = useRef<SessionTranscriptRef>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const pendingFocusRef = useRef(false);
+  const pendingPromptRef = useRef<string | null>(null);
   const isInitializingRef = useRef(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -87,12 +90,43 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
   // Expose methods through ref
   useImperativeHandle(ref, () => ({
     focusInput: () => {
-      transcriptRef.current?.focusInput();
+      if (transcriptRef.current) {
+        transcriptRef.current.focusInput();
+      } else {
+        pendingFocusRef.current = true;
+      }
+    },
+    insertPrompt: (text: string) => {
+      if (transcriptRef.current) {
+        transcriptRef.current.insertPrompt(text);
+      } else {
+        pendingPromptRef.current = text;
+      }
     },
     loadSession: (id: string) => {
       setSessionId(id);
     },
   }), []);
+
+  useEffect(() => {
+    if (isCollapsed || isLoading || !sessionId) return;
+
+    const frameId = requestAnimationFrame(() => {
+      const pendingPrompt = pendingPromptRef.current;
+      if (pendingPrompt !== null) {
+        pendingPromptRef.current = null;
+        pendingFocusRef.current = false;
+        transcriptRef.current?.insertPrompt(pendingPrompt);
+        return;
+      }
+      if (pendingFocusRef.current) {
+        pendingFocusRef.current = false;
+        transcriptRef.current?.focusInput();
+      }
+    });
+
+    return () => cancelAnimationFrame(frameId);
+  }, [isCollapsed, isLoading, sessionId]);
 
   // Initialize session list on mount
   useEffect(() => {
@@ -291,7 +325,7 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
       )}
 
       {/* Header with session dropdown */}
-      <div className="chat-sidebar-header flex items-center gap-2 p-2 border-b border-nim justify-between shrink-0">
+      <div className="chat-sidebar-header [container-type:inline-size] flex items-center gap-2 p-2 border-b border-nim justify-between shrink-0">
         <SessionDropdown
           currentSessionId={sessionId}
           sessions={availableSessions}
@@ -300,8 +334,9 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
           onDeleteSession={handleDeleteSession}
           onRenameSession={handleRenameSession}
           onOpenSessionManager={onSwitchToAgentMode}
+          className="flex-1"
         />
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           {onSwitchToAgentMode && (
             <button
               className="chat-sidebar-maximize-button flex items-center justify-center w-7 h-7 rounded-md text-nim-muted border-none cursor-pointer transition-colors duration-150 hover:bg-nim-bg-active hover:text-nim bg-transparent"
@@ -315,9 +350,10 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
             className="chat-sidebar-new-button flex items-center gap-1 px-3 py-1.5 rounded-md text-[0.8125rem] font-medium bg-nim-primary text-nim-on-primary border-none cursor-pointer transition-opacity duration-150 hover:opacity-90"
             onClick={handleNewSession}
             title="Start new conversation"
+            aria-label="Start new conversation"
           >
             <MaterialSymbol icon="add" size={16} />
-            New
+            <span className="chat-sidebar-new-label">New</span>
           </button>
         </div>
       </div>

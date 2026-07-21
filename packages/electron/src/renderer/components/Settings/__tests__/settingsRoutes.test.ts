@@ -11,7 +11,10 @@ describe('settings route registry', () => {
   it('declares every route in exactly one scope', () => {
     const seen = new Map<string, string>();
     for (const scope of ['application', 'account', 'project'] as const) {
-      for (const route of getSettingsRoutesForScope(scope, { developerMode: true })) {
+      for (const route of getSettingsRoutesForScope(scope, {
+        developerMode: true,
+        showDirectChatProviders: true,
+      })) {
         expect(seen.has(route.id)).toBe(false);
         seen.set(route.id, scope);
         expect(route.scope).toBe(scope);
@@ -26,7 +29,10 @@ describe('settings route registry', () => {
   });
 
   it('keeps project-level MCP server configuration reachable', () => {
-    const projectRoutes = getSettingsRoutesForScope('project', { developerMode: false });
+    const projectRoutes = getSettingsRoutesForScope('project', {
+      developerMode: false,
+      showDirectChatProviders: false,
+    });
 
     expect(projectRoutes).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -44,6 +50,24 @@ describe('settings route registry', () => {
       category: 'project-mcp-servers',
       target: { kind: 'workspace', workspacePath: '/workspace' },
     });
+  });
+
+  it('hides direct chat providers until the visibility policy reveals the group', () => {
+    const hiddenRoutes = getSettingsRoutesForScope('application', {
+      developerMode: false,
+      showDirectChatProviders: false,
+    });
+    const visibleRoutes = getSettingsRoutesForScope('application', {
+      developerMode: false,
+      showDirectChatProviders: true,
+    });
+
+    expect(hiddenRoutes.map((route) => route.id)).not.toEqual(
+      expect.arrayContaining(['claude', 'openai', 'lmstudio']),
+    );
+    expect(visibleRoutes.map((route) => route.id)).toEqual(
+      expect.arrayContaining(['claude', 'openai', 'lmstudio']),
+    );
   });
 
   it('requires explicit project context', () => {

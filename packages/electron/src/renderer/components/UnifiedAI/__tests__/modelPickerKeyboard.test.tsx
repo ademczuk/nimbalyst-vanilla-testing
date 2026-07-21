@@ -2,8 +2,10 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { Provider, createStore } from 'jotai';
 import { ModelSelector } from '../ModelSelector';
 import { isOpenModelPickerShortcut } from '../AIInput';
+import { advancedSettingsAtom } from '../../../store/atoms/appSettings';
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: () => null,
@@ -20,6 +22,21 @@ vi.mock('../../../help', () => ({
 }));
 
 afterEach(() => cleanup());
+
+function renderModelSelector(ui: React.ReactElement, showDirectChatProviders = false) {
+  const testStore = createStore();
+  testStore.set(advancedSettingsAtom, {
+    ...testStore.get(advancedSettingsAtom),
+    showDirectChatProviders,
+  });
+  const rendered = render(<Provider store={testStore}>{ui}</Provider>);
+  return {
+    ...rendered,
+    rerender: (nextUi: React.ReactElement) => rendered.rerender(
+      <Provider store={testStore}>{nextUi}</Provider>,
+    ),
+  };
+}
 
 describe('AI model picker keyboard controls', () => {
   it('recognizes Cmd/Ctrl+Shift+M as the model-picker shortcut', () => {
@@ -46,13 +63,14 @@ describe('AI model picker keyboard controls', () => {
     const onModelChange = vi.fn();
     const aiInput = document.createElement('textarea');
     document.body.appendChild(aiInput);
-    const view = render(
+    const view = renderModelSelector(
       <ModelSelector
         currentModel="claude:haiku"
         onModelChange={onModelChange}
         openRequest={0}
         onKeyboardDismiss={() => aiInput.focus()}
-      />
+      />,
+      true,
     );
 
     view.rerender(
@@ -109,13 +127,14 @@ describe('AI model picker keyboard controls', () => {
     });
     const aiInput = document.createElement('textarea');
     document.body.appendChild(aiInput);
-    const view = render(
+    const view = renderModelSelector(
       <ModelSelector
         currentModel="claude:haiku"
         onModelChange={() => {}}
         openRequest={0}
         onKeyboardDismiss={() => aiInput.focus()}
-      />
+      />,
+      true,
     );
 
     view.rerender(
@@ -138,5 +157,69 @@ describe('AI model picker keyboard controls', () => {
       await modelsPromise;
     });
     aiInput.remove();
+  });
+});
+
+describe('AI model picker provider visibility', () => {
+  const groupedModels = {
+    opencode: [{ id: 'opencode:kimi', name: 'Kimi', provider: 'opencode' }],
+    claude: [{ id: 'claude:haiku', name: 'Haiku', provider: 'claude' }],
+    openai: [{ id: 'openai:gpt-5', name: 'GPT-5', provider: 'openai' }],
+    lmstudio: [{ id: 'lmstudio:local', name: 'Local Model', provider: 'lmstudio' }],
+  };
+
+  function mockModels() {
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        aiGetModels: vi.fn().mockResolvedValue({ success: true, grouped: groupedModels }),
+      },
+    });
+  }
+
+  it('hides unconfigured direct chat providers by default', async () => {
+    mockModels();
+    renderModelSelector(
+      <ModelSelector currentModel="opencode:kimi" currentProvider="opencode" onModelChange={() => {}} />,
+    );
+
+    fireEvent.click(screen.getByTestId('model-picker'));
+
+    expect(await screen.findByRole('button', { name: 'Kimi' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Haiku' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'GPT-5' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Local Model' })).toBeNull();
+  });
+
+  it('reveals direct chat providers when the advanced toggle is on', async () => {
+    mockModels();
+    renderModelSelector(
+      <ModelSelector currentModel="opencode:kimi" currentProvider="opencode" onModelChange={() => {}} />,
+      true,
+    );
+
+    fireEvent.click(screen.getByTestId('model-picker'));
+
+    expect(await screen.findByRole('button', { name: 'Haiku' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'GPT-5' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Local Model' })).toBeTruthy();
+  });
+
+  it('keeps the current direct provider reachable for a started session', async () => {
+    mockModels();
+    renderModelSelector(
+      <ModelSelector
+        currentModel="claude:haiku"
+        currentProvider="claude"
+        sessionHasMessages
+        onModelChange={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('model-picker'));
+
+    expect(await screen.findByRole('button', { name: 'Haiku' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'GPT-5' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Local Model' })).toBeNull();
   });
 });

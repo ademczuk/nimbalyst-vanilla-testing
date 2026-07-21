@@ -425,6 +425,8 @@ export interface AdvancedSettings {
   customPathDirs: string;
   // System spellchecker (applies to all editors and text inputs)
   spellcheckEnabled: boolean;
+  // Reveal direct chat providers in settings and initial model selection.
+  showDirectChatProviders: boolean;
   // Document history settings
   historyMaxAgeDays: number; // Max age in days before snapshots are cleaned up (default: 30)
   historyMaxSnapshots: number; // Max snapshots per file (default: 250)
@@ -450,6 +452,7 @@ const defaultAdvancedSettings: AdvancedSettings = {
   } as Record<BetaFeatureTag, boolean>,
   enableAllBetaFeatures: false,
   spellcheckEnabled: true,
+  showDirectChatProviders: false,
   customPathDirs: '',
   historyMaxAgeDays: 30,
   historyMaxSnapshots: 250,
@@ -540,6 +543,9 @@ function scheduleAdvancedPersist(
           break;
         case 'spellcheckEnabled':
           await window.electronAPI.invoke('spellcheck:set-enabled', settingsToPersist.spellcheckEnabled);
+          break;
+        case 'showDirectChatProviders':
+          await window.electronAPI.invoke('app-settings:set', 'showDirectChatProviders', settingsToPersist.showDirectChatProviders);
           break;
         // walkthroughsViewedCount and walkthroughsTotalCount are read-only from main process
       }
@@ -708,7 +714,7 @@ export async function initAdvancedSettings(): Promise<AdvancedSettings> {
   }
 
   try {
-    const [channel, analyticsEnabled, extensionDevToolsEnabled, walkthroughState, maxHeapSizeMB, alphaFeatures, betaFeatures, enableAllBetaFeatures, customPathDirs, spellcheckEnabled, historyMaxAgeDays, historyMaxSnapshots, preferredTerminalShell] =
+    const [channel, analyticsEnabled, extensionDevToolsEnabled, walkthroughState, maxHeapSizeMB, alphaFeatures, betaFeatures, enableAllBetaFeatures, customPathDirs, spellcheckEnabled, showDirectChatProviders, historyMaxAgeDays, historyMaxSnapshots, preferredTerminalShell] =
       await Promise.all([
         window.electronAPI.invoke('release-channel:get'),
         window.electronAPI.invoke('analytics:is-enabled'),
@@ -720,6 +726,7 @@ export async function initAdvancedSettings(): Promise<AdvancedSettings> {
         window.electronAPI.invoke('beta-features:get-enable-all'),
         window.electronAPI.invoke('app-settings:get', 'customPathDirs'),
         window.electronAPI.invoke('app-settings:get', 'spellcheckEnabled'),
+        window.electronAPI.invoke('app-settings:get', 'showDirectChatProviders'),
         window.electronAPI.invoke('app-settings:get', 'historyMaxAgeDays'),
         window.electronAPI.invoke('app-settings:get', 'historyMaxSnapshots'),
         window.electronAPI.invoke('app-settings:get', 'preferredTerminalShell'),
@@ -742,6 +749,7 @@ export async function initAdvancedSettings(): Promise<AdvancedSettings> {
       betaFeatures: betaFeatures ?? defaultAdvancedSettings.betaFeatures,
       enableAllBetaFeatures: enableAllBetaFeatures ?? false,
       spellcheckEnabled: spellcheckEnabled ?? true,
+      showDirectChatProviders: showDirectChatProviders ?? false,
       customPathDirs: customPathDirs ?? '',
       historyMaxAgeDays: historyMaxAgeDays ?? 30,
       historyMaxSnapshots: historyMaxSnapshots ?? 250,
@@ -1798,7 +1806,7 @@ export interface WorkspacePermissionsState {
   allowedPatterns: PatternRule[];
   additionalDirectories: AdditionalDirectory[];
   allowedUrlPatterns: AllowedUrlPattern[];
-  /** Issue #628: opt-in classifier for "Allow All" workspaces. */
+  /** Issue #628: opt-in automatic reviewer for "Allow All" workspaces. */
   allowAllUsesClassifier: boolean;
   loading: boolean;
   error: string | null;

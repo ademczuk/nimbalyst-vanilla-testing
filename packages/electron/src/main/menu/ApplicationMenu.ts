@@ -266,8 +266,8 @@ export async function createApplicationMenu() {
                 },
                 {
                     id: 'file-new-session',
-                    label: 'New Session...',
-                    accelerator: KeyboardShortcuts.file.newSessionGlobal,
+                    label: 'Launch New Session...',
+                    accelerator: KeyboardShortcuts.file.sessionLaunchPopup,
                     click: async () => {
                         const focusedWindow = getFocusedWindow();
 
@@ -278,9 +278,7 @@ export async function createApplicationMenu() {
                                 const state = windowStates.get(windowId);
 
                                 if (state?.mode === 'workspace' && state.workspacePath) {
-                                    // Switch to agent mode and create new session
-                                    focusedWindow.webContents.send('set-content-mode', 'agent');
-                                    focusedWindow.webContents.send('agent-new-session');
+                                    focusedWindow.webContents.send('session-launch-popup-open');
                                 }
                             }
                         }

@@ -14,6 +14,8 @@ import { datamodelDiscoverTip } from './datamodel-discover';
 import { docHistoryTip } from './doc-history';
 import { documentSharedTip } from './document-shared';
 import { excalidrawDiscoverTip } from './excalidraw-discover';
+import { filesAgentContextTip } from './files-agent-context';
+import { filesVisualEditorsTip } from './files-visual-editors';
 import { keyboardShortcutsTip } from './keyboard-shortcuts';
 import { lightningInterruptTip } from './lightning-interrupt';
 import { mobileKeepAwakeTip } from './mobile-keep-awake';
@@ -29,6 +31,10 @@ import { wakeupTip } from './wakeup';
 import { worktreeSessionTip } from './worktree-session';
 
 export const tips: TipDefinition[] = [
+  // Files-mode empty state
+  filesVisualEditorsTip,
+  filesAgentContextTip,
+  quickOpenTip,
   // Original five (priority 5-10 -- highest)
   mobileKeepAwakeTip,
   worktreeSessionTip,
@@ -47,7 +53,6 @@ export const tips: TipDefinition[] = [
   claudeMdTip,
   autoCommitTip,
   docHistoryTip,
-  quickOpenTip,
   contentSearchTip,
   mobilePairedTip,
   wakeupTip,

@@ -19,7 +19,7 @@ import { editorRegistry } from '@nimbalyst/runtime/ai/EditorRegistry';
 import { getExtensionLoader } from '@nimbalyst/runtime';
 import { customEditorRegistry } from '../CustomEditors';
 import { WorkspaceSidebar } from '../WorkspaceSidebar';
-import { WorkspaceWelcome } from '../WorkspaceWelcome';
+import { WorkspaceWelcome, type WelcomeFileQuickPick } from '../WorkspaceWelcome';
 import { TabManager } from '../TabManager/TabManager';
 import { TabContent } from '../TabContent/TabContent';
 import { ChatSidebar, type ChatSidebarRef } from '../ChatSidebar';
@@ -40,6 +40,7 @@ import {
   aiChatWidthAtomFamily,
   aiChatCollapsedAtomFamily,
 } from '../../store/atoms/workspaceLayout';
+import { refreshFileTree } from '../../store/listeners/fileTreeListeners';
 
 export interface EditorModeRef {
   closeActiveTab: () => void;
@@ -102,6 +103,7 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
   // Dialog states
   const [isNewFileDialogOpen, setIsNewFileDialogOpen] = useState(false);
   const [newFileDirectory, setNewFileDirectory] = useState<string | null>(null);
+  const [newFileInitialType, setNewFileInitialType] = useState<NewFileType>('markdown');
   const [isWorkspaceHistoryDialogOpen, setIsWorkspaceHistoryDialogOpen] = useState(false);
   const [workspaceHistoryPath, setWorkspaceHistoryPath] = useState<string | null>(null);
 
@@ -927,6 +929,30 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
     }
   }, [isAIChatCollapsed]);
 
+  const handleWelcomeNewFile = useCallback((quickPick?: WelcomeFileQuickPick) => {
+    let fileType: NewFileType = 'markdown';
+    if (quickPick === 'mockup') {
+      fileType = 'mockup';
+    } else if (quickPick === 'diagram') {
+      const diagramType = extensionFileTypes.find((type) => type.extension === '.excalidraw');
+      fileType = diagramType ? `ext:${diagramType.extension}` : 'any';
+    }
+
+    setNewFileDirectory(selectedFolderPath);
+    setNewFileInitialType(fileType);
+    setIsNewFileDialogOpen(true);
+  }, [extensionFileTypes, selectedFolderPath]);
+
+  const handleWelcomeFocusAgent = useCallback(() => {
+    setIsAIChatCollapsed(false);
+    chatSidebarRef.current?.focusInput();
+  }, [setIsAIChatCollapsed]);
+
+  const handleWelcomeInsertPrompt = useCallback((prompt: string) => {
+    setIsAIChatCollapsed(false);
+    chatSidebarRef.current?.insertPrompt(prompt);
+  }, [setIsAIChatCollapsed]);
+
   // Toggle sidebar collapsed state
   const toggleSidebarCollapsed = useCallback(() => {
     if (sidebarCollapsed) {
@@ -1114,6 +1140,7 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
       if (selectedFolderPath) {
         setNewFileDirectory(selectedFolderPath);
       }
+      setNewFileInitialType('markdown');
       setIsNewFileDialogOpen(true);
     });
 
@@ -1275,13 +1302,19 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
       }
 
       const filePath = `${directory}/${fullFileName}`;
-      await window.electronAPI.createFile(filePath, content);
+      const result = await window.electronAPI.createFile(filePath, content);
+      if (!result?.success) {
+        throw new Error(result?.error || 'Failed to create file');
+      }
+
+      await refreshFileTree(workspacePath);
 
       // Open the new file
-      await handleWorkspaceFileSelect(filePath);
+      await handleWorkspaceFileSelect(result.filePath || filePath);
 
       setIsNewFileDialogOpen(false);
       setNewFileDirectory(null);
+      setNewFileInitialType('markdown');
     } catch (error) {
       console.error('Error creating new file:', error);
     }
@@ -1338,7 +1371,10 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
           >
             <TabManager
               onTabClose={handleTabClose}
-              onNewTab={() => setIsNewFileDialogOpen(true)}
+              onNewTab={() => {
+                setNewFileInitialType('markdown');
+                setIsNewFileDialogOpen(true);
+              }}
               hideTabBar={false}
               isActive={isActive}
               onToggleAIChat={() => setIsAIChatCollapsed(prev => !prev)}
@@ -1388,7 +1424,14 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
             ref={welcomeContainerRef}
             style={{ display: 'flex', flex: 1 }}
           >
-            <WorkspaceWelcome workspaceName={workspaceName || 'Open a file to get started'} />
+            <WorkspaceWelcome
+              workspaceName={workspaceName || 'Open a file to get started'}
+              workspacePath={workspacePath}
+              hasWorkspace={true}
+              onNewFile={handleWelcomeNewFile}
+              onFocusAgent={handleWelcomeFocusAgent}
+              onInsertAgentPrompt={handleWelcomeInsertPrompt}
+            />
           </div>
         </div>
 
@@ -1417,12 +1460,14 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
           onClose={() => {
             setIsNewFileDialogOpen(false);
             setNewFileDirectory(null);
+            setNewFileInitialType('markdown');
           }}
           currentDirectory={newFileDirectory || workspacePath}
           workspacePath={workspacePath}
           onCreateFile={handleNewFile}
           extensionFileTypes={extensionFileTypes}
           onDirectoryChange={setNewFileDirectory}
+          initialFileType={newFileInitialType}
         />
       )}
 

@@ -28,6 +28,8 @@ describe('AccountInspectorPopover', () => {
         onClose={vi.fn()}
         onOpenAccount={onOpenAccount}
         onManageOrganization={onManageOrganization}
+        onOpenApplicationSettings={vi.fn()}
+        onOpenProjectSettings={vi.fn()}
       />,
     );
 
@@ -43,6 +45,29 @@ describe('AccountInspectorPopover', () => {
     expect(onManageOrganization).toHaveBeenCalledWith('org-work');
   });
 
+  it('links to Application and Project settings', () => {
+    const onOpenApplicationSettings = vi.fn();
+    const onOpenProjectSettings = vi.fn();
+    render(
+      <AccountInspectorPopover
+        accounts={[]}
+        projectOrg={null}
+        anchorEl={anchor()}
+        onClose={vi.fn()}
+        onOpenAccount={vi.fn()}
+        onManageOrganization={vi.fn()}
+        onOpenApplicationSettings={onOpenApplicationSettings}
+        onOpenProjectSettings={onOpenProjectSettings}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('account-inspector-application-settings-row'));
+    expect(onOpenApplicationSettings).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId('account-inspector-project-settings-row'));
+    expect(onOpenProjectSettings).toHaveBeenCalledTimes(1);
+  });
+
   it('invites sign-in when signed out and offers org setup when the project has none', () => {
     const onManageOrganization = vi.fn();
     render(
@@ -53,6 +78,8 @@ describe('AccountInspectorPopover', () => {
         onClose={vi.fn()}
         onOpenAccount={vi.fn()}
         onManageOrganization={onManageOrganization}
+        onOpenApplicationSettings={vi.fn()}
+        onOpenProjectSettings={vi.fn()}
       />,
     );
 

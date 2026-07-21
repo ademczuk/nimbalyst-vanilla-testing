@@ -24,6 +24,7 @@ interface SettingsSidebarProps {
   onSelectCategory: (category: SettingsCategory | string) => void;
   providerStatus?: Record<string, { enabled: boolean; testStatus?: string }>;
   scope?: SettingsScope;
+  showDirectChatProviders: boolean;
 }
 
 const GROUP_DESCRIPTIONS: Record<string, string> = {
@@ -44,6 +45,7 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
   onSelectCategory,
   providerStatus = {},
   scope = 'application',
+  showDirectChatProviders,
 }) => {
   const developerMode = useAtomValue(developerModeAtom);
   const [extAgentProviders, setExtAgentProviders] = useState<
@@ -70,7 +72,7 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
 
   const groups = useMemo(() => {
     const grouped = new Map<string, Array<SettingsRoute | { id: string; label: string; icon?: string; status: string }>>();
-    for (const route of getSettingsRoutesForScope(scope, { developerMode })) {
+    for (const route of getSettingsRoutesForScope(scope, { developerMode, showDirectChatProviders })) {
       const entries = grouped.get(route.group) ?? [];
       entries.push(route);
       grouped.set(route.group, entries);
@@ -81,7 +83,7 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
       grouped.set('Agent Providers', entries);
     }
     return [...grouped.entries()];
-  }, [developerMode, extAgentProviders, scope]);
+  }, [developerMode, extAgentProviders, scope, showDirectChatProviders]);
 
   return (
     <aside

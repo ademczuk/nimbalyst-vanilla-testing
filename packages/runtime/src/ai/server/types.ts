@@ -56,6 +56,7 @@ export interface DocumentContext {
 
   // Session context (populated by backend before sending to provider)
   sessionType?: SessionType;
+  hasBeenNamed?: boolean;  // Session already has a caller-assigned name; suppresses in-band self-naming
   permissionsPath?: string;  // Path for permission lookups (may differ from worktreePath)
   mcpConfigWorkspacePath?: string;  // Path for MCP config lookup (parent project for worktrees)
   attachments?: ChatAttachment[];

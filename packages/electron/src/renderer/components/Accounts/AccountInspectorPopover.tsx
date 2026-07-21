@@ -30,9 +30,13 @@ interface AccountInspectorPopoverProps {
   onOpenAccount: () => void;
   /** Open the org-management window for an organization (omit orgId to create one). */
   onManageOrganization: (orgId?: string) => void;
+  /** Open the global Application settings. */
+  onOpenApplicationSettings: () => void;
+  /** Open the current project's settings. */
+  onOpenProjectSettings: () => void;
 }
 
-/** Row height/shape shared by the Account and Organization entries. */
+/** Row height/shape shared by the settings, Account and Organization entries. */
 const ROW_CLASS =
   'account-inspector-row flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-[var(--nim-bg-hover)]';
 
@@ -43,6 +47,8 @@ export function AccountInspectorPopover({
   onClose,
   onOpenAccount,
   onManageOrganization,
+  onOpenApplicationSettings,
+  onOpenProjectSettings,
 }: AccountInspectorPopoverProps) {
   const { refs, floatingStyles, context } = useFloating({
     open: true,
@@ -75,7 +81,62 @@ export function AccountInspectorPopover({
         data-component="AccountInspectorPopover"
         data-testid="account-inspector-popover"
       >
-        {/* Account row → Account screen (sign-in / manage). */}
+        {/* Settings shortcuts → the Application and Project settings screens. */}
+        <button
+          type="button"
+          className={ROW_CLASS}
+          data-testid="account-inspector-application-settings-row"
+          onClick={onOpenApplicationSettings}
+        >
+          <MaterialSymbol icon="settings" size={20} className="shrink-0 text-[var(--nim-text-muted)]" />
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">Application Settings</span>
+          <MaterialSymbol icon="chevron_right" size={18} className="text-[var(--nim-text-faint)]" />
+        </button>
+        <button
+          type="button"
+          className={ROW_CLASS}
+          data-testid="account-inspector-project-settings-row"
+          onClick={onOpenProjectSettings}
+        >
+          <MaterialSymbol icon="tune" size={20} className="shrink-0 text-[var(--nim-text-muted)]" />
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">Project Settings</span>
+          <MaterialSymbol icon="chevron_right" size={18} className="text-[var(--nim-text-faint)]" />
+        </button>
+
+        <div className="border-t border-[var(--nim-border)]" />
+
+        {/* Organization row → org-management window for the active project's org.
+            A single compact line whether or not the project has an org. */}
+        {projectOrg ? (
+          <button
+            type="button"
+            className={`${ROW_CLASS} py-2`}
+            data-testid="account-inspector-organization-row"
+            onClick={() => onManageOrganization(projectOrg.orgId)}
+          >
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-gradient-to-br from-[#60a5fa] to-[#a78bfa] text-[10px] font-semibold text-white">
+              {projectOrg.name.slice(0, 2).toUpperCase()}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{projectOrg.name}</span>
+            <MaterialSymbol icon="chevron_right" size={18} className="text-[var(--nim-text-faint)]" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={`${ROW_CLASS} py-2`}
+            data-testid="account-inspector-organization-row"
+            onClick={() => onManageOrganization(undefined)}
+          >
+            <MaterialSymbol icon="corporate_fare" size={20} className="shrink-0 text-[var(--nim-text-muted)]" />
+            <span className="min-w-0 flex-1 truncate text-sm">No organization</span>
+            <span className="shrink-0 text-[11px] text-[var(--nim-text-muted)]">Set up</span>
+            <MaterialSymbol icon="chevron_right" size={18} className="text-[var(--nim-text-faint)]" />
+          </button>
+        )}
+
+        <div className="border-t border-[var(--nim-border)]" />
+
+        {/* Account row (bottom) → Account screen (sign-in / manage). */}
         <button
           type="button"
           className={ROW_CLASS}
@@ -90,28 +151,6 @@ export function AccountInspectorPopover({
             <span className="block truncate text-sm font-medium">{email ?? 'Sign in'}</span>
             <span className={`block text-[11px] ${expired ? 'text-[var(--nim-warning)]' : 'text-[var(--nim-text-muted)]'}`}>
               {email ? (expired ? 'Session expired — reconnect' : 'Manage account & sign-in') : 'Sign in to sync and collaborate'}
-            </span>
-          </span>
-          <MaterialSymbol icon="chevron_right" size={18} className="text-[var(--nim-text-faint)]" />
-        </button>
-
-        <div className="border-t border-[var(--nim-border)]" />
-
-        {/* Organization row → org-management window for the active project's org. */}
-        <button
-          type="button"
-          className={ROW_CLASS}
-          data-testid="account-inspector-organization-row"
-          onClick={() => onManageOrganization(projectOrg?.orgId)}
-        >
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[#60a5fa] to-[#a78bfa] text-xs font-semibold text-white">
-            {projectOrg ? projectOrg.name.slice(0, 2).toUpperCase() : <MaterialSymbol icon="corporate_fare" size={18} />}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-[10px] font-semibold uppercase tracking-wide text-[var(--nim-text-faint)]">Organization</span>
-            <span className="block truncate text-sm font-medium">{projectOrg?.name ?? 'No organization'}</span>
-            <span className="block text-[11px] text-[var(--nim-text-muted)]">
-              {projectOrg ? 'Manage members, projects & billing' : 'Set up an organization for this project'}
             </span>
           </span>
           <MaterialSymbol icon="chevron_right" size={18} className="text-[var(--nim-text-faint)]" />

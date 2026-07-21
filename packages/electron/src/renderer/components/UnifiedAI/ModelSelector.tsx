@@ -14,12 +14,13 @@ import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol, getProviderIcon } from '@nimbalyst/runtime';
 import { isAgentProvider, shouldBlockStartedSessionProviderSwitch } from '@nimbalyst/runtime/ai/server/types';
 import { getClaudeCodeModelLabel } from '../../utils/modelUtils';
-import { providersAtom } from '../../store/atoms/appSettings';
+import { advancedSettingsAtom, aiProviderSettingsAtom } from '../../store/atoms/appSettings';
 import { setWindowModeAtom } from '../../store/atoms/windowMode';
 import { navigateToSettingsAtom } from '../../store/atoms/settingsNavigation';
 import type { SettingsCategory } from '../Settings/SettingsSidebar';
 import { AlphaBadge } from '../common/AlphaBadge';
 import { HelpTooltip } from '../../help';
+import { isDirectChatProvider, isProviderVisible } from '../../utils/chatProviderVisibility';
 
 const ALPHA_PROVIDERS = new Set(['opencode', 'copilot-cli']);
 
@@ -68,7 +69,9 @@ export function ModelSelector({
   const [providerLabels, setProviderLabels] = useState<Record<string, string>>({});
   const [providerIcons, setProviderIcons] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-  const providers = useAtomValue(providersAtom);
+  const aiProviderSettings = useAtomValue(aiProviderSettingsAtom);
+  const advancedSettings = useAtomValue(advancedSettingsAtom);
+  const { providers } = aiProviderSettings;
   const setWindowMode = useSetAtom(setWindowModeAtom);
   const navigateToSettings = useSetAtom(navigateToSettingsAtom);
   const menuRef = React.useRef<HTMLDivElement>(null);
@@ -277,10 +280,9 @@ export function ModelSelector({
     return getProviderIcon(provider, { size });
   };
 
-  const CHAT_MODEL_PROVIDERS = new Set(['claude', 'openai', 'lmstudio']);
   const getProviderType = (provider: string): ProviderType => {
     if (isAgentProvider(provider)) return 'agent';
-    if (CHAT_MODEL_PROVIDERS.has(provider)) return 'model';
+    if (isDirectChatProvider(provider)) return 'model';
     return 'agent';
   };
 
@@ -294,8 +296,17 @@ export function ModelSelector({
     return sectionType !== currentProviderType;
   };
 
+  const preservedProvider = sessionHasMessages ? currentProvider : null;
+  const visibleModels = Object.fromEntries(
+    Object.entries(models).filter(([provider]) => isProviderVisible(provider, {
+      revealAll: advancedSettings.showDirectChatProviders,
+      settings: aiProviderSettings,
+      preserveProviderId: preservedProvider,
+    })),
+  );
+
   // Group providers by type (agents vs models)
-  const groupedProviders = Object.entries(models).reduce((acc, [provider, providerModels]) => {
+  const groupedProviders = Object.entries(visibleModels).reduce((acc, [provider, providerModels]) => {
     const isAgent = getProviderType(provider) === 'agent';
     const type = isAgent ? 'agents' : 'models';
     if (!acc[type]) acc[type] = {};
@@ -355,7 +366,7 @@ export function ModelSelector({
           >
           {loading ? (
             <div className="model-selector-loading p-3 text-center text-xs text-[var(--nim-text-faint)]">Loading models...</div>
-          ) : Object.keys(models).length === 0 ? (
+          ) : Object.keys(visibleModels).length === 0 ? (
             <div className="model-selector-empty p-3 text-center text-xs text-[var(--nim-text-faint)]">No models available</div>
           ) : (
             <>

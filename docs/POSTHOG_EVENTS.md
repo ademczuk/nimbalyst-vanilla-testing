@@ -101,6 +101,15 @@ All events include `$session_id` property automatically. Dev users are marked wi
 | `session_view_mode_switched` | `SessionHistory.tsx` | User switches between list and kanban views for session history | `fromMode` (list/card/kanban)<br/>`toMode` (list/card/kanban) | (pending release) |  |
 | `session_list_filter_applied` | `SessionHistory.tsx` | User applies a tag filter or searches in the sessions list panel | `filterType` (tag/search)<br/>`activeTagCount` (number of active tag filters) | (pending release) |  |
 
+### Contextual Tips
+
+| Event Name | File(s) | Trigger | Properties | First Added (Public) | Significant Changes |
+| --- | --- | --- | --- | --- | --- |
+| `tip_shown` | `TipProvider.tsx:169, 289`<br/>`FilesEmptyTipDisplay.tsx` | A contextual tip card is displayed (floating card, developer menu, or Files empty state) | `tip_id`<br/>`tip_name`<br/>`source` (developer_menu, when triggered manually)<br/>`surface` (files_empty, when shown on the Files empty state) | v0.56.8 (2026-03-23) | (pending release as of 6ddf1d7): Added files_empty surface |
+| `tip_action_clicked` | `TipProvider.tsx:185, 200`<br/>`InlineTipDisplay.tsx:111, 127`<br/>`FilesEmptyTipDisplay.tsx` | User clicks a tip's primary or secondary action button | `tip_id`<br/>`tip_name`<br/>`action_label`<br/>`action_type` (secondary, when applicable)<br/>`surface` (inline_empty_transcript / files_empty) | v0.56.8 (2026-03-23) | (pending release as of 6ddf1d7): Added files_empty surface |
+| `tip_all_tips_opened` | `InlineTipDisplay.tsx:143`<br/>`FilesEmptyTipDisplay.tsx` | User opens the All Tips dialog from an inline tip card | `from_tip_id`<br/>`surface` (inline_empty_transcript / files_empty) | v0.56.8 (2026-03-23) | (pending release as of 6ddf1d7): Added files_empty surface |
+| `tip_navigated` | `FilesEmptyTipDisplay.tsx` | User clicks "Next tip" on the Files empty-state tip card | `from_tip_id`<br/>`to_tip_id`<br/>`direction` (next)<br/>`reason` (next_button)<br/>`surface` (files_empty) | (pending release as of 6ddf1d7) |  |
+
 ### Session Kanban Board
 
 | Event Name | File(s) | Trigger | Properties | First Added (Public) | Significant Changes |

@@ -195,6 +195,7 @@ export class OpenAICodexProvider extends BaseAgentProvider {
    * `liveProtocolSessions` is in-memory only.
    */
   private readonly liveProtocolSessions = new Map<string, ProtocolSession>();
+  private readonly liveProtocolSessionPermissionKeys = new Map<string, string>();
   private readonly activeProtocolSessionCounts = new Map<string, number>();
   private readonly protocolSessionIdleTimers = new Map<
     string,
@@ -1004,7 +1005,20 @@ export class OpenAICodexProvider extends BaseAgentProvider {
       //   2. A persisted thread id (`this.sessions.getSessionId`) from a prior
       //      Nimbalyst process. Call `resumeSession` to attach to it.
       //   3. Otherwise, `createSession`.
-      const cachedLiveSession = sessionId ? this.liveProtocolSessions.get(sessionId) : undefined;
+      const permissionKey = `${permissionDecision.permissionMode ?? 'none'}:${permissionDecision.agentVerified === true}`;
+      let cachedLiveSession = sessionId ? this.liveProtocolSessions.get(sessionId) : undefined;
+      if (
+        sessionId &&
+        cachedLiveSession &&
+        this.liveProtocolSessionPermissionKeys.get(sessionId) !== permissionKey
+      ) {
+        // Sandbox and approval settings are fixed when a Codex thread is
+        // attached to an app-server child. Reattach the persisted thread when
+        // project permissions change so Agent-verified takes effect on the
+        // very next turn rather than after the idle eviction window.
+        this.evictLiveProtocolSession(sessionId);
+        cachedLiveSession = undefined;
+      }
       const existingSessionId = this.sessions.getSessionId(sessionId || '');
       // console.log('[CODEX] Session lookup:', {
       //   sessionId,
@@ -1080,6 +1094,7 @@ export class OpenAICodexProvider extends BaseAgentProvider {
         raw: {
           systemPrompt,
           abortSignal: abortController.signal,
+          agentVerified: permissionDecision.agentVerified === true,
           codexConfigOverrides: this.buildCodexConfigOverrides(mcpServers),
           ...(codexEnv ? { codexEnv } : {}),
           ...(this.config?.effortLevel ? { effortLevel: this.config.effortLevel } : {}),
@@ -1132,6 +1147,7 @@ export class OpenAICodexProvider extends BaseAgentProvider {
       // to key by) and when we just hit the cache (no-op).
       if (sessionId && !cachedLiveSession) {
         this.liveProtocolSessions.set(sessionId, session);
+        this.liveProtocolSessionPermissionKeys.set(sessionId, permissionKey);
       }
 
       // Persist a newly created thread ID immediately, before streaming the
@@ -1387,6 +1403,7 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     if (!sessionId) return;
     this.cancelProtocolSessionIdleTimer(sessionId);
     const cached = this.liveProtocolSessions.get(sessionId);
+    this.liveProtocolSessionPermissionKeys.delete(sessionId);
     if (!cached) return;
     this.liveProtocolSessions.delete(sessionId);
     try { this.protocol.cleanupSession(cached); }
@@ -1803,6 +1820,7 @@ export class OpenAICodexProvider extends BaseAgentProvider {
       catch (err) { console.warn('[CODEX] protocol.cleanupSession threw during destroy():', err); }
     }
     this.liveProtocolSessions.clear();
+    this.liveProtocolSessionPermissionKeys.clear();
     this.appServerNotificationDeduper.clear();
     // Clear permission service caches
     this.permissionService.clearSessionCache();
@@ -2889,7 +2907,12 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     workspacePath: string,
     permissionsPath: string,
     signal: AbortSignal
-  ): Promise<{ decision: 'allow' | 'deny'; reason?: string; permissionMode?: PermissionMode }> {
+  ): Promise<{
+    decision: 'allow' | 'deny';
+    reason?: string;
+    permissionMode?: PermissionMode;
+    agentVerified?: boolean;
+  }> {
     const pathForTrust = permissionsPath || workspacePath;
 
     // Check trust status
@@ -2906,12 +2929,17 @@ export class OpenAICodexProvider extends BaseAgentProvider {
         };
       }
 
-      // IMPORTANT: Codex can only be used in "allow-all" or "bypass-all" mode
-      // The Codex SDK does not support tool-level permission checks (no canUseTool callback)
-      // We can only approve/deny entire turns, not individual tools
-      // Therefore, we require users to explicitly opt-in to unrestricted mode
+      // Codex does not expose Nimbalyst's per-tool permission callback. Permit
+      // only project modes that authorize the turn; Agent-verified bypass is
+      // narrowed downstream to Codex's native sandbox plus automatic reviewer.
       if (trustStatus.mode === 'bypass-all' || trustStatus.mode === 'allow-all') {
-        return { decision: 'allow', permissionMode: trustStatus.mode };
+        return {
+          decision: 'allow',
+          permissionMode: trustStatus.mode,
+          agentVerified:
+            trustStatus.mode === 'bypass-all' &&
+            trustStatus.allowAllUsesClassifier === true,
+        };
       }
 
       // Deny Codex in "ask" mode - tool-level permissions are not supported

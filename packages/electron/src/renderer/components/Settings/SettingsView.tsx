@@ -42,6 +42,7 @@ import { ExtensionMarketplacePanel } from './panels/ExtensionMarketplacePanel';
 import { walkthroughs } from '../../walkthroughs';
 import {
   aiProviderSettingsAtom,
+  advancedSettingsAtom,
   developerModeAtom,
   setAIProviderSettingsAtom,
   setProviderConfigAtom,
@@ -51,6 +52,7 @@ import {
   type ProviderConfig,
   type AIModel,
 } from '../../store/atoms/appSettings';
+import { shouldShowDirectChatProviderSettings } from '../../utils/chatProviderVisibility';
 import { omitModelsField } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 import { AccountSettingsPanel } from './panels/AccountSettingsPanel';
 import { ProjectSharingPanel, type ProjectSettingsTarget } from './panels/ProjectSharingPanel';
@@ -278,6 +280,7 @@ export function SettingsView({
 
   // AI Provider settings - using Jotai atoms (Phase 5b)
   const [aiProviderSettings] = useAtom(aiProviderSettingsAtom);
+  const advancedSettings = useAtomValue(advancedSettingsAtom);
   const [, updateAIProviderSettings] = useAtom(setAIProviderSettingsAtom);
   const [, updateProviderConfig] = useAtom(setProviderConfigAtom);
   const [, updateApiKey] = useAtom(setApiKeyAtom);
@@ -285,6 +288,10 @@ export function SettingsView({
 
   // Destructure for easier access (these update when atom updates)
   const { providers, apiKeys, availableModels } = aiProviderSettings;
+  const showDirectChatProviders = shouldShowDirectChatProviderSettings(
+    advancedSettings.showDirectChatProviders,
+    aiProviderSettings,
+  );
 
   // Local setters that wrap atom updates for backward compatibility
   const setProviders = useCallback((updater: Record<string, ProviderConfig> | ((prev: Record<string, ProviderConfig>) => Record<string, ProviderConfig>)) => {
@@ -370,14 +377,17 @@ export function SettingsView({
 
   // When scope changes, ensure selected category is valid for that scope
   useEffect(() => {
-    const validCategories = getSettingsRoutesForScope(scope, { developerMode }).map((route) => route.id);
+    const validCategories = getSettingsRoutesForScope(scope, {
+      developerMode,
+      showDirectChatProviders,
+    }).map((route) => route.id);
     // Extension-contributed agent providers (e.g. antigravity-gemini-agent) are
     // valid selectable categories too; don't bounce the user off them.
     const isExtensionProvider = scope === 'application' && extAgentProviders.some((pr) => pr.id === selectedCategory);
     if (!isExtensionProvider && !validCategories.includes(selectedCategory as typeof validCategories[number])) {
       setSelectedCategory(getDefaultSettingsCategory(scope));
     }
-  }, [scope, selectedCategory, developerMode, extAgentProviders]);
+  }, [scope, selectedCategory, developerMode, extAgentProviders, showDirectChatProviders]);
 
   useEffect(() => {
     if (!developerMode && selectedCategory === 'github') {
@@ -1043,6 +1053,7 @@ export function SettingsView({
           onSelectCategory={setSelectedCategory}
           providerStatus={providerStatus}
           scope={scope}
+          showDirectChatProviders={showDirectChatProviders}
           // releaseChannel now comes from Jotai atom in SettingsSidebar
         />
 

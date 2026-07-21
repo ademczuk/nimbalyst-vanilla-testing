@@ -120,6 +120,66 @@ describe("ExtensionLoader deferred editor bundles", () => {
     ).toBe(false);
   });
 
+  it("keeps collaboration-capable editors eager so their collab codec registers at startup", () => {
+    // Editor-only manifest that would otherwise defer, but declares collab.
+    const collabManifest: ExtensionManifest = {
+      ...manifest,
+      contributions: {
+        ...manifest.contributions,
+        customEditors: [
+          {
+            filePatterns: ["*.lazy"],
+            displayName: "Lazy Test Editor",
+            component: "LazyEditor",
+            collaboration: { supported: true },
+          },
+        ],
+      },
+    };
+    expect(shouldDeferExtensionBundle(collabManifest)).toBe(false);
+
+    // collaboration.supported: false must NOT force eager.
+    expect(
+      shouldDeferExtensionBundle({
+        ...manifest,
+        contributions: {
+          ...manifest.contributions,
+          customEditors: [
+            {
+              filePatterns: ["*.lazy"],
+              displayName: "Lazy Test Editor",
+              component: "LazyEditor",
+              collaboration: { supported: false },
+            },
+          ],
+        },
+      })
+    ).toBe(true);
+
+    // Only one of several editors declaring collab is enough to stay eager.
+    expect(
+      shouldDeferExtensionBundle({
+        ...manifest,
+        contributions: {
+          ...manifest.contributions,
+          customEditors: [
+            {
+              filePatterns: ["*.a"],
+              displayName: "A",
+              component: "A",
+            },
+            {
+              filePatterns: ["*.b"],
+              displayName: "B",
+              component: "B",
+              collaboration: { supported: true },
+            },
+          ],
+        },
+      })
+    ).toBe(false);
+  });
+
   it("registers editor and new-file metadata without evaluating the module", () => {
     const platform = makePlatform(async () => ({
       components: { LazyEditor: ReadyEditor },

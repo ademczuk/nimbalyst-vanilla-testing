@@ -45,6 +45,7 @@ import type { TextSelection } from './TextSelectionIndicator';
 import { type SerializableDocumentContext } from '../../hooks/useDocumentContext';
 import { serializeEditorContextItemsForIpc } from './editorContextSerialization';
 import { isClaudeCliTerminalSession } from './claudeCliInputRouting';
+import { expandSessionMentions } from './sessionMentions';
 import { diffTreeGroupByDirectoryAtom, setDiffTreeGroupByDirectoryAtom } from '../../store/atoms/projectState';
 import {
   sessionDraftInputAtom,
@@ -144,26 +145,6 @@ function isCorruptedSpreadOfString(value: unknown): boolean {
   return true;
 }
 
-/**
- * Expand @@[name](shortId) session mentions to @@[name](fullUuid).
- * Short IDs (5 chars) are used in the textarea for readability;
- * at send time we resolve them to full UUIDs for the agent.
- */
-function expandSessionMentions(
-  message: string,
-  registry: Map<string, import('@nimbalyst/runtime').SessionMeta>
-): string {
-  return message.replace(/@@\[([^\]]+)\]\(([a-f0-9]+)\)/g, (_match, name, shortId) => {
-    for (const [fullId] of registry) {
-      if (fullId.startsWith(shortId)) {
-        return `@@[${name}](${fullId})`;
-      }
-    }
-    // No match found -- leave as-is
-    return _match;
-  });
-}
-
 function makeOptimisticError(text: string, extra?: Partial<TranscriptViewMessage>): TranscriptViewMessage {
   return {
     id: nextOptimisticId(),
@@ -214,6 +195,7 @@ interface Todo {
 
 export interface SessionTranscriptRef {
   focusInput: () => void;
+  insertPrompt: (text: string) => void;
 }
 
 export interface SessionTranscriptProps {
@@ -1047,7 +1029,11 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
   // ============================================================
   useImperativeHandle(ref, () => ({
     focusInput: () => inputRef.current?.focus(),
-  }));
+    insertPrompt: (text: string) => {
+      setDraftInput(text);
+      inputRef.current?.focus();
+    },
+  }), [setDraftInput]);
 
   // ============================================================
   // Handlers

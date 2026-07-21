@@ -1433,6 +1433,84 @@ describe('OpenAICodexProvider', () => {
     expect(cleanupSession).toHaveBeenCalledWith(turn1Session);
   });
 
+  it('reattaches a live Codex thread when Agent-verified is enabled', async () => {
+    let classifierEnabled = false;
+    OpenAICodexProvider.setTrustChecker(() => ({
+      trusted: true,
+      mode: 'bypass-all',
+      allowAllUsesClassifier: classifierEnabled,
+    }));
+
+    const firstSession = {
+      id: 'thread-permission-change',
+      platform: 'codex-app-server',
+      raw: { generation: 1 },
+    };
+    const secondSession = {
+      id: 'thread-permission-change',
+      platform: 'codex-app-server',
+      raw: { generation: 2 },
+    };
+    const createSession = vi.fn(async () => firstSession);
+    const resumeSession = vi.fn(async () => secondSession);
+    const cleanupSession = vi.fn();
+    const sendMessage = vi.fn((_session: unknown, _message: unknown) => createAsyncEventStream([
+      {
+        type: 'complete',
+        content: 'ok',
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      },
+    ]));
+    const protocol = {
+      platform: 'codex-app-server',
+      createSession,
+      resumeSession,
+      forkSession: vi.fn(),
+      sendMessage,
+      abortSession: vi.fn(),
+      cleanupSession,
+    } as any;
+    const provider = new OpenAICodexProvider(
+      { apiKey: 'test-key' },
+      { protocol },
+    );
+    await provider.initialize({ apiKey: 'test-key', model: 'openai-codex:gpt-5' });
+
+    for await (const _chunk of provider.sendMessage(
+      'raw access turn',
+      undefined,
+      'session-permission-change',
+      [],
+      process.cwd(),
+    )) {
+      // drain
+    }
+    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
+      raw: expect.objectContaining({ agentVerified: false }),
+    }));
+
+    classifierEnabled = true;
+    for await (const _chunk of provider.sendMessage(
+      'verified turn',
+      undefined,
+      'session-permission-change',
+      [],
+      process.cwd(),
+    )) {
+      // drain
+    }
+
+    expect(cleanupSession).toHaveBeenCalledWith(firstSession);
+    expect(resumeSession).toHaveBeenCalledWith(
+      'thread-permission-change',
+      expect.objectContaining({
+        raw: expect.objectContaining({ agentVerified: true }),
+      }),
+    );
+    expect(sendMessage.mock.calls[1]![0]).toBe(secondSession);
+    provider.cleanupSession('session-permission-change');
+  });
+
   it('denies Codex turns when workspace is not trusted', async () => {
     const startThread = vi.fn();
     const provider = new OpenAICodexProvider(
@@ -1466,6 +1544,55 @@ describe('OpenAICodexProvider', () => {
     expect(startThread).not.toHaveBeenCalled();
     const errorChunk = chunks.find((chunk) => chunk.type === 'error');
     expect(errorChunk?.error).toContain('not trusted');
+  });
+
+  it('propagates Agent-verified trust into Codex session options', async () => {
+    const createSession = vi.fn(async () => ({
+      id: 'thread-agent-verified',
+      platform: 'codex-app-server',
+      raw: {},
+    }));
+    const protocol = {
+      platform: 'codex-app-server',
+      createSession,
+      resumeSession: vi.fn(),
+      forkSession: vi.fn(),
+      sendMessage: vi.fn(() => createAsyncEventStream([
+        {
+          type: 'complete',
+          content: 'ok',
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        },
+      ])),
+      abortSession: vi.fn(),
+      cleanupSession: vi.fn(),
+    } as any;
+    const provider = new OpenAICodexProvider(
+      { apiKey: 'test-key' },
+      { protocol, transport: 'sdk' },
+    );
+    OpenAICodexProvider.setTrustChecker(() => ({
+      trusted: true,
+      mode: 'bypass-all',
+      allowAllUsesClassifier: true,
+    }));
+    await provider.initialize({ apiKey: 'test-key', model: 'openai-codex:gpt-5' });
+
+    for await (const _chunk of provider.sendMessage(
+      'verify this turn',
+      undefined,
+      'session-agent-verified',
+      [],
+      process.cwd(),
+    )) {
+      // drain
+    }
+
+    expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
+      permissionMode: 'bypass-all',
+      raw: expect.objectContaining({ agentVerified: true }),
+    }));
+    provider.cleanupSession('session-agent-verified');
   });
 
   it('denies Codex in ask mode (tool-level permissions not supported)', async () => {

@@ -19,6 +19,7 @@ import {
   setFileSystemServiceFor,
 } from '@nimbalyst/runtime';
 import { navigationHistoryService } from '../services/NavigationHistoryService';
+import { runWhenAppIsActive } from './AppActivationGuard';
 import { signalFirstWindowLoaded } from '../services/startupMaintenanceGate';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { FeatureTrackingService } from '../services/analytics/FeatureTrackingService';
@@ -153,6 +154,8 @@ export function getFocusedOrNewWindow(): BrowserWindow {
 export interface CreateWindowOptions {
     /** Show the window without activating the app (no focus steal). */
     showInactive?: boolean;
+    /** Keep a restored window hidden if the user switched away during startup. */
+    deferShowUntilAppActive?: boolean;
 }
 
 export function createWindow(
@@ -571,11 +574,16 @@ export function createWindow(
         // Show window when ready
         window.once('ready-to-show', () => {
             // console.log('[MAIN] Window ready to show at', new Date().toISOString(), 'elapsed:', Date.now() - startTime, 'ms');
-            if (options?.showInactive) {
-                window.showInactive();
-            } else {
-                window.show();
+            const showWindow = options?.showInactive
+                ? () => window.showInactive()
+                : () => window.show();
+
+            if (options?.deferShowUntilAppActive) {
+                runWhenAppIsActive(window, showWindow);
+                return;
             }
+
+            showWindow();
         });
 
         // Handle renderer process crashes

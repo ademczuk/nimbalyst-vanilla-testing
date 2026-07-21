@@ -81,6 +81,7 @@ export type SettingsDestination =
 
 export interface SettingsAvailabilityContext {
   developerMode: boolean;
+  showDirectChatProviders: boolean;
 }
 
 export interface SettingsRoute {
@@ -94,6 +95,8 @@ export interface SettingsRoute {
 }
 
 const developerOnly = ({ developerMode }: SettingsAvailabilityContext) => developerMode;
+const directChatProvidersVisible = ({ showDirectChatProviders }: SettingsAvailabilityContext) =>
+  showDirectChatProviders;
 
 export const settingsRoutes: readonly SettingsRoute[] = [
   { id: 'notifications', scope: 'application', group: 'Application', label: 'Notifications', icon: 'notifications' },
@@ -107,9 +110,9 @@ export const settingsRoutes: readonly SettingsRoute[] = [
   { id: 'openai-codex', scope: 'application', group: 'Agent Providers', label: 'OpenAI Codex', icon: 'smart_toy' },
   { id: 'opencode', scope: 'application', group: 'Agent Providers', label: 'OpenCode', icon: 'terminal', isAlpha: true },
   { id: 'copilot-cli', scope: 'application', group: 'Agent Providers', label: 'GitHub Copilot', icon: 'terminal', isAlpha: true },
-  { id: 'claude', scope: 'application', group: 'Chat Providers', label: 'Claude Chat', icon: 'chat' },
-  { id: 'openai', scope: 'application', group: 'Chat Providers', label: 'OpenAI', icon: 'chat' },
-  { id: 'lmstudio', scope: 'application', group: 'Chat Providers', label: 'LM Studio', icon: 'memory' },
+  { id: 'claude', scope: 'application', group: 'Chat Providers', label: 'Claude Chat', icon: 'chat', isAvailable: directChatProvidersVisible },
+  { id: 'openai', scope: 'application', group: 'Chat Providers', label: 'OpenAI', icon: 'chat', isAvailable: directChatProvidersVisible },
+  { id: 'lmstudio', scope: 'application', group: 'Chat Providers', label: 'LM Studio', icon: 'memory', isAvailable: directChatProvidersVisible },
   { id: 'marketplace', scope: 'application', group: 'Extensions', label: 'Marketplace', icon: 'storefront' },
   { id: 'installed-extensions', scope: 'application', group: 'Extensions', label: 'Installed', icon: 'extension' },
   { id: 'privileged-extensions', scope: 'application', group: 'Extensions', label: 'Privileged Capabilities', icon: 'shield_lock' },

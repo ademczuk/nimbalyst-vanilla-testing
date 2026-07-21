@@ -34,6 +34,10 @@ import {
 import { registerFileExtension, clearRegisteredExtensions } from '../extensions/RegisteredFileTypes';
 import { getBuiltinExtensionsDirectory } from '../extensions/builtinExtensionsDirectory';
 import {
+  detectStaleBuiltinExtensionBundle,
+  formatStaleBundleWarning,
+} from '../extensions/staleExtensionBundle';
+import {
   startExtensionBackendModules,
   stopExtensionBackendModules,
   getDefaultBackendModuleLifecycleDeps,
@@ -1100,6 +1104,23 @@ export function registerExtensionHandlers(): void {
                     }
                   }
                 }
+              }
+            }
+
+            // Dev-only: warn when a built-in extension's built bundle is
+            // older than its source, so features that run at activate() time
+            // (e.g. collab codec registration) aren't silently broken by a
+            // stale dev bundle. See NIM-1983.
+            if (isBuiltinDir && !app.isPackaged) {
+              try {
+                const stale = await detectStaleBuiltinExtensionBundle(
+                  extensionId,
+                  extensionPath,
+                  typeof manifest.main === 'string' ? manifest.main : undefined,
+                );
+                if (stale) logger.main.warn(formatStaleBundleWarning(stale));
+              } catch {
+                // Diagnostic only -- never block loading.
               }
             }
 

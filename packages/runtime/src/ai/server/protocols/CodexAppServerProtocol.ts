@@ -45,6 +45,7 @@ import {
   resolveCodexBinaryPath,
 } from './codexAppServer/codexAppServerBinary';
 import { terminateOwnedProcessTree } from './processTreeTermination';
+import { resolveCodexPermissionProfile } from './codexPermissionProfile';
 import type {
   AnyItem,
   ApprovalResponse,
@@ -527,8 +528,10 @@ export class CodexAppServerProtocol implements AgentProtocol {
    * `buildThreadOptions` so behavior is preserved across transports.
    */
   private buildThreadStartParams(options: SessionOptions): ThreadStartParams {
-    const sandbox: ThreadStartParams['sandbox'] =
-      options.permissionMode === 'bypass-all' ? 'danger-full-access' : 'workspace-write';
+    const permissionProfile = resolveCodexPermissionProfile(
+      options.permissionMode,
+      options.raw?.agentVerified === true,
+    );
 
     const effortLevel = options.raw?.effortLevel as string | undefined;
     const reasoningEffortRaw = effortLevel === 'max' ? 'xhigh' : (effortLevel ?? 'high');
@@ -553,9 +556,12 @@ export class CodexAppServerProtocol implements AgentProtocol {
 
     return {
       model: options.model ?? null,
-      sandbox,
+      sandbox: permissionProfile.sandboxMode,
       cwd: options.workspacePath,
-      approvalPolicy: 'never', // Nimbalyst routes approvals via host bindings; we never want codex to block waiting on stdin
+      approvalPolicy: permissionProfile.approvalPolicy,
+      ...(permissionProfile.approvalsReviewer
+        ? { approvalsReviewer: permissionProfile.approvalsReviewer }
+        : {}),
       ephemeral: false,
       developerInstructions: systemPrompt,
       config,
@@ -581,20 +587,17 @@ export class CodexAppServerProtocol implements AgentProtocol {
   /**
    * Register handlers for codex's server-to-client requests. Each handler
    * delegates to the host bindings (Nimbalyst's permission system, dialog
-   * surface, etc.). Defaults are intentionally permissive to mirror today's
-   * `approvalPolicy: 'never'` behavior in the SDK transport.
+   * surface, etc.). Approval requests that escape Codex's automatic reviewer
+   * fail closed when no host binding is available.
    */
   private wireServerRequestHandlers(client: JsonRpcClient): void {
     const deny: ApprovalResponse = { decision: 'denied' };
-    const allow: ApprovalResponse = { decision: 'approved' };
 
     client.setServerRequestHandler('item/fileChange/requestApproval', async (raw) => {
       const params = raw as ItemFileChangeRequestApprovalParams;
       if (this.host.approveFileChange) return this.host.approveFileChange(params);
-      // No host binding: with approvalPolicy=never codex should not call us here.
-      // Default-allow keeps things flowing if codex changes that contract.
-      console.warn('[CODEX][APPSERVER] approveFileChange called with no host binding; default allow');
-      return allow;
+      console.warn('[CODEX][APPSERVER] approveFileChange called with no host binding; default deny');
+      return deny;
     });
 
     client.setServerRequestHandler('item/commandExecution/requestApproval', async (raw) => {
@@ -615,7 +618,7 @@ export class CodexAppServerProtocol implements AgentProtocol {
       if (this.host.approveFileChange) {
         return this.host.approveFileChange(raw as ItemFileChangeRequestApprovalParams);
       }
-      return allow;
+      return deny;
     });
 
     client.setServerRequestHandler('execCommandApproval', async (raw) => {
@@ -627,8 +630,7 @@ export class CodexAppServerProtocol implements AgentProtocol {
 
     client.setServerRequestHandler('mcpServer/elicitation/request', async (raw) => {
       if (this.host.handleMcpElicitation) return this.host.handleMcpElicitation(raw);
-      // No host binding: auto-accept, mirroring this transport's permissive
-      // exec/file defaults (approvalPolicy: 'never'). Returning `null` fails
+      // Nimbalyst MCP tools own their durable prompt flows. Returning `null` fails
       // codex's deserializer ("invalid type: null, expected struct
       // McpServerElicitationRequestResponse") and codex then reports every
       // nimbalyst MCP tool call as "user rejected MCP tool call" (#797).

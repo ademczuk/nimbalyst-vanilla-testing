@@ -545,6 +545,14 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
                 setUserMenuOpen(false);
                 handleNavigateSettings('account', 'account');
               }}
+              onOpenApplicationSettings={() => {
+                setUserMenuOpen(false);
+                handleNavigateSettings('application');
+              }}
+              onOpenProjectSettings={() => {
+                setUserMenuOpen(false);
+                handleNavigateSettings('project');
+              }}
               onManageOrganization={(orgId) => {
                 setUserMenuOpen(false);
                 // Org administration opens in its own window (2026-07-17

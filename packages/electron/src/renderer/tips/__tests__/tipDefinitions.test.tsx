@@ -10,6 +10,8 @@ import { FEATURE_USAGE_KEYS, type FeatureUsageKey, type FeatureUsageRecord } fro
 import { tipCreateWorktreeSessionRequestAtom } from '../atoms';
 import { keyboardShortcutsTip } from '../definitions/keyboard-shortcuts';
 import { sessionCleanupTip } from '../definitions/session-cleanup';
+import { filesAgentContextTip } from '../definitions/files-agent-context';
+import { filesVisualEditorsTip } from '../definitions/files-visual-editors';
 import { themeExploreTip } from '../definitions/theme-explore';
 import { trackerModeTip } from '../definitions/tracker-mode';
 import { worktreeSessionTip } from '../definitions/worktree-session';
@@ -186,5 +188,18 @@ describe('contextual tip definitions', () => {
 
   it('inserts the /session-cleanup command from the session cleanup tip action', () => {
     expect(sessionCleanupTip.content.action?.insertPrompt).toBe('/session-cleanup ');
+  });
+
+  it('targets the welcome tips to the files-empty surface', () => {
+    expect(filesVisualEditorsTip.trigger.screen).toBe('files-empty');
+    expect(filesAgentContextTip.trigger.screen).toBe('files-empty');
+    expect(filesVisualEditorsTip.trigger.condition(createContext())).toBe(true);
+    expect(filesAgentContextTip.trigger.condition(createContext())).toBe(true);
+  });
+
+  it('seeds a visual-editor prompt from the welcome tip action', () => {
+    expect(filesVisualEditorsTip.content.action?.insertPrompt).toBe(
+      'Create a visual mockup for ',
+    );
   });
 });
