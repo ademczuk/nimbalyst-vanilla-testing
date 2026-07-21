@@ -398,7 +398,7 @@ export interface AgentPermissions {
   permissionMode: AgentPermissionMode;
   /**
    * Opt-in (issue #628): when true, "Allow All" (bypass-all) routes agent-mode
-   * Claude Code sessions through the SDK auto-mode classifier instead of
+   * sessions through the provider's automatic approval reviewer instead of
    * bypassing every operation. Undefined/false = literal allow-all.
    */
   allowAllUsesClassifier?: boolean;

@@ -1798,7 +1798,7 @@ export interface WorkspacePermissionsState {
   allowedPatterns: PatternRule[];
   additionalDirectories: AdditionalDirectory[];
   allowedUrlPatterns: AllowedUrlPattern[];
-  /** Issue #628: opt-in classifier for "Allow All" workspaces. */
+  /** Issue #628: opt-in automatic reviewer for "Allow All" workspaces. */
   allowAllUsesClassifier: boolean;
   loading: boolean;
   error: string | null;

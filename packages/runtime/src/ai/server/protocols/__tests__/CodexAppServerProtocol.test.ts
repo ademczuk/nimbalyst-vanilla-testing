@@ -173,6 +173,68 @@ describe('CodexAppServerProtocol', () => {
     protocol.cleanupSession(session);
   });
 
+  it('uses Codex automatic review for Agent-verified workspaces', async () => {
+    const protocol = new CodexAppServerProtocol();
+    const sessionPromise = protocol.createSession({
+      workspacePath: '/tmp/ws',
+      permissionMode: 'bypass-all',
+      raw: { agentVerified: true },
+    });
+
+    const initReq = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({
+      id: initReq.id,
+      result: {
+        codexHome: '/fake',
+        platformFamily: 'unix',
+        platformOs: 'macos',
+        userAgent: 'fake/0',
+      },
+    });
+
+    const startReq = await nextWrittenMatching(child, 'thread/start');
+    expect(startReq.params).toMatchObject({
+      sandbox: 'workspace-write',
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'auto_review',
+    });
+    child.emitLine({ id: startReq.id, result: { thread: { id: 'thread-agent-verified' } } });
+
+    const session = await sessionPromise;
+    protocol.cleanupSession(session);
+  });
+
+  it('keeps raw Allow everything on unrestricted access without reviews', async () => {
+    const protocol = new CodexAppServerProtocol();
+    const sessionPromise = protocol.createSession({
+      workspacePath: '/tmp/ws',
+      permissionMode: 'bypass-all',
+      raw: { agentVerified: false },
+    });
+
+    const initReq = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({
+      id: initReq.id,
+      result: {
+        codexHome: '/fake',
+        platformFamily: 'unix',
+        platformOs: 'macos',
+        userAgent: 'fake/0',
+      },
+    });
+
+    const startReq = await nextWrittenMatching(child, 'thread/start');
+    expect(startReq.params).toMatchObject({
+      sandbox: 'danger-full-access',
+      approvalPolicy: 'never',
+    });
+    expect(startReq.params).not.toHaveProperty('approvalsReviewer');
+    child.emitLine({ id: startReq.id, result: { thread: { id: 'thread-allow-everything' } } });
+
+    const session = await sessionPromise;
+    protocol.cleanupSession(session);
+  });
+
   it('routes cleanup through the owned process-tree terminator exactly once', async () => {
     const terminateProcessTree = vi.fn((ownedChild: FakeChildProcess) => {
       // Keep the root alive until the tree terminator has captured it. Ending
