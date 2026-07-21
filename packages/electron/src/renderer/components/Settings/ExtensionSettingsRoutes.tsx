@@ -56,9 +56,10 @@ export const ExtensionSettingsRoutePanel: React.FC<ExtensionSettingsRoutePanelPr
       window.electronAPI.invoke('extensions:ai-call-backend-tool', {
         toolName,
         args: args ?? {},
+        workspacePath,
         callerExtensionId: route.extensionId,
       }),
-    [route.extensionId],
+    [route.extensionId, workspacePath],
   );
   const Component = route.component;
   const projectProps = route.scope === 'project' ? { workspacePath, projectTarget } : {};

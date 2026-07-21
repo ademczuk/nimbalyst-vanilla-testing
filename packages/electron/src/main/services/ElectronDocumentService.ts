@@ -2,7 +2,7 @@ import { BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent, app, shell }
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import {
+import type {
   Document,
   DocumentService,
   DocumentOpenOptions,
