@@ -35,7 +35,11 @@ export function appendActivity(
   action: string,
   details?: { field?: string; oldValue?: string; newValue?: string },
 ): void {
-  const activity = data.activity || [];
+  const activity = data.activity || data.customFields?.activity || [];
+  if (data.customFields?.activity) {
+    delete data.customFields.activity;
+    if (Object.keys(data.customFields).length === 0) delete data.customFields;
+  }
   const now = Date.now();
   const lastEntry = activity[activity.length - 1];
   const shouldCoalesce = action === 'updated'

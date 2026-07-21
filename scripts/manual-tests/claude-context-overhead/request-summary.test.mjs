@@ -65,6 +65,58 @@ test("summary never persists private request text", () => {
   );
 });
 
+test("merged system text is split without persisting either segment", () => {
+  const summarizer = createRequestSummarizer({
+    fingerprintKey,
+    runId: "test-run",
+  });
+  const marker =
+    "The following is an addendum to the above. Anything in the addendum supersedes the above.";
+  const firstText = `private cli preset\n\n${marker}\nprivate provider append`;
+  const secondText = `private cli\n\n${marker}\nprivate provider append`;
+
+  const first = summarizer.summarize(
+    JSON.stringify(
+      request({
+        system: [{ type: "text", text: firstText }],
+      })
+    )
+  );
+  const second = summarizer.summarize(
+    JSON.stringify(
+      request({
+        system: [{ type: "text", text: secondText }],
+      })
+    )
+  );
+  const composition = second.system[0].textComposition;
+  const persisted = JSON.stringify({ first, second });
+
+  assert.equal(composition.appendSystemPromptMarkerFound, true);
+  assert.equal(
+    first.system[0].textComposition.providerAppendSystemPrompt.fingerprint,
+    composition.providerAppendSystemPrompt.fingerprint
+  );
+  assert.notEqual(
+    first.system[0].textComposition.cliPresetRemainder.fingerprint,
+    composition.cliPresetRemainder.fingerprint
+  );
+  assert.deepEqual(second.system[0].textByteDiffFromPrevious, {
+    commonPrefixBytes: 11,
+    commonSuffixBytes: Buffer.byteLength(
+      `\n\n${marker}\nprivate provider append`
+    ),
+    beforeChangedBytes: 7,
+    afterChangedBytes: 0,
+    beforeChangedFingerprint:
+      second.system[0].textByteDiffFromPrevious.beforeChangedFingerprint,
+    afterChangedFingerprint:
+      second.system[0].textByteDiffFromPrevious.afterChangedFingerprint,
+  });
+  assert.equal(persisted.includes("private cli preset"), false);
+  assert.equal(persisted.includes("private provider append"), false);
+});
+
 test("live request families are stable, private, and session-specific", () => {
   const first = request({
     metadata: { user_id: "private-session-a" },

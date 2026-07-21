@@ -116,6 +116,7 @@ vi.mock('../../../services/MainBodyDocService', () => ({
 import {
   createBidirectionalLink,
   handleTrackerCreate,
+  handleTrackerAddComment,
   handleTrackerDefineType,
   handleTrackerDeleteType,
   handleTrackerGet,
@@ -129,6 +130,39 @@ import {
 } from '../trackerToolHandlers';
 import { isTrackerSyncActive } from '../../../services/TrackerSyncManager';
 import { getEffectiveTrackerSyncPolicy, shouldSyncTrackerItem } from '../../../services/TrackerPolicyService';
+
+describe('handleTrackerAddComment', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('persists an agent comment and attributed activity through the tracker row', async () => {
+    const row = makeRow({ workspace: '/tmp/ws' });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [row] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [row] });
+
+    const result = await handleTrackerAddComment(
+      { trackerId: 'NIM-1', body: '**Agent** comment' },
+      '/tmp/ws',
+    );
+
+    expect(result.isError).toBe(false);
+    const updateCall = mockQuery.mock.calls.find((call) =>
+      String(call[0]).includes('UPDATE tracker_items SET data'),
+    );
+    expect(updateCall).toBeTruthy();
+    const data = JSON.parse(updateCall![1]![0] as string);
+    expect(data.comments).toHaveLength(1);
+    expect(data.comments[0].body).toBe('**Agent** comment');
+    expect(data.activity).toHaveLength(1);
+    expect(data.activity[0]).toMatchObject({
+      action: 'commented',
+      authorIdentity: { displayName: 'Test User' },
+    });
+  });
+});
 
 function makeRow(overrides: Record<string, unknown> = {}) {
   return {

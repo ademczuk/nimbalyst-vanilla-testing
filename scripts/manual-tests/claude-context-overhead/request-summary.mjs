@@ -2,6 +2,8 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 
 const ESTIMATED_BYTES_PER_TOKEN = 4;
+export const NIMBALYST_APPEND_SYSTEM_PROMPT_MARKER =
+  "The following is an addendum to the above. Anything in the addendum supersedes the above.";
 const PRIVATE_SEGMENT_KEYS = new Set(["system", "tools", "messages"]);
 const PUBLIC_OPTION_VALUES = new Set([
   "model",
@@ -112,6 +114,70 @@ function summarizeSegment(value, fingerprint, extra = {}) {
     bytes,
     estimatedTokens: estimatedTokens(bytes),
     fingerprint: fingerprint(value),
+  };
+}
+
+function summarizeSystemTextComposition(text, fingerprint, marker) {
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex === -1) {
+    return { appendSystemPromptMarkerFound: false };
+  }
+
+  const cliPresetRemainder = text.slice(0, markerIndex);
+  const providerAppendSystemPrompt = text.slice(markerIndex);
+  return {
+    appendSystemPromptMarkerFound: true,
+    cliPresetRemainder: summarizeSegment(cliPresetRemainder, fingerprint),
+    providerAppendSystemPrompt: summarizeSegment(
+      providerAppendSystemPrompt,
+      fingerprint
+    ),
+  };
+}
+
+function summarizeTextByteDiff(previousText, currentText, fingerprint) {
+  if (typeof previousText !== "string" || typeof currentText !== "string") {
+    return null;
+  }
+
+  const before = Buffer.from(previousText, "utf8");
+  const after = Buffer.from(currentText, "utf8");
+  let commonPrefixBytes = 0;
+  while (
+    commonPrefixBytes < before.length &&
+    commonPrefixBytes < after.length &&
+    before[commonPrefixBytes] === after[commonPrefixBytes]
+  ) {
+    commonPrefixBytes += 1;
+  }
+
+  let commonSuffixBytes = 0;
+  while (
+    commonSuffixBytes < before.length - commonPrefixBytes &&
+    commonSuffixBytes < after.length - commonPrefixBytes &&
+    before[before.length - 1 - commonSuffixBytes] ===
+      after[after.length - 1 - commonSuffixBytes]
+  ) {
+    commonSuffixBytes += 1;
+  }
+
+  const beforeChanged = before.subarray(
+    commonPrefixBytes,
+    before.length - commonSuffixBytes
+  );
+  const afterChanged = after.subarray(
+    commonPrefixBytes,
+    after.length - commonSuffixBytes
+  );
+  if (beforeChanged.length === 0 && afterChanged.length === 0) return null;
+
+  return {
+    commonPrefixBytes,
+    commonSuffixBytes,
+    beforeChangedBytes: beforeChanged.length,
+    afterChangedBytes: afterChanged.length,
+    beforeChangedFingerprint: fingerprint(beforeChanged),
+    afterChangedFingerprint: fingerprint(afterChanged),
   };
 }
 
@@ -269,8 +335,10 @@ export function summarizeSseResponse(chunks, contentEncoding) {
 export function createRequestSummarizer({
   fingerprintKey = randomBytes(32),
   runId = randomUUID(),
+  appendSystemPromptMarker = NIMBALYST_APPEND_SYSTEM_PROMPT_MARKER,
 } = {}) {
   let previousSummary;
+  let previousSystemTexts = [];
   let requestIndex = 0;
   const fingerprint = (value) => keyedFingerprint(value, fingerprintKey);
 
@@ -294,6 +362,12 @@ export function createRequestSummarizer({
       const systemValues =
         typeof rawSystem === "string" ? [rawSystem] : rawSystem ?? [];
       const system = systemValues.map((block, index) => {
+        const text =
+          typeof block === "string"
+            ? block
+            : typeof block?.text === "string"
+            ? block.text
+            : undefined;
         const summary = summarizeSegment(block, fingerprint, {
           index,
           type: typeof block === "string" ? "text" : block.type ?? "object",
@@ -307,6 +381,20 @@ export function createRequestSummarizer({
         return {
           ...summary,
           fieldFingerprints: flattenLeaves(block, fingerprint),
+          ...(text === undefined
+            ? {}
+            : {
+                textComposition: summarizeSystemTextComposition(
+                  text,
+                  fingerprint,
+                  appendSystemPromptMarker
+                ),
+                textByteDiffFromPrevious: summarizeTextByteDiff(
+                  previousSystemTexts[index],
+                  text,
+                  fingerprint
+                ),
+              }),
         };
       });
 
@@ -421,6 +509,13 @@ export function createRequestSummarizer({
       };
       summary.changesFromPrevious = compareSummaries(previousSummary, summary);
       previousSummary = summary;
+      previousSystemTexts = systemValues.map((block) =>
+        typeof block === "string"
+          ? block
+          : typeof block?.text === "string"
+          ? block.text
+          : undefined
+      );
       return summary;
     },
   };

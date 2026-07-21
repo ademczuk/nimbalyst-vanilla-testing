@@ -105,9 +105,8 @@ export const ALWAYS_LOAD_META_KEY = 'anthropic/alwaysLoad';
 /**
  * On the core endpoint, mark the CORE_ALWAYS_LOAD_TOOLS subset eager via
  * per-tool `_meta`. The core server config sets no server-level `alwaysLoad`;
- * this per-tool marking is how the core tools the prompt references — including
- * the visual tools display_to_user / capture_editor_screenshot — stay in the
- * prompt without a server-level flag.
+ * this per-tool marking keeps interaction-critical tools in the prompt without
+ * forcing lower-frequency core schemas onto every first turn.
  */
 export function applyCoreAlwaysLoadMeta<T extends NamedToolSchema>(
   tools: T[],

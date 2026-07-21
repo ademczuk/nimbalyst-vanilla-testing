@@ -238,6 +238,10 @@ export function trackerRecordToItem(record: TrackerRecord): TrackerItem {
       customFields[key] = value;
     }
   }
+  for (const key of ['linkedPullRequests', 'activity', 'comments'] as const) {
+    const value = record.system[key];
+    if (value !== undefined) customFields[key] = value;
+  }
 
   return {
     id: record.id,

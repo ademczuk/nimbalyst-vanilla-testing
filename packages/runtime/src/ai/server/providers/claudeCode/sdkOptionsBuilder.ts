@@ -23,7 +23,11 @@ type SDKUserMessage = {
 
 export interface BuildSdkOptionsDeps {
   resolveModelVariant: () => string;
-  mcpConfigService: { getMcpServersConfig: (params: { sessionId?: string; workspacePath: string }) => Promise<Record<string, any>> };
+  getMcpServersSnapshot: (params: {
+    sessionId?: string;
+    workspacePath: string;
+    profile?: 'standard' | 'meta-agent';
+  }) => Promise<Record<string, any>>;
   createCanUseToolHandler: (sessionId?: string, workspacePath?: string, permissionsPath?: string) => any;
   toolHooksService: {
     createPreToolUseHook: () => any;
@@ -155,7 +159,7 @@ export async function buildSdkOptions(
 ): Promise<BuildSdkOptionsResult> {
   const {
     resolveModelVariant,
-    mcpConfigService,
+    getMcpServersSnapshot,
     createCanUseToolHandler,
     toolHooksService,
     teammateManager,
@@ -240,7 +244,16 @@ export async function buildSdkOptions(
           append: systemPrompt
         },
     settingSources,
-    mcpServers: await mcpConfigService.getMcpServersConfig({ sessionId, workspacePath: mcpConfigWorkspacePath || workspacePath }),
+    // NIM-1988: this is the provider-owned, first-build snapshot, not a live
+    // config read. The SDK rebuilds the API tool prefix on resumed turns, so a
+    // server appearing/disappearing here would force a tools_changed miss over
+    // the whole cached conversation. Do not move the live McpConfigService read
+    // back into this per-turn builder; ClaudeCodeProvider freezes it once.
+    mcpServers: await getMcpServersSnapshot({
+      sessionId,
+      workspacePath: mcpConfigWorkspacePath || workspacePath,
+      profile: isMetaAgent ? 'meta-agent' : 'standard',
+    }),
     // NIM-843 (SDK path): use ONLY the mcpServers we pass above and ignore the
     // SDK's own discovery (~/.claude.json, project .mcp.json, user settings,
     // claude.ai connectors). settingSources includes 'user'/'project' to load

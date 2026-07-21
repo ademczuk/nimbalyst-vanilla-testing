@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, nativeImage, nativeTheme, session } from 'electron';
 import { safeHandle, safeOn } from './utils/ipcRegistry';
+import { installMicrophoneGate } from './mediaPermissionGate';
 import { markBootComplete } from './utils/bootState';
 import { markStart, markEnd, checkpoint, logSummary } from './utils/startupTiming';
 import type { SessionStore } from '@nimbalyst/runtime';
@@ -197,6 +198,20 @@ import { TrayManager } from './tray/TrayManager';
 import { pathToFileURL } from 'url';
 import { registerLinuxAppImageProtocolHandler } from './services/LinuxProtocolRegistration';
 import { installWindowOpenGuard } from './window/windowOpenGuard';
+
+// Register before any startup path can create a partition session. Browsed web
+// content stays microphone-denied even after Voice Mode receives an OS grant.
+// The default session is skipped here: this event also fires for it, and its
+// timing relative to the explicit allow-when-granted install in whenReady is
+// not guaranteed — without the guard, deny-always could overwrite that gate
+// and block Voice Mode capture even after the OS grant.
+app.on('session-created', (createdSession) => {
+  if (createdSession === session.defaultSession) return;
+  installMicrophoneGate(createdSession, {
+    allowWhenGranted: false,
+    label: createdSession.storagePath ?? 'session-created',
+  });
+});
 
 // CRITICAL: Hide dock icon when running as background Node process
 // This prevents Terminal icon from appearing when Claude Code spawns child processes
@@ -1329,6 +1344,13 @@ BrowserWindow.prototype.focus = function(this: BrowserWindow) {
 app.whenReady().then(async () => {
     checkpoint('app-ready');
 
+    // The default renderer session may use the microphone after Voice Mode has
+    // explicitly obtained the OS grant. Non-default sessions are deny-always.
+    installMicrophoneGate(session.defaultSession, {
+        allowWhenGranted: true,
+        label: 'default',
+    });
+
     // Raise the file descriptor soft limit from the macOS default of 256.
     // Nimbalyst uses recursive fs.watch, chokidar per open tab, terminal PTYs,
     // and database connections — 256 FDs is far too low and causes silent
@@ -1385,41 +1407,6 @@ app.whenReady().then(async () => {
     if (!process.env.PLAYWRIGHT) {
         showSplashScreen();
     }
-
-    // Set up permission request handler to control when system permission dialogs appear
-    // This prevents microphone permission prompt from appearing on app launch
-    // Microphone access is only granted when the user explicitly enables voice mode
-    // The voice mode flow (VoiceModeService) uses systemPreferences.askForMediaAccess()
-    // which bypasses this handler and properly requests OS-level permission
-    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-        // Allow most permissions by default
-        if (permission === 'media') {
-            // For media permissions, check what type is being requested
-            // details.mediaTypes contains 'audio' and/or 'video'
-            const mediaTypes = (details as any).mediaTypes || [];
-
-            // Check if microphone permission has already been granted at the OS level
-            // If so, allow the renderer to access it
-            if (mediaTypes.includes('audio')) {
-                const { systemPreferences } = require('electron');
-                const micStatus = systemPreferences.getMediaAccessStatus('microphone');
-
-                if (micStatus === 'granted') {
-                    // User has already granted microphone permission via voice mode activation
-                    callback(true);
-                    return;
-                }
-
-                // Microphone not yet granted - deny to prevent premature permission prompt
-                // The voice mode activation flow will request permission properly
-                callback(false);
-                return;
-            }
-        }
-
-        // Allow other permissions
-        callback(true);
-    });
 
     // Override console methods to capture all console output in log file
     // This must be called FIRST before any console.log calls

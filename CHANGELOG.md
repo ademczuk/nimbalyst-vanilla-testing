@@ -10,19 +10,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.70.2] - 2026-07-21
+
+
+### Added
+<!-- New features go here -->
 - Launch a new AI session from any workspace mode with Cmd+Shift+N; the draggable composer runs it in the background without navigating away and resets for the next launch.
 - Agents can send local system notifications to get your attention when you step away.
 - Start a new AI review session from any pull request with the review command prefilled.
+- Search the model picker by model name or ID.
+- Start the Voice Agent from the iOS sessions list.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
 - The agent permissions dialog and navigation indicator now present four clearer autonomy levels, defaulting to Agent-verified.
 - Updated the bundled marketplace catalog with 18 extension releases, including Electronics Studio and new Replicad CAD tools.
 - Inline tracker references now show the item type, key, live title, workflow state, and owner, with completed titles crossed out.
+- The Files view empty state now offers starter files and prompt suggestions in a responsive layout.
+- Direct chat providers stay hidden until explicitly enabled.
 
 ### Fixed
 <!-- Bug fixes go here -->
-- Claude Agent sessions reduce two observed prompt-cache invalidation paths around session-tag updates and early tool calls; broader context-overhead validation remains in progress.
+- Voice Mode now asks for microphone permission on macOS the first time you turn it on, instead of never prompting or prompting during normal use.
+- Claude Agent sessions no longer invalidate their prompt cache mid-session — tag updates, session naming, and extension servers connecting mid-session could each re-bill the full cached context — and rarely used built-in tools now load on demand to reduce per-session overhead.
 - New agent sessions no longer hang on a spinner that never resolves when git status stalls; the session list stays responsive instead of requiring an app restart.
 - Pending permission review buttons now scroll to the correct approval prompt instead of doing nothing.
 - RTL text typed in the chat composer now displays on the right again; the detected direction is mirrored onto the composer's visible-text overlay, which a transparent-textarea refactor had left stuck on LTR.
@@ -32,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spreadsheet documents (CSV, TSV, and calc sheets) can now be shared as collaborative documents instead of being reported as unsupported.
 - The New Session button in the files chat panel no longer gets cut off on a narrow panel, and you can now start a new session from the session menu too.
 - Claude Code (CLI) sessions created for a worktree now run inside that worktree, so their edits land on the worktree branch instead of the main branch.
+- Restored windows no longer steal focus during launch.
+- Shared tracker comments and history now persist through database and collaboration sync.
+- Legacy mockup embeds migrate to the current live design-link format instead of breaking Markdown rendering.
+- AI edits to Excalidraw documents stay offscreen instead of opening the editor unexpectedly.
 
 ### Removed
 <!-- Removed features go here -->

@@ -1198,7 +1198,7 @@ function createExtensionDevMcpServer(
               {
                 name: "extension_test_open_file",
                 description:
-                  "Open a file in Nimbalyst for testing. Creates a tab and waits for the editor (including extension editors) to mount. Use this before running Playwright tests that need a specific file open.",
+                  "Visibly open and focus a file tab in Nimbalyst for Playwright testing, then wait for the editor to mount. This interrupts the user's active tab. Use only when a test must interact with a mounted UI; never use it as a prerequisite for extension AI tools, which mount hidden editors automatically.",
                 inputSchema: {
                   type: "object",
                   properties: {

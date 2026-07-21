@@ -123,18 +123,21 @@ describe('mcpEndpointRouting', () => {
       const result = applyCoreAlwaysLoadMeta(coreTools, MCP_CORE);
       const metaByName = new Map(result.map((t) => [t.name, (t as { _meta?: Record<string, unknown> })._meta]));
 
-      // The visual-output tools are eager: the prompt tells the model to use
-      // them, so their schemas must be in context (NIM-1766).
       for (const eager of [
         'AskUserQuestion',
         'PromptForUserInput',
-        'developer_git_commit_proposal',
-        'get_session_edited_files',
         'update_session_meta',
         'display_to_user',
-        'capture_editor_screenshot',
       ]) {
         expect(metaByName.get(eager)).toEqual({ 'anthropic/alwaysLoad': true });
+      }
+
+      for (const deferred of [
+        'developer_git_commit_proposal',
+        'get_session_edited_files',
+        'capture_editor_screenshot',
+      ]) {
+        expect(metaByName.get(deferred)).toBeUndefined();
       }
     });
 

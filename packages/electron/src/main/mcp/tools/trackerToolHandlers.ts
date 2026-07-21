@@ -3029,7 +3029,7 @@ export async function handleTrackerAddComment(
     const authorIdentity = getCurrentIdentity(workspacePath);
 
     // Add comment to the comments array
-    const comments = data.comments || [];
+    const comments = data.comments || data.customFields?.comments || [];
     const commentId = `comment_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const newComment = {
       id: commentId,
@@ -3041,6 +3041,10 @@ export async function handleTrackerAddComment(
     };
     comments.push(newComment);
     data.comments = comments;
+    if (data.customFields?.comments) {
+      delete data.customFields.comments;
+      if (Object.keys(data.customFields).length === 0) delete data.customFields;
+    }
 
     // Also stamp lastModifiedBy and record activity
     data.lastModifiedBy = authorIdentity;

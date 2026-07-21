@@ -174,6 +174,32 @@ describe('trackerRecordToItem round-trip', () => {
     expect(restored.documentId).toBe(original.documentId);
   });
 
+  it('preserves system collections carried through legacy customFields', () => {
+    const comments = [
+      { id: 'comment-1', authorIdentity: { displayName: 'Alice' }, body: 'hello', createdAt: 1 },
+    ];
+    const activity = [
+      { id: 'activity-1', authorIdentity: { displayName: 'Alice' }, action: 'commented', timestamp: 1 },
+    ];
+    const linkedPullRequests = [
+      { remote: 'nimbalyst/nimbalyst', number: 42, url: 'https://github.com/nimbalyst/nimbalyst/pull/42' },
+    ];
+    const original = makeTrackerItem({
+      customFields: {
+        severity: 'high',
+        comments,
+        activity,
+        linkedPullRequests,
+      },
+    });
+
+    const restored = trackerRecordToItem(trackerItemToRecord(original));
+
+    expect(restored.customFields?.comments).toEqual(comments);
+    expect(restored.customFields?.activity).toEqual(activity);
+    expect(restored.customFields?.linkedPullRequests).toEqual(linkedPullRequests);
+  });
+
   it('preserves custom fields in customFields', () => {
     const original = makeTrackerItem();
     const record = trackerItemToRecord(original);

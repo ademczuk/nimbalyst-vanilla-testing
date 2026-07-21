@@ -313,6 +313,16 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   // MCP configuration service for loading and processing MCP server configs
   private mcpConfigService: McpConfigService;
 
+  // MCP configuration, decided ONCE per session (this provider instance is
+  // per-session) at the first SDK options build and then frozen as serialized
+  // bytes. The SDK re-sends its tool prefix on every resumed turn; re-reading
+  // the live Electron map lets extension/server readiness change membership or
+  // ordering mid-session and forces a tools_changed miss over the entire cached
+  // conversation. DO NOT replace this with a per-turn config read. Parsing a
+  // fresh object from the frozen bytes also prevents SDK mutation from changing
+  // later turns. See NIM-1988 and ClaudeCodeProvider.mcpSnapshot.test.ts.
+  private mcpServersSnapshotJsonPromise: Promise<string> | undefined;
+
   // ---- Static dependency forwarding ----
   // All static fields and setters live in ClaudeCodeDeps.
   // These forwarding setters maintain backward compatibility for callers.
@@ -365,6 +375,21 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       claudeSettingsEnvLoader: ClaudeCodeDeps.claudeSettingsEnvLoader,
       shellEnvironmentLoader: ClaudeCodeDeps.shellEnvironmentLoader,
     });
+  }
+
+  private async getMcpServersSnapshot(options: {
+    sessionId?: string;
+    workspacePath: string;
+    profile?: 'standard' | 'meta-agent';
+  }): Promise<Record<string, any>> {
+    if (!this.mcpServersSnapshotJsonPromise) {
+      this.mcpServersSnapshotJsonPromise = this.mcpConfigService
+        .getMcpServersConfig(options)
+        .then((mcpServers) => JSON.stringify(mcpServers));
+    }
+
+    const snapshotJson = await this.mcpServersSnapshotJsonPromise;
+    return JSON.parse(snapshotJson) as Record<string, any>;
   }
 
   getProviderName(): string {
@@ -679,7 +704,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       const sdkResult = await buildSdkOptions(
         {
           resolveModelVariant: () => this.resolveModelVariant(),
-          mcpConfigService: this.mcpConfigService,
+          getMcpServersSnapshot: (options) => this.getMcpServersSnapshot(options),
           createCanUseToolHandler: (sid, wp, pp) => this.createCanUseToolHandler(sid, wp, pp),
           toolHooksService: this.toolHooksService!,
           teammateManager: this.teammateManager,
@@ -708,13 +733,9 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       this.promptController = promptController;
       spawnDiagContext = { binaryPath: options.pathToClaudeCodeExecutable, cwd: options.cwd };
 
-      // Meta-agent: override MCP config with meta-agent profile and apply tool restrictions
+      // Meta-agent: the profile-specific MCP map was frozen by buildSdkOptions
+      // through getMcpServersSnapshot; only native-tool restrictions remain here.
       if (isMetaAgent) {
-        options.mcpServers = await this.mcpConfigService.getMcpServersConfig({
-          sessionId,
-          workspacePath,
-          profile: 'meta-agent',
-        });
         const allowedSet = new Set(BaseAgentProvider.META_AGENT_ALLOWED_TOOLS);
         const blockedNativeTools = SDK_NATIVE_TOOLS.filter(t => !allowedSet.has(t));
         (options as any).allowedTools = BaseAgentProvider.META_AGENT_ALLOWED_TOOLS;

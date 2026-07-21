@@ -1060,6 +1060,13 @@ export function registerTrackerSyncHandlers(): void {
             applyRemote: (def) => applyRemoteWorkspaceTrackerNavigationEntry(workspacePath, def),
           },
           getJwt: async () => 'test-jwt',
+          buildUrl: (roomId) => {
+            const wsBase = payload.serverUrl
+              .replace(/^http:/, 'ws:')
+              .replace(/^https:/, 'wss:')
+              .replace(/\/$/, '');
+            return `${wsBase}/sync/${roomId}?test_user_id=${encodeURIComponent(payload.userId)}&test_org_id=${encodeURIComponent(payload.orgId)}`;
+          },
           createWebSocket: ((url: string) => new WebSocket(url)) as unknown as TrackerSyncEngineConfig['createWebSocket'],
           onStatusChange: (status) => {
             const entry = engines.get(workspacePath);
@@ -1136,12 +1143,14 @@ export function trackerItemToPayload(item: TrackerItem): TrackerItemPayload {
     fields: { ...record.fields },
     labels: labelsMap,
     comments: record.system.comments ?? [],
+    activity: record.system.activity ?? [],
     system: {
       authorIdentity: record.system.authorIdentity ?? null,
       lastModifiedBy: record.system.lastModifiedBy ?? null,
       createdByAgent: record.system.createdByAgent,
       linkedCommitSha: record.system.linkedCommitSha,
       linkedCommits: record.system.linkedCommits,
+      linkedPullRequests: record.system.linkedPullRequests,
       documentId: record.system.documentId,
       createdAt: record.system.createdAt,
       updatedAt: record.system.updatedAt,

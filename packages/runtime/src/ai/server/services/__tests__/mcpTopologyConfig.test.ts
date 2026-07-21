@@ -34,13 +34,17 @@ describe('Topology descriptor', () => {
     expect(isEagerServer(MCP_SITUATIONAL)).toBe(false);
   });
 
-  it('always-loads the visual tools the prompt tells the model to use (NIM-1766)', () => {
-    // The system prompt actively instructs the model to call these for inline
-    // charts/screenshots, so their schemas must be in context. Deferring them
-    // made the model guess the args and hit schema-validation errors instead of
-    // rendering. Keep them eager.
-    expect(CORE_ALWAYS_LOAD_TOOLS).toContain('display_to_user');
-    expect(CORE_ALWAYS_LOAD_TOOLS).toContain('capture_editor_screenshot');
+  it('keeps interaction-critical tools eager and defers low-frequency core tools', () => {
+    expect(CORE_ALWAYS_LOAD_TOOLS).toEqual([
+      'AskUserQuestion',
+      'PromptForUserInput',
+      'display_to_user',
+      'update_session_meta',
+    ]);
+
+    expect(CORE_ALWAYS_LOAD_TOOLS).not.toContain('developer_git_commit_proposal');
+    expect(CORE_ALWAYS_LOAD_TOOLS).not.toContain('capture_editor_screenshot');
+    expect(CORE_ALWAYS_LOAD_TOOLS).not.toContain('get_session_edited_files');
   });
 
   it('gives every first-party server a unique config-key and endpoint path', () => {

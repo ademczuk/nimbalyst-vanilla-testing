@@ -714,7 +714,7 @@ For test files that live outside any workspace (e.g. inline scripts created by `
 | Tool | Description |
 | --- | --- |
 | `extension_test_run` | Run inline Playwright scripts or `.spec.ts` files. Inline scripts get a `page` already connected to the correct window. Test files should import from `@nimbalyst/extension-sdk/testing`. |
-| `extension_test_open_file` | Open a file and wait for extension editor to mount |
+| `extension_test_open_file` | Visibly open and focus a file for Playwright UI testing; never use as an AI-tool prerequisite |
 | `extension_test_ai_tool` | Call extension tool handlers directly |
 
 **For agents writing test files**: import from `@nimbalyst/extension-sdk/testing` — `NODE_PATH` is set automatically so imports resolve even for external extension projects.

@@ -36,6 +36,8 @@ import { useColdPaintFallback } from '../../hooks/useColdPaintFallback';
 import { useMarkTrackerViewed } from '../../hooks/useTrackerUnread';
 import { useRecordTrackerOpened } from '../../hooks/useRecordTrackerOpened';
 import { reconcileExternalFieldChanges } from './trackerDetailFieldSync';
+import { invokeTrackerCommentMutation } from './trackerCommentMutation';
+import { formatTrackerActivity } from './trackerActivityPresentation';
 
 interface TrackerItemDetailProps {
   itemId: string;
@@ -1734,11 +1736,7 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
                 <div key={entry.id} className="flex items-start gap-2 text-[11px]">
                   <span className="text-nim-muted shrink-0">{entry.authorIdentity?.displayName || 'Unknown'}</span>
                   <span className="text-nim-faint">
-                    {entry.action === 'created' ? 'created this item' :
-                     entry.action === 'commented' ? 'added a comment' :
-                     entry.action === 'status_changed' ? `changed status to ${entry.newValue}` :
-                     entry.action === 'archived' ? (entry.newValue === 'true' ? 'archived' : 'unarchived') :
-                     entry.field ? `updated ${entry.field}` : entry.action}
+                    {formatTrackerActivity(entry)}
                   </span>
                   <span className="text-nim-faint ml-auto shrink-0">{getRelativeTimeString(entry.timestamp)}</span>
                 </div>
@@ -1937,6 +1935,7 @@ const CommentsSection: React.FC<{ itemId: string; comments?: any[] }> = ({ itemI
   const [currentIdentity, setCurrentIdentity] = useState<TrackerIdentity | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState('');
+  const [commentError, setCommentError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1953,27 +1952,31 @@ const CommentsSection: React.FC<{ itemId: string; comments?: any[] }> = ({ itemI
   const handleEditSave = useCallback(async (commentId: string) => {
     const body = editBody.trim();
     if (!body) return;
-    setEditingId(null);
+    setCommentError(null);
     try {
-      await window.electronAPI.invoke('document-service:tracker-item-update-comment', {
+      await invokeTrackerCommentMutation(window.electronAPI.invoke, 'document-service:tracker-item-update-comment', {
         itemId,
         commentId,
         body,
       });
+      setEditingId(null);
     } catch (err) {
       console.error('Failed to edit comment:', err);
+      setCommentError(err instanceof Error ? err.message : String(err));
     }
   }, [itemId, editBody]);
 
   const handleDelete = useCallback(async (commentId: string) => {
+    setCommentError(null);
     try {
-      await window.electronAPI.invoke('document-service:tracker-item-update-comment', {
+      await invokeTrackerCommentMutation(window.electronAPI.invoke, 'document-service:tracker-item-update-comment', {
         itemId,
         commentId,
         deleted: true,
       });
     } catch (err) {
       console.error('Failed to delete comment:', err);
+      setCommentError(err instanceof Error ? err.message : String(err));
     }
   }, [itemId]);
 
@@ -1998,6 +2001,7 @@ const CommentsSection: React.FC<{ itemId: string; comments?: any[] }> = ({ itemI
     if (!newComment.trim() || submitting) return;
     const body = newComment.trim();
     setSubmitting(true);
+    setCommentError(null);
     // Optimistically show the comment immediately
     setOptimisticComments(prev => [...prev, {
       id: `optimistic_${Date.now()}`,
@@ -2009,7 +2013,7 @@ const CommentsSection: React.FC<{ itemId: string; comments?: any[] }> = ({ itemI
     }]);
     setNewComment('');
     try {
-      await window.electronAPI.invoke('document-service:tracker-item-add-comment', {
+      await invokeTrackerCommentMutation(window.electronAPI.invoke, 'document-service:tracker-item-add-comment', {
         itemId,
         body,
       });
@@ -2017,6 +2021,8 @@ const CommentsSection: React.FC<{ itemId: string; comments?: any[] }> = ({ itemI
       console.error('Failed to add comment:', err);
       // Remove the optimistic comment on failure
       setOptimisticComments(prev => prev.filter(c => c.body !== body));
+      setNewComment(body);
+      setCommentError(err instanceof Error ? err.message : String(err));
     } finally {
       setSubmitting(false);
     }
@@ -2103,6 +2109,11 @@ const CommentsSection: React.FC<{ itemId: string; comments?: any[] }> = ({ itemI
           Post
         </button>
       </div>
+      {commentError && (
+        <p className="tracker-comment-error m-0 text-xs text-nim-error" role="alert">
+          {commentError}
+        </p>
+      )}
     </div>
   );
 };

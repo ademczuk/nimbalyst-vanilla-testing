@@ -2,6 +2,8 @@ import SwiftUI
 import GRDB
 
 #if canImport(UIKit)
+import UIKit
+
 /// Invisible UIView overlay that intercepts all touches to report user activity
 /// for device presence tracking. Passes all touches through without consuming them.
 /// This mirrors how the Electron app uses document-level event listeners.
@@ -315,8 +317,10 @@ public struct LoginView: View {
 public struct MainNavigationView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.openURL) private var openURL
     @State private var navigationPath = NavigationPath()
     @State private var showNotificationPrompt = false
+    @State private var showVoiceSettings = false
     @ObservedObject private var notificationManager = NotificationManager.shared
 
     public init() {}
@@ -407,7 +411,63 @@ public struct MainNavigationView: View {
         } message: {
             Text("Your sessions could not be decrypted. The encryption key on this device no longer matches your Mac. Please re-pair by scanning the QR code from your Mac's settings.")
         }
+        #if os(iOS)
+        .alert(item: voiceActivationIssueBinding) { issue in
+            switch issue {
+            case .missingOpenAIKey:
+                return Alert(
+                    title: Text("Voice Agent Unavailable"),
+                    message: Text("Sync an OpenAI API key from Nimbalyst on your Mac before starting the voice agent."),
+                    primaryButton: .default(Text("Open Voice Settings")) {
+                        showVoiceSettings = true
+                    },
+                    secondaryButton: .cancel()
+                )
+            case .microphonePermissionDenied:
+                return Alert(
+                    title: Text("Microphone Access Required"),
+                    message: Text("Allow microphone access in iOS Settings to use the voice agent."),
+                    primaryButton: .default(Text("Open Settings")) {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            openURL(url)
+                        }
+                    },
+                    secondaryButton: .cancel()
+                )
+            case .audioSessionFailed(let message):
+                return Alert(
+                    title: Text("Voice Agent Could Not Start"),
+                    message: Text(message),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
+        }
+        .sheet(isPresented: $showVoiceSettings) {
+            NavigationStack {
+                SettingsView()
+                    .environmentObject(appState)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showVoiceSettings = false }
+                        }
+                    }
+            }
+        }
+        #endif
     }
+
+    #if os(iOS)
+    private var voiceActivationIssueBinding: Binding<VoiceAgent.ActivationIssue?> {
+        Binding(
+            get: { appState.voiceAgent?.activationIssue },
+            set: { newValue in
+                if newValue == nil {
+                    appState.voiceAgent?.dismissActivationIssue()
+                }
+            }
+        )
+    }
+    #endif
 
     private func navigateToSession(_ sessionId: String) {
         guard sizeClass != .regular else {

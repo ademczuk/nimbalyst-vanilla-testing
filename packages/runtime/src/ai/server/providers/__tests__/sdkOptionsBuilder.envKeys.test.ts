@@ -36,7 +36,7 @@ import { buildSdkOptions } from '../claudeCode/sdkOptionsBuilder';
 function makeDeps(overrides: Partial<Parameters<typeof buildSdkOptions>[0]> = {}) {
   return {
     resolveModelVariant: () => 'opus',
-    mcpConfigService: { getMcpServersConfig: async () => ({}) },
+    getMcpServersSnapshot: async () => ({}),
     createCanUseToolHandler: () => () => true,
     toolHooksService: {
       createPreToolUseHook: () => () => ({}),

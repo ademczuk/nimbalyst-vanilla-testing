@@ -11,6 +11,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import {
   createRequestSummarizer,
   fingerprintRequestFamily,
+  NIMBALYST_APPEND_SYSTEM_PROMPT_MARKER,
   summarizeSseResponse,
 } from "./request-summary.mjs";
 
@@ -29,7 +30,13 @@ function getRequestSummarizer(streamKey) {
   if (!requestSummarizers.has(streamKey)) {
     requestSummarizers.set(
       streamKey,
-      createRequestSummarizer({ fingerprintKey, runId: fingerprintRunId })
+      createRequestSummarizer({
+        fingerprintKey,
+        runId: fingerprintRunId,
+        // Harness-only instrumentation: split the merged CLI preset from the
+        // provider append text in memory. Persist only lengths and HMACs.
+        appendSystemPromptMarker: NIMBALYST_APPEND_SYSTEM_PROMPT_MARKER,
+      })
     );
   }
   return requestSummarizers.get(streamKey);

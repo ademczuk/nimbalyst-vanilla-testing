@@ -1884,15 +1884,13 @@ export class ElectronDocumentService implements DocumentService {
     // survives the sync re-serialization and inverse-write reads find it (NIM-1305).
     nestRelationshipFieldsIntoCustomFields(data, globalRegistry.get(row.type)?.fields ?? [], { writtenFields });
 
-    await database.query(
-      `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
+    const result = await database.query<any>(
+      `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2 RETURNING *`,
       [JSON.stringify(data), row.id]
     );
-
-    const result = await database.query<any>(
-      `SELECT * FROM tracker_items WHERE id = $1`,
-      [row.id]
-    );
+    if (result.rows.length === 0) {
+      throw new Error(`Tracker item not found: ${itemId}`);
+    }
     const updated = this.rowToTrackerItem(result.rows[0]);
 
     const changeEvent: TrackerItemChangeEvent = {
@@ -2173,14 +2171,14 @@ export class ElectronDocumentService implements DocumentService {
     // tracker_items.body_version bumped but tracker_body_cache without
     // the new row -- on next save the bump re-fires and the cache row
     // gets a fresher version anyway, so we don't end up wedged.
-    const updateResult = await database.query<{ body_version: string | number | null }>(
+    const updateResult = await database.query<any>(
       `UPDATE tracker_items
          SET content = $1,
              data = $2,
              body_version = COALESCE(body_version, 0) + 1,
              updated = NOW()
        WHERE id = $3
-       RETURNING body_version`,
+       RETURNING *`,
       [contentJson, JSON.stringify(data), row.id]
     );
     const newBodyVersion = Number(updateResult.rows[0]?.body_version ?? 0);
@@ -2197,12 +2195,8 @@ export class ElectronDocumentService implements DocumentService {
       );
     }
 
-    const result = await database.query<any>(
-      `SELECT * FROM tracker_items WHERE id = $1`,
-      [row.id]
-    );
-    if (result.rows.length > 0) {
-      const item = this.rowToTrackerItem(result.rows[0]);
+    if (updateResult.rows.length > 0) {
+      const item = this.rowToTrackerItem(updateResult.rows[0]);
       const changeEvent: TrackerItemChangeEvent = {
         added: [],
         updated: [item],
@@ -2351,22 +2345,28 @@ export class ElectronDocumentService implements DocumentService {
       }
     }
 
-    if (archive) {
-      await database.query(
-        `UPDATE tracker_items SET archived = TRUE, archived_at = NOW(), updated = NOW() WHERE id = $1`,
-        [row.id]
-      );
-    } else {
-      await database.query(
-        `UPDATE tracker_items SET archived = FALSE, archived_at = NULL, updated = NOW() WHERE id = $1`,
-        [row.id]
-      );
+    const data = typeof row.data === 'string' ? JSON.parse(row.data) : (row.data || {});
+    const wasArchived = Boolean(row.archived);
+    if (wasArchived !== archive) {
+      appendActivity(data, getCurrentIdentity(row.workspace), 'archived', {
+        field: 'archived',
+        oldValue: String(wasArchived),
+        newValue: String(archive),
+      });
     }
 
-    const result = await database.query<any>(
-      `SELECT * FROM tracker_items WHERE id = $1`,
-      [row.id]
-    );
+    let result;
+    if (archive) {
+      result = await database.query<any>(
+        `UPDATE tracker_items SET data = $1, archived = TRUE, archived_at = NOW(), updated = NOW() WHERE id = $2 RETURNING *`,
+        [JSON.stringify(data), row.id]
+      );
+    } else {
+      result = await database.query<any>(
+        `UPDATE tracker_items SET data = $1, archived = FALSE, archived_at = NULL, updated = NOW() WHERE id = $2 RETURNING *`,
+        [JSON.stringify(data), row.id]
+      );
+    }
     if (result.rows.length === 0) {
       throw new Error(`Tracker item not found: ${itemId}`);
     }
@@ -4057,7 +4057,7 @@ export function setupDocumentServiceHandlers(resolver: DocumentServiceResolver) 
       // getCurrentIdentity imported statically at top of file
       const authorIdentity = getCurrentIdentity(row.rows[0].workspace);
 
-      const comments = data.comments || [];
+      const comments = data.comments || data.customFields?.comments || [];
       const commentId = `comment_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       comments.push({
         id: commentId,
@@ -4068,17 +4068,14 @@ export function setupDocumentServiceHandlers(resolver: DocumentServiceResolver) 
         deleted: false,
       });
       data.comments = comments;
+      if (data.customFields?.comments) {
+        delete data.customFields.comments;
+        if (Object.keys(data.customFields).length === 0) delete data.customFields;
+      }
       data.lastModifiedBy = authorIdentity;
 
       // Record activity for the comment
-      const activity = data.activity || [];
-      activity.push({
-        id: `activity_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        authorIdentity,
-        action: 'commented',
-        timestamp: Date.now(),
-      });
-      data.activity = activity.length > 100 ? activity.slice(-100) : activity;
+      appendActivity(data, authorIdentity, 'commented');
 
       await database.query(
         `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,
@@ -4108,7 +4105,7 @@ export function setupDocumentServiceHandlers(resolver: DocumentServiceResolver) 
       if (row.rows.length === 0) return { success: false, error: 'Item not found' };
 
       const data = typeof row.rows[0].data === 'string' ? JSON.parse(row.rows[0].data) : row.rows[0].data || {};
-      const comments = data.comments || [];
+      const comments = data.comments || data.customFields?.comments || [];
 
       // NIM-360: edit/delete are author-only. Build the requested mutation
       // (delete wins over edit if both are set) and let the pure guard enforce
@@ -4128,6 +4125,20 @@ export function setupDocumentServiceHandlers(resolver: DocumentServiceResolver) 
       }
       data.comments = result.comments;
       data.lastModifiedBy = actor;
+      if (data.customFields?.comments) {
+        delete data.customFields.comments;
+        if (Object.keys(data.customFields).length === 0) delete data.customFields;
+      }
+      appendActivity(
+        data,
+        actor,
+        mutation.kind === 'edit' ? 'comment_updated' : 'comment_deleted',
+        {
+          field: 'comment',
+          oldValue: result.previous.body,
+          newValue: mutation.kind === 'edit' ? result.comment.body : undefined,
+        },
+      );
 
       await database.query(
         `UPDATE tracker_items SET data = $1, updated = NOW() WHERE id = $2`,

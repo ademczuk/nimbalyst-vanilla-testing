@@ -51,6 +51,7 @@ function nativeRow(data: Record<string, unknown>) {
     sync_status: 'local',
     last_indexed: new Date().toISOString(),
     body_version: 0,
+    archived: false,
   };
 }
 
@@ -65,7 +66,7 @@ function installStatefulTrackerRow(initialData: Record<string, unknown>) {
     }
     if (normalized.startsWith('UPDATE tracker_items SET data = $1')) {
       state.row = { ...state.row, data: params?.[0] as string };
-      return { rows: [] };
+      return { rows: [state.row] };
     }
     if (normalized.startsWith('UPDATE tracker_items SET content = $1')) {
       state.row = {
@@ -74,7 +75,7 @@ function installStatefulTrackerRow(initialData: Record<string, unknown>) {
         data: params?.[1] as string,
         body_version: state.row.body_version + 1,
       };
-      return { rows: [{ body_version: state.row.body_version }] };
+      return { rows: [state.row] };
     }
     if (normalized.startsWith('INSERT INTO tracker_body_cache')) {
       return { rows: [] };
@@ -86,6 +87,7 @@ function installStatefulTrackerRow(initialData: Record<string, unknown>) {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mockQuery.mockReset();
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-activity-history-test-'));
   service = new ElectronDocumentService(tempDir);
 });
@@ -100,7 +102,6 @@ describe('direct UI tracker activity history', () => {
     const original = nativeRow({ title: 'Example bug', status: 'to-do', activity: [] });
     const persisted = nativeRow({ title: 'Example bug', status: 'in-progress', activity: [] });
     mockQuery.mockResolvedValueOnce({ rows: [original] });
-    mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [persisted] });
 
     await service.updateTrackerItem('bug-1', { status: 'in-progress' });
@@ -120,9 +121,8 @@ describe('direct UI tracker activity history', () => {
     const original = nativeRow({ title: 'Example bug', status: 'to-do', activity: [] });
     const persisted = nativeRow({ title: 'Example bug', status: 'to-do', activity: [] });
     mockQuery.mockResolvedValueOnce({ rows: [original] });
-    mockQuery.mockResolvedValueOnce({ rows: [{ body_version: 1 }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ ...persisted, body_version: 1 }] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
-    mockQuery.mockResolvedValueOnce({ rows: [persisted] });
 
     await service.updateTrackerItemContent('bug-1', { root: { type: 'root' } });
 
@@ -134,6 +134,26 @@ describe('direct UI tracker activity history', () => {
       authorIdentity: { email: 'human@example.com', displayName: 'Human Editor' },
       action: 'updated',
       field: 'content',
+    });
+  });
+
+  it('records attributed before/after history for archive changes', async () => {
+    const original = nativeRow({ title: 'Example bug', status: 'to-do', activity: [] });
+    const persisted = { ...original, archived: true };
+    mockQuery.mockResolvedValueOnce({ rows: [original] });
+    mockQuery.mockResolvedValueOnce({ rows: [persisted] });
+
+    await service.archiveTrackerItem('bug-1', true);
+
+    const updateCall = mockQuery.mock.calls[1];
+    const writtenData = JSON.parse(updateCall[1][0]);
+    expect(writtenData.activity).toHaveLength(1);
+    expect(writtenData.activity[0]).toMatchObject({
+      authorIdentity: { email: 'human@example.com', displayName: 'Human Editor' },
+      action: 'archived',
+      field: 'archived',
+      oldValue: 'false',
+      newValue: 'true',
     });
   });
 
