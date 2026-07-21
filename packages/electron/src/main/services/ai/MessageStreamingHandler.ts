@@ -775,8 +775,8 @@ export class MessageStreamingHandler {
     // so other modules subscribing to the same provider event stay wired.
     this.installListener(provider, 'message:logged', onMessageLogged);
 
-    // Forward provider-side title updates (from the SDK's generateSessionTitle
-    // path) to all renderers so the session list updates in real time.
+    // Forward any provider-side title updates to all renderers so the session
+    // list updates in real time.
     // Mirrors the broadcast that SessionNamingService does for the MCP-tool path.
     const onSessionTitleUpdated = (data: { sessionId: string; title: string }) => {
       for (const window of BrowserWindow.getAllWindows()) {
@@ -1284,6 +1284,14 @@ export class MessageStreamingHandler {
 
         // Session metadata
         sessionType: documentContext?.sessionType ?? session.sessionType,
+        // Whether the session already has a caller-assigned name (e.g. a
+        // spawn_session child titled by its parent). claude-code reads this only
+        // on its FIRST turn to decide whether to self-name in-band; it then
+        // freezes that decision so the appended system prompt stays cache-stable
+        // (see ClaudeCodeProvider.buildSystemPrompt). This is the raw, mutable
+        // flag — it flips true once any session self-names — so downstream must
+        // not gate per-turn behavior on it.
+        hasBeenNamed: session.hasBeenNamed,
         mode: effectiveMode,
         permissionsPath,  // For worktree sessions, this is the parent project path
         mcpConfigWorkspacePath: session.worktreeProjectPath || effectiveWorkspacePath,  // Use parent project for MCP config lookup

@@ -71,11 +71,12 @@ So the user can see at a glance whether each session's changes are committed: af
 export interface ClaudeCodePromptOptions {
   hasSessionNaming?: boolean;
   /**
-   * When true, the prompt tells the agent NOT to set `name` — the host will
-   * generate the title out-of-band. Only providers that actually run an
-   * out-of-band naming path (currently just claude-code via the SDK's
-   * generateSessionTitle) should pass true. Other providers must leave this
-   * false so the agent still sets a name via update_session_meta.
+   * When true, the prompt tells the agent NOT to set `name` — the session is
+   * already named out-of-band (e.g. a spawn_session child titled by its parent).
+   * When false, the agent names the session in-band via update_session_meta.
+   * Pass true only when a name already exists or a real out-of-band path will
+   * set one; otherwise the session is never named. (claude-code dropped its SDK
+   * generateSessionTitle path in NIM-1988 and now names in-band by default.)
    */
   hasOutOfBandNaming?: boolean;
   /**

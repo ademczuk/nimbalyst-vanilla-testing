@@ -227,6 +227,11 @@ export async function buildSdkOptions(
 
   const options: any = {
     pathToClaudeCodeExecutable: effectivePath,
+    // NOTE: this `append` string is re-sent on EVERY resumed turn and sits at
+    // the front of the prompt-cache prefix. It MUST be byte-identical across a
+    // session's turns — any per-turn variation (e.g. a naming section that flips
+    // once the agent names the session) forces a system_changed cache miss on
+    // the whole prefix. See ClaudeCodeProvider.buildSystemPrompt / NIM-1988.
     systemPrompt: isMetaAgent
       ? systemPrompt  // Plain string — fully replaces CC system prompt
       : {

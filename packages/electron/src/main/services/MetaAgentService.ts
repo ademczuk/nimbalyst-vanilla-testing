@@ -591,9 +591,9 @@ export class MetaAgentService {
       createdBySessionId: metaSessionId,
       parentSessionId: args.parentSessionIdOverride ?? null,
       // When the meta-agent (or any caller of spawn_session) supplies an
-      // explicit title, treat the session as already named so the out-of-band
-      // SDK title generator (see ClaudeCodeProvider.runTitleGeneration) does
-      // not clobber it via updateTitleIfNotNamed.
+      // explicit title, treat the session as already named. claude-code reads
+      // this flag (via documentContext.hasBeenNamed) to set hasOutOfBandNaming
+      // and suppress in-band self-naming, so the child keeps the parent's title.
       hasBeenNamed: callerProvidedTitle,
     } as any);
 

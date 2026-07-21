@@ -204,9 +204,15 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   private static cachedSdkSkills: string[] = [];
   private static cachedSdkSlashCommands: string[] = [];
 
-  // Per-process guard: tracks sessionIds we've already attempted naming for so we
-  // don't keep nudging the SDK every turn if the first attempt failed.
-  private sessionTitleGenerationFiredFor: Set<string> = new Set();
+  // Per-process guard for the best-effort default phase fallback.
+  private sessionPhaseFallbackAppliedFor: Set<string> = new Set();
+
+  // Session-naming mode, decided ONCE per session (this provider instance is
+  // per-session) and then frozen. See buildSystemPrompt for the full rationale.
+  // DO NOT recompute this per turn from the live hasBeenNamed flag — that flag
+  // flips false->true when the agent names itself in-band on turn 1, which would
+  // flip the appended system prompt on turn 2 and bust the whole prompt cache.
+  private outOfBandNamingDecision: boolean | undefined = undefined;
 
   private markMessagesAsHidden: boolean = false; // Flag to mark next messages as hidden
   private helperMethod: 'native' | 'custom' = 'native';
@@ -509,12 +515,6 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     attachments?: any[]
   ): AsyncIterableIterator<StreamChunk> {
     const startTime = Date.now();
-
-    // Capture the original user message for the naming side-question. Held in a
-    // local const (not an instance field) so concurrent or hidden sendMessage
-    // calls can't overwrite each other's description before handleSystemInit
-    // fires.
-    const firstUserMessageDescription = message;
 
     // CRITICAL: Capture hidden mode flag at START and reset immediately
     // This prevents race conditions when concurrent sendMessage calls overlap
@@ -1341,7 +1341,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
               // -- Lifecycle items (side effects only, not transcript-relevant) --
 
               case 'system_init':
-                yield* this.handleSystemInit(item.chunk, sessionId, hideMessages, firstUserMessageDescription);
+                yield* this.handleSystemInit(item.chunk, sessionId, hideMessages);
                 break;
 
               case 'system_task':
@@ -1939,17 +1939,6 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     this.currentSessionId = undefined;
   }
 
-  /**
-   * If the session is still unnamed, ask the SDK's built-in title generator.
-   * Tags and phase stay on the required update_session_meta path so first-turn
-   * metadata does not make a second paid model request or perturb the main
-   * conversation's prompt-cache policy.
-   *
-   * Must be called DURING the turn (after init, before result), because the SDK
-   * calls transport.endInput() after the first result chunk and rejects pending
-   * control responses with "Query closed before response received".
-   */
-
   // Per-session "transcript processing already scheduled" flag. The streaming
   // chunk loop fires scheduleTranscriptProcessing per chunk, so without this
   // we'd queue one processNewMessages run per chunk; the per-session lock
@@ -1999,12 +1988,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     }
   }
 
-  private async maybeGenerateSessionTitle(
-    queryRef: Query,
-    sessionId: string,
-    description: string
-  ): Promise<void> {
-    if (this.sessionTitleGenerationFiredFor.has(sessionId)) return;
+  private async maybeApplyDefaultSessionPhase(sessionId: string): Promise<void> {
+    if (this.sessionPhaseFallbackAppliedFor.has(sessionId)) return;
 
     try {
       const { AISessionsRepository } = await import('../../../storage/repositories/AISessionsRepository');
@@ -2012,21 +1997,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       if (!session) return;
       if ((session as any).hasBeenNamed === true) return;
 
-      const generateTitle = (queryRef as any).generateSessionTitle;
-      if (typeof generateTitle !== 'function') {
-        console.warn('[CLAUDE-CODE] naming skip: generateSessionTitle not exposed on Query');
-        return;
-      }
-
-      this.sessionTitleGenerationFiredFor.add(sessionId);
-      await this.runTitleGeneration(queryRef, sessionId, description, generateTitle);
-
       // Default phase fallback — only if the metadata tool or a prior turn has
       // not set a phase. Tags remain owned by the required metadata-tool call;
       // a second paid SDK side request duplicated that work and disturbed the
       // main conversation's prompt-cache policy.
-      const refreshed = await AISessionsRepository.get(sessionId);
-      const existingPhase = (refreshed?.metadata as any)?.phase;
+      this.sessionPhaseFallbackAppliedFor.add(sessionId);
+      const existingPhase = (session.metadata as any)?.phase;
       if (!existingPhase) {
         const fallbackMetadata = { phase: 'planning' };
         await AISessionsRepository.updateMetadata(sessionId, {
@@ -2037,40 +2013,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         this.emit('session:metadata-updated', { sessionId, metadata: fallbackMetadata });
       }
     } catch (error) {
-      // Best-effort -- never let naming errors disrupt the main session
-      console.warn('[CLAUDE-CODE] Session naming failed:', (error as Error)?.message ?? error);
-    }
-  }
-
-  private async runTitleGeneration(
-    queryRef: Query,
-    sessionId: string,
-    description: string,
-    generateTitle: any
-  ): Promise<void> {
-    try {
-      // generateSessionTitle has no language parameter on the SDK surface, so
-      // we steer it via the description string. This is best-effort -- the
-      // SDK still ultimately decides.
-      const { getPreferredAgentLanguage } = await import('../preferredAgentLanguageConfig');
-      const language = getPreferredAgentLanguage();
-      const promptDescription = language
-        ? `${description}\n\n(Write the title in this language: ${language}.)`
-        : description;
-
-      const title: string | undefined = await generateTitle.call(queryRef, promptDescription, { persist: false });
-      if (!title || typeof title !== 'string' || title.trim().length === 0) return;
-
-      const trimmed = title.trim();
-      const { SessionManager } = await import('../SessionManager');
-      const manager = new SessionManager();
-      await manager.initialize();
-      await manager.updateSessionTitle(sessionId, trimmed);
-
-      this.emit('session:title-updated', { sessionId, title: trimmed });
-      // console.log(`[CLAUDE-CODE] generated session title for ${sessionId}: "${trimmed}"`);
-    } catch (error) {
-      console.warn('[CLAUDE-CODE] generateSessionTitle failed:', (error as Error)?.message ?? error);
+      // Best-effort -- never let fallback metadata disrupt the main session.
+      console.warn('[CLAUDE-CODE] Session phase fallback failed:', (error as Error)?.message ?? error);
     }
   }
 
@@ -2425,7 +2369,6 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     chunk: any,
     sessionId: string | undefined,
     hideMessages: boolean,
-    firstUserMessageDescription: string,
   ): Generator<StreamChunk> {
     // Clean up stale "running" tasks from previous sessions/restarts
     if (sessionId && this.activeTasks.size === 0) {
@@ -2496,14 +2439,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       this.startMcpHealthChecks();
     }
 
-    // Fire-and-forget session-title generation. It must run DURING the turn
-    // (here, not post-turn) because the SDK calls transport.endInput() after the
-    // first result chunk for both string-prompt and AsyncIterable paths, killing
-    // the transport before any post-turn write could land. Init time is the
-    // earliest safe moment: subprocess alive, stdin open, MCP servers connected.
-    if (sessionId && this.leadQuery) {
-      const queryRef = this.leadQuery;
-      this.maybeGenerateSessionTitle(queryRef, sessionId, firstUserMessageDescription).catch(() => {});
+    // The host has already persisted a provisional first-prompt title before
+    // the provider starts. Do not also call Query.generateSessionTitle here:
+    // NIM-1988 measured it as a byte-identical paid auxiliary request. Keep the
+    // independent phase fallback without making another model call.
+    if (sessionId) {
+      this.maybeApplyDefaultSessionPhase(sessionId).catch(() => {});
     }
   }
 
@@ -3644,12 +3585,42 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     const isVoiceMode = (documentContext as any)?.isVoiceMode;
     const voiceModeCodingAgentPrompt = (documentContext as any)?.voiceModeCodingAgentPrompt;
 
+    // ── Session naming: correctness AND prompt-cache invariant (NIM-1988) ──
+    //
+    // Behavior we want:
+    //   - A session already named out-of-band (e.g. a spawn_session child titled
+    //     by its parent, hasBeenNamed=true at creation) must NOT self-name, or it
+    //     clobbers that title -> hasOutOfBandNaming = true ("do NOT set name").
+    //   - Every other session names itself in-band via update_session_meta (the
+    //     same call it already makes for tags/phase, so no extra paid request).
+    //     We removed the SDK's generateSessionTitle side-call (NIM-1988: a
+    //     byte-identical paid auxiliary request per first turn), so a fresh
+    //     session MUST self-name in-band or it keeps only the host's provisional
+    //     truncated first-prompt title -> hasOutOfBandNaming = false.
+    //
+    // Why this is memoized and NOT recomputed per turn (the part that keeps
+    // biting us — do not "simplify" it back):
+    //   This system prompt is sent as `--append-system-prompt` and re-sent on
+    //   EVERY resumed turn (see sdkOptionsBuilder), sitting at the front of the
+    //   prompt-cache prefix. `hasBeenNamed` is MUTABLE: a normal session is
+    //   unnamed on turn 1 (false -> in-band variant), the agent names it, and
+    //   turn 2 reads true. Gating on the live flag would flip the naming section
+    //   between turns -> a full system_changed cache miss on turn 2 of every
+    //   multi-turn session, re-billing the entire ~47k prefix uncached. That
+    //   costs far more than the ~630 tokens the naming change saves.
+    //   The first build happens BEFORE the agent's in-band naming runs, so
+    //   hasBeenNamed here means "named by a caller", which is exactly the signal
+    //   we want. Freeze it. Invariant covered by
+    //   ClaudeCodeProvider.sessionNaming.test.ts ("stable after ... named
+    //   mid-session" asserts turn2 === turn1 byte-for-byte).
+    if (this.outOfBandNamingDecision === undefined) {
+      this.outOfBandNamingDecision = documentContext?.hasBeenNamed === true;
+    }
+    const alreadyNamedOutOfBand = this.outOfBandNamingDecision;
+
     const prompt = buildClaudeCodeSystemPrompt({
       hasSessionNaming,
-      // claude-code generates titles out-of-band via the SDK's generateSessionTitle
-      // (see maybeGenerateSessionTitle). Other providers must keep
-      // hasOutOfBandNaming = false so the agent still names the session itself.
-      hasOutOfBandNaming: true,
+      hasOutOfBandNaming: alreadyNamedOutOfBand,
       worktreePath,
       isVoiceMode,
       voiceModeCodingAgentPrompt,
