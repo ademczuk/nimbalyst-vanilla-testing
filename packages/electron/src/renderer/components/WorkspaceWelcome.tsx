@@ -43,7 +43,7 @@ export function WorkspaceWelcome({
   }, [onInsertAgentPrompt]);
 
   return (
-    <div className="workspace-welcome @container flex h-full w-full items-start justify-center overflow-y-auto bg-nim px-4 py-8 text-nim">
+    <div className="workspace-welcome [container-type:inline-size] flex h-full w-full items-start justify-center overflow-y-auto bg-nim px-4 py-8 text-nim">
       <div className="workspace-welcome-content my-auto w-full max-w-[560px] text-center">
         <div className="workspace-welcome-icon mx-auto mb-4 h-16 w-16">
           {iconUrl && (
@@ -67,7 +67,7 @@ export function WorkspaceWelcome({
               Files are saved automatically as you work
             </p>
 
-            <div className="workspace-welcome-actions grid grid-cols-1 gap-3 text-left @[520px]:grid-cols-2">
+            <div className="workspace-welcome-actions grid grid-cols-1 gap-3 text-left">
               <div
                 className="workspace-welcome-action-card rounded-xl border border-nim bg-nim-secondary p-4 transition-colors duration-150 hover:border-[color-mix(in_srgb,var(--nim-primary)_45%,var(--nim-border))] hover:bg-nim-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nim-primary)]"
                 role="button"
