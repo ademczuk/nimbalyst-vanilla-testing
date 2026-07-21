@@ -325,7 +325,7 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
       )}
 
       {/* Header with session dropdown */}
-      <div className="chat-sidebar-header flex items-center gap-2 p-2 border-b border-nim justify-between shrink-0">
+      <div className="chat-sidebar-header [container-type:inline-size] flex items-center gap-2 p-2 border-b border-nim justify-between shrink-0">
         <SessionDropdown
           currentSessionId={sessionId}
           sessions={availableSessions}
@@ -334,8 +334,9 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
           onDeleteSession={handleDeleteSession}
           onRenameSession={handleRenameSession}
           onOpenSessionManager={onSwitchToAgentMode}
+          className="flex-1"
         />
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           {onSwitchToAgentMode && (
             <button
               className="chat-sidebar-maximize-button flex items-center justify-center w-7 h-7 rounded-md text-nim-muted border-none cursor-pointer transition-colors duration-150 hover:bg-nim-bg-active hover:text-nim bg-transparent"
@@ -349,9 +350,10 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
             className="chat-sidebar-new-button flex items-center gap-1 px-3 py-1.5 rounded-md text-[0.8125rem] font-medium bg-nim-primary text-nim-on-primary border-none cursor-pointer transition-opacity duration-150 hover:opacity-90"
             onClick={handleNewSession}
             title="Start new conversation"
+            aria-label="Start new conversation"
           >
             <MaterialSymbol icon="add" size={16} />
-            New
+            <span className="chat-sidebar-new-label">New</span>
           </button>
         </div>
       </div>

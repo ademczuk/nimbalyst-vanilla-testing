@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Answering a question prompt in a Codex (GPT) session now reliably resumes the turn, on desktop and from the mobile app, instead of appearing to submit but hanging.
 - The user menu again links to Application and Project settings, which the account menu redesign had dropped.
 - Spreadsheet documents (CSV, TSV, and calc sheets) can now be shared as collaborative documents instead of being reported as unsupported.
+- The New Session button in the files chat panel no longer gets cut off on a narrow panel, and you can now start a new session from the session menu too.
 
 ### Removed
 <!-- Removed features go here -->
