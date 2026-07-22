@@ -288,11 +288,11 @@ export function registerFileHandlers() {
                     { name: 'Text Files', extensions: ['txt'] },
                     { name: 'All Files', extensions: ['*'] }
                 ],
-                defaultPath: getDialogDefaultPath({
-                    window,
-                    explicitPath: state?.filePath || undefined,
-                    suggestedName: state?.filePath ? undefined : 'untitled.md',
-                })
+                // An already-saved doc reopens at its own path; a new one lands
+                // in the active workspace as untitled.md.
+                defaultPath: state?.filePath
+                    ? getDialogDefaultPath({ window, explicitPath: state.filePath })
+                    : getDialogDefaultPath({ window, suggestedName: 'untitled.md' })
             });
 
             if (!result.canceled) {

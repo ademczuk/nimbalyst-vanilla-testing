@@ -1,7 +1,8 @@
 import { app, type BrowserWindow } from 'electron';
+import { statSync } from 'fs';
 import { dirname, isAbsolute, join } from 'path';
 import { store } from './store';
-import { resolveActiveWorkspacePath, windows, windowStates } from '../window/windowState';
+import { getWindowIdForWindow, resolveActiveWorkspacePathForWindowId } from '../window/windowState';
 
 type SelectionKind = 'file' | 'directory';
 
@@ -34,20 +35,41 @@ export function selectedDialogDirectory(selectedPath: string, kind: SelectionKin
 }
 
 function workspacePathForWindow(window?: BrowserWindow | null): string | null {
-  if (!window) return null;
-  for (const [windowId, candidate] of windows) {
-    if (candidate === window) {
-      return resolveActiveWorkspacePath(windowStates.get(windowId));
-    }
-  }
-  return null;
+  return resolveActiveWorkspacePathForWindowId(getWindowIdForWindow(window)) ?? null;
 }
 
+/**
+ * A remembered or workspace directory is only usable if it still exists — a
+ * project moved to another disk, a deleted folder, or an unmounted volume
+ * would otherwise be handed to the native dialog, which degrades differently
+ * on each platform. Fall through to the next candidate instead.
+ */
+export function usableDirectory(candidate: string | null | undefined): string | undefined {
+  if (!candidate) return undefined;
+  try {
+    return statSync(candidate).isDirectory() ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Default location for a native file/folder dialog.
+ *
+ * Electron 43 defaults pickers to the Downloads folder, which is almost never
+ * where the user is working. Prefer, in order: the window's active workspace,
+ * the last directory a dialog landed in, then Documents.
+ *
+ * Pass `window` whenever the dialog concerns workspace content, so it opens in
+ * the project the user is actually looking at. Omit it only for dialogs that
+ * are deliberately workspace-independent — picking a notification sound, or
+ * choosing where a brand-new project should live.
+ */
 export function getDialogDefaultPath(options: DialogPathOptions = {}): string {
   return selectDialogDefaultPath({
     explicitPath: options.explicitPath,
-    workspacePath: workspacePathForWindow(options.window),
-    lastDirectory: store.get('lastDialogDirectory'),
+    workspacePath: usableDirectory(workspacePathForWindow(options.window)) ?? null,
+    lastDirectory: usableDirectory(store.get('lastDialogDirectory')),
     documentsPath: app.getPath('documents'),
     suggestedName: options.suggestedName,
   });

@@ -23,7 +23,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
-    "postinstall": "electron-builder install-app-deps",
+    "postinstall": "install-electron && electron-builder install-app-deps",
     "build:unpack": "npm run build && npm run build:extensions && npm run validate:extra-resources && electron-builder --dir",
     "build:dist": "npm run build && npm run build:extensions && npm run validate:extra-resources && electron-builder",
     "build:mac": "npm run build && npm run build:extensions && node -r dotenv/config build/configure-build.js && node build/build-with-env.js --mac",

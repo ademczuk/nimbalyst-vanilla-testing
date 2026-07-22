@@ -27,7 +27,7 @@ import { ExtensionLogService } from '../services/ExtensionLogService';
 import { getMcpConfigService } from '../mcpConfigServiceRef';
 import { addNimAssetRoot } from '../protocols/nimAssetProtocol';
 import { addNimPreviewWorkspaceRoot } from '../protocols/nimPreviewProtocol';
-import { windows, windowStates, anyWindowReferencesWorkspace, resolveDocumentServicePath } from './windowState';
+import { windows, windowStates, anyWindowReferencesWorkspace, resolveDocumentServicePath, getWindowIdForWindow } from './windowState';
 import { shouldSaveSessionOnWindowClose } from './sessionSaveOnClose';
 
 // Window management
@@ -839,12 +839,7 @@ export function getMostRecentlyFocusedWorkspaceWindow(): BrowserWindow | null {
 
 // Find custom window ID from BrowserWindow
 export function getWindowId(browserWindow: BrowserWindow): number | null {
-    for (const [windowId, window] of windows) {
-        if (window === browserWindow) {
-            return windowId;
-        }
-    }
-    return null;
+    return getWindowIdForWindow(browserWindow);
 }
 
 // IPC handler to check if a window is focused

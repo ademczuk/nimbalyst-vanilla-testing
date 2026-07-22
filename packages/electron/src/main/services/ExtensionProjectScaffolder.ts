@@ -156,6 +156,9 @@ export async function showNewExtensionProjectDialog(sourceWindow?: BrowserWindow
     return;
   }
 
+  // Deliberately window-less: a new extension project is a sibling of the
+  // user's projects, not content inside the currently-open workspace, so this
+  // starts from the last-used directory rather than the active project.
   const defaultPath = getDialogDefaultPath({
     suggestedName: 'my-nimbalyst-extension',
   });

@@ -382,10 +382,15 @@ const WORKER_BUNDLES = [
     externals: ['better-sqlite3'],
     nativeBinaries: [
       // v13 loads an N-API prebuild directly; keep the legacy build path as a
-      // fallback for source-built packages.
+      // fallback for source-built packages. On Linux the runtime resolver
+      // (lib/binding.js#getPrebuildPath) picks linuxmusl-* when glibc is
+      // absent, so accept either variant rather than only the glibc name.
       {
         candidateRelPaths: [
           `node_modules/better-sqlite3/prebuilds/${targetPlatform}-${targetArch}.node`,
+          ...(targetPlatform === 'linux'
+            ? [`node_modules/better-sqlite3/prebuilds/linuxmusl-${targetArch}.node`]
+            : []),
           'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
         ],
       },

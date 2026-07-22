@@ -433,6 +433,8 @@ export function registerSettingsHandlers() {
             buttonLabel: 'Use Sound',
             properties: ['openFile'],
             filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'] }],
+            // Deliberately window-less: sound files live in the user's music
+            // library, not inside the open workspace.
             defaultPath: getDialogDefaultPath(),
         };
         const result = window
