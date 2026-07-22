@@ -25,11 +25,17 @@
         }
       }
     ],
-    "settingsPanel": {
-      "component": "NimbalystMemorySettings",
-      "title": "Project Memory",
-      "icon": "psychology"
-    }
+    "settingsRoutes": [
+      {
+        "id": "memory",
+        "scope": "project",
+        "label": "Memory",
+        "group": "Project",
+        "icon": "psychology",
+        "order": 80,
+        "component": "NimbalystMemorySettings"
+      }
+    ]
   },
   "marketplace": {
     "categories": ["developer-tools", "ai"],

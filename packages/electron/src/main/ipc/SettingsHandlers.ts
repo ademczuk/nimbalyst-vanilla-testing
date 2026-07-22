@@ -43,6 +43,7 @@ import { getEnhancedPath } from '../services/CLIManager';
 import { logger } from '../utils/logger';
 import { getSettingsService, isSettingKey } from '../services/SettingsService';
 import { SessionNamingService } from '../services/SessionNamingService';
+import { getDialogDefaultPath, rememberDialogSelection } from '../utils/dialogPaths';
 import { SoundNotificationService } from '../services/SoundNotificationService';
 import { autoUpdaterService } from '../services/autoUpdater';
 import type { OnboardingState } from '../utils/store';
@@ -432,6 +433,9 @@ export function registerSettingsHandlers() {
             buttonLabel: 'Use Sound',
             properties: ['openFile'],
             filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac'] }],
+            // Deliberately window-less: sound files live in the user's music
+            // library, not inside the open workspace.
+            defaultPath: getDialogDefaultPath(),
         };
         const result = window
             ? await dialog.showOpenDialog(window, dialogOptions)
@@ -441,6 +445,7 @@ export function registerSettingsHandlers() {
         }
 
         const sourcePath = result.filePaths[0];
+        rememberDialogSelection(sourcePath, 'file');
 
         // Reject oversized files: the bytes are read into memory and cloned over
         // IPC on every completion, so a huge file means churn / OOM risk.

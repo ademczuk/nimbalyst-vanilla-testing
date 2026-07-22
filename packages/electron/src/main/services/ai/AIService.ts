@@ -111,6 +111,7 @@ import {
   detectConfiguredAIProvider,
   safeSend,
   getFileExtensionForAnalytics,
+  extensionPromptRequiresConfiguredApiKey,
   extractModelForProvider,
   detectNimbalystSlashCommand,
   extractFileMentions,
@@ -3701,8 +3702,9 @@ export class AIService {
         throw new Error(`Provider ${provider} is not enabled for this workspace`);
       }
 
-      // Check API key (claude-code uses SSO, so key is optional)
-      if (provider !== 'claude-code') {
+      // Direct API providers require explicitly configured keys. Agent providers
+      // with their own sign-in flows (Claude Code and OpenAI Codex) do not.
+      if (extensionPromptRequiresConfiguredApiKey(provider)) {
         const apiKey = this.getApiKeyForProvider(provider, workspacePath);
         if (!apiKey) {
           throw new Error(`API key not configured for provider ${provider}. Configure it in Settings > AI.`);

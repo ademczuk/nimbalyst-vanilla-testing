@@ -45,6 +45,7 @@ import { autoUpdaterService } from '../services/autoUpdater';
 import { KeyboardShortcuts } from './KeyboardShortcuts';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { FeatureTrackingService } from '../services/analytics/FeatureTrackingService';
+import { getDialogDefaultPath, rememberDialogSelection } from '../utils/dialogPaths';
 import {
     showExtensionProjectIntroDialog,
     showNewExtensionProjectDialog,
@@ -381,17 +382,23 @@ export async function createApplicationMenu() {
                     label: 'Open...',
                     accelerator: KeyboardShortcuts.file.open,
                     click: async () => {
-                        const result = await dialog.showOpenDialog({
+                        const focusedWindow = BrowserWindow.getFocusedWindow();
+                        const dialogOptions: Electron.OpenDialogOptions = {
+                            defaultPath: getDialogDefaultPath({ window: focusedWindow }),
                             properties: ['openFile'],
                             filters: [
                                 { name: 'Markdown Files', extensions: ['md', 'markdown'] },
                                 { name: 'Text Files', extensions: ['txt'] },
                                 { name: 'All Files', extensions: ['*'] }
                             ]
-                        });
+                        };
+                        const result = focusedWindow
+                            ? await dialog.showOpenDialog(focusedWindow, dialogOptions)
+                            : await dialog.showOpenDialog(dialogOptions);
 
                         if (!result.canceled && result.filePaths.length > 0) {
                             const filePath = result.filePaths[0];
+                            rememberDialogSelection(filePath, 'file');
                             // Check if file is already open
                             const existingWindow = findWindowByFilePath(filePath);
                             if (existingWindow) {

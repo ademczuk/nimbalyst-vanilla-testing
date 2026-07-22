@@ -10,7 +10,6 @@ import {
   type FrontmatterData,
 } from '@nimbalyst/runtime';
 import { editorRegistry } from '@nimbalyst/runtime/ai/EditorRegistry';
-import { SearchReplaceStateManager } from '@nimbalyst/runtime';
 import { store } from '@nimbalyst/runtime/store';
 import { DocumentModelRegistry } from '../services/document-model/DocumentModelRegistry';
 import { aiApi } from '../services/aiApi';
@@ -37,6 +36,7 @@ import {
   menuFindNextCommandAtom,
   menuFindPreviousCommandAtom,
 } from '../store/atoms/menuCommands';
+import { openEditorFind } from '../components/TabEditor/editorFindCommand';
 
 // Tracker field updates now go through the generic trackerStatus frontmatter format.
 // No hardcoded plan-specific field list needed.
@@ -1172,12 +1172,12 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
         (window as unknown as { __currentDocumentPath?: string | null }).__currentDocumentPath ||
         editorRegistry.getActiveFilePath();
       if (activeFilePath) {
-        SearchReplaceStateManager.toggle(activeFilePath);
+        openEditorFind(activeFilePath);
       }
     } else if (mode === 'collab') {
       const activeDocumentPath = collabModeRef.current?.getActiveDocumentPath?.();
       if (activeDocumentPath) {
-        SearchReplaceStateManager.toggle(activeDocumentPath);
+        openEditorFind(activeDocumentPath);
       }
     } else if (mode === 'agent') {
       window.dispatchEvent(new CustomEvent('menu:find'));

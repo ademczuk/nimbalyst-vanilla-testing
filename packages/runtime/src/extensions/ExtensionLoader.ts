@@ -27,6 +27,7 @@ import type {
   ClaudePluginContribution,
   PanelContribution,
   SettingsPanelContribution,
+  LoadedExtensionSettingsRoute,
   LoadedPanel,
   PanelHostProps,
   PanelGutterButtonProps,
@@ -186,6 +187,7 @@ function validateManifest(
     !contributions?.hostComponents &&
     !contributions?.panels &&
     !contributions?.settingsPanel &&
+    !contributions?.settingsRoutes &&
     !contributions?.newFileMenu &&
     !contributions?.configuration &&
     !contributions?.themes;
@@ -202,6 +204,7 @@ function validateManifest(
     !contributions?.hostComponents &&
     !contributions?.panels &&
     !contributions?.settingsPanel &&
+    !contributions?.settingsRoutes &&
     !contributions?.newFileMenu &&
     !contributions?.configuration;
 
@@ -789,6 +792,75 @@ function validateManifest(
           }
         }
       }
+
+      // Validate first-class settings routes.
+      if (contributions.settingsRoutes !== undefined) {
+        if (!Array.isArray(contributions.settingsRoutes)) {
+          errors.push({
+            error: `Invalid 'contributions.settingsRoutes' - should be an array`,
+            field: 'contributions.settingsRoutes',
+            suggestion: 'Provide an array of scoped settings route metadata',
+          });
+        } else {
+          const routeIds = new Set<string>();
+          contributions.settingsRoutes.forEach((value, index) => {
+            const field = `contributions.settingsRoutes[${index}]`;
+            if (!value || typeof value !== 'object' || Array.isArray(value)) {
+              errors.push({
+                error: `settingsRoutes[${index}] must be an object`,
+                field,
+              });
+              return;
+            }
+
+            const route = value as Record<string, unknown>;
+            if (typeof route.id !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(route.id)) {
+              errors.push({
+                error: `settingsRoutes[${index}] has an invalid 'id'`,
+                field: `${field}.id`,
+                suggestion: 'Use letters, numbers, dots, underscores, or hyphens',
+              });
+            } else if (routeIds.has(route.id)) {
+              errors.push({
+                error: `settingsRoutes contains duplicate id '${route.id}'`,
+                field: `${field}.id`,
+              });
+            } else {
+              routeIds.add(route.id);
+            }
+
+            if (route.scope !== 'application' && route.scope !== 'project') {
+              errors.push({
+                error: `settingsRoutes[${index}] has invalid scope '${String(route.scope)}'`,
+                field: `${field}.scope`,
+                suggestion: 'Use "application" or "project"',
+              });
+            }
+            for (const required of ['label', 'component'] as const) {
+              if (typeof route[required] !== 'string' || !route[required]) {
+                errors.push({
+                  error: `settingsRoutes[${index}] missing '${required}'`,
+                  field: `${field}.${required}`,
+                });
+              }
+            }
+            for (const optional of ['group', 'icon'] as const) {
+              if (route[optional] !== undefined && (typeof route[optional] !== 'string' || !route[optional])) {
+                errors.push({
+                  error: `settingsRoutes[${index}].${optional} must be a non-empty string when present`,
+                  field: `${field}.${optional}`,
+                });
+              }
+            }
+            if (route.order !== undefined && typeof route.order !== 'number') {
+              errors.push({
+                error: `settingsRoutes[${index}].order must be a number when present`,
+                field: `${field}.order`,
+              });
+            }
+          });
+        }
+      }
     }
   }
 
@@ -956,7 +1028,7 @@ function createExtensionContext(
       sendPrompt: async (options: {
         prompt: string;
         sessionName?: string;
-        provider?: 'claude-code' | 'claude' | 'openai';
+        provider?: 'claude-code' | 'claude' | 'openai' | 'openai-codex';
         model?: string;
       }): Promise<{ sessionId: string; response: string }> => {
         const electronAPI = (window as any).electronAPI;
@@ -1410,6 +1482,7 @@ export class ExtensionLoader {
       !contributions?.hostComponents &&
       !contributions?.panels &&
       !contributions?.settingsPanel &&
+      !contributions?.settingsRoutes &&
       !contributions?.newFileMenu &&
       !contributions?.configuration &&
       !contributions?.themes &&
@@ -1427,6 +1500,7 @@ export class ExtensionLoader {
       !contributions?.hostComponents &&
       !contributions?.panels &&
       !contributions?.settingsPanel &&
+      !contributions?.settingsRoutes &&
       !contributions?.newFileMenu &&
       !contributions?.configuration &&
       !manifest.main;
@@ -2136,6 +2210,52 @@ export class ExtensionLoader {
     panels.sort((a, b) => (a.contribution.order ?? 100) - (b.contribution.order ?? 100));
 
     return panels;
+  }
+
+  /**
+   * Get first-class settings routes from loaded, enabled extensions.
+   * Route components reuse the module's existing `settingsPanel` namespace.
+   */
+  getSettingsRoutes(): LoadedExtensionSettingsRoute[] {
+    const routes: LoadedExtensionSettingsRoute[] = [];
+
+    for (const loaded of this.loadedExtensions.values()) {
+      if (!loaded.enabled) continue;
+
+      const contributions = loaded.manifest.contributions?.settingsRoutes ?? [];
+      const settingsPanelExports = loaded.module.settingsPanel ?? {};
+
+      for (const contribution of contributions) {
+        const component = settingsPanelExports[contribution.component];
+        if (!component) {
+          console.warn(
+            `[ExtensionLoader] Extension ${loaded.manifest.id} declares settings route '${contribution.id}' but does not export settingsPanel.${contribution.component}`
+          );
+          continue;
+        }
+
+        routes.push({
+          id: `ext:${loaded.manifest.id}:${contribution.id}`,
+          extensionId: loaded.manifest.id,
+          scope: contribution.scope,
+          label: contribution.label,
+          group: contribution.group ?? 'Extensions',
+          icon: contribution.icon ?? 'extension',
+          order: contribution.order ?? 100,
+          componentName: contribution.component,
+          contribution,
+          component: component as ComponentType<SettingsPanelProps>,
+        });
+      }
+    }
+
+    routes.sort((a, b) =>
+      a.group.localeCompare(b.group)
+      || a.order - b.order
+      || a.label.localeCompare(b.label)
+      || a.id.localeCompare(b.id)
+    );
+    return routes;
   }
 
   /**

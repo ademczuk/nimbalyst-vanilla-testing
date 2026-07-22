@@ -9,6 +9,7 @@ Extensions can contribute:
 - **File Type Handlers**: Associate file extensions with specific editors
 - **AI Tools via MCP**: Expose functionality to AI agents through the Model Context Protocol
 - **Custom UI Components**: Panels, widgets, and tool call renderers
+- **Scoped Settings Routes**: First-class application or project rows in the Settings sidebar, with project context for per-repository surfaces
 
 ## Current Editor Types
 

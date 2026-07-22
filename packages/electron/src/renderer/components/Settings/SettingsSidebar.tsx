@@ -13,6 +13,7 @@ import { developerModeAtom } from '../../store/atoms/appSettings';
 import {
   getSettingsRoutesForScope,
   type SettingsCategory,
+  type ExtensionSettingsRoute,
   type SettingsRoute,
   type SettingsScope,
 } from './settingsRoutes';
@@ -25,6 +26,7 @@ interface SettingsSidebarProps {
   providerStatus?: Record<string, { enabled: boolean; testStatus?: string }>;
   scope?: SettingsScope;
   showDirectChatProviders: boolean;
+  extensionRoutes?: readonly ExtensionSettingsRoute[];
 }
 
 const GROUP_DESCRIPTIONS: Record<string, string> = {
@@ -46,6 +48,7 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
   providerStatus = {},
   scope = 'application',
   showDirectChatProviders,
+  extensionRoutes = [],
 }) => {
   const developerMode = useAtomValue(developerModeAtom);
   const [extAgentProviders, setExtAgentProviders] = useState<
@@ -72,7 +75,11 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
 
   const groups = useMemo(() => {
     const grouped = new Map<string, Array<SettingsRoute | { id: string; label: string; icon?: string; status: string }>>();
-    for (const route of getSettingsRoutesForScope(scope, { developerMode, showDirectChatProviders })) {
+    for (const route of getSettingsRoutesForScope(
+      scope,
+      { developerMode, showDirectChatProviders },
+      extensionRoutes,
+    )) {
       const entries = grouped.get(route.group) ?? [];
       entries.push(route);
       grouped.set(route.group, entries);
@@ -83,7 +90,7 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
       grouped.set('Agent Providers', entries);
     }
     return [...grouped.entries()];
-  }, [developerMode, extAgentProviders, scope, showDirectChatProviders]);
+  }, [developerMode, extAgentProviders, extensionRoutes, scope, showDirectChatProviders]);
 
   return (
     <aside
@@ -117,10 +124,10 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
               )}
             </div>
             {routes.map((route) => {
-              const isRegistered = 'scope' in route;
+              const isSettingsRoute = 'source' in route;
               const id = route.id;
               const providerState = providerStatus[id];
-              const status = !isRegistered
+              const status = !isSettingsRoute
                 ? route.status
                 : providerState?.enabled ? providerState.testStatus : undefined;
               return (
@@ -136,12 +143,14 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
                   onClick={() => onSelectCategory(id)}
                 >
                   <span className="settings-sidebar-item-icon flex items-center justify-center w-5 h-5 shrink-0 text-[var(--nim-text-muted)]">
-                    {isRegistered
+                    {isSettingsRoute
                       ? routeIcon(route)
                       : route.icon ? <MaterialSymbol icon={route.icon} size={16} /> : getProviderIcon(id, { size: 16 })}
                   </span>
                   <span className="settings-sidebar-item-name flex-1 truncate">{route.label}</span>
-                  {isRegistered && route.isAlpha && <AlphaBadge size="xs" tooltip={SETTINGS_ALPHA_TOOLTIP} />}
+                  {isSettingsRoute && route.source === 'builtin' && route.isAlpha && (
+                    <AlphaBadge size="xs" tooltip={SETTINGS_ALPHA_TOOLTIP} />
+                  )}
                   {(status === 'success' || status === 'active' || status === 'error' || status === 'denied') && (
                     <span className={`settings-sidebar-item-status h-2 w-2 rounded-full ${status === 'success' || status === 'active' ? 'bg-[var(--nim-success)]' : 'bg-[var(--nim-error)]'}`} />
                   )}

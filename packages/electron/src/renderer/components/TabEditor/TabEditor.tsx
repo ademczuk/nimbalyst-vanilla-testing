@@ -30,7 +30,7 @@ import {
   $approveDiffs,
   $rejectDiffs
 } from '@nimbalyst/runtime';
-import { $getRoot, $getSelection, $isRangeSelection, SKIP_SCROLL_INTO_VIEW_TAG, SKIP_DOM_SELECTION_TAG, COMMAND_PRIORITY_LOW } from 'lexical';
+import { $getRoot, $getSelection, $isRangeSelection, $setSelection, SKIP_SCROLL_INTO_VIEW_TAG, SKIP_DOM_SELECTION_TAG, COMMAND_PRIORITY_LOW } from 'lexical';
 import { DocumentHeaderContainer } from '@nimbalyst/runtime/plugins/TrackerPlugin/documentHeader';
 // Side-effect import: registers GenericFrontmatterHeader with DocumentHeaderRegistry
 import '@nimbalyst/runtime/plugins/FrontmatterPlugin';
@@ -43,6 +43,7 @@ import { customEditorRegistry, CustomEditorWrapper } from '../CustomEditors';
 import { logger } from '../../utils/logger';
 import { createEditorHost } from './createEditorHost';
 import type { EditorHost, DiffConfig, ProjectFileWriteReceipt, EditorHostFileSystem } from '@nimbalyst/runtime';
+import { createProjectFileSystemHost } from '../../services/projectFileSystemHost';
 import { createExtensionStorage, createElementVisibilityTracker } from '@nimbalyst/runtime';
 import { setEditorContext, setEditorContextItems, clearEditorContext } from '../../stores/editorContextStore';
 import { store, editorHasUnacceptedChangesAtom, makeEditorKey } from '@nimbalyst/runtime/store';
@@ -53,6 +54,8 @@ import { useDocumentModel } from '../../services/document-model/useDocumentModel
 import { DocumentModelRegistry } from '../../services/document-model/DocumentModelRegistry';
 import type { DiffState } from '../../services/document-model/types';
 import { diffTrace } from '@nimbalyst/runtime/utils/debugFlags';
+import { SearchReplaceStateManager, isLexicalSearchEditor } from '@nimbalyst/runtime/plugins/SearchReplace';
+import { hasEditorFind, registerEditorFindHandler } from './editorFindCommand';
 
 /** Normalize a file path for comparison: backslashes to forward slashes, strip trailing slashes. */
 function normalizePathForCompare(p: string): string {
@@ -401,6 +404,17 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   useEffect(() => { sourceModeRef.current = sourceMode; }, [sourceMode]);
   useEffect(() => { supportsSourceModeRef.current = isMarkdown || customEditorSupportsSourceMode; }, [isMarkdown, customEditorSupportsSourceMode]);
 
+  useEffect(() => {
+    return registerEditorFindHandler(filePath, () => {
+      const editor = editorRef.current;
+      if (hasEditorFind(editor)) {
+        editor.openFind();
+      } else if (isLexicalSearchEditor(editor)) {
+        SearchReplaceStateManager.toggle(filePath);
+      }
+    });
+  }, [filePath]);
+
   // Clear Lexical editor selection when tab becomes inactive
   // This ensures no stale visual selection when switching back to the tab
   // Note: Monaco handles this internally via the isActive prop
@@ -709,6 +723,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
           const tReparseStart = performance.now();
           editorRef.current.update(() => {
             const tInsideUpdateStart = performance.now();
+            // Clearing a selected node without moving selection first makes
+            // Lexical throw "selection has been lost ..." (NIM-2005).
+            $setSelection(null);
             const root = $getRoot();
             root.clear();
             const tAfterClear = performance.now();
@@ -874,6 +891,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                 const transformers = getEditorTransformers();
 
                 editorRef.current.update(() => {
+                  // Clearing a selected node without moving selection first makes
+                  // Lexical throw "selection has been lost ..." (NIM-2005).
+                  $setSelection(null);
                   const root = $getRoot();
                   root.clear();
                   $convertFromEnhancedMarkdownString(diskContent, transformers);
@@ -1169,6 +1189,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             if (isMarkdown) {
               const transformers = getEditorTransformers();
               editorRef.current.update(() => {
+                // Clearing a selected node without moving selection first makes
+                // Lexical throw "selection has been lost ..." (NIM-2005).
+                $setSelection(null);
                 const root = $getRoot();
                 root.clear();
                 $convertFromEnhancedMarkdownString(content, transformers);
@@ -1255,6 +1278,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
               const transformers = getEditorTransformers();
               diffTrace('TabEditor.applyDiffState resetting editor to oldContent', { filePath, oldLen: oldContent.length, t: performance.now() });
               editorRef.current.update(() => {
+                // Clearing a selected node without moving selection first makes
+                // Lexical throw "selection has been lost ..." (NIM-2005).
+                $setSelection(null);
                 const root = $getRoot();
                 root.clear();
                 $convertFromEnhancedMarkdownString(oldContent, transformers);
@@ -1440,6 +1466,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
               // For Lexical (markdown), we need to clear diff nodes and reload content
               const transformers = getEditorTransformers();
               editorRef.current?.update(() => {
+                // Clearing a selected node without moving selection first makes
+                // Lexical throw "selection has been lost ..." (NIM-2005).
+                $setSelection(null);
                 const root = $getRoot();
                 root.clear();
                 $convertFromEnhancedMarkdownString(newContent, transformers);
@@ -1484,6 +1513,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
           const transformers = getEditorTransformers();
 
           editorRef.current.update(() => {
+            // Clearing a selected node without moving selection first makes
+            // Lexical throw "selection has been lost ..." (NIM-2005).
+            $setSelection(null);
             const root = $getRoot();
             root.clear();
             $convertFromEnhancedMarkdownString(newContent, transformers);
@@ -1524,6 +1556,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             const transformers = getEditorTransformers();
 
             editorRef.current.update(() => {
+              // Clearing a selected node without moving selection first makes
+              // Lexical throw "selection has been lost ..." (NIM-2005).
+              $setSelection(null);
               const root = $getRoot();
               root.clear();
               $convertFromEnhancedMarkdownString(newContent, transformers);
@@ -1692,6 +1727,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
               const transformers = getEditorTransformers();
 
               editorRef.current.update(() => {
+                // Clearing a selected node without moving selection first makes
+                // Lexical throw "selection has been lost ..." (NIM-2005).
+                $setSelection(null);
                 const root = $getRoot();
                 root.clear();
                 $convertFromEnhancedMarkdownString(finalContent, transformers);
@@ -2283,25 +2321,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
       },
 
       ...(workspaceId && !filePath.startsWith('virtual://') ? {
-        fs: {
-          read: (paths: string[]) =>
-            window.electronAPI.invoke('project-fs:read', paths),
-          write: async (edit) => {
-            const receipt = await window.electronAPI.invoke('project-fs:write', edit) as ProjectFileWriteReceipt;
-            await refreshCurrentFileAfterProjectWrite(receipt);
-            return receipt;
-          },
-          onChanged: (callback: (paths: string[]) => void) => {
-            const offDisk = window.electronAPI.onFileChangedOnDisk((data: { path: string }) => callback([data.path]));
-            const offWrite = window.electronAPI.on('project-fs:changed', (receipt: ProjectFileWriteReceipt) => {
-              callback(receipt.files.map((entry) => entry.path));
-            });
-            return () => {
-              offDisk();
-              offWrite();
-            };
-          },
-        } satisfies EditorHostFileSystem,
+        fs: createProjectFileSystemHost({
+          onAfterWrite: refreshCurrentFileAfterProjectWrite,
+        }) satisfies EditorHostFileSystem,
       } : {}),
 
       // Open only host-normalized HTTPS references outside the renderer.
@@ -2592,7 +2614,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
         <FixedTabHeaderContainer
           filePath={filePath}
           fileName={fileName}
-          editor={editorRef.current}
+          editor={isMarkdown && !sourceMode ? editorRef.current : undefined}
         />
         {autosaveConflictDiskContent !== null && (
           <div
@@ -2612,6 +2634,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                     if (isMarkdown) {
                       const transformers = getEditorTransformers();
                       editorRef.current.update(() => {
+                        // Clearing a selected node without moving selection first makes
+                        // Lexical throw "selection has been lost ..." (NIM-2005).
+                        $setSelection(null);
                         const root = $getRoot();
                         root.clear();
                         $convertFromEnhancedMarkdownString(diskContent, transformers);

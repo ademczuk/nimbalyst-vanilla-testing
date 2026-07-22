@@ -74,6 +74,8 @@ interface AppStoreSchema {
   osNotificationsEnabled?: boolean;
   // Release channel
   releaseChannel?: ReleaseChannel;
+  // Shared fallback for native file/folder dialogs outside workspace context.
+  lastDialogDirectory?: string;
   // Default AI model for new sessions (format: "provider:model" e.g., "claude-code:sonnet")
   defaultAIModel?: string;
   // Default GitHub CLI account login for PR review. A per-project

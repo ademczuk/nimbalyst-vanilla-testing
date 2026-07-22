@@ -19,6 +19,7 @@ import { getOrgIdFromJwt, getJwtExp } from '../services/jwtOrg';
 import { getOrgKey, getOrgKeyFingerprint, getOrCreateIdentityKeyPair, uploadIdentityKeyToOrg, fetchAndUnwrapOrgKey, clearOrgKey, fetchTeamKeyStatus, getLastKnownTeamKeyStatus, getArchivedOrgKeys } from '../services/OrgKeyService';
 import { getWorkspaceState, updateWorkspaceState } from '../utils/store';
 import { createSingleFlight } from '../utils/asyncCache';
+import { getDialogDefaultPath, rememberDialogSelection } from '../utils/dialogPaths';
 import { getPersonalDocSyncConfig, isSyncEnabled } from '../services/SyncManager';
 import { resolveCollabDocumentType } from './collabDocumentTypeResolver';
 import { getSyncId } from '../services/DocSyncService';
@@ -1429,7 +1430,7 @@ export function registerDocumentSyncHandlers(): void {
 
     const dialogOptions: Electron.SaveDialogOptions = {
       title: 'Save a copy',
-      defaultPath: payload.defaultFileName,
+      defaultPath: getDialogDefaultPath({ window, explicitPath: payload.defaultFileName }),
       filters: filterExtensions.length > 0
         ? [{ name: payload.documentType, extensions: filterExtensions }]
         : undefined,
@@ -1442,6 +1443,8 @@ export function registerDocumentSyncHandlers(): void {
     if (result.canceled || !result.filePath) {
       return { success: false, cancelled: true };
     }
+
+    rememberDialogSelection(result.filePath, 'file');
 
     try {
       const buffer = payload.bytes instanceof Uint8Array

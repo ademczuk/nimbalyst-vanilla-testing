@@ -41,6 +41,10 @@ export type {
   // Panel types
   PanelContribution,
   SettingsPanelContribution,
+  SettingsRouteContribution,
+  ExtensionSettingsRouteScope,
+  SettingsRouteProjectTarget,
+  LoadedExtensionSettingsRoute,
   LoadedPanel,
   PanelHostProps,
   PanelGutterButtonProps,

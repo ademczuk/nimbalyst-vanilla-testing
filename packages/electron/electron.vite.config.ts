@@ -112,6 +112,8 @@ const claudeAgentSdkVersion = (() => {
 })();
 const runtimeSrcDir = resolve(__dirname, '../runtime/src');
 const runtimeDistDir = resolve(__dirname, '../runtime/dist');
+const runtimeElectronMainEntry = resolve(runtimeSrcDir, 'electronMain.ts');
+const extensionSdkElectronMainEntry = resolve(__dirname, '../extension-sdk/src/electronMain.ts');
 
 // Plugin to resolve workspace package subpaths correctly in production
 const resolveWorkspaceSubpaths = () => {
@@ -164,10 +166,18 @@ export default defineConfig({
       },
     ],
     resolve: {
-      alias: {
-        // Always use src for bundling - simpler than dealing with ESM/CJS issues
-        '@nimbalyst/runtime': runtimeSrcDir
-      }
+      alias: [
+        // Keep Electron main off the public runtime barrel. In development,
+        // watching that barrel's renderer/editor/extension-loader modules
+        // restarted Electron and reloaded every workspace window even when no
+        // main-process runtime value had changed.
+        { find: /^@nimbalyst\/runtime$/, replacement: runtimeElectronMainEntry },
+        // Explicit subpath imports still resolve straight to runtime source.
+        { find: '@nimbalyst/runtime', replacement: runtimeSrcDir },
+        // The public SDK barrel includes renderer hooks which import the public
+        // runtime barrel. Main only needs validation and protocol helpers.
+        { find: /^@nimbalyst\/extension-sdk$/, replacement: extensionSdkElectronMainEntry },
+      ]
     },
     build: {
       target: 'node16',

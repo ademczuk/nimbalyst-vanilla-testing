@@ -327,7 +327,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - New file menu contribution
 - Lexical node and transformer contribution
 - Claude slash command contribution
-- Settings panel contribution
+- Nested settings panel contribution plus first-class application/project settings routes with project context
 - Tracker importer contribution (`trackerImporters`) — external-source importers backed by a backend module
 - Extension hot reload
 - Extension developer kit with scaffolding
@@ -454,3 +454,4 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - PostHog integration (opt-in, anonymous)
 - AI usage report with historical graph and activity heatmap
 - Per-project usage breakdown
+- Per-tool usage tracking (local counters for built-in and MCP/extension tools) surfaced as a Tools section in the AI usage report (top tools, built-in vs MCP split, over-time, per-provider) and as a targeting signal for contextual tips; backfill from past claude-code and codex sessions

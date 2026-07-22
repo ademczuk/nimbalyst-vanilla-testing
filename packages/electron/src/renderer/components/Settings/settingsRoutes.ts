@@ -53,6 +53,9 @@ export type RegisteredSettingsCategory =
   | AccountSettingsCategory
   | ProjectSettingsCategory;
 
+/** Namespaced id for a first-class route contributed by an extension. */
+export type ExtensionSettingsRouteId = `ext:${string}`;
+
 export type LegacySettingsCategory =
   | PersonalSettingsCategory
   | OrganizationSettingsCategory
@@ -66,14 +69,17 @@ export type LegacySettingsCategory =
   | 'installed';
 
 /** Compatibility category accepted at old entry points during the route migration. */
-export type SettingsCategory = RegisteredSettingsCategory | LegacySettingsCategory;
+export type SettingsCategory =
+  | RegisteredSettingsCategory
+  | ExtensionSettingsRouteId
+  | LegacySettingsCategory;
 
 export type SettingsDestination =
-  | { scope: 'application'; category: ApplicationSettingsCategory }
+  | { scope: 'application'; category: ApplicationSettingsCategory | ExtensionSettingsRouteId }
   | { scope: 'account'; category: AccountSettingsCategory }
   | {
       scope: 'project';
-      category: ProjectSettingsCategory;
+      category: ProjectSettingsCategory | ExtensionSettingsRouteId;
       target:
         | { kind: 'workspace'; workspacePath: string }
         | { kind: 'organizationProject'; orgId: string; projectId: string };
@@ -84,7 +90,8 @@ export interface SettingsAvailabilityContext {
   showDirectChatProviders: boolean;
 }
 
-export interface SettingsRoute {
+export interface BuiltinSettingsRoute {
+  source: 'builtin';
   id: RegisteredSettingsCategory;
   scope: SettingsScope;
   group: string;
@@ -94,11 +101,25 @@ export interface SettingsRoute {
   isAvailable?: (context: SettingsAvailabilityContext) => boolean;
 }
 
+export interface ExtensionSettingsRoute {
+  source: 'extension';
+  id: ExtensionSettingsRouteId;
+  scope: 'application' | 'project';
+  group: string;
+  label: string;
+  icon: string;
+  extensionId: string;
+  componentName: string;
+  order: number;
+}
+
+export type SettingsRoute = BuiltinSettingsRoute | ExtensionSettingsRoute;
+
 const developerOnly = ({ developerMode }: SettingsAvailabilityContext) => developerMode;
 const directChatProvidersVisible = ({ showDirectChatProviders }: SettingsAvailabilityContext) =>
   showDirectChatProviders;
 
-export const settingsRoutes: readonly SettingsRoute[] = [
+const builtinSettingsRouteDefinitions: readonly Omit<BuiltinSettingsRoute, 'source'>[] = [
   { id: 'notifications', scope: 'application', group: 'Application', label: 'Notifications', icon: 'notifications' },
   { id: 'themes', scope: 'application', group: 'Application', label: 'Themes', icon: 'palette' },
   { id: 'voice-mode', scope: 'application', group: 'Application', label: 'Voice Mode', icon: 'mic', isAlpha: true },
@@ -131,6 +152,10 @@ export const settingsRoutes: readonly SettingsRoute[] = [
   { id: 'project-extensions', scope: 'project', group: 'Project', label: 'Extensions', icon: 'extension' },
 ] as const;
 
+export const settingsRoutes: readonly BuiltinSettingsRoute[] = builtinSettingsRouteDefinitions.map(
+  (route) => ({ ...route, source: 'builtin' }),
+);
+
 const defaults: Record<SettingsScope, RegisteredSettingsCategory> = {
   application: 'notifications',
   account: 'account',
@@ -144,16 +169,38 @@ export function getDefaultSettingsCategory(scope: SettingsScope): RegisteredSett
 export function getSettingsRoutesForScope(
   scope: SettingsScope,
   context: SettingsAvailabilityContext,
+  extensionRoutes: readonly ExtensionSettingsRoute[] = [],
 ): SettingsRoute[] {
-  return settingsRoutes.filter((route) =>
+  const builtins = settingsRoutes.filter((route) =>
     route.scope === scope && (route.isAvailable?.(context) ?? true));
+  const extensions = extensionRoutes
+    .filter((route) => route.scope === scope)
+    .sort((a, b) =>
+      a.group.localeCompare(b.group)
+      || a.order - b.order
+      || a.label.localeCompare(b.label)
+      || a.id.localeCompare(b.id));
+  return [...builtins, ...extensions];
 }
 
-export function isSettingsCategory(value: string): value is RegisteredSettingsCategory {
-  return settingsRoutes.some((route) => route.id === value);
+export function isExtensionSettingsRouteId(value: string): value is ExtensionSettingsRouteId {
+  return value.startsWith('ext:');
+}
+
+export function isSettingsCategory(
+  value: string,
+): value is RegisteredSettingsCategory | ExtensionSettingsRouteId {
+  return isExtensionSettingsRouteId(value) || settingsRoutes.some((route) => route.id === value);
 }
 
 export function validateSettingsDestination(destination: SettingsDestination): boolean {
+  if (isExtensionSettingsRouteId(destination.category)) {
+    if (destination.scope === 'account') return false;
+    if (destination.scope === 'application') return true;
+    return destination.target.kind === 'workspace'
+      ? destination.target.workspacePath.trim().length > 0
+      : destination.target.orgId.trim().length > 0 && destination.target.projectId.trim().length > 0;
+  }
   const route = settingsRoutes.find((candidate) => candidate.id === destination.category);
   if (!route || route.scope !== destination.scope) return false;
   if (destination.scope === 'project') {
@@ -202,6 +249,9 @@ export function normalizeSettingsDestination(link: LegacySettingsLink): Settings
         ? { kind: 'workspace' as const, workspacePath: link.workspacePath }
         : null;
     if (!target) return null;
+    if (legacyCategory && isExtensionSettingsRouteId(legacyCategory)) {
+      return { scope: 'project', category: legacyCategory, target };
+    }
     const category: ProjectSettingsCategory = legacyCategory === 'tracker-config'
       ? 'project-trackers'
       : legacyCategory === 'agent-permissions'
@@ -212,6 +262,10 @@ export function normalizeSettingsDestination(link: LegacySettingsLink): Settings
             ? 'project-github'
             : 'project-sharing';
     return { scope: 'project', category, target };
+  }
+
+  if (legacyCategory && isExtensionSettingsRouteId(legacyCategory)) {
+    return { scope: 'application', category: legacyCategory };
   }
 
   const category = isSettingsCategory(legacyCategory ?? '')

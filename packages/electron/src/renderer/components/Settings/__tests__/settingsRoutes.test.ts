@@ -3,9 +3,36 @@ import { describe, expect, it } from 'vitest';
 import {
   getDefaultSettingsCategory,
   getSettingsRoutesForScope,
+  isExtensionSettingsRouteId,
   normalizeSettingsDestination,
+  type ExtensionSettingsRoute,
   validateSettingsDestination,
 } from '../settingsRoutes';
+
+const extensionRoutes: ExtensionSettingsRoute[] = [
+  {
+    source: 'extension',
+    id: 'ext:com.example.memory:memory',
+    extensionId: 'com.example.memory',
+    scope: 'project',
+    group: 'Extensions',
+    label: 'Memory',
+    icon: 'psychology',
+    componentName: 'MemorySettings',
+    order: 50,
+  },
+  {
+    source: 'extension',
+    id: 'ext:com.example.deploy:deploy',
+    extensionId: 'com.example.deploy',
+    scope: 'application',
+    group: 'Extensions',
+    label: 'Deploy',
+    icon: 'cloud_upload',
+    componentName: 'DeploySettings',
+    order: 10,
+  },
+];
 
 describe('settings route registry', () => {
   it('declares every route in exactly one scope', () => {
@@ -81,6 +108,49 @@ describe('settings route registry', () => {
       category: 'project-sharing',
       target: { kind: 'organizationProject', orgId: 'org-1', projectId: 'project-1' },
     })).toBe(true);
+  });
+
+  it('merges extension routes only into their declared scope', () => {
+    const projectRoutes = getSettingsRoutesForScope(
+      'project',
+      { developerMode: false, showDirectChatProviders: false },
+      extensionRoutes,
+    );
+    const applicationRoutes = getSettingsRoutesForScope(
+      'application',
+      { developerMode: false, showDirectChatProviders: false },
+      extensionRoutes,
+    );
+
+    expect(projectRoutes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'ext:com.example.memory:memory', source: 'extension' }),
+    ]));
+    expect(projectRoutes.map((route) => route.id)).not.toContain('ext:com.example.deploy:deploy');
+    expect(applicationRoutes.map((route) => route.id)).toContain('ext:com.example.deploy:deploy');
+  });
+
+  it('recognizes and validates namespaced extension deep links', () => {
+    expect(isExtensionSettingsRouteId('ext:com.example.memory:memory')).toBe(true);
+    expect(isExtensionSettingsRouteId('project-sharing')).toBe(false);
+    expect(validateSettingsDestination({
+      scope: 'project',
+      category: 'ext:com.example.memory:memory',
+      target: { kind: 'workspace', workspacePath: '/workspace' },
+    })).toBe(true);
+    expect(validateSettingsDestination({
+      scope: 'project',
+      category: 'ext:com.example.memory:memory',
+      target: { kind: 'workspace', workspacePath: '' },
+    })).toBe(false);
+    expect(normalizeSettingsDestination({
+      category: 'ext:com.example.memory:memory',
+      scope: 'project',
+      workspacePath: '/workspace',
+    })).toEqual({
+      scope: 'project',
+      category: 'ext:com.example.memory:memory',
+      target: { kind: 'workspace', workspacePath: '/workspace' },
+    });
   });
 
   it('translates legacy deep links without crossing identity lanes', () => {

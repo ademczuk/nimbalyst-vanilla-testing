@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { createIpcSubscriber } from './ipcSubscriptions.ts';
 import {ClaudeForWindowsInstallation} from "../main/services/CLIManager.ts";
 import type { GhCliStatus } from '../main/services/GhCliDetector.ts';
 import type {
@@ -19,6 +20,8 @@ import type {
 // our use case and prevents spurious "memory leak" warnings.
 // The real fix is also in place: using stable references in useEffect deps.
 ipcRenderer.setMaxListeners(100);
+
+const subscribeToIpcChannel = createIpcSubscriber(ipcRenderer);
 
 interface ArchiveTask {
   worktreeId: string;
@@ -1489,6 +1492,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAll: () => ipcRenderer.invoke('feature-usage:get-all'),
   },
 
+  // Per-tool usage (tip targeting rollup + AI Usage Report Tools tab)
+  toolUsage: {
+    getRollup: () => ipcRenderer.invoke('tool-usage:get-rollup'),
+    getReport: (workspaceId?: string) => ipcRenderer.invoke('tool-usage:get-report', workspaceId),
+    backfill: () => ipcRenderer.invoke('tool-usage:backfill'),
+  },
+
   // Credentials (for sync and mobile pairing)
   credentials: {
     get: () => ipcRenderer.invoke('credentials:get'),
@@ -1980,34 +1990,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('heap-snapshot:capture'),
   invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args),
   send: (channel: string, ...args: any[]) => ipcRenderer.send(channel, ...args),
-  on: (channel: string, callback: (...args: any[]) => void) => {
-    const handler = (_event: any, ...args: any[]) => callback(...args);
-
-    // Increase max listeners for document service channels that may have multiple watchers
-    if (channel.startsWith('document-service:')) {
-      const currentMax = ipcRenderer.getMaxListeners();
-      if (currentMax !== 0 && currentMax < 50) {
-        ipcRenderer.setMaxListeners(50);
-      }
-    }
-
-    ipcRenderer.on(channel, handler);
-    // Store mapping from callback to handler for proper removal
-    if (!(window as any).__ipcHandlers) {
-      (window as any).__ipcHandlers = new WeakMap();
-    }
-    (window as any).__ipcHandlers.set(callback, { channel, handler });
-    return () => ipcRenderer.removeListener(channel, handler);
-  },
-  off: (channel: string, callback: (...args: any[]) => void) => {
-    // Look up the actual handler that was registered
-    const handlerInfo = (window as any).__ipcHandlers?.get(callback);
-    if (handlerInfo && handlerInfo.channel === channel) {
-      ipcRenderer.removeListener(channel, handlerInfo.handler);
-      (window as any).__ipcHandlers.delete(callback);
-    } else {
-      // Fallback: try to remove callback directly (won't work but maintains backward compat)
-      ipcRenderer.removeListener(channel, callback);
-    }
-  }
+  // Subscribe to an IPC channel. Call the returned closure to unsubscribe --
+  // there is deliberately no `off(channel, callback)` counterpart, because
+  // contextBridge re-proxies the callback on every crossing and identity-based
+  // removal can never match. See ipcSubscriptions.ts.
+  on: subscribeToIpcChannel
 });

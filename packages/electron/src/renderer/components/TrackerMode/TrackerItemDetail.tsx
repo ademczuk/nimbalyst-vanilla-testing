@@ -12,7 +12,7 @@ import { useAtomValue, useSetAtom } from 'jotai';
 import { NimbalystEditor, MaterialSymbol, ProviderIcon } from '@nimbalyst/runtime';
 import type { EditorConfig } from '@nimbalyst/runtime/editor';
 import { $convertFromEnhancedMarkdownString, getEditorTransformers } from '@nimbalyst/runtime/editor';
-import { $getRoot } from 'lexical';
+import { $getRoot, $setSelection } from 'lexical';
 import * as Y from 'yjs';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
@@ -33,6 +33,7 @@ import { errorNotificationService } from '../../services/ErrorNotificationServic
 import { getRelativeTimeString } from '../../utils/dateFormatting';
 import { useTrackerContentCollab } from '../../hooks/useTrackerContentCollab';
 import { useColdPaintFallback } from '../../hooks/useColdPaintFallback';
+import { useCollabSyncCurtain } from '../../hooks/useCollabSyncCurtain';
 import { useMarkTrackerViewed } from '../../hooks/useTrackerUnread';
 import { useRecordTrackerOpened } from '../../hooks/useRecordTrackerOpened';
 import { reconcileExternalFieldChanges } from './trackerDetailFieldSync';
@@ -716,19 +717,16 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
     itemShared: isItemShared,
   });
 
-  // Track whether the collab provider has ever reached 'connected' for this
-  // item/provider lifecycle. We show a static loading indicator over the
-  // editor until then, because the editor may mount with an empty Y.Doc
-  // while the WebSocket sync is still in flight -- without this the user
-  // would see a blank editor and mistake it for "no content".
-  const [hasSyncedOnce, setHasSyncedOnce] = useState(false);
-  useEffect(() => {
-    // Reset when a fresh provider is created (new item or new session).
-    setHasSyncedOnce(false);
-  }, [providerEpoch]);
-  useEffect(() => {
-    if (collabStatus === 'connected') setHasSyncedOnce(true);
-  }, [collabStatus]);
+  // Whether the collab provider has reached 'connected' for the CURRENT
+  // provider generation. We show a static loading indicator over the editor
+  // until then, because the editor may mount with an empty Y.Doc while the
+  // WebSocket sync is still in flight -- without this the user would see a
+  // blank editor and mistake it for "no content".
+  //
+  // NIM-1985: this must be epoch-aware, not two order-dependent effects.
+  // See useCollabSyncCurtain's doc comment for the warm-reopen inversion
+  // that left the curtain permanently covering a fully-painted body.
+  const hasSyncedOnce = useCollabSyncCurtain(collabStatus, providerEpoch);
 
   // Defensive cold-paint fallback for shared `fullDocument` trackers.
   //
@@ -782,6 +780,9 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
         { itemId, mdLen: bodyCacheMarkdown.length, providerEpoch },
       );
       editor.update(() => {
+        // Clearing a selected node without moving selection first makes
+        // Lexical throw "selection has been lost ..." (NIM-2005).
+        $setSelection(null);
         const root = $getRoot();
         root.clear();
         $convertFromEnhancedMarkdownString(bodyCacheMarkdown, getEditorTransformers());
@@ -1104,6 +1105,9 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
             ? () => {
                 console.log('[TrackerItemDetail] initialEditorState fn CALLED',
                   { itemId: item?.id, mdContentLen: mdContent.length });
+                // Clearing a selected node without moving selection first makes
+                // Lexical throw "selection has been lost ..." (NIM-2005).
+                $setSelection(null);
                 const root = $getRoot();
                 root.clear();
                 $convertFromEnhancedMarkdownString(mdContent, getEditorTransformers());

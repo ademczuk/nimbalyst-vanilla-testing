@@ -10,12 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Extensions can contribute first-class Application or Project settings pages with per-repository context, and Memory now has its own Project settings page.
+- The AI Usage Report now shows built-in and extension tool usage over time and by project, with historical backfill and contextual tips for undiscovered tools.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- The desktop app now runs on Electron 43, and file and folder pickers open in the active workspace or their last-used directory instead of defaulting to Downloads.
+- Updated the bundled Claude Agent engine to Claude Code 2.1.215; subagents no longer spawn their own nested subagents by default, and the number running at once is now capped.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- OpenAI Codex automations now use the signed-in ChatGPT subscription, report failures accurately, and prevent overlapping duplicate runs.
+- Interrupting a Claude Agent session no longer lets a permission-gated tool run anyway after the interrupt.
+- The Find menu command now opens Monaco's native find widget in code files instead of crashing the markdown search bar.
+- Reopening a shared tracker item shows its content again instead of a loading overlay that never clears.
+- Opening a shared tracker or document no longer crashes the editor with a lost-selection error.
+- Switching sessions no longer leaks event listeners, which could slow the window down and eventually crash it after days of uptime.
+- Right-clicking a file near the edge of the edited-files sidebar or the project picker now keeps the context menu on screen, and Escape closes it.
 
 ### Removed
 <!-- Removed features go here -->

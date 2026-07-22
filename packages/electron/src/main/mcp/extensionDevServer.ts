@@ -155,6 +155,7 @@ function validateManifest(manifestPath: string): {
         contributions.hostComponents?.length ||
         contributions.panels?.length ||
         contributions.settingsPanel ||
+        contributions.settingsRoutes?.length ||
         contributions.newFileMenu?.length ||
         contributions.configuration;
       const isDataOnly =

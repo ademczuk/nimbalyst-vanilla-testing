@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { usePostHog } from 'posthog-js/react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
@@ -8,10 +8,16 @@ import { SettingsSidebar, type SettingsCategory } from './SettingsSidebar';
 import {
   getDefaultSettingsCategory,
   getSettingsRoutesForScope,
+  isExtensionSettingsRouteId,
   normalizeSettingsDestination,
   type SettingsDestination,
   type SettingsScope,
 } from './settingsRoutes';
+import {
+  ExtensionSettingsRoutePanel,
+  toSettingsRoute,
+  useExtensionSettingsRoutes,
+} from './ExtensionSettingsRoutes';
 import { pushNavigationEntryAtom, isRestoringNavigationAtom } from '../../store';
 
 // Import provider panels from GlobalSettings
@@ -276,6 +282,11 @@ export function SettingsView({
       ? requestedDestination.target
       : (workspacePath ? { kind: 'workspace', workspacePath } : undefined),
   );
+  const loadedExtensionSettingsRoutes = useExtensionSettingsRoutes();
+  const extensionSettingsRoutes = useMemo(
+    () => loadedExtensionSettingsRoutes.map(toSettingsRoute),
+    [loadedExtensionSettingsRoutes],
+  );
 
 
   // AI Provider settings - using Jotai atoms (Phase 5b)
@@ -380,14 +391,21 @@ export function SettingsView({
     const validCategories = getSettingsRoutesForScope(scope, {
       developerMode,
       showDirectChatProviders,
-    }).map((route) => route.id);
+    }, extensionSettingsRoutes).map((route) => route.id);
     // Extension-contributed agent providers (e.g. antigravity-gemini-agent) are
     // valid selectable categories too; don't bounce the user off them.
     const isExtensionProvider = scope === 'application' && extAgentProviders.some((pr) => pr.id === selectedCategory);
     if (!isExtensionProvider && !validCategories.includes(selectedCategory as typeof validCategories[number])) {
       setSelectedCategory(getDefaultSettingsCategory(scope));
     }
-  }, [scope, selectedCategory, developerMode, extAgentProviders, showDirectChatProviders]);
+  }, [
+    scope,
+    selectedCategory,
+    developerMode,
+    extAgentProviders,
+    extensionSettingsRoutes,
+    showDirectChatProviders,
+  ]);
 
   useEffect(() => {
     if (!developerMode && selectedCategory === 'github') {
@@ -785,6 +803,31 @@ export function SettingsView({
       return panel;
     };
 
+    const selectedCategoryId = String(selectedCategory);
+    if (isExtensionSettingsRouteId(selectedCategoryId)) {
+      const extensionRoute = loadedExtensionSettingsRoutes.find(
+        (route) => route.id === selectedCategoryId && route.scope === scope,
+      );
+      if (!extensionRoute) {
+        return (
+          <p className="settings-extension-route-unavailable text-sm text-[var(--nim-text-muted)]">
+            This extension settings route is no longer available.
+          </p>
+        );
+      }
+      return (
+        <ExtensionSettingsRoutePanel
+          route={extensionRoute}
+          workspacePath={
+            scope === 'project' && projectTarget?.kind === 'workspace'
+              ? projectTarget.workspacePath
+              : undefined
+          }
+          projectTarget={scope === 'project' ? projectTarget : undefined}
+        />
+      );
+    }
+
     switch (selectedCategory) {
       case 'claude':
         return wrapWithOverride('claude', 'Claude', <ClaudePanel {...commonProps} />);
@@ -1054,6 +1097,7 @@ export function SettingsView({
           providerStatus={providerStatus}
           scope={scope}
           showDirectChatProviders={showDirectChatProviders}
+          extensionRoutes={extensionSettingsRoutes}
           // releaseChannel now comes from Jotai atom in SettingsSidebar
         />
 

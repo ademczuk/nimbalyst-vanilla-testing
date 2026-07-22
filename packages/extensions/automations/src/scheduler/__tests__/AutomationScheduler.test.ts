@@ -60,7 +60,7 @@ Do the thing for ${opts.id}.
 `;
 }
 
-const okFire: OnAutomationFire = async () => ({ response: 'done', sessionId: 's1', outputFile: 'out.md' });
+const okFire: OnAutomationFire = async () => ({ success: true, response: 'done', sessionId: 's1', outputFile: 'out.md' });
 
 describe('AutomationScheduler timer firing', () => {
   beforeEach(() => {
@@ -199,6 +199,65 @@ describe('AutomationScheduler timer firing', () => {
     // Fires 60 min after enable, without waiting for the 30s poll.
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000 + 2000);
     expect(fire).toHaveBeenCalledTimes(1);
+
+    scheduler.dispose();
+  });
+
+  it('records a reported execution failure as an error without incrementing the successful run count', async () => {
+    const path = 'nimbalyst-local/automations/failing.md';
+    const fs = makeFs({
+      [path]: automationFile({ id: 'failing', scheduleYaml: '    type: interval\n    intervalMinutes: 60' }),
+    });
+    const scheduler = new AutomationScheduler(fs, makeUi());
+    scheduler.setOnFire(async () => ({
+      success: false,
+      response: 'Authentication failed',
+      error: 'Sign in to OpenAI Codex to continue.',
+      outputFile: 'nimbalyst-local/automations/failing/error.md',
+    }));
+
+    await scheduler.initialize();
+    await scheduler.runNow(path);
+
+    const status = parseAutomationStatus(fs.files.get(path)!);
+    expect(status?.lastRunStatus).toBe('error');
+    expect(status?.lastRunError).toBe('Sign in to OpenAI Codex to continue.');
+    expect(status?.runCount).toBe(0);
+
+    const history = JSON.parse(fs.files.get('nimbalyst-local/automations/failing/history.json')!);
+    expect(history).toEqual([
+      expect.objectContaining({
+        status: 'error',
+        error: 'Sign in to OpenAI Codex to continue.',
+        outputFile: 'nimbalyst-local/automations/failing/error.md',
+      }),
+    ]);
+
+    scheduler.dispose();
+  });
+
+  it('coalesces overlapping runs of the same automation', async () => {
+    const path = 'nimbalyst-local/automations/slow.md';
+    const fs = makeFs({
+      [path]: automationFile({ id: 'slow', scheduleYaml: '    type: interval\n    intervalMinutes: 60' }),
+    });
+    const scheduler = new AutomationScheduler(fs, makeUi());
+    let finish!: (result: Awaited<ReturnType<OnAutomationFire>>) => void;
+    const fire = vi.fn(() => new Promise<Awaited<ReturnType<OnAutomationFire>>>((resolve) => {
+      finish = resolve;
+    }));
+    scheduler.setOnFire(fire);
+
+    await scheduler.initialize();
+    const first = scheduler.runNow(path);
+    const second = scheduler.runNow(path);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fire).toHaveBeenCalledTimes(1);
+    finish({ success: true, response: 'done', sessionId: 's1', outputFile: 'out.md' });
+    await Promise.all([first, second]);
+    expect(parseAutomationStatus(fs.files.get(path)!)?.runCount).toBe(1);
 
     scheduler.dispose();
   });

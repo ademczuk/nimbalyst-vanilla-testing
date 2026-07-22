@@ -51,7 +51,7 @@ import {
   registerCollabHistoryController,
   type CollabHistoryController,
 } from '../../store/atoms/collabHistoryControllers';
-import { $getRoot, type LexicalEditor } from 'lexical';
+import { $getRoot, $setSelection, type LexicalEditor } from 'lexical';
 import type { EditorHost, ExtensionStorage } from '@nimbalyst/runtime';
 import type { CollabDocumentConfig } from '../../utils/collabDocumentOpener';
 import { resolveCollabConfigForUri } from '../../utils/collabDocumentOpener';
@@ -88,6 +88,8 @@ import { customEditorRegistry } from '../CustomEditors';
 import type { CustomEditorRegistration } from '../CustomEditors/types';
 import { useCollabLocalOrigin } from '../../hooks/useCollabLocalOrigin';
 import { useLexicalSelectionContext } from '../../hooks/useLexicalSelectionContext';
+import { SearchReplaceStateManager, isLexicalSearchEditor } from '@nimbalyst/runtime/plugins/SearchReplace';
+import { hasEditorFind, registerEditorFindHandler } from './editorFindCommand';
 import { markDocViewed } from '../../hooks/useDocUnread';
 import { recordDocOpened } from '../../store/atoms/collabDiscovery';
 import { exportCollabRecoveryPlaintext, getCollabContentAdapter } from '@nimbalyst/collab-adapters';
@@ -207,6 +209,7 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
   const collabProviderRef = useRef<CollabLexicalProvider | null>(null);
   const getContentRef = useRef<(() => string) | null>(null);
   const lexicalEditorRef = useRef<LexicalEditor | null>(null);
+  const monacoEditorRef = useRef<unknown>(null);
   const historyControllerRef = useRef<CollabHistoryController | null>(null);
   const bootstrapEnsuredRef = useRef(false);
   const bootstrapInFlightRef = useRef(false);
@@ -1103,6 +1106,17 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
 
   // ---- Branch selection ---------------------------------------------------
   const documentType = activeConfig.documentType ?? 'markdown';
+
+  useEffect(() => {
+    return registerEditorFindHandler(filePath, () => {
+      const monacoWrapper = monacoEditorRef.current;
+      if (hasEditorFind(monacoWrapper)) {
+        monacoWrapper.openFind();
+      } else if (isLexicalSearchEditor(lexicalEditorRef.current)) {
+        SearchReplaceStateManager.toggle(filePath);
+      }
+    });
+  }, [filePath]);
   const extensionRegistration: CustomEditorRegistration | null = useMemo(() => {
     if (documentType === 'markdown' || documentType === 'code') return null;
     // Look up by the share filename, which carries the extension (e.g.
@@ -1340,6 +1354,9 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         if (!editor) return;
         const markdown = decoder.decode(plaintext);
         editor.update(() => {
+          // Clearing a selected node without moving selection first makes
+          // Lexical throw "selection has been lost ..." (NIM-2005).
+          $setSelection(null);
           const root = $getRoot();
           root.clear();
           $convertFromEnhancedMarkdownString(markdown, getEditorTransformers());
@@ -1448,6 +1465,9 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
                 void ensureBootstrapRevision();
               }
             }}
+            onEditorReady={(editor) => {
+              monacoEditorRef.current = editor;
+            }}
             onDirtyChange={onDirtyChange}
           />
         ) : extensionRegistration && syncProviderRef.current ? (
@@ -1490,6 +1510,7 @@ interface MonacoCollabBranchProps {
   activeConfig: CollabDocumentConfig;
   createHistoryClient: () => CollabHistoryClient;
   onHistoryControllerChange: (controller: CollabHistoryController | null) => void;
+  onEditorReady?: (editor: unknown) => void;
   onDirtyChange?: (isDirty: boolean) => void;
 }
 
@@ -1501,6 +1522,7 @@ const MonacoCollabBranch: React.FC<MonacoCollabBranchProps> = ({
   activeConfig,
   createHistoryClient,
   onHistoryControllerChange,
+  onEditorReady,
   onDirtyChange,
 }) => {
   const setHistoryDialogFile = useSetAtom(historyDialogFileAtom);
@@ -1624,6 +1646,7 @@ const MonacoCollabBranch: React.FC<MonacoCollabBranchProps> = ({
           fileName={syntheticName}
           config={{ isActive }}
           collab={{ textField: 'content' }}
+          onEditorReady={onEditorReady}
         />
       </div>
     </DocumentPathProvider>
