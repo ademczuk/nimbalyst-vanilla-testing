@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- Bug fixes go here -->
 - Interrupting a Claude Agent session no longer lets a permission-gated tool run anyway after the interrupt.
+- The Find menu command now opens Monaco's native find widget in code files instead of crashing the markdown search bar.
 
 ### Removed
 <!-- Removed features go here -->

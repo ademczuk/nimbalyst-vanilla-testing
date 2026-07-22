@@ -53,6 +53,8 @@ import { useDocumentModel } from '../../services/document-model/useDocumentModel
 import { DocumentModelRegistry } from '../../services/document-model/DocumentModelRegistry';
 import type { DiffState } from '../../services/document-model/types';
 import { diffTrace } from '@nimbalyst/runtime/utils/debugFlags';
+import { SearchReplaceStateManager, isLexicalSearchEditor } from '@nimbalyst/runtime/plugins/SearchReplace';
+import { hasEditorFind, registerEditorFindHandler } from './editorFindCommand';
 
 /** Normalize a file path for comparison: backslashes to forward slashes, strip trailing slashes. */
 function normalizePathForCompare(p: string): string {
@@ -400,6 +402,17 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
   useEffect(() => { sourceModeRef.current = sourceMode; }, [sourceMode]);
   useEffect(() => { supportsSourceModeRef.current = isMarkdown || customEditorSupportsSourceMode; }, [isMarkdown, customEditorSupportsSourceMode]);
+
+  useEffect(() => {
+    return registerEditorFindHandler(filePath, () => {
+      const editor = editorRef.current;
+      if (hasEditorFind(editor)) {
+        editor.openFind();
+      } else if (isLexicalSearchEditor(editor)) {
+        SearchReplaceStateManager.toggle(filePath);
+      }
+    });
+  }, [filePath]);
 
   // Clear Lexical editor selection when tab becomes inactive
   // This ensures no stale visual selection when switching back to the tab
@@ -2592,7 +2605,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
         <FixedTabHeaderContainer
           filePath={filePath}
           fileName={fileName}
-          editor={editorRef.current}
+          editor={isMarkdown && !sourceMode ? editorRef.current : undefined}
         />
         {autosaveConflictDiskContent !== null && (
           <div
