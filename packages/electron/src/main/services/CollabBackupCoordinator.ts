@@ -3,11 +3,13 @@ import {
   DocumentSyncProvider,
   type DocumentSyncConfig,
 } from '@nimbalyst/runtime/sync';
+import type { Doc } from 'yjs';
+
 import {
-  getCollabContentAdapter,
-  exportCollabRecoveryPlaintext,
-  type CollabContentAdapter,
-} from '@nimbalyst/collab-adapters';
+  convertFromFileIntoDoc,
+  convertRecoveryPlaintext,
+  describeCollabCodec,
+} from './CollabConversionClient';
 
 import { getDatabase } from '../database/initialize';
 import { getCollabSyncWsUrl } from '../utils/collabSyncUrl';
@@ -158,8 +160,30 @@ async function withSyncedDocument<T>(
   }
 }
 
-function extensionFor(adapter: CollabContentAdapter): string {
-  return adapter.fileExtensions[0] ?? '.txt';
+/**
+ * Capture one document via the codec host: its exact plaintext file
+ * representation plus the extension to store it under.
+ *
+ * This is the correctness win of moving conversion off main. Main can only
+ * ever hold the codecs it statically imports, so a shared document of any
+ * other type used to come back "No adapter for X" -- which fails the sweep,
+ * which blocks the encryption custody migration for the whole org. A codec
+ * host has every extension loaded, so marketplace and structured editors are
+ * backup-able for the first time.
+ */
+async function captureViaCodecHost(
+  documentType: string,
+  yDoc: Doc,
+  workspacePath?: string,
+): Promise<{ plaintext: string; extension: string }> {
+  const [plaintext, codec] = await Promise.all([
+    convertRecoveryPlaintext(documentType, yDoc, { workspacePath }),
+    describeCollabCodec(documentType, { workspacePath }),
+  ]);
+  if (plaintext === null) {
+    throw new Error(`Codec ${documentType} does not export UTF-8 plaintext`);
+  }
+  return { plaintext, extension: codec.fileExtensions[0] ?? '.txt' };
 }
 
 async function enumerateSweepItems(
@@ -230,21 +254,18 @@ export async function backupCollabProject(
   let skipped = 0;
 
   for (const item of items) {
-    const adapter = getCollabContentAdapter(item.documentType);
-    if (!adapter) {
-      skipped += 1;
-      failures.push({ documentId: item.documentId, error: `No adapter for ${item.documentType}` });
-      continue;
-    }
     try {
       const result = await withSyncedDocument(orgId, item.documentId, async (provider) => {
-        const plaintext = exportCollabRecoveryPlaintext(adapter, provider.getYDoc());
-        if (plaintext === null) throw new Error(`Adapter ${item.documentType} does not export UTF-8 plaintext`);
+        const { plaintext, extension } = await captureViaCodecHost(
+          item.documentType,
+          provider.getYDoc(),
+          workspacePath,
+        );
         return getCollabBackupService().backupNow({
           ...item,
           orgId,
           projectId,
-          extension: extensionFor(adapter),
+          extension,
           plaintext,
         });
       });
@@ -300,21 +321,17 @@ async function backupOriginProject(
   let backedUp = 0;
   let skipped = 0;
   for (const item of items) {
-    const adapter = getCollabContentAdapter(item.documentType);
-    if (!adapter) {
-      skipped += 1;
-      failures.push({ documentId: item.documentId, error: `No adapter for ${item.documentType}` });
-      continue;
-    }
     try {
       const result = await withSyncedDocument(orgId, item.documentId, async (provider) => {
-        const plaintext = exportCollabRecoveryPlaintext(adapter, provider.getYDoc());
-        if (plaintext === null) throw new Error(`Adapter ${item.documentType} does not export UTF-8 plaintext`);
+        const { plaintext, extension } = await captureViaCodecHost(
+          item.documentType,
+          provider.getYDoc(),
+        );
         return getCollabBackupService().backupNow({
           ...item,
           orgId,
           projectId,
-          extension: extensionFor(adapter),
+          extension,
           plaintext,
         });
       });
@@ -402,9 +419,6 @@ export async function restoreCollabBackup(input: {
   const manifest = await getCollabBackupService().listProjectBackups(team.orgId, projectId);
   const entry = manifest?.documents[input.documentId];
   if (!entry) return { success: false, error: 'Backup not found' };
-  const adapter = getCollabContentAdapter(entry.type);
-  if (!adapter) return { success: false, error: `No adapter for ${entry.type}` };
-
   return getCollabBackupService().restore({
     orgId: team.orgId,
     projectId,
@@ -414,7 +428,13 @@ export async function restoreCollabBackup(input: {
         team.orgId,
         input.documentId,
         async (provider) => {
-          adapter.applyFromFile(provider.getYDoc(), plaintext);
+          await convertFromFileIntoDoc(
+            'applyFromFile',
+            entry.type,
+            provider.getYDoc(),
+            plaintext,
+            { workspacePath: input.workspacePath },
+          );
           if (input.force) {
             // Promote the restored Y.Doc to the sole authoritative snapshot,
             // dropping the undecryptable server rows.

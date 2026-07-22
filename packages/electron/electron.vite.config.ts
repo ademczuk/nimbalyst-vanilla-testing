@@ -5,6 +5,7 @@ import viteNimbalystPlugin from '../shared/viteNimbalystPlugin.ts'
 import { viteStaticCopy } from 'vite-plugin-static-copy'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import fs from 'fs'
+import { findMainBundleGraphViolations } from '../../scripts/main-bundle-graph-policy.mjs'
 
 // Plugin to optimize Shiki language imports
 const optimizeShikiPlugin = () => {
@@ -134,6 +135,31 @@ const resolveWorkspaceSubpaths = () => {
   };
 };
 
+/**
+ * Fail the actual main-process build if renderer/editor modules enter its
+ * Rollup graph. This uses Rollup's live module graph, so production builds do
+ * not need to emit and ship a large sourcemap just to enforce the boundary.
+ */
+const guardMainBundleGraph = () => ({
+  name: 'guard-main-bundle-graph',
+  buildEnd(this: { getModuleIds(): IterableIterator<string>; error(message: string): never }, error?: Error) {
+    if (error) return;
+    const moduleIds = Array.from(this.getModuleIds());
+    const violations = findMainBundleGraphViolations(moduleIds);
+    if (violations.length > 0) {
+      const details = violations.flatMap(({ name, hits }) => [
+        `${name}: ${hits.length}`,
+        ...hits.slice(0, 10).map((hit) => `  + ${hit}`),
+      ]).join('\n');
+      this.error(
+        `Electron main bundle contains renderer/editor modules:\n${details}\n` +
+        'Do not raise the zero budgets; remove the import path instead.',
+      );
+    }
+    console.log(`[bundle-graph] main Rollup graph within zero budgets (${moduleIds.length} modules).`);
+  },
+});
+
 export default defineConfig({
   main: {
     define: {
@@ -145,6 +171,7 @@ export default defineConfig({
     },
     plugins: [
       resolveWorkspaceSubpaths(),
+      guardMainBundleGraph(),
       {
         name: 'copy-sqlite-schemas',
         // Use options.dir so this works regardless of the active outDir

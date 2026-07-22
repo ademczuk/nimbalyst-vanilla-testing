@@ -43,7 +43,7 @@ import { buildCollabUri } from '../../utils/collabUri';
 import { FixedTabHeaderContainer, FixedTabHeaderRegistry } from '@nimbalyst/runtime/plugins/shared/fixedTabHeader';
 import { LexicalDiffHeaderAdapter } from '../UnifiedDiffHeader';
 import { DocumentSyncProvider, CollabHistoryClient, LocalDocumentReplica } from '@nimbalyst/runtime/sync';
-import { CollabLexicalProvider } from '@nimbalyst/runtime/sync';
+import { CollabLexicalProvider } from '@nimbalyst/runtime/collab-lexical';
 import { createRevisionAdapterFromCollabContent } from '@nimbalyst/runtime/sync';
 import { historyDialogFileAtom } from '../../store/atoms/historyDialog';
 import {

@@ -248,7 +248,7 @@ export class OpenAICodexProvider extends BaseAgentProvider {
   private static additionalDirectoriesLoader: ((workspacePath: string) => string[]) | null = null;
 
   // Codex PreToolUse hook config (injected from electron main process).
-  // When set, every Codex session is configured with a PreToolUse hook
+  // When set, legacy SDK sessions are configured with a PreToolUse hook
   // matching `^apply_patch$` that snapshots each affected file's pre-edit
   // content to a per-session sidecar dir BEFORE Codex applies the patch.
   // This is the only way to capture true pre-edit content reliably -- the
@@ -379,6 +379,10 @@ export class OpenAICodexProvider extends BaseAgentProvider {
 
   getProviderName(): string {
     return 'openai-codex';
+  }
+
+  getTransport(): CodexTransport {
+    return this.transport;
   }
 
   public static setTrustChecker(checker: TrustChecker | null): void {
@@ -1050,7 +1054,7 @@ export class OpenAICodexProvider extends BaseAgentProvider {
       // (an Electron binary) run as plain Node so we don't have to ship a
       // separate Node runtime. When the resolver isn't wired up (tests, older
       // electron builds) the hook is simply not configured.
-      const sidecarDir = sessionId
+      const sidecarDir = this.transport === 'sdk' && sessionId
         ? OpenAICodexProvider.preEditSidecarDirResolver?.(sessionId)
         : undefined;
       if (sidecarDir) {
@@ -1979,13 +1983,15 @@ export class OpenAICodexProvider extends BaseAgentProvider {
       configOverrides.mcp_servers = codexMcpServers;
     }
 
-    // Register a PreToolUse hook for apply_patch that snapshots pre-edit
+    // Legacy SDK only: register a PreToolUse hook for apply_patch that snapshots pre-edit
     // content to a per-session sidecar BEFORE Codex applies the patch. This
     // sidesteps the item.started race -- by the time we observe item.started
     // in the SDK stream, the patch may already be on disk. The hook fires
     // synchronously inside the codex process before any disk write, so the
     // captured content is guaranteed pre-edit.
-    const hookScriptPath = OpenAICodexProvider.preEditHookScriptPathResolver?.();
+    const hookScriptPath = this.transport === 'sdk'
+      ? OpenAICodexProvider.preEditHookScriptPathResolver?.()
+      : undefined;
     if (hookScriptPath) {
       const hookCommand = `"${process.execPath}" "${hookScriptPath}"`;
       configOverrides.hooks = {

@@ -44,8 +44,6 @@ import {
   reuploadFromLocalOrigin,
   seedSharedDocumentFromContent,
 } from '../services/CollabLocalOriginService';
-import { registerCollabContentAdapterFromDescriptor } from '../services/collabContentAdapterRegistration';
-import type { CollabAdapterDescriptor } from '@nimbalyst/runtime';
 import WebSocket from 'ws';
 import { getCollabDocumentReplicaStore } from '../services/CollabDocumentReplicaStore';
 import { getCollabOutboxDrainCoordinator } from '../services/CollabOutboxDrainerService';
@@ -883,18 +881,6 @@ export function registerDocumentSyncHandlers(): void {
   }) => {
     try {
       const ok = await seedSharedDocumentFromContent(payload);
-      return { success: ok };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  });
-
-  // Renderer forwards serializable adapter descriptors for any installed
-  // extension (marketplace or built-in) so the main process can rebuild the
-  // adapter and reach parity (seed/reupload/history) for that documentType.
-  safeHandle('collab-adapter:register-descriptor', async (_event, descriptor: CollabAdapterDescriptor) => {
-    try {
-      const ok = registerCollabContentAdapterFromDescriptor(descriptor);
       return { success: ok };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };

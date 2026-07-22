@@ -10,6 +10,7 @@ import { FEATURE_USAGE_KEYS, type FeatureUsageKey, type FeatureUsageRecord } fro
 import { tipCreateWorktreeSessionRequestAtom } from '../atoms';
 import { keyboardShortcutsTip } from '../definitions/keyboard-shortcuts';
 import { sessionCleanupTip } from '../definitions/session-cleanup';
+import { sessionLaunchShortcutTip } from '../definitions/session-launch-shortcut';
 import { filesAgentContextTip } from '../definitions/files-agent-context';
 import { filesVisualEditorsTip } from '../definitions/files-visual-editors';
 import { themeExploreTip } from '../definitions/theme-explore';
@@ -114,6 +115,33 @@ describe('contextual tip definitions', () => {
     keyboardShortcutsTip.content.action?.onClick?.();
 
     expect(dialogRef.current?.open).toHaveBeenCalledWith(DIALOG_IDS.KEYBOARD_SHORTCUTS, {});
+  });
+
+  it('shows the session launch shortcut tip to established session users without shortcut usage', () => {
+    const eligible = createContext({
+      currentMode: 'agent',
+      featureUsage: createFeatureUsage({
+        [FEATURE_USAGE_KEYS.SESSION_CREATED]: 3,
+      }),
+    });
+    const newUser = createContext({
+      currentMode: 'agent',
+      featureUsage: createFeatureUsage({
+        [FEATURE_USAGE_KEYS.SESSION_CREATED]: 2,
+      }),
+    });
+    const alreadyUsedShortcut = createContext({
+      currentMode: 'agent',
+      featureUsage: createFeatureUsage({
+        [FEATURE_USAGE_KEYS.SESSION_CREATED]: 5,
+        [FEATURE_USAGE_KEYS.KEYBOARD_SHORTCUT_USED]: 1,
+      }),
+    });
+
+    expect(sessionLaunchShortcutTip.trigger.screen).toBe('agent');
+    expect(sessionLaunchShortcutTip.trigger.condition(eligible)).toBe(true);
+    expect(sessionLaunchShortcutTip.trigger.condition(newUser)).toBe(false);
+    expect(sessionLaunchShortcutTip.trigger.condition(alreadyUsedShortcut)).toBe(false);
   });
 
   it('shows the theme tip only after repeated launches without a theme change', () => {

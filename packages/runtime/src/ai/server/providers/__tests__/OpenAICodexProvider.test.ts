@@ -32,12 +32,45 @@ describe('OpenAICodexProvider', () => {
     OpenAICodexProvider.setClaudeSettingsEnvLoader(null);
     OpenAICodexProvider.setShellEnvironmentLoader(null);
     OpenAICodexProvider.setEnhancedPathLoader(null);
+    OpenAICodexProvider.setPreEditHookScriptPathResolver(null);
+    OpenAICodexProvider.setPreEditSidecarDirResolver(null);
+    OpenAICodexProvider.setCodexTransportResolver(null);
 
     // Provide default injected dependencies required by the provider.
     OpenAICodexProvider.setTrustChecker(() => ({ trusted: true, mode: 'allow-all' as any }));
     OpenAICodexProvider.setPermissionPatternChecker(async () => false);
     OpenAICodexProvider.setPermissionPatternSaver(async () => {});
     OpenAICodexProvider.setSecurityLogger(() => {});
+  });
+
+  describe('transport-specific pre-edit hook configuration', () => {
+    const protocol = {
+      platform: 'test',
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      forkSession: vi.fn(),
+      sendMessage: vi.fn(),
+      abortSession: vi.fn(),
+      cleanupSession: vi.fn(),
+    } as any;
+
+    it('does not inject the legacy apply_patch hook for app-server', () => {
+      OpenAICodexProvider.setPreEditHookScriptPathResolver(() => '/app/codex-pre-edit-hook.mjs');
+      const provider = new OpenAICodexProvider({}, { transport: 'app-server', protocol });
+
+      expect(provider.getTransport()).toBe('app-server');
+      expect((provider as any).buildCodexConfigOverrides({}).hooks).toBeUndefined();
+    });
+
+    it('keeps the legacy apply_patch hook for the SDK escape hatch', () => {
+      OpenAICodexProvider.setPreEditHookScriptPathResolver(() => '/app/codex-pre-edit-hook.mjs');
+      const provider = new OpenAICodexProvider({}, { transport: 'sdk', protocol });
+
+      expect(provider.getTransport()).toBe('sdk');
+      expect((provider as any).buildCodexConfigOverrides({}).hooks).toMatchObject({
+        PreToolUse: [{ matcher: '^apply_patch$' }],
+      });
+    });
   });
 
   describe('AskUserQuestion completion persistence', () => {

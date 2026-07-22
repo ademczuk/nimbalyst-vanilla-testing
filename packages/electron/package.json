@@ -61,6 +61,7 @@
     "@monaco-editor/react": "^4.7.0",
     "@nimbalyst/collab-adapters": "*",
     "@nimbalyst/excalidraw-extension": "*",
+    "@nimbalyst/extension-calc-sheets": "*",
     "@nimbalyst/extension-csv-spreadsheet": "*",
     "@nimbalyst/extension-datamodellm": "*",
     "@nimbalyst/mockuplm": "*",

@@ -26,9 +26,10 @@ import { basename, join } from 'path';
 import * as path from 'path';
 import { existsSync } from 'fs';
 import * as fs from 'fs';
-import { windows, windowStates, createWindow, findWindowByFilePath, getWindowId } from '../window/WindowManager';
+import { windowStates, createWindow, findWindowByFilePath, getWindowId } from '../window/WindowManager';
 import { createAboutWindow } from '../window/AboutWindow';
 import { createWorkspaceManagerWindow } from '../window/WorkspaceManagerWindow.ts';
+import { createTeamManagementWindow } from '../window/TeamManagementWindow';
 import { createAIUsageReportWindow } from '../window/AIUsageReportWindow';
 import { createDatabaseBrowserWindow } from '../window/DatabaseBrowserWindow';
 import { createDeveloperDashboardWindow } from '../window/DeveloperDashboardWindow';
@@ -994,6 +995,20 @@ export async function createApplicationMenu() {
                             hasKeyboardEquivalent: true,
                         });
                         createWorkspaceManagerWindow();
+                    }
+                },
+                {
+                    // No orgId: the window opens on the last-selected organization
+                    // (or the first one you belong to), same as the switcher's
+                    // untargeted entry points.
+                    label: 'Organization Manager (Alpha)',
+                    click: async () => {
+                        AnalyticsService.getInstance().sendEvent('menu_action_used', {
+                            menu: 'window',
+                            action: 'organization_manager',
+                            hasKeyboardEquivalent: false,
+                        });
+                        createTeamManagementWindow();
                     }
                 },
                 {

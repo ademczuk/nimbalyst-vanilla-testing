@@ -88,6 +88,7 @@ import {
   wasCommunityPopupShownThisLaunch,
   incrementCompletedSessionsWithTools,
   getDefaultEffortLevel,
+  getAppSetting,
 } from '../../utils/store';
 import {
   safeSend,
@@ -110,6 +111,21 @@ import { installScopedProviderListener } from './providerListenerRegistry';
 import type Store from 'electron-store';
 import type { AIService } from './AIService';
 import type { HooklessAgentFileWatcher } from './HooklessAgentFileWatcher';
+import type { WorkspaceFileAttributionMode } from '../WorkspaceFileAttributionPolicy';
+
+function resolveWorkspaceFileAttributionMode(
+  providerName: string,
+  provider: AIProvider | null | undefined,
+): WorkspaceFileAttributionMode {
+  if (providerName !== 'openai-codex') return 'fuzzy';
+
+  const codexProvider = provider as (AIProvider & {
+    getTransport?: () => 'sdk' | 'app-server';
+  }) | null | undefined;
+  const activeTransport = codexProvider?.getTransport?.();
+  const configuredTransport = getAppSetting<{ transport?: 'sdk' | 'app-server' }>('openaiCodex')?.transport;
+  return (activeTransport ?? configuredTransport) === 'sdk' ? 'fuzzy' : 'disabled';
+}
 
 export type SendMessageHandler = (
   event: Electron.IpcMainInvokeEvent,
@@ -384,7 +400,10 @@ export class MessageStreamingHandler {
     // This is passed through documentContext to avoid changing sendMessage signature
     let permissionsPath = session.worktreeProjectPath || effectiveWorkspacePath;
     if (isAgentProvider(session.provider)) {
-      await this.svc.hooklessWatcher.ensureForSession(session.id, effectiveWorkspacePath);
+      const existingProvider = ProviderFactory.getProvider(session.provider as AIProviderType, session.id);
+      await this.svc.hooklessWatcher.ensureForSession(session.id, effectiveWorkspacePath, {
+        attributionMode: resolveWorkspaceFileAttributionMode(session.provider, existingProvider),
+      });
     }
 
     // Comprehensive logging of what we're sending to Claude
@@ -1335,13 +1354,18 @@ export class MessageStreamingHandler {
         }
       }
 
-      // Start file snapshot cache + watcher for agentic sessions (diff support)
-      // Only start once per session; persists across turns
+      const workspaceFileAttributionMode = resolveWorkspaceFileAttributionMode(session.provider, provider);
+
+      // Start file snapshot cache + watcher for providers that need listener
+      // attribution. App-server Codex registers a disabled policy instead and
+      // relies solely on its authoritative fileChange items.
       if (isAgentProvider(session.provider)
         && effectiveWorkspacePath
       ) {
         try {
-          await this.svc.hooklessWatcher.ensureForSession(session.id, effectiveWorkspacePath);
+          await this.svc.hooklessWatcher.ensureForSession(session.id, effectiveWorkspacePath, {
+            attributionMode: workspaceFileAttributionMode,
+          });
         } catch (watcherError) {
           logger.main.error('[AIService] Failed to start Codex file cache:', watcherError);
         }
@@ -1722,16 +1746,19 @@ export class MessageStreamingHandler {
                   const toolUseId = providerToolUseId;
 
                   // Open / close a Codex edit attribution window for write-capable
-                  // tool calls. Watcher events that fire while a window is open
+                  // tool calls on listener-backed transports. Watcher events that fire while a window is open
                   // (or within a short post-close grace period) attribute to the
                   // canonical synthetic edit-group ID instead of falling back to
                   // ToolCallMatcher's fuzzy time heuristics. We deliberately
                   // exclude command_execution per the Phase 2 scope decision.
-                  if (isCodexProvider && chunkSyntheticToolUseId && shouldOpenCodexEditWindow(chunk.toolCall.name)) {
+                  const listenerAttributionDisabled = workspaceFileAttributionMode === 'disabled';
+                  if (isCodexProvider && !listenerAttributionDisabled && chunkSyntheticToolUseId && shouldOpenCodexEditWindow(chunk.toolCall.name)) {
                     let codexTargetFilePath: string | null = null;
                     const argsRecord = chunk.toolCall.arguments as Record<string, unknown> | undefined;
                     if (argsRecord) {
                       if (typeof argsRecord.file_path === 'string') codexTargetFilePath = argsRecord.file_path;
+                      else if (typeof argsRecord.filePath === 'string') codexTargetFilePath = argsRecord.filePath;
+                      else if (typeof argsRecord.targetFilePath === 'string') codexTargetFilePath = argsRecord.targetFilePath;
                       else if (typeof argsRecord.path === 'string') codexTargetFilePath = argsRecord.path;
                     }
                     codexEditWindowRegistry.open({
@@ -1842,7 +1869,7 @@ export class MessageStreamingHandler {
                   // Codex emits both item.started and item.completed for command_execution;
                   // run fallback on the second occurrence (usually completed) so we diff
                   // against post-command file content.
-                  if (trackToolName === 'Bash' && typeof trackArgs?.command === 'string') {
+                  if (!listenerAttributionDisabled && trackToolName === 'Bash' && typeof trackArgs?.command === 'string') {
                     const commandItemId = typeof chunk.toolCall.id === 'string'
                       ? chunk.toolCall.id
                       : `${trackArgs.command.slice(0, 200)}:${toolCallCount}`;

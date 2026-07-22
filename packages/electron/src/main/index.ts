@@ -189,7 +189,7 @@ import { getCollabAssetOutboxDrainCoordinator } from './services/CollabAssetOutb
 import { getCollabAssetStore } from './services/CollabAssetStore';
 import { registerCollabBackupHandlers } from './ipc/CollabBackupHandlers';
 import { flushPendingCollabBackups } from './services/CollabBackupService';
-import { registerBuiltinCollabContentAdapters } from './services/collabContentAdapterRegistration';
+import { registerCollabConversionClient } from './services/CollabConversionClient';
 import { registerCollabV3TestHandlers } from './ipc/CollabV3TestHandlers';
 import { registerHeapSnapshotHandlers } from './ipc/HeapSnapshotHandlers';
 import { getPermissionService } from './services/PermissionService';
@@ -1617,7 +1617,7 @@ app.whenReady().then(async () => {
 
     registerTeamHandlers();
     registerOrgKeyHandlers();
-    registerBuiltinCollabContentAdapters();
+    registerCollabConversionClient();
     registerDocumentSyncHandlers();
     getCollabOutboxDrainCoordinator().start();
     getCollabAssetOutboxDrainCoordinator().start();

@@ -1,5 +1,5 @@
 import { getExtensionLoader } from '@nimbalyst/runtime';
-import { MarkdownCollabContentAdapter } from '@nimbalyst/runtime/sync';
+import { MarkdownCollabContentAdapter } from '@nimbalyst/runtime/collab-lexical';
 import type {
   CollabCodec,
   CustomEditorContribution,

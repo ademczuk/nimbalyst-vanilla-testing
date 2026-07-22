@@ -858,8 +858,7 @@ export class CodexAppServerProtocol implements AgentProtocol {
       return;
     }
 
-    // commandExecution etc. continue to surface only on item/completed by
-    // default unless they need a started-stage widget race fix.
+    // Other items continue to surface only on item/completed by default.
   }
 
   private handleItemCompleted(

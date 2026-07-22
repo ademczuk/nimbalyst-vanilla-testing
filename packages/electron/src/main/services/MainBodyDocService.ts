@@ -23,13 +23,10 @@
 import WebSocket from 'ws';
 import {
   DocumentSyncProvider,
-  HeadlessLexicalYDoc,
   type DocumentSyncConfig,
   type DocumentSyncStatus,
 } from '@nimbalyst/runtime/sync';
-import { HeadlessBodyNodes, getEditorTransformers, $convertFromEnhancedMarkdownString } from '@nimbalyst/runtime/editor';
-import { exportCollabRecoveryPlaintext, getCollabContentAdapter } from '@nimbalyst/collab-adapters';
-import { $getRoot } from 'lexical';
+import { convertFromFileIntoDoc, convertRecoveryPlaintext } from './CollabConversionClient';
 import { logger } from '../utils/logger';
 import { getCollabSyncWsUrl } from '../utils/collabSyncUrl';
 import { findTeamForWorkspace, getOrgScopedJwt } from './TeamService';
@@ -43,7 +40,6 @@ interface BodyEntry {
   workspacePath: string;
   itemId: string;
   provider: DocumentSyncProvider;
-  ydoc: HeadlessLexicalYDoc;
   /** When the next idle eviction is scheduled. Reset on every apply. */
   idleTimer: ReturnType<typeof setTimeout> | null;
   /** Last touch time -- used for LRU eviction when the cap is hit. */
@@ -120,10 +116,6 @@ async function resolveConfig(
     userId: '',
     documentId,
     onContentChanged: (yDoc) => {
-      const adapter = getCollabContentAdapter('markdown');
-      if (!adapter) return;
-      const plaintext = exportCollabRecoveryPlaintext(adapter, yDoc);
-      if (plaintext === null) return;
       getCollabBackupService().onContentChanged({
         documentId,
         orgId: team.orgId,
@@ -132,8 +124,18 @@ async function resolveConfig(
         title: itemId,
         relativePath: null,
         kind: 'body',
-        extension: adapter.fileExtensions[0] ?? '.md',
-        getPlaintext: () => plaintext,
+        extension: '.md',
+        // Serialization is deliberately deferred: the backup service calls
+        // this only after its debounce settles, so a burst of edits costs one
+        // conversion round trip instead of one per change -- and the captured
+        // text is the doc as of the write, not as of the first keystroke.
+        getPlaintext: async () => {
+          const plaintext = await convertRecoveryPlaintext('markdown', yDoc, { workspacePath });
+          if (plaintext === null) {
+            throw new Error('The markdown codec did not return UTF-8 plaintext');
+          }
+          return plaintext;
+        },
       });
     },
     // Node's bundled global WebSocket is unavailable on older Electron
@@ -168,30 +170,10 @@ async function acquireEntry(
   const config = await resolveConfig(workspacePath, itemId);
   if (!config) return null;
 
-  // Awareness suppression: the headless binding never registers focus
-  // tracking, and we never call `provider.setLocalAwareness`. The
-  // CollabLexicalProvider wrapper exposes a Provider-shaped `awareness`
-  // object whose setLocalState is a no-op when nothing's wired through
-  // it, so a warm renderer peer will not see this service as a phantom
-  // user. (`@lexical/yjs createBinding` reads from the provider's
-  // awareness only on demand.)
+  // Awareness suppression: this peer never registers focus tracking and we
+  // never call `provider.setLocalAwareness`, so a warm renderer peer will not
+  // see this service as a phantom user.
   const provider = new DocumentSyncProvider(config);
-  const ydoc = provider.getYDoc();
-
-  // Build a thin adapter that meets the @lexical/yjs Provider contract
-  // backed by our DocumentSyncProvider. We don't share the renderer's
-  // CollabLexicalProvider because that wrapper is renderer-flavored
-  // (deferred sync semantics intended for a populated room); the
-  // headless service wants the simplest possible "connect, broadcast,
-  // disconnect" shape.
-  const headless = new HeadlessLexicalYDoc({
-    doc: ydoc,
-    // Full markdown-producible node set (list/link/image/...), not the minimal
-    // EditorNodes -- otherwise list-bearing bodies throw "Node list is not
-    // registered" and never seed (NIM imported-body bug).
-    nodes: HeadlessBodyNodes,
-    provider: makeHeadlessProviderShim(provider),
-  });
 
   let connected = false;
   const ready = new Promise<boolean>((resolve) => {
@@ -215,7 +197,6 @@ async function acquireEntry(
     workspacePath,
     itemId,
     provider,
-    ydoc: headless,
     idleTimer: null,
     touchedAt: Date.now(),
     ready,
@@ -246,50 +227,8 @@ function destroyEntry(entry: BodyEntry): void {
   if (entry.destroyed) return;
   entry.destroyed = true;
   if (entry.idleTimer) clearTimeout(entry.idleTimer);
-  try { entry.ydoc.destroy(); } catch { /* ignore */ }
   try { entry.provider.destroy(); } catch { /* ignore */ }
   entries.delete(entryKey(entry.workspacePath, entry.itemId));
-}
-
-/**
- * Adapter from our `DocumentSyncProvider` to the `Provider` interface
- * `@lexical/yjs.createBinding` expects. Awareness is a no-op so the
- * service doesn't emit phantom presence.
- */
-function makeHeadlessProviderShim(provider: DocumentSyncProvider): any {
-  const noopAwareness = {
-    getLocalState: () => null,
-    getStates: () => new Map(),
-    setLocalState: () => { /* intentional no-op */ },
-    setLocalStateField: () => { /* intentional no-op */ },
-    on: () => { /* no awareness events surface from this client */ },
-    off: () => { /* no-op */ },
-  };
-  const noopListeners = new Map<string, Set<(...args: any[]) => void>>();
-  const shim = {
-    awareness: noopAwareness,
-    connect: () => provider.connect(),
-    disconnect: () => provider.disconnect(),
-    on: (type: string, cb: (...args: any[]) => void) => {
-      // `createBinding` watches 'sync' and 'reload' events. We don't
-      // surface those from DocumentSyncProvider because the binding only
-      // uses them for cursor reset / awareness reload, which we don't
-      // need.
-      let set = noopListeners.get(type);
-      if (!set) {
-        set = new Set();
-        noopListeners.set(type, set);
-      }
-      set.add(cb);
-    },
-    off: (type: string, cb: (...args: any[]) => void) => {
-      noopListeners.get(type)?.delete(cb);
-    },
-    // Pass through the Y.Doc reference so callers don't accidentally
-    // create a second doc.
-    getYDoc: () => provider.getYDoc(),
-  };
-  return shim;
 }
 
 // ============================================================================
@@ -297,27 +236,37 @@ function makeHeadlessProviderShim(provider: DocumentSyncProvider): any {
 // ============================================================================
 
 /**
- * Apply a markdown body write to the live Y.Doc for `itemId`. If the
- * workspace has no team, this is a no-op. Errors are logged but never
- * thrown -- the caller's PGLite write + metadata `bodyVersion` bump is
- * the durable record; this is the best-effort fan-out to warm peers.
+ * Apply a markdown body write to the live Y.Doc for `itemId`. If the workspace
+ * has no team, this is a no-op.
+ *
+ * Returns whether the write reached the room. The caller's PGLite write +
+ * `bodyVersion` bump is the durable record, so a failure here is not fatal --
+ * but it means warm peers did NOT get the update, so it is logged at error
+ * level rather than swallowed as a warning.
  */
 export async function applyHeadlessBodyMarkdown(
   workspacePath: string,
   itemId: string,
   markdown: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const entry = await acquireEntry(workspacePath, itemId);
-    if (!entry) return;
+    if (!entry) return false;
     await entry.ready;
-    entry.ydoc.applyUpdate(() => {
-      const root = $getRoot();
-      root.clear();
-      $convertFromEnhancedMarkdownString(markdown, getEditorTransformers());
-    });
+    await convertFromFileIntoDoc(
+      'applyFromFile',
+      'markdown',
+      entry.provider.getYDoc(),
+      markdown,
+      { workspacePath },
+    );
+    return true;
   } catch (err) {
-    logger.main.warn('[MainBodyDocService] applyHeadlessBodyMarkdown failed for', itemId, ':', err);
+    logger.main.error(
+      '[MainBodyDocService] Live body fan-out failed; warm peers did not receive this write',
+      { itemId, workspacePath, error: err instanceof Error ? err.message : String(err) },
+    );
+    return false;
   }
 }
 

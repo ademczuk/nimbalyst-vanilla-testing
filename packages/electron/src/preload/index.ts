@@ -1070,13 +1070,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
         documentType,
         content,
       }) as Promise<{ success: boolean; error?: string }>,
-    // Forward a serializable collab adapter descriptor so the main process can
-    // rebuild the adapter (dynamic main-process adapters for any extension).
-    registerCollabAdapterDescriptor: (descriptor: unknown) =>
-      ipcRenderer.invoke('collab-adapter:register-descriptor', descriptor) as Promise<{
-        success: boolean;
-        error?: string;
-      }>,
     getLocalOrigin: (workspacePath: string, documentId: string) =>
       ipcRenderer.invoke('document-sync:get-local-origin', {
         workspacePath,
@@ -1551,7 +1544,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Team Management (all member ops take explicit orgId -- per-workspace, not global)
   team: {
-    list: () => ipcRenderer.invoke('team:list'),
+    list: (options?: { forceRefresh?: boolean }) => ipcRenderer.invoke('team:list', options),
     /** Open (or focus + retarget) the dedicated org-management window. */
     openManagementWindow: (target?: { orgId?: string; workspacePath?: string }) =>
       ipcRenderer.invoke('team-window:open', target),

@@ -30,7 +30,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { DocumentSyncProvider, DocumentSyncStatus, ReviewGateState, CollabLexicalProvider } from '@nimbalyst/runtime/sync';
+import type { DocumentSyncProvider, DocumentSyncStatus, ReviewGateState } from '@nimbalyst/runtime/sync';
+import type { CollabLexicalProvider } from '@nimbalyst/runtime/collab-lexical';
 import type { Doc } from 'yjs';
 import type { Provider } from '@lexical/yjs';
 import { $convertFromEnhancedMarkdownString, getEditorTransformers } from '@nimbalyst/runtime/editor';
