@@ -24,6 +24,7 @@ import { mobilePairedTip } from './mobile-paired';
 import { mockupDiscoverTip } from './mockup-discover';
 import { quickOpenTip } from './quick-open';
 import { sessionCleanupTip } from './session-cleanup';
+import { sessionLaunchShortcutTip } from './session-launch-shortcut';
 import { sessionSharedTip } from './session-shared';
 import { spreadsheetDiscoverTip } from './spreadsheet-discover';
 import { themeExploreTip } from './theme-explore';
@@ -40,6 +41,7 @@ export const tips: TipDefinition[] = [
   mobileKeepAwakeTip,
   worktreeSessionTip,
   trackerModeTip,
+  sessionLaunchShortcutTip,
   keyboardShortcutsTip,
   themeExploreTip,
   // Editor discovery
