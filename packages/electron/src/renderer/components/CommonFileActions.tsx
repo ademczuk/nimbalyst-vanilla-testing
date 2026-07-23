@@ -337,13 +337,15 @@ export function CommonFileActions({
       </Item>
 
       {/* Copy Path */}
-      <Item
-        className={menuItemClass}
-        onClick={() => { actions.copyFilePath(); onClose(); }}
-      >
-        {showIcons && <MaterialSymbol icon="content_copy" size={iconSize} />}
-        <span>Copy Path</span>
-      </Item>
+      {!isCollabUri(filePath) && (
+        <Item
+          className={menuItemClass}
+          onClick={() => { actions.copyFilePath(); onClose(); }}
+        >
+          {showIcons && <MaterialSymbol icon="content_copy" size={iconSize} />}
+          <span>Copy Path</span>
+        </Item>
+      )}
 
       {/* Share Link (conditional on file type) */}
       {actions.isShareable && (

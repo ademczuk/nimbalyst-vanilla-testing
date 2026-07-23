@@ -338,10 +338,12 @@ export function createProxiedWebSocket(url: string): WebSocket {
   function dispatchWsEvent(event: WsEvent): void {
     switch (event.type) {
       case 'open':
+        if (readyState === WebSocket.CLOSING || readyState === WebSocket.CLOSED) break;
         readyState = WebSocket.OPEN;
         eventTarget.dispatchEvent(new Event('open'));
         break;
       case 'message':
+        if (readyState === WebSocket.CLOSING || readyState === WebSocket.CLOSED) break;
         readyState = WebSocket.OPEN;
         eventTarget.dispatchEvent(new MessageEvent('message', { data: event.data }));
         break;
@@ -380,10 +382,12 @@ export function createProxiedWebSocket(url: string): WebSocket {
     },
 
     close() {
-      readyState = WebSocket.CLOSED;
+      if (readyState === WebSocket.CLOSING || readyState === WebSocket.CLOSED) {
+        return;
+      }
+      readyState = WebSocket.CLOSING;
       if (wsId) {
         api.wsClose(wsId);
-        cleanup();
       } else {
         // close() called before wsConnect() resolved (e.g., React StrictMode teardown).
         // Flag it so the connect resolution can close the main-process socket.
@@ -398,10 +402,10 @@ export function createProxiedWebSocket(url: string): WebSocket {
       wsId = result.wsId;
 
       // If close() was called before wsConnect resolved (React StrictMode),
-      // immediately close the main-process socket and bail.
+      // register first so the main-process close event reaches the caller.
       if (closedBeforeConnected) {
+        registerWsHandler(wsId, dispatchWsEvent);
         api.wsClose(wsId);
-        wsPendingEvents.delete(wsId);
         return;
       }
 

@@ -120,6 +120,35 @@ describe('CommonFileActions Share to Team catalog eligibility', () => {
     expect(screen.queryByRole('button', { name: 'Share to Team' })).toBeNull();
   });
 
+  it('omits Copy Path for collaborative documents while keeping it for local files', () => {
+    mocks.resolveShareability.mockReturnValue({ state: 'ready', descriptor: spreadsheetDescriptor });
+    const { rerender } = render(
+      <CommonFileActions
+        filePath="collab://org:team-a:doc:document-a"
+        fileName="people.csv"
+        onClose={() => {}}
+        menuItemClass="menu-item"
+        separatorClass="separator"
+        useButtons
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Copy Path' })).toBeNull();
+
+    rerender(
+      <CommonFileActions
+        filePath="/workspace/people.csv"
+        fileName="people.csv"
+        onClose={() => {}}
+        menuItemClass="menu-item"
+        separatorClass="separator"
+        useButtons
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Copy Path' })).toBeTruthy();
+  });
+
   it('reads text descriptors as UTF-8 strings and opaque descriptors as bytes', async () => {
     const readFileContent = vi.fn()
       .mockResolvedValueOnce({ success: true, content: 'a,b\n1,2', isBinary: false })
