@@ -27,6 +27,7 @@ import { enrichTranscriptMessagesWithToolCallDiffs } from '../services/Transcrip
 import { setSessionPendingPrompt } from '../services/ai/pendingPromptPersistence';
 import { normalizeSessionPhaseMetadataUpdate } from '../services/session/sessionPhaseTransition';
 import { destroyProviderForArchivedSession } from '../services/ai/archiveSessionProviderLifecycle';
+import { resolveSessionModelSelection } from '../services/ai/sessionModelSelection';
 
 // Initialize session manager
 const sessionManager = new SessionManager();
@@ -224,18 +225,9 @@ export async function registerSessionHandlers() {
         try {
             const { session, workspaceId } = payload;
 
-            // Extract and sync provider from model ID if model follows "provider:model" format
-            let provider = session.provider as AIProviderType;
-            let model = session.model;
-
-            if (model) {
-                const modelId = ModelIdentifier.tryParse(model);
-                if (modelId) {
-                    provider = modelId.provider;
-                }
-            } else {
-                // No model provided - get default for the provider using ModelIdentifier
-                model = ModelIdentifier.getDefaultModelId(provider);
+            const requestedProvider = session.provider as AIProviderType;
+            const { provider, model } = resolveSessionModelSelection(requestedProvider, session.model);
+            if (!session.model) {
                 console.log(`[SessionHandlers] No model provided, using default: ${model}`);
             }
 
@@ -665,19 +657,10 @@ export async function registerSessionHandlers() {
             const sessionId = crypto.randomUUID();
             console.log(`[SessionHandlers] Creating child session ${sessionId} for parent ${parentSessionId}`);
 
-            // Extract and sync provider from model ID if model follows "provider:model" format
-            // This prevents mismatches where provider and model come from different sources
-            let provider = rawProvider;
-            let model: string;
-            if (providedModel) {
-                const modelId = ModelIdentifier.tryParse(providedModel);
-                if (modelId) {
-                    provider = modelId.provider;
-                }
-                model = providedModel;
-            } else {
-                model = ModelIdentifier.getDefaultModelId(provider as AIProviderType);
-            }
+            const { provider, model } = resolveSessionModelSelection(
+                rawProvider as AIProviderType,
+                providedModel,
+            );
 
             const createPayload = {
                 id: sessionId,

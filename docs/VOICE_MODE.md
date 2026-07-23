@@ -225,7 +225,7 @@ The OpenAI Realtime API session is configured with these function-calling tools:
 | `get_session_summary` | Get a summary of the linked coding session |
 | `list_sessions` | List recent AI sessions in the workspace |
 | `navigate_to_session` | Switch the UI to a specific AI session |
-| `create_session` | Create a new coding session and switch to it. The voice agent's linked session updates automatically via `voiceModeListeners.syncLinkedSession`. |
+| `create_session` | Create a new coding session and switch to it. Repeated creation calls are deduplicated until the next coding prompt, which is pinned to the created session even if the active UI session changes. |
 | `propose_commit` | Trigger the "Commit with AI" feature. Sends `voice-mode:propose-commit` to the renderer, which runs the same logic as the Smart Commit button in `GitOperationsPanel`: pre-fetches files via `git:get-commit-context`, then dispatches an `ai:sendMessage` with the canonical `Use the developer_git_commit_proposal tool to create a commit.` prefix so the `CommitRequestCard` widget appears in the transcript. The resulting `git_commit_proposal_request` interactive prompt flows back to the voice agent through the existing interactive-prompt forwarding for verbal approve/reject. |
 
 ## Extension Voice Tools & Context Providers (general core hooks)
@@ -295,6 +295,10 @@ Generation happens in the Voice Mode settings panel (`packages/electron/src/rend
 5. The window switches to Agent mode and selects the new session so the user can watch it run.
 
 There is no main-process IPC handler for summary generation -- the agent does the work through its existing tooling. If no agent is configured (`defaultAgentModel` is empty), the button is disabled and the panel shows a link into the AI Models settings instead. The previous direct-Anthropic-API implementation was removed because it required a chat API key the user might not have, even though voice mode itself only requires an OpenAI key.
+
+## Workspace Command Context
+
+At every desktop voice-session start, `VoiceModeService` clears the shared `AgentWorkflowService` snapshot, reads the same provider-aware command catalog used by the composer, and adds a bounded list of validated slash-command names to the Realtime system instructions. This makes newly added, removed, or renamed workspace commands visible on the next voice session even when they changed inside the catalog's normal cache window; command bodies, descriptions, source paths, allowed tools, and other file-derived metadata are deliberately excluded from the voice prompt.
 
 ## Session Persistence
 

@@ -1191,6 +1191,7 @@ export class MessageStreamingHandler {
       const edits: any[] = [];  // Track edits for the assistant message
       let hasStreamingContent = false;  // Track if we used streamContent tool
       let hadError = false;  // Track if an error occurred during the stream
+      let providerError: string | undefined;
       let firstChunkTime: number | undefined;
       let chunkCount = 0;
       let textChunks = 0;
@@ -2154,6 +2155,7 @@ export class MessageStreamingHandler {
 
             // Detect Bedrock tool search error even if runtime didn't flag it
             const errorMsg = chunk.error || 'Unknown error occurred';
+            providerError = errorMsg;
             const isBedrockToolError = chunk.isBedrockToolError || isBedrockToolSearchError(errorMsg);
             const isServerError = chunk.isServerError || false;
 
@@ -2561,6 +2563,7 @@ export class MessageStreamingHandler {
               content: fullResponse,
               lastTextSection: lastTextSection.trim() || prevTextSection,
               isComplete: true,
+              error: providerError,
               autoContextPending: session.provider === 'claude-code'
             });
 
