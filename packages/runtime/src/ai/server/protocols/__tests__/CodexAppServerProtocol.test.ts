@@ -783,9 +783,14 @@ describe('CodexAppServerProtocol', () => {
 
     controller.abort();
 
-    // The interrupt must go out even though no further notification arrives.
+    // The interrupt must go out even though no further notification arrives,
+    // and it MUST carry the active turnId. The app server rejects the request
+    // with `-32600 missing field 'turnId'` otherwise, which silently leaves the
+    // turn running and the session stuck 'running' forever (the exact symptom
+    // that recurred: repeated cancels never take).
     const interruptReq = await nextWrittenMatching(child, 'turn/interrupt', 500);
     expect((interruptReq.params as { threadId: string }).threadId).toBe('t-abort');
+    expect((interruptReq.params as { turnId: string }).turnId).toBe('turn-1');
 
     // The generator must unwind promptly so the stream consumer can finalize
     // and mark the session idle.
