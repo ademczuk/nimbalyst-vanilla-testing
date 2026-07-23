@@ -383,11 +383,11 @@ export function NimbalystMemorySettings({ theme, callBackendTool }: SettingsPane
 
       {/* ---------------- QUICK OPEN ---------------- */}
       <section style={SECTION}>
-        <h4 style={H4}>Global search</h4>
+        <h4 style={H4}>Memory search</h4>
         <p style={{ margin: 0, color: muted, lineHeight: 1.5 }}>
-          With this extension enabled, Quick Open gains a <strong>Search</strong>{' '}
-          tab that finds any tracker or document by meaning. Trackers are cataloged
-          automatically.
+          With this extension enabled, Quick Open gains a <strong>Memory</strong>{' '}
+          tab that finds documents, trackers, and optional AI sessions by meaning.
+          Trackers are cataloged automatically.
         </p>
         <label
           style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', lineHeight: 1.45 }}

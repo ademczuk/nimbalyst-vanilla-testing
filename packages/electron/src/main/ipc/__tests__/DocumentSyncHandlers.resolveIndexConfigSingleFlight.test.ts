@@ -3,31 +3,42 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   appendLocalUpdateMock,
   browserWindowsMock,
+  clearCollabAssetSenderMock,
   drainCoordinatorMock,
   estimateLocalAppendBytesMock,
+  fetchAndUnwrapOrgKeyMock,
   fetchTeamKeyStatusMock,
   findTeamForWorkspaceMock,
+  getArchivedOrgKeysMock,
   getLastKnownTeamKeyStatusMock,
+  getOrgKeyMock,
   handlers,
   listPendingOutboxesMock,
   prepareForAppendMock,
+  registerCollabAssetDocumentMock,
   safeHandleMock,
 } = vi.hoisted(() => {
   const handlers = new Map<string, (...args: any[]) => any>();
   return {
     appendLocalUpdateMock: vi.fn(),
     browserWindowsMock: vi.fn(),
+    clearCollabAssetSenderMock: vi.fn(),
     getLastKnownTeamKeyStatusMock: vi.fn(),
     drainCoordinatorMock: {
+      clearSender: vi.fn(),
       getAttachedSenderIds: vi.fn(),
       isProviderAttached: vi.fn(),
     },
     estimateLocalAppendBytesMock: vi.fn(),
+    fetchAndUnwrapOrgKeyMock: vi.fn(),
     fetchTeamKeyStatusMock: vi.fn(),
     findTeamForWorkspaceMock: vi.fn(),
+    getArchivedOrgKeysMock: vi.fn(),
+    getOrgKeyMock: vi.fn(),
     handlers,
     listPendingOutboxesMock: vi.fn(),
     prepareForAppendMock: vi.fn(),
+    registerCollabAssetDocumentMock: vi.fn(),
     safeHandleMock: vi.fn((channel: string, handler: (...args: any[]) => any) => {
       handlers.set(channel, handler);
     }),
@@ -77,15 +88,15 @@ vi.mock('../../services/jwtOrg', () => ({
 }));
 
 vi.mock('../../services/OrgKeyService', () => ({
-  getOrgKey: vi.fn(async () => null),
+  getOrgKey: getOrgKeyMock,
   getOrgKeyFingerprint: vi.fn(() => null),
   getOrCreateIdentityKeyPair: vi.fn(async () => undefined),
   uploadIdentityKeyToOrg: vi.fn(async () => undefined),
-  fetchAndUnwrapOrgKey: vi.fn(async () => null),
+  fetchAndUnwrapOrgKey: fetchAndUnwrapOrgKeyMock,
   clearOrgKey: vi.fn(),
   fetchTeamKeyStatus: fetchTeamKeyStatusMock,
   getLastKnownTeamKeyStatus: getLastKnownTeamKeyStatusMock,
-  getArchivedOrgKeys: vi.fn(() => []),
+  getArchivedOrgKeys: getArchivedOrgKeysMock,
 }));
 
 vi.mock('../../utils/store', () => ({
@@ -94,9 +105,16 @@ vi.mock('../../utils/store', () => ({
 }));
 
 vi.mock('../../services/SyncManager', () => ({}));
-vi.mock('../collabDocumentTypeResolver', () => ({}));
+vi.mock('../collabDocumentTypeResolver', () => ({
+  resolveCollabDocumentType: vi.fn(() => 'markdown'),
+}));
 vi.mock('../../services/DocSyncService', () => ({}));
-vi.mock('../../protocols/collabAssetProtocol', () => ({}));
+vi.mock('../../protocols/collabAssetProtocol', () => ({
+  registerCollabAssetDocument: registerCollabAssetDocumentMock,
+  unregisterCollabAssetDocument: vi.fn(),
+  isCollabAssetDocumentRegisteredForSender: vi.fn(() => true),
+  clearCollabAssetSender: clearCollabAssetSenderMock,
+}));
 vi.mock('../../services/CollabAssetUploader', () => ({}));
 vi.mock('../../services/markdownAssetScanner', () => ({}));
 vi.mock('../../services/CollabLocalOriginService', () => ({}));
@@ -116,12 +134,110 @@ vi.mock('../../services/CollabOutboxDrainerService', () => ({
 import { registerDocumentSyncHandlers } from '../DocumentSyncHandlers';
 import { getOrgScopedJwt } from '../../services/TeamService';
 
+describe('document-sync:open server-managed key path (NIM-2036)', () => {
+  beforeEach(() => {
+    handlers.clear();
+    vi.clearAllMocks();
+    findTeamForWorkspaceMock.mockResolvedValue({ orgId: 'org-1', teamProjectId: null });
+    fetchTeamKeyStatusMock.mockResolvedValue({ mode: 'server-managed', dekEpoch: 1, dekFingerprint: 'fp' });
+    getLastKnownTeamKeyStatusMock.mockReturnValue(null);
+    getOrgKeyMock.mockResolvedValue(null);
+    getArchivedOrgKeysMock.mockReturnValue([]);
+    fetchAndUnwrapOrgKeyMock.mockResolvedValue(null);
+    listPendingOutboxesMock.mockResolvedValue([]);
+    registerDocumentSyncHandlers();
+  });
+
+  it('never fetches a legacy org-key envelope while opening server-managed documents', async () => {
+    const handler = handlers.get('document-sync:open');
+    expect(handler).toBeTruthy();
+    const sender = {
+      id: 2036,
+      isDestroyed: () => false,
+      once: vi.fn(),
+    };
+
+    await handler!({ sender }, {
+      workspacePath: '/workspace/one',
+      documentId: 'doc-1',
+      documentType: 'markdown',
+    });
+    await handler!({ sender }, {
+      workspacePath: '/workspace/one',
+      documentId: 'doc-1',
+      documentType: 'markdown',
+    });
+
+    expect(fetchAndUnwrapOrgKeyMock).not.toHaveBeenCalled();
+    expect(registerCollabAssetDocumentMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not fetch a legacy org-key envelope while resolving the server-managed index', async () => {
+    const result = await handlers.get('document-sync:resolve-index-config')!(
+      null,
+      { workspacePath: '/workspace/one' },
+    );
+
+    expect(result).toEqual(expect.objectContaining({ success: true }));
+    expect(fetchAndUnwrapOrgKeyMock).not.toHaveBeenCalled();
+  });
+
+  it('still supplies locally persisted legacy epochs for best-effort recovery', async () => {
+    const currentKey = await crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      true,
+      ['encrypt', 'decrypt'],
+    );
+    const currentRaw = Buffer.from(
+      await crypto.subtle.exportKey('raw', currentKey),
+    ).toString('base64');
+    getOrgKeyMock.mockResolvedValue(currentKey);
+    getArchivedOrgKeysMock.mockReturnValue([
+      {
+        rawKeyBase64: currentRaw,
+        fingerprint: 'duplicate',
+        archivedAt: new Date().toISOString(),
+        reason: 'duplicate',
+      },
+      {
+        rawKeyBase64: 'archived-key-base64',
+        fingerprint: 'archived',
+        archivedAt: new Date().toISOString(),
+        reason: 'rotation',
+      },
+    ]);
+    const sender = {
+      id: 2037,
+      isDestroyed: () => false,
+      once: vi.fn(),
+    };
+
+    const result = await handlers.get('document-sync:open')!(
+      { sender },
+      {
+        workspacePath: '/workspace/one',
+        documentId: 'doc-legacy-recovery',
+        documentType: 'markdown',
+      },
+    );
+
+    expect(result.config.legacyOrgKeysBase64).toEqual([
+      currentRaw,
+      'archived-key-base64',
+    ]);
+    expect(fetchAndUnwrapOrgKeyMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('document-sync:resolve-index-config single-flight (RC4)', () => {
   beforeEach(() => {
     handlers.clear();
     findTeamForWorkspaceMock.mockReset();
     fetchTeamKeyStatusMock.mockReset();
     fetchTeamKeyStatusMock.mockResolvedValue({ mode: 'server-managed', dekEpoch: 1, dekFingerprint: 'fp' });
+    getOrgKeyMock.mockReset().mockResolvedValue(null);
+    getArchivedOrgKeysMock.mockReset().mockReturnValue([]);
+    fetchAndUnwrapOrgKeyMock.mockReset().mockResolvedValue(null);
     listPendingOutboxesMock.mockReset();
     listPendingOutboxesMock.mockResolvedValue([]);
 
@@ -196,6 +312,9 @@ describe('document-sync:resolve-index-config offline custody fallback (NIM-1778)
     fetchTeamKeyStatusMock.mockReset();
     getLastKnownTeamKeyStatusMock.mockReset();
     getLastKnownTeamKeyStatusMock.mockReturnValue(null);
+    getOrgKeyMock.mockReset().mockResolvedValue(null);
+    getArchivedOrgKeysMock.mockReset().mockReturnValue([]);
+    fetchAndUnwrapOrgKeyMock.mockReset().mockResolvedValue(null);
     vi.mocked(getOrgScopedJwt).mockReset();
     registerDocumentSyncHandlers();
   });

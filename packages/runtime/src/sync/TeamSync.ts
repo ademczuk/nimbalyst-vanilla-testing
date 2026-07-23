@@ -186,7 +186,9 @@ export class TeamSyncProvider {
       url = appendSyncClientParams(`${serverUrl}/sync/${roomId}?token=${encodeURIComponent(jwt)}`);
     }
 
-    const ws = new WebSocket(url);
+    const ws = this.config.createWebSocket
+      ? this.config.createWebSocket(url)
+      : new WebSocket(url);
     this.ws = ws;
 
     ws.addEventListener('open', () => {
@@ -637,6 +639,7 @@ export class TeamSyncProvider {
    * left with un-rekeyed titles; a no-op everywhere else.
    */
   private maybeAutoBackfillLegacyTitles(): void {
+    if (this.config.autoBackfillLegacyTitles === false) return;
     if (this.legacyTitleBackfillRan) return;
     if (!this.serverManaged || !(this.config.legacyOrgKeys?.length)) return;
     if (this.legacyTitleDocIds.size === 0) return;

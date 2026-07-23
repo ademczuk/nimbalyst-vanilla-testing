@@ -26,6 +26,7 @@ import {
   HeadlessBodyNodes,
   getEditorTransformers,
 } from '../editor';
+import { TrackerReferenceTransformer } from '../plugins/TrackerLinkPlugin/TrackerReferenceTransformer';
 import { HeadlessLexicalYDoc } from './HeadlessLexicalYDoc';
 
 const NOOP_PROVIDER: Provider = {
@@ -45,6 +46,13 @@ const NOOP_PROVIDER: Provider = {
 
 /** Origin for bridge traffic, so an update is never echoed back to its source. */
 const BRIDGE_ORIGIN = Symbol('nimbalyst:markdown-adapter-bridge');
+
+function getHeadlessEditorTransformers() {
+  const transformers = getEditorTransformers();
+  return transformers.includes(TrackerReferenceTransformer)
+    ? transformers
+    : [TrackerReferenceTransformer, ...transformers];
+}
 
 /**
  * Run `fn` against a headless Lexical editor holding `yDoc`'s content.
@@ -124,7 +132,10 @@ export const MarkdownCollabContentAdapter: CollabContentAdapter = {
     withHeadless(yDoc, (headless) => {
       headless.applyUpdate(() => {
         $getRoot().clear();
-        $convertFromEnhancedMarkdownString(markdown, getEditorTransformers());
+        $convertFromEnhancedMarkdownString(
+          markdown,
+          getHeadlessEditorTransformers(),
+        );
       });
     });
   },
@@ -137,7 +148,10 @@ export const MarkdownCollabContentAdapter: CollabContentAdapter = {
     withHeadless(yDoc, (headless) => {
       headless.applyUpdate(() => {
         $getRoot().clear();
-        $convertFromEnhancedMarkdownString(markdown, getEditorTransformers());
+        $convertFromEnhancedMarkdownString(
+          markdown,
+          getHeadlessEditorTransformers(),
+        );
       });
     });
   },
@@ -145,7 +159,9 @@ export const MarkdownCollabContentAdapter: CollabContentAdapter = {
   exportToFile(yDoc) {
     return withHeadless(yDoc, (headless) => {
       return headless.editor.getEditorState().read(() => {
-        return $convertToEnhancedMarkdownString(getEditorTransformers());
+        return $convertToEnhancedMarkdownString(
+          getHeadlessEditorTransformers(),
+        );
       });
     });
   },
@@ -153,7 +169,9 @@ export const MarkdownCollabContentAdapter: CollabContentAdapter = {
   toPlainText(yDoc) {
     return withHeadless(yDoc, (headless) => {
       return headless.editor.getEditorState().read(() => {
-        return $convertToEnhancedMarkdownString(getEditorTransformers());
+        return $convertToEnhancedMarkdownString(
+          getHeadlessEditorTransformers(),
+        );
       });
     });
   },

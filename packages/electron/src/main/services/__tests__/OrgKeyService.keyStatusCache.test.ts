@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { fetchMock, fsFiles } = vi.hoisted(() => ({
+const { fetchMock, fsFiles, generateDocumentKeyMock, writeCounts } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
+  generateDocumentKeyMock: vi.fn(),
   // In-memory backing store for OrgKeyService's encrypted-file persistence so
   // tests can seed a locally cached org key (legacy-e2e evidence) without disk.
   fsFiles: new Map<string, string>(),
+  writeCounts: new Map<string, number>(),
 }));
 
 vi.mock('fs', () => ({
@@ -15,6 +17,7 @@ vi.mock('fs', () => ({
     return Buffer.from(v, 'utf8');
   },
   writeFileSync: (p: string, data: string | Buffer) => {
+    writeCounts.set(p, (writeCounts.get(p) ?? 0) + 1);
     fsFiles.set(p, typeof data === 'string' ? data : data.toString('utf8'));
   },
 }));
@@ -50,7 +53,7 @@ vi.mock('../TeamService', () => ({
 
 vi.mock('@nimbalyst/runtime/sync', () => ({
   ECDHKeyManager: class {
-    static generateDocumentKey = vi.fn();
+    static generateDocumentKey = generateDocumentKeyMock;
     deserializeKeyPair = vi.fn();
     serializeKeyPair = vi.fn();
     generateKeyPair = vi.fn();
@@ -65,7 +68,7 @@ fsFiles.set(
   JSON.stringify([['org-legacy-e2e', 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=']])
 );
 
-import { clearLastKnownTeamKeyStatus, fetchTeamKeyStatus, getLastKnownTeamKeyStatus, invalidateTeamKeyStatusCache, setTeamKeyCustodyMode } from '../OrgKeyService';
+import { clearLastKnownTeamKeyStatus, fetchTeamKeyStatus, generateAndStoreOrgKey, getLastKnownTeamKeyStatus, hasOrgKey, invalidateTeamKeyStatusCache, setTeamKeyCustodyMode } from '../OrgKeyService';
 
 function jsonResponse(body: unknown) {
   return { ok: true, json: async () => body };
@@ -74,6 +77,24 @@ function jsonResponse(body: unknown) {
 function keyStatusCallCount(): number {
   return fetchMock.mock.calls.filter((call: unknown[]) => (call[0] as string).includes('/key-status')).length;
 }
+
+describe('OrgKeyService org-key persistence', () => {
+  it('does not rewrite safe storage when the org key bytes are unchanged', async () => {
+    const key = await crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      true,
+      ['encrypt', 'decrypt'],
+    );
+    generateDocumentKeyMock.mockResolvedValue(key);
+    hasOrgKey('org-legacy-e2e');
+    writeCounts.clear();
+
+    await generateAndStoreOrgKey('org-idempotent-write');
+    await generateAndStoreOrgKey('org-idempotent-write');
+
+    expect(writeCounts.get('/mock/user-data/org-encryption-keys.enc')).toBe(1);
+  });
+});
 
 describe('OrgKeyService key-status cache (RC2)', () => {
   beforeEach(() => {

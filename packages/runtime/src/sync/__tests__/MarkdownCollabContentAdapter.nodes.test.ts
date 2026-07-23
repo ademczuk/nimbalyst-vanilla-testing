@@ -14,10 +14,22 @@
  *
  * That was a missed call site of the `HeadlessBodyNodes` fix.
  */
-import { describe, it, expect } from 'vitest';
+import { createHeadlessEditor } from '@lexical/headless';
+import { createBinding, syncLexicalUpdateToYjs } from '@lexical/yjs';
+import {
+  $applyNodeReplacement,
+  $createParagraphNode,
+  $getRoot,
+  DecoratorNode,
+  type EditorConfig,
+  type NodeKey,
+  type SerializedLexicalNode,
+} from 'lexical';
+import { describe, it, expect, vi } from 'vitest';
 import * as Y from 'yjs';
 
 import { MarkdownCollabContentAdapter } from '../MarkdownCollabContentAdapter';
+import HeadlessBodyNodes from '../../editor/nodes/headlessBodyNodes';
 // Side-effect: populate the transformer set (core + built-in extensions) so
 // getEditorTransformers() returns the same list the main process uses.
 import '../../editor/extensions/registerBuiltinExtensions';
@@ -37,6 +49,125 @@ See [the docs](https://example.com/docs).
 ---
 
 Done.`;
+
+class RendererTrackerReferenceNode extends DecoratorNode<null> {
+  __referenceKey: string;
+
+  constructor(referenceKey: string, key?: NodeKey) {
+    super(key);
+    this.__referenceKey = referenceKey;
+  }
+
+  static getType(): string {
+    return 'tracker-reference';
+  }
+
+  static clone(node: RendererTrackerReferenceNode): RendererTrackerReferenceNode {
+    return new RendererTrackerReferenceNode(node.__referenceKey, node.__key);
+  }
+
+  static importJSON(
+    serializedNode: SerializedLexicalNode & { referenceKey: string },
+  ): RendererTrackerReferenceNode {
+    return $createRendererTrackerReferenceNode(serializedNode.referenceKey);
+  }
+
+  createDOM(_config: EditorConfig): HTMLElement {
+    return document.createElement('span');
+  }
+
+  updateDOM(): false {
+    return false;
+  }
+
+  decorate(): null {
+    return null;
+  }
+
+  exportJSON(): SerializedLexicalNode & { referenceKey: string } {
+    return {
+      type: 'tracker-reference',
+      version: 1,
+      referenceKey: this.__referenceKey,
+    };
+  }
+}
+
+function $createRendererTrackerReferenceNode(
+  referenceKey: string,
+): RendererTrackerReferenceNode {
+  return $applyNodeReplacement(
+    new RendererTrackerReferenceNode(referenceKey),
+  );
+}
+
+function trackerReferenceSharedDoc(referenceKey: string): Y.Doc {
+  const doc = new Y.Doc();
+  const provider = {
+    awareness: {
+      getLocalState: () => null,
+      setLocalState: () => {},
+      getStates: () => new Map(),
+      on: () => {},
+      off: () => {},
+    },
+    getYDoc: () => doc,
+  } as any;
+  const writer = createHeadlessEditor({
+    namespace: 'tracker-reference-shared-doc-writer',
+    nodes: [
+      ...HeadlessBodyNodes.filter(
+        (nodeClass) => nodeClass.getType() !== 'tracker-reference',
+      ),
+      RendererTrackerReferenceNode,
+    ],
+    onError: (error: Error) => {
+      throw error;
+    },
+  });
+  const binding = createBinding(
+    writer,
+    provider,
+    'main',
+    doc,
+    new Map([['main', doc]]),
+  );
+  const removeListener = writer.registerUpdateListener(
+    ({
+      prevEditorState,
+      editorState,
+      dirtyLeaves,
+      dirtyElements,
+      normalizedNodes,
+      tags,
+    }) => {
+      syncLexicalUpdateToYjs(
+        binding,
+        provider,
+        prevEditorState,
+        editorState,
+        dirtyElements,
+        dirtyLeaves,
+        normalizedNodes,
+        tags,
+      );
+    },
+  );
+
+  writer.update(
+    () => {
+      $getRoot().append(
+        $createParagraphNode().append(
+          $createRendererTrackerReferenceNode(referenceKey),
+        ),
+      );
+    },
+    { discrete: true },
+  );
+  removeListener();
+
+  return doc;
+}
 
 describe('MarkdownCollabContentAdapter node set', () => {
   it('seeds list and link markdown into the Y.Doc instead of aborting', () => {
@@ -93,5 +224,29 @@ describe('MarkdownCollabContentAdapter node set', () => {
     expect(markdown.match(/first/g) ?? []).toHaveLength(1);
     expect(markdown.match(/Done\./g) ?? []).toHaveLength(1);
     expect(markdown.match(/example\.com\/docs/g) ?? []).toHaveLength(1);
+  });
+
+  it('exports renderer-authored tracker references without a headless node error', () => {
+    const yDoc = trackerReferenceSharedDoc('NIM-2043');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const exported = MarkdownCollabContentAdapter.exportToFile(yDoc);
+      const markdown =
+        typeof exported === 'string'
+          ? exported
+          : new TextDecoder('utf-8').decode(exported as Uint8Array);
+
+      expect(markdown).toContain('[NIM-2043](nimbalyst://NIM-2043)');
+      expect(
+        warn.mock.calls.some((call) =>
+          call.some((value) =>
+            String(value).includes('Node tracker-reference is not registered'),
+          ),
+        ),
+      ).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

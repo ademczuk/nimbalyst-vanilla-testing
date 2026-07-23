@@ -415,7 +415,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Session quick open (Cmd+L) — Shift+Tab searches message contents, not just titles
 - Prompt quick open (Cmd+Shift+L)
 - Content search (Cmd+Shift+F)
-- Global semantic search (Cmd+Shift+O) — a Quick Open "Search" tab that finds any tracker or document by meaning (hybrid semantic + keyword), powered by the Nimbalyst Memory extension; appears only when that extension is enabled. Optionally indexes AI sessions too (off by default)
+- Memory search (Cmd+Shift+O) — a Quick Open "Memory" tab with Docs, Trackers, and Sessions scopes for hybrid semantic + keyword lookup, powered by the Nimbalyst Memory extension; appears only when that extension is enabled. Tracker results retain issue keys, status, type filters, and exact-match lookup; AI session indexing is optional and off by default
 - Shared team document quick open (Cmd+Shift+D) — a team-gated Quick Open tab with name filtering, unread/favorite cues, and direct navigation into Shared Documents
 - Mouse back/forward button support
 - Breadcrumb navigation

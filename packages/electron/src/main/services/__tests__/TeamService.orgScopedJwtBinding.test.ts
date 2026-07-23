@@ -86,7 +86,11 @@ vi.mock('../CollabBackupService', () => ({}));
 vi.mock('../SilentTeamEncryptionMigration', () => ({}));
 vi.mock('../TeamAuthBootstrap', () => ({ createTeamAuthBootstrap: (fn: unknown) => fn }));
 
-import { getOrgScopedJwt, invalidateListTeamsCache } from '../TeamService';
+import {
+  getOrgScopedJwt,
+  getTeamMigrationFinalizationStatus,
+  invalidateListTeamsCache,
+} from '../TeamService';
 import { getPersonalSessionJwtForAccount, getSessionTokenForAccount } from '../StytchAuthService';
 
 const SECONDARY_ORG = 'org-owned-by-secondary';
@@ -114,6 +118,7 @@ describe('getOrgScopedJwt account binding (two-JWT rule)', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     invalidateListTeamsCache();
   });
 
@@ -142,5 +147,56 @@ describe('getOrgScopedJwt account binding (two-JWT rule)', () => {
 
     await expect(getOrgScopedJwt('org-with-no-binding')).rejects.toThrow(/No signed-in account binding/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('lets background migration verification exceed the normal 15 second API deadline', async () => {
+    vi.useFakeTimers();
+    const orgId = 'org-with-many-documents';
+    resolveTeamOrgAccountBindingMock.mockResolvedValue({
+      personalOrgId: SECONDARY_ACCOUNT,
+      teamMemberId: 'secondary-team-member',
+    });
+    let migrationSignal: AbortSignal | undefined;
+    fetchMock.mockImplementation(async (url: string, init?: { signal?: AbortSignal }) => {
+      if (url.endsWith(`/api/teams/${orgId}/switch`)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ sessionJwt: 'long-migration-team-jwt', sessionToken: 'long-migration-team-token' }),
+        };
+      }
+      if (url.endsWith(`/api/teams/${orgId}/migration-finalization-status`)) {
+        migrationSignal = init?.signal;
+        return new Promise((resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          });
+          setTimeout(() => resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              mode: 'server-managed',
+              complete: true,
+              pendingDocumentIds: [],
+              staleTitleDocumentIds: [],
+              failedDocumentIds: [],
+              documentsChecked: 500,
+              finalizedAt: '2026-07-23T06:00:00.000Z',
+            }),
+          }), 20_000);
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const statusPromise = getTeamMigrationFinalizationStatus(orgId);
+    await vi.advanceTimersByTimeAsync(15_001);
+    expect(migrationSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(4_999);
+
+    await expect(statusPromise).resolves.toMatchObject({
+      complete: true,
+      documentsChecked: 500,
+    });
   });
 });

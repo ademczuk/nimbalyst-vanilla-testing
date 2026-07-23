@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import {
   DocumentSyncProvider,
+  TeamSyncProvider,
   type DocumentSyncConfig,
 } from '@nimbalyst/runtime/sync';
 import type { Doc } from 'yjs';
@@ -449,4 +450,81 @@ export async function restoreCollabBackup(input: {
       );
     },
   });
+}
+
+/**
+ * Promote a fully decoded legacy room to a current server-managed snapshot.
+ * This is deliberately stricter than disaster-recovery force-replace: if even
+ * one row could not be decrypted, the provider refuses to compact it away.
+ */
+export async function finalizeCollabDocumentMigration(
+  orgId: string,
+  documentId: string,
+): Promise<void> {
+  await withSyncedDocument(orgId, documentId, async (provider) => {
+    if (!(await provider.finalizeServerManagedState(SYNC_TIMEOUT_MS))) {
+      throw new Error(`The server did not acknowledge migration finalization for ${documentId}`);
+    }
+  });
+}
+
+/**
+ * Connect the team index in a non-renderer host, recover every legacy title
+ * with locally retained key epochs, and await the provider's persistence
+ * verification. The server-side finalization status remains the final source
+ * of truth after this returns.
+ */
+export async function finalizeCollabTitleMigration(orgId: string): Promise<void> {
+  const legacyOrgKeys: CryptoKey[] = [];
+  const current = await getOrgKey(orgId);
+  if (current) legacyOrgKeys.push(current);
+  for (const archived of getArchivedOrgKeys(orgId)) {
+    try {
+      legacyOrgKeys.push(await importLegacyKey(archived.rawKeyBase64));
+    } catch (error) {
+      logger.main.warn('[CollabMigration] Could not import archived title key', {
+        orgId,
+        fingerprint: archived.fingerprint,
+        error,
+      });
+    }
+  }
+  if (legacyOrgKeys.length === 0) {
+    throw new Error('This device has no retained legacy organization key for title finalization');
+  }
+
+  let resolveLoaded!: () => void;
+  const loaded = new Promise<void>((resolve) => { resolveLoaded = resolve; });
+  const provider = new TeamSyncProvider({
+    serverUrl: getCollabSyncWsUrl(),
+    getJwt: () => getOrgScopedJwt(orgId),
+    orgId,
+    userId: 'migration-finalizer',
+    keyCustody: 'server-managed',
+    legacyOrgKeys,
+    orgKeyFingerprint: null,
+    autoBackfillLegacyTitles: false,
+    createWebSocket: ((url: string) => new WebSocket(url)) as unknown as (url: string) => globalThis.WebSocket,
+    onDocumentsLoaded: () => resolveLoaded(),
+  });
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new Error('Timed out loading the team document index for migration')),
+      SYNC_TIMEOUT_MS,
+    );
+  });
+  try {
+    await provider.connect();
+    await Promise.race([loaded, timeout]);
+    const result = await provider.backfillLegacyTitles();
+    if (result.confirmed === null || result.confirmed < result.sent) {
+      throw new Error(
+        `Only ${result.confirmed ?? 0} of ${result.sent} legacy document titles were confirmed`,
+      );
+    }
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    provider.destroy();
+  }
 }

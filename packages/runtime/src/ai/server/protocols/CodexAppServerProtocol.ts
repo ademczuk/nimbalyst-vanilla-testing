@@ -66,6 +66,7 @@ import type {
   ThreadStartResponse,
   TokenUsage,
   TurnCompletedNotification,
+  TurnInterruptParams,
   TurnStartParams,
   UserInputElement,
   WarningNotification,
@@ -326,8 +327,14 @@ export class CodexAppServerProtocol implements AgentProtocol {
     let interruptRequested = false;
     const requestInterrupt = () => {
       if (interruptRequested) return;
+      // Before turn/start resolves there is no turn to interrupt; the pump
+      // still unwinds on the queued 'abort' entry, so skipping the RPC here is
+      // safe. Sending without turnId is rejected (-32600) and leaves the turn
+      // running (NIM-1607 follow-on).
+      if (!raw.activeTurnId) return;
       interruptRequested = true;
-      Promise.resolve(raw.client.request('turn/interrupt', { threadId: raw.threadId }))
+      const params: TurnInterruptParams = { threadId: raw.threadId, turnId: raw.activeTurnId };
+      Promise.resolve(raw.client.request('turn/interrupt', params))
         .catch((err) => console.warn('[CODEX][APPSERVER] turn/interrupt failed:', err));
     };
     const onAbort = () => {
@@ -405,7 +412,8 @@ export class CodexAppServerProtocol implements AgentProtocol {
   abortSession(session: ProtocolSession): void {
     const raw = this.assertRaw(session);
     if (raw.activeTurnId && raw.threadId) {
-      raw.client.notify('turn/interrupt', { threadId: raw.threadId });
+      const params: TurnInterruptParams = { threadId: raw.threadId, turnId: raw.activeTurnId };
+      raw.client.notify('turn/interrupt', params);
     }
   }
 

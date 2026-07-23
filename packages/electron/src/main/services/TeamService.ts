@@ -86,12 +86,19 @@ import { performKeyRotation, cleanupOrphanedDocuments, reEncryptTrackerFromLocal
 // The cycle is safe because both sides only reference the imported symbols
 // inside function bodies, never at module-init time -- by the time
 // autoMatchTeamForWorkspace runs, both modules are fully loaded.
-import { ensureTrackerSyncForWorkspace, migrateTeamToServerManaged } from './TrackerSyncManager';
+import {
+  ensureTrackerSyncForWorkspace,
+  finalizeTeamEncryptionDocument,
+  finalizeTeamEncryptionTitles,
+  migrateTeamToServerManaged,
+} from './TrackerSyncManager';
 import { getCollabBackupService } from './CollabBackupService';
 import {
   getSilentMigrationState,
   initializeServerManagedOrganization,
+  resetSilentMigrationForOrg,
   runSilentTeamEncryptionMigrations,
+  type MigrationFinalizationStatus,
 } from './SilentTeamEncryptionMigration';
 import { createTeamAuthBootstrap } from './TeamAuthBootstrap';
 import {
@@ -490,6 +497,16 @@ async function exchangeOrgScopedJwt(
  * healthy worker responds in under a second.
  */
 const TEAM_API_TIMEOUT_MS = 15_000;
+// Migration verification intentionally fans out across every not-yet-sealed
+// document room. Large organizations can take longer than the normal
+// interactive API deadline while Durable Objects wake and seal in batches.
+// Keep this override scoped to the background finalizer so document opens and
+// ordinary team operations still fail quickly when the API is unhealthy.
+const MIGRATION_FINALIZATION_API_TIMEOUT_MS = 120_000;
+
+interface FetchTeamApiOptions {
+  timeoutMs?: number;
+}
 
 /**
  * Make an authenticated REST call to the collabv3 team API.
@@ -497,8 +514,16 @@ const TEAM_API_TIMEOUT_MS = 15_000;
  * Uses org-scoped JWT when orgId is provided (for member operations).
  * When accountOrgId is provided, uses that account's JWT instead of the primary.
  */
-async function fetchTeamApi(path: string, method: string, body?: unknown, orgId?: string, accountOrgId?: string): Promise<any> {
+async function fetchTeamApi(
+  path: string,
+  method: string,
+  body?: unknown,
+  orgId?: string,
+  accountOrgId?: string,
+  options?: FetchTeamApiOptions,
+): Promise<any> {
   const httpUrl = getCollabServerUrl();
+  const timeoutMs = options?.timeoutMs ?? TEAM_API_TIMEOUT_MS;
 
   const jwtSource = orgId ? 'org-scoped' : 'personal';
   // logger.main.info(`[TeamService] ${method} ${path} (jwt: ${jwtSource}${orgId ? `, org: ${orgId}` : ''}${accountOrgId ? `, account: ${accountOrgId}` : ''})`);
@@ -511,7 +536,7 @@ async function fetchTeamApi(path: string, method: string, body?: unknown, orgId?
       headers['Content-Type'] = 'application/json';
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TEAM_API_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const reqStart = Date.now();
     try {
       const resp = await net.fetch(`${httpUrl}${path}`, {
@@ -532,7 +557,7 @@ async function fetchTeamApi(path: string, method: string, body?: unknown, orgId?
       const reqMs = Date.now() - reqStart;
       if ((err as { name?: string })?.name === 'AbortError') {
         logger.main.warn(`[TeamService] ${method} ${path} timed out after ${reqMs}ms (jwt: ${jwtSource})`);
-        throw new Error(`Team API timeout after ${TEAM_API_TIMEOUT_MS}ms: ${method} ${path}`);
+        throw new Error(`Team API timeout after ${timeoutMs}ms: ${method} ${path}`);
       }
       logger.main.warn(`[TeamService] ${method} ${path} threw after ${reqMs}ms (jwt: ${jwtSource}):`, err);
       throw err;
@@ -639,6 +664,19 @@ async function fetchTeamApi(path: string, method: string, body?: unknown, orgId?
   return response.json();
 }
 
+export async function getTeamMigrationFinalizationStatus(
+  orgId: string,
+): Promise<MigrationFinalizationStatus> {
+  return fetchTeamApi(
+    `/api/teams/${orgId}/migration-finalization-status`,
+    'GET',
+    undefined,
+    orgId,
+    undefined,
+    { timeoutMs: MIGRATION_FINALIZATION_API_TIMEOUT_MS },
+  ) as Promise<MigrationFinalizationStatus>;
+}
+
 // ============================================================================
 // Git Remote Detection
 // ============================================================================
@@ -725,6 +763,7 @@ async function listTeams(): Promise<TeamDetails[]> {
     return listTeamsCache.promise;
   }
 
+  let allAccountLookupsSucceeded = true;
   const promise = (async (): Promise<TeamDetails[]> => {
     const allAccounts = getAccounts();
     const teamsByOrgId = new Map<string, TeamDetails>();
@@ -733,21 +772,16 @@ async function listTeams(): Promise<TeamDetails[]> {
     // Query teams for each signed-in account in parallel
     const results = await Promise.allSettled(
       allAccounts.map(async (account) => {
-        try {
-          const data = await fetchTeamApi('/api/teams', 'GET', undefined, undefined, account.personalOrgId) as { teams: TeamDetails[] };
-          return (data.teams || []).map((team) => ({
-            ...team,
-            sourcePersonalOrgId: account.personalOrgId,
-            sourceEmail: account.email,
-          }));
-        } catch (err) {
-          logger.main.error(`[TeamService] listTeams error for account ${account.email}:`, err);
-          return [];
-        }
+        const data = await fetchTeamApi('/api/teams', 'GET', undefined, undefined, account.personalOrgId) as { teams: TeamDetails[] };
+        return (data.teams || []).map((team) => ({
+          ...team,
+          sourcePersonalOrgId: account.personalOrgId,
+          sourceEmail: account.email,
+        }));
       })
     );
 
-    for (const result of results) {
+    for (const [index, result] of results.entries()) {
       if (result.status === 'fulfilled') {
         for (const team of result.value) {
           if (team.sourcePersonalOrgId && team.owningPersonalOrgId
@@ -786,6 +820,12 @@ async function listTeams(): Promise<TeamDetails[]> {
             existing.accountBindings = [...(existing.accountBindings ?? []), binding];
           }
         }
+      } else {
+        allAccountLookupsSucceeded = false;
+        logger.main.error(
+          `[TeamService] listTeams error for account ${allAccounts[index]?.email ?? 'unknown'}:`,
+          result.reason,
+        );
       }
     }
 
@@ -809,11 +849,19 @@ async function listTeams(): Promise<TeamDetails[]> {
   })();
 
   listTeamsCache = { promise, expiresAt: now + LIST_TEAMS_TTL_MS };
-  // Drop the cache on rejection so the next caller retries instead of pinning
-  // a failed promise for the TTL window.
-  promise.catch(() => {
-    if (listTeamsCache?.promise === promise) listTeamsCache = null;
-  });
+  // A partial/failed account lookup is not authoritative. Return any teams we
+  // did resolve to this caller, but evict the result immediately so a timeout
+  // cannot pin "no teams" (or an incomplete list) for the full five minutes.
+  void promise.then(
+    () => {
+      if (!allAccountLookupsSucceeded && listTeamsCache?.promise === promise) {
+        listTeamsCache = null;
+      }
+    },
+    () => {
+      if (listTeamsCache?.promise === promise) listTeamsCache = null;
+    },
+  );
 
   return promise;
 }
@@ -2042,6 +2090,24 @@ export function registerTeamHandlers(): void {
     return { success: true, migration: getSilentMigrationState(orgId) };
   });
 
+  safeHandle('team:retry-encryption-migration', async (_event, orgId: string) => {
+    try {
+      const teams = await listTeams();
+      const team = teams.find((candidate) => candidate.orgId === orgId);
+      if (!team) return { success: false, error: 'Organization not found' };
+      resetSilentMigrationForOrg(orgId);
+      await scheduleSilentEncryptionMigrations([team]);
+      const migration = getSilentMigrationState(orgId);
+      return {
+        success: migration?.status === 'complete',
+        migration,
+        error: migration?.status === 'stuck' ? migration.message : undefined,
+      };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
   safeHandle('team:create', async (_event, name: string, workspacePath?: string, accountOrgId?: string) => {
     try {
       const team = await createTeam(name, workspacePath, accountOrgId);
@@ -2307,6 +2373,21 @@ async function scheduleSilentEncryptionMigrations(teams: TeamDetails[]): Promise
       migrate: async (orgId) => {
         await migrateTeamToServerManaged(orgId);
       },
+      getFinalizationStatus: async (orgId) => {
+        const status = await getTeamMigrationFinalizationStatus(orgId);
+        const purgedUpdates = status.purgedLegacyUpdates ?? 0;
+        const purgedSnapshots = status.purgedLegacySnapshots ?? 0;
+        if (purgedUpdates + purgedSnapshots > 0) {
+          logger.main.warn('[TeamService] Permanently deleted legacy collaboration rows after server-managed cutover', {
+            orgId,
+            purgedUpdates,
+            purgedSnapshots,
+          });
+        }
+        return status;
+      },
+      finalizeDocument: finalizeTeamEncryptionDocument,
+      finalizeTitles: finalizeTeamEncryptionTitles,
     });
     if (result.attempted > 0) {
       logger.main.info('[TeamService] Silent encryption migration scan complete', result);

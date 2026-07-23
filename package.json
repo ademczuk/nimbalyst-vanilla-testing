@@ -21,7 +21,7 @@
     "test": "npm run test:unit",
     "test:unit": "vitest",
     "test:prepush": "vitest --run",
-    "test:prepush-gate": "node --test scripts/__tests__/prepush-test-gate.test.mjs scripts/__tests__/check-main-bundle-graph.test.mjs",
+    "test:prepush-gate": "node --test scripts/__tests__/prepush-test-gate.test.mjs scripts/__tests__/check-main-bundle-graph.test.mjs scripts/__tests__/check-push-authors.test.mjs",
     "test:unit:ui": "vitest --ui",
     "test:unit:coverage": "vitest --coverage",
     "test:provider:integration": "cross-env RUN_AI_PROVIDER_TESTS=true vitest --run",

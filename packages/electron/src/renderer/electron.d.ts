@@ -148,10 +148,15 @@ interface ElectronAPI {
     getEncryptionMigrationStatus?: (orgId: string) => Promise<{
       success: boolean;
       migration?:
-        | { status: 'migrating'; startedAt: string }
+        | { status: 'migrating'; startedAt: string; documentsCompleted?: number; documentsTotal?: number; phase?: 'custody' | 'titles' | 'documents' | 'verifying' }
         | { status: 'complete'; finishedAt: string }
-        | { status: 'stuck'; failedAt: string; message: string }
+        | { status: 'stuck'; failedAt: string; message: string; retryAt?: string }
         | null;
+    }>;
+    retryEncryptionMigration?: (orgId: string) => Promise<{
+      success: boolean;
+      migration?: unknown;
+      error?: string;
     }>;
     [method: string]: any;
   };

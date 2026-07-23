@@ -227,13 +227,17 @@ function saveOrgKeysToDisk(): void {
 /**
  * Store an org encryption key locally (raw AES-256 key as base64).
  */
-function storeOrgKeyRaw(orgId: string, rawKeyBase64: string): void {
+function storeOrgKeyRaw(orgId: string, rawKeyBase64: string): boolean {
   loadOrgKeysFromDisk();
+  if (orgKeysCache.get(orgId)?.rawKeyBase64 === rawKeyBase64) {
+    return false;
+  }
   orgKeysCache.set(orgId, {
     rawKeyBase64,
     fingerprint: computeOrgKeyFingerprint(rawKeyBase64),
   });
   saveOrgKeysToDisk();
+  return true;
 }
 
 // ============================================================================
@@ -575,8 +579,10 @@ export async function unwrapAndStoreOrgKey(
   const km = await getOrCreateIdentityKeyPair();
   const orgKey = await km.unwrapDocumentKeyVerified(envelope, expectedSenderPublicKeyJwk);
   const rawBytes = await crypto.subtle.exportKey('raw', orgKey);
-  storeOrgKeyRaw(orgId, uint8ArrayToBase64(new Uint8Array(rawBytes)));
-  logger.main.info('[OrgKeyService] Unwrapped and stored org key for:', orgId);
+  const changed = storeOrgKeyRaw(orgId, uint8ArrayToBase64(new Uint8Array(rawBytes)));
+  if (changed) {
+    logger.main.info('[OrgKeyService] Unwrapped and stored org key for:', orgId);
+  }
   return orgKey;
 }
 

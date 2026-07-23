@@ -51,6 +51,9 @@ export interface TeamSyncConfig {
   /** WebSocket server URL (e.g., wss://sync.nimbalyst.com) */
   serverUrl: string;
 
+  /** Optional host WebSocket factory (Electron main and other non-DOM hosts). */
+  createWebSocket?: (url: string) => WebSocket;
+
   /** Function to get fresh JWT for WebSocket auth */
   getJwt: () => Promise<string>;
 
@@ -106,6 +109,12 @@ export interface TeamSyncConfig {
    * re-register the recovered title as plaintext via `backfillLegacyTitles()`.
    */
   legacyOrgKeys?: CryptoKey[];
+
+  /**
+   * Disable the provider's fire-and-forget title repair when a host needs to
+   * await and verify the backfill explicitly (for migration finalization).
+   */
+  autoBackfillLegacyTitles?: boolean;
 
   /**
    * Fingerprint of the current org key (`SHA-256(rawKey).slice(0,32)`),

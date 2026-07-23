@@ -889,7 +889,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Global semantic search (nimbalyst-memory engine). Returns empty / false when
-  // the memory extension is disabled so the Quick Open Search tab can hide.
+  // the memory extension is disabled so the Quick Open Memory tab can hide.
   semanticSearch: {
     isAvailable: (workspacePath: string) =>
       ipcRenderer.invoke('semantic-search:available', workspacePath) as Promise<boolean>,
@@ -1578,11 +1578,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getEncryptionMigrationStatus: (orgId: string) => ipcRenderer.invoke('team:get-encryption-migration-status', orgId) as Promise<{
       success: boolean;
       migration?:
-        | { status: 'migrating'; startedAt: string }
+        | { status: 'migrating'; startedAt: string; documentsCompleted?: number; documentsTotal?: number; phase?: 'custody' | 'titles' | 'documents' | 'verifying' }
         | { status: 'complete'; finishedAt: string }
-        | { status: 'stuck'; failedAt: string; message: string }
+        | { status: 'stuck'; failedAt: string; message: string; retryAt?: string }
         | null;
     }>,
+    retryEncryptionMigration: (orgId: string) => ipcRenderer.invoke('team:retry-encryption-migration', orgId),
     listKeyEnvelopes: (orgId: string) => ipcRenderer.invoke('team:list-key-envelopes', orgId),
     setProjectIdentity: (orgId: string, workspacePath: string) => ipcRenderer.invoke('team:set-project-identity', orgId, workspacePath),
     clearProjectIdentity: (orgId: string) => ipcRenderer.invoke('team:clear-project-identity', orgId),
@@ -1618,6 +1619,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteOrganization: (orgId: string) => ipcRenderer.invoke('team:delete', orgId),
     getEncryptionStatus: (orgId: string) => ipcRenderer.invoke('team:get-key-custody-status', orgId),
     getEncryptionMigrationStatus: (orgId: string) => ipcRenderer.invoke('team:get-encryption-migration-status', orgId),
+    retryEncryptionMigration: (orgId: string) => ipcRenderer.invoke('team:retry-encryption-migration', orgId),
   },
 
   // Epic H1: org / project access model. `canAccess` is the single client-side

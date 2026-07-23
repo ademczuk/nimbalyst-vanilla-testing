@@ -1058,7 +1058,7 @@ export async function createApplicationMenu() {
                     }
                 },
                 {
-                    label: 'Global Search',
+                    label: 'Memory Search',
                     accelerator: KeyboardShortcuts.window.globalSearch,
                     registerAccelerator: false, // Handled by renderer keyboard handler
                     click: () => {
