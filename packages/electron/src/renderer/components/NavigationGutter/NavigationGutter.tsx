@@ -507,7 +507,7 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
   return (
     <div
       ref={gutterRef}
-      className="navigation-gutter w-12 h-screen bg-nim-secondary border-r border-nim flex flex-col items-center py-2 shrink-0"
+      className="navigation-gutter w-12 h-full bg-nim-secondary border-r border-nim flex flex-col items-center py-2 shrink-0"
       onContextMenu={(e) => {
         // Only open the background context menu on empty space (not a button/item).
         if ((e.target as HTMLElement).closest('button, [data-panel-id], [data-gutter-item]')) return;

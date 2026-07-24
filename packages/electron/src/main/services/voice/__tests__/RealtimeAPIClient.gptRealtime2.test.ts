@@ -118,6 +118,24 @@ describe('session config (gpt-realtime-2)', () => {
     expect(update.session.instructions).toContain('/review-contribution');
   });
 
+  it('requires explicit consent before the voice agent captures UI pixels', () => {
+    const client = makeClient('gpt-realtime-2');
+    const sent = attachFakeSocket(client);
+
+    (client as any).updateSession();
+
+    const update = sent.find((e) => e.type === 'session.update');
+    expect(update.session.instructions).toContain(
+      'capture_ui_screenshot sends pixels from the visible Nimbalyst window',
+    );
+    expect(update.session.instructions).toContain(
+      'Never infer consent from an unrelated request',
+    );
+    expect(update.session.instructions).toContain(
+      'never set userConfirmed=true without that consent',
+    );
+  });
+
   it('does NOT re-assert voice on response.create (drift fix)', () => {
     const client = makeClient('gpt-realtime-2');
     const sent = attachFakeSocket(client);

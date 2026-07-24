@@ -44,6 +44,9 @@ interface KeyboardShortcutsOptions {
   // Agent mode toggle
   toggleAgentCollapsed: () => void;
 
+  // Shared active-mode action used by both Cmd/Ctrl+B and WindowTopBar.
+  toggleActiveLeftPane: () => void;
+
   // Opens history for the document focused in the current content mode.
   openHistoryForCurrentDocument: () => void;
 
@@ -77,6 +80,17 @@ export function isSessionLaunchPopupShortcut(
   return isAppModifier && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'n';
 }
 
+export function isToggleSidebarShortcut(
+  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>,
+  macPlatform = isMac,
+): boolean {
+  const isAppModifier = macPlatform ? event.metaKey : event.ctrlKey;
+  return isAppModifier
+    && !event.shiftKey
+    && !event.altKey
+    && event.key.toLowerCase() === 'b';
+}
+
 export function useKeyboardShortcuts({
   activeMode,
   workspaceMode,
@@ -85,6 +99,7 @@ export function useKeyboardShortcuts({
   editorModeRef,
   agentModeRef,
   toggleAgentCollapsed,
+  toggleActiveLeftPane,
   openHistoryForCurrentDocument,
   isFullscreenPanelActive,
   exitFullscreenPanel,
@@ -121,6 +136,13 @@ export function useKeyboardShortcuts({
         e.preventDefault();
         e.stopPropagation();
         store.set(sessionLaunchPopupRequestAtom, (version) => version + 1);
+        return;
+      }
+
+      if (workspaceMode && isToggleSidebarShortcut(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleActiveLeftPane();
         return;
       }
 
@@ -315,6 +337,7 @@ export function useKeyboardShortcuts({
     editorModeRef,
     agentModeRef,
     toggleAgentCollapsed,
+    toggleActiveLeftPane,
     openHistoryForCurrentDocument,
     toggleTerminalPanel,
     closeTerminalPanel,

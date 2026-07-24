@@ -22,6 +22,7 @@ import { registerFileHandlers } from './ipc/FileHandlers';
 import { registerWorkspaceHandlers } from './ipc/WorkspaceHandlers.ts';
 import { registerSettingsHandlers } from './ipc/SettingsHandlers';
 import { registerWindowHandlers } from './ipc/WindowHandlers';
+import { registerWindowChromeHandlers } from './ipc/WindowChromeHandlers';
 import { registerEditorStateHandlers } from './ipc/EditorStateHandlers';
 import { registerHistoryHandlers } from './ipc/HistoryHandlers';
 import { registerSessionHandlers } from './ipc/SessionHandlers';
@@ -179,6 +180,7 @@ import { shutdownStytchAuth, handleAuthCallback, isAuthenticated, getPersonalUse
 import { registerTrackerSyncHandlers, initializeTrackerSync } from './services/TrackerSyncManager';
 import { initTrackerSchemaService, updateTrackerSchemaWorkspace } from './services/TrackerSchemaService';
 import { initTrackerNavigationService } from './services/TrackerNavigationService';
+import { initTrackerSavedViewService } from './services/TrackerSavedViewService';
 import { registerTeamHandlers, autoMatchTeamForWorkspace, getOrgScopedJwt, findTeamForWorkspace } from './services/TeamService';
 import { windowStates, windows, resolveActiveWorkspacePath } from './window/windowState';
 import { getRecentItems } from './utils/store';
@@ -198,6 +200,7 @@ import { TrayManager } from './tray/TrayManager';
 import { pathToFileURL } from 'url';
 import { registerLinuxAppImageProtocolHandler } from './services/LinuxProtocolRegistration';
 import { installWindowOpenGuard } from './window/windowOpenGuard';
+import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeConfigDir';
 
 // Register before any startup path can create a partition session. Browsed web
 // content stays microphone-denied even after Voice Mode receives an OS grant.
@@ -380,8 +383,8 @@ function checkClaudeCodeInstallationOnFirstLaunch(): void {
     }
 
     try {
-        // Check for Claude settings directory (~/.claude/)
-        const claudeSettingsDir = path.join(os.homedir(), '.claude');
+        // Check for the user-level Claude config directory
+        const claudeSettingsDir = resolveClaudeConfigDir();
         const hasClaudeInstalled = existsSync(claudeSettingsDir);
 
         logger.main.info(`First launch Claude Code check: hasClaudeInstalled=${hasClaudeInstalled}`);
@@ -1548,6 +1551,7 @@ app.whenReady().then(async () => {
     registerWorkspaceWatcherHandlers();
     registerSettingsHandlers();
     registerWindowHandlers();
+    registerWindowChromeHandlers();
     registerEditorStateHandlers();
     await registerHistoryHandlers();
     await registerSessionHandlers();
@@ -1610,6 +1614,7 @@ app.whenReady().then(async () => {
     SemanticCatalogService.getInstance().start();
     initTrackerSchemaService(); // Register IPC handlers + load built-in schemas
     initTrackerNavigationService();
+    initTrackerSavedViewService();
 
     // Initialize commit-tracker linking (listens to GitRefWatcher for all commits)
     commitTrackerLinker.initialize({ getDatabase: () => database });

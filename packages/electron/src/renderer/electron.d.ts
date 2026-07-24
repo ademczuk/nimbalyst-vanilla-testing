@@ -218,6 +218,7 @@ interface ElectronAPI {
   onOpenKeyboardShortcuts: (callback: () => void) => () => void;
   onOpenFeedback: (callback: () => void) => () => void;
   onThemeChange: (callback: (theme: string) => void) => () => void;
+  setTitleBarOverlayColors: (colors: { color: string; symbolColor: string }) => void;
   onMcpConfigChanged: (callback: (data: { scope: 'user' | 'workspace'; workspacePath?: string }) => void) => () => void;
 
   // Offscreen editor IPC

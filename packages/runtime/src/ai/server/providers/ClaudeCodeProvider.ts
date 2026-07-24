@@ -101,6 +101,7 @@ import {
 import { ClaudeCodeDeps } from './claudeCode/dependencyInjection';
 import { buildSdkOptions, type PromptStreamController } from './claudeCode/sdkOptionsBuilder';
 import { resolveEffectiveSessionMode } from './claudeCode/resolveEffectiveSessionMode';
+import { resolveClaudeConfigDir } from './claudeCode/claudeConfigDir';
 import {
   hasRunningTasks as computeHasRunningTasks,
   shouldDeferTeardownForSubagents,
@@ -3776,11 +3777,10 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
    */
   private async checkSessionExists(sessionId: string): Promise<boolean> {
     try {
-      const os = await import('os');
       const fs = await import('fs/promises');
       const path = await import('path');
 
-      const historyPath = path.join(os.homedir(), '.claude', 'history.jsonl');
+      const historyPath = path.join(resolveClaudeConfigDir(), 'history.jsonl');
 
       let content: string;
       try {

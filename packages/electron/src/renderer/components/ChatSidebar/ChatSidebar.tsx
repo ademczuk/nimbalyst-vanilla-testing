@@ -25,16 +25,29 @@ export interface ChatSidebarRef {
   focusInput: () => void;
   insertPrompt: (text: string) => void;
   loadSession: (sessionId: string) => void;
+  createNewSession: () => Promise<void>;
 }
 
 export interface ChatSidebarProps {
   workspacePath: string;
   /** Whether the parent mode/panel is actively visible */
   isActive?: boolean;
+  /** Optional externally-controlled session. Undefined preserves the sidebar's normal self-managed behavior. */
+  sessionId?: string | null;
+  /** Called when the current session changes, including newly-created sessions. */
+  onSessionIdChange?: (sessionId: string | null) => void;
+  /** Whether to select/create a session automatically on mount. */
+  autoInitializeSession?: boolean;
+  /** Title used when this sidebar creates a new standard chat session. */
+  newSessionTitle?: string;
+  /** Optional initial draft for newly-created standard chat sessions. */
+  newSessionDraft?: string;
+  /** Optional session shown as the context for this chat. */
+  linkedSession?: { id: string; title: string };
   documentContext?: SerializableDocumentContext;
   /** Getter function for document context - async, reads from disk */
   getDocumentContext?: () => Promise<SerializableDocumentContext>;
-  onFileOpen?: (filePath: string) => Promise<void>;
+  onFileOpen?: (filePath: string) => Promise<void> | void;
   /** Whether the sidebar is collapsed */
   isCollapsed?: boolean;
   /** Callback when collapse state should toggle */
@@ -50,6 +63,12 @@ export interface ChatSidebarProps {
 export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
   workspacePath,
   isActive = true,
+  sessionId: controlledSessionId,
+  onSessionIdChange,
+  autoInitializeSession = true,
+  newSessionTitle = 'Chat',
+  newSessionDraft,
+  linkedSession,
   documentContext,
   getDocumentContext,
   onFileOpen,
@@ -64,8 +83,18 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
   const pendingFocusRef = useRef(false);
   const pendingPromptRef = useRef<string | null>(null);
   const isInitializingRef = useRef(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const initializedWorkspaceRef = useRef<string | null>(null);
+  const [internalSessionId, setInternalSessionId] = useState<string | null>(null);
+  const isSessionControlled = controlledSessionId !== undefined;
+  const sessionId = isSessionControlled ? controlledSessionId : internalSessionId;
+  const [isLoading, setIsLoading] = useState(autoInitializeSession);
+
+  const selectSession = useCallback((nextSessionId: string | null) => {
+    if (!isSessionControlled) {
+      setInternalSessionId(nextSessionId);
+    }
+    onSessionIdChange?.(nextSessionId);
+  }, [isSessionControlled, onSessionIdChange]);
 
   // Session list from Jotai - filtered for chat mode (no worktrees, no workstream parents)
   const sessionList = useAtomValue(sessionListChatAtom);
@@ -87,6 +116,43 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
     }));
   }, [sessionList]);
 
+  const handleNewSession = useCallback(async () => {
+    const newSessionId = crypto.randomUUID();
+    // Parse provider from defaultModel using ModelIdentifier
+    const modelId = defaultModel ? ModelIdentifier.tryParse(defaultModel) : null;
+    const provider = modelId?.provider || 'claude-code';
+    const result = await window.electronAPI.invoke(
+      'sessions:create',
+      {
+        session: {
+          id: newSessionId,
+          provider,
+          model: defaultModel,
+          title: newSessionTitle,
+        },
+        workspaceId: workspacePath,
+      }
+    );
+    if (result?.success) {
+      if (newSessionDraft) {
+        await window.electronAPI.invoke(
+          'sessions:update-draft-input',
+          newSessionId,
+          newSessionDraft,
+        );
+      }
+      selectSession(newSessionId);
+      refreshSessions();
+    }
+  }, [
+    defaultModel,
+    newSessionDraft,
+    newSessionTitle,
+    refreshSessions,
+    selectSession,
+    workspacePath,
+  ]);
+
   // Expose methods through ref
   useImperativeHandle(ref, () => ({
     focusInput: () => {
@@ -104,9 +170,10 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
       }
     },
     loadSession: (id: string) => {
-      setSessionId(id);
+      selectSession(id);
     },
-  }), []);
+    createNewSession: handleNewSession,
+  }), [handleNewSession, selectSession]);
 
   useEffect(() => {
     if (isCollapsed || isLoading || !sessionId) return;
@@ -137,10 +204,18 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
   // Initialize session - select most recent or create new if none exist
   // CRITICAL: Only runs once on mount to avoid creating duplicate sessions
   useEffect(() => {
+    if (!autoInitializeSession) {
+      setIsLoading(false);
+      return;
+    }
     if (!isActive) {
       setIsLoading(false);
       return;
     }
+    if (initializedWorkspaceRef.current === workspacePath) {
+      return;
+    }
+    initializedWorkspaceRef.current = workspacePath;
 
     const initSession = async () => {
       // Prevent concurrent initialization
@@ -171,7 +246,7 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
 
           // If we have existing chat sessions, use the most recent one
           if (chatSessions.length > 0) {
-            setSessionId(chatSessions[0].id);
+            selectSession(chatSessions[0].id);
             setIsLoading(false);
             return;
           }
@@ -195,7 +270,7 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
           }
         );
         if (result?.success) {
-          setSessionId(newSessionId);
+          selectSession(newSessionId);
           // Refresh the session list to include the new session
           refreshSessions();
         }
@@ -208,9 +283,14 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
     };
 
     initSession();
-    // CRITICAL: Only run once on mount - workspacePath changes trigger full remount anyway
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, workspacePath]);
+  }, [
+    autoInitializeSession,
+    defaultModel,
+    isActive,
+    refreshSessions,
+    selectSession,
+    workspacePath,
+  ]);
 
   const handleFileClick = useCallback(async (filePath: string) => {
     if (onFileOpen) {
@@ -219,31 +299,8 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
   }, [onFileOpen]);
 
   const handleSessionSelect = useCallback((selectedSessionId: string) => {
-    setSessionId(selectedSessionId);
-  }, []);
-
-  const handleNewSession = useCallback(async () => {
-    const newSessionId = crypto.randomUUID();
-    // Parse provider from defaultModel using ModelIdentifier
-    const modelId = defaultModel ? ModelIdentifier.tryParse(defaultModel) : null;
-    const provider = modelId?.provider || 'claude-code';
-    const result = await window.electronAPI.invoke(
-      'sessions:create',
-      {
-        session: {
-          id: newSessionId,
-          provider,
-          model: defaultModel,
-          title: 'Chat',
-        },
-        workspaceId: workspacePath,
-      }
-    );
-    if (result?.success) {
-      setSessionId(newSessionId);
-      refreshSessions();
-    }
-  }, [workspacePath, refreshSessions, defaultModel]);
+    selectSession(selectedSessionId);
+  }, [selectSession]);
 
   const handleDeleteSession = useCallback(async (sessionIdToDelete: string) => {
     await window.electronAPI.invoke('session:delete', sessionIdToDelete);
@@ -252,12 +309,12 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
     if (sessionIdToDelete === sessionId) {
       const remaining = sessionList.filter(s => s.id !== sessionIdToDelete);
       if (remaining.length > 0) {
-        setSessionId(remaining[0].id);
+        selectSession(remaining[0].id);
       } else {
-        handleNewSession();
+        await handleNewSession();
       }
     }
-  }, [workspacePath, sessionId, sessionList, refreshSessions, handleNewSession]);
+  }, [sessionId, sessionList, refreshSessions, handleNewSession, selectSession]);
 
   const handleRenameSession = useCallback(async (sessionIdToRename: string, newName: string) => {
     await window.electronAPI.invoke('sessions:update-title', sessionIdToRename, newName);
@@ -336,27 +393,30 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
           onOpenSessionManager={onSwitchToAgentMode}
           className="flex-1"
         />
-        <div className="flex items-center gap-1 shrink-0">
-          {onSwitchToAgentMode && (
-            <button
-              className="chat-sidebar-maximize-button flex items-center justify-center w-7 h-7 rounded-md text-nim-muted border-none cursor-pointer transition-colors duration-150 hover:bg-nim-bg-active hover:text-nim bg-transparent"
-              onClick={() => onSwitchToAgentMode(sessionId ?? undefined)}
-              title="Open in agent mode"
-            >
-              <MaterialSymbol icon="zoom_out_map" size={16} />
-            </button>
-          )}
+        {onSwitchToAgentMode && (
           <button
-            className="chat-sidebar-new-button flex items-center gap-1 px-3 py-1.5 rounded-md text-[0.8125rem] font-medium bg-nim-primary text-nim-on-primary border-none cursor-pointer transition-opacity duration-150 hover:opacity-90"
-            onClick={handleNewSession}
-            title="Start new conversation"
-            aria-label="Start new conversation"
+            className="chat-sidebar-maximize-button flex items-center justify-center w-7 h-7 shrink-0 rounded-md text-nim-muted border-none cursor-pointer transition-colors duration-150 hover:bg-nim-bg-active hover:text-nim bg-transparent"
+            onClick={() => onSwitchToAgentMode(sessionId ?? undefined)}
+            title="Open in agent mode"
           >
-            <MaterialSymbol icon="add" size={16} />
-            <span className="chat-sidebar-new-label">New</span>
+            <MaterialSymbol icon="zoom_out_map" size={16} />
           </button>
-        </div>
+        )}
       </div>
+
+      {linkedSession && (
+        <div
+          className="chat-sidebar-linked-session flex items-center gap-2 px-3 py-1.5 border-b border-nim bg-nim-secondary text-xs text-nim-muted shrink-0"
+          data-testid="chat-sidebar-linked-session"
+          data-linked-session-id={linkedSession.id}
+        >
+          <MaterialSymbol icon="link" size={15} className="text-nim-primary shrink-0" />
+          <span className="shrink-0">Connected to</span>
+          <span className="truncate text-nim" title={linkedSession.title}>
+            {linkedSession.title}
+          </span>
+        </div>
+      )}
 
       <SessionTranscript
         key={sessionId}

@@ -5,7 +5,7 @@ import { useTabsActions, useTabNavigationShortcuts, type TabData } from '../../c
 import { store, editorDirtyAtom, makeEditorKey } from '@nimbalyst/runtime/store';
 import { fileDeletedAtomFamily } from '../../store/atoms/fileWatch';
 import { pushNavigationEntryAtom, isRestoringNavigationAtom, historyDialogFileAtom } from '../../store';
-import { newBrowserTabRequestAtom, newMockupRequestAtom, toggleAIChatPanelRequestAtom } from '../../store/atoms/appCommands';
+import { newBrowserTabRequestAtom, newMockupRequestAtom } from '../../store/atoms/appCommands';
 import { useTabNavigation } from '../../hooks/useTabNavigation';
 import { useEditorMaximize } from '../../hooks/useEditorMaximize';
 import { useResizeDragShield } from '../../hooks/useResizeDragShield';
@@ -50,6 +50,8 @@ export interface EditorModeRef {
   selectFile: (filePath: string) => Promise<void>;
   openHistoryDialog: () => void;
   toggleSidebarCollapsed: () => void;
+  toggleAIChatCollapsed: () => void;
+  createNewChatSession: () => Promise<void>;
   tabs: {
     addTab: (filePath: string, content?: string) => string | undefined;
     removeTab: (tabId: string) => void;
@@ -966,6 +968,10 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
     }
   }, [sidebarCollapsed, sidebarWidth, preCollapseWidth]);
 
+  const toggleAIChatCollapsed = useCallback(() => {
+    setIsAIChatCollapsed((collapsed) => !collapsed);
+  }, [setIsAIChatCollapsed]);
+
   // Double-click a tab to maximize the editor (collapse file tree + AI chat).
   // Second double-click restores the exact prior collapse state.
   const { isMaximized: isEditorMaximized, toggle: toggleEditorMaximized, clearMaximize: clearEditorMaximized } =
@@ -1023,6 +1029,13 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
       }
     },
     toggleSidebarCollapsed,
+    toggleAIChatCollapsed,
+    createNewChatSession: async () => {
+      if (isAIChatCollapsed) {
+        setIsAIChatCollapsed(false);
+      }
+      await chatSidebarRef.current?.createNewSession();
+    },
     tabs: {
       addTab: (filePath: string, content?: string) => {
         const currentTabs = tabsRef.current;
@@ -1077,7 +1090,16 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
       },
       get activeTabId() { return tabsRef.current?.getSnapshot()?.activeTabId ?? null; },
     }
-  }), [handleOpen, handleSaveAs, handleWorkspaceFileSelect, handleTabClose, toggleSidebarCollapsed]);
+  }), [
+    handleOpen,
+    handleSaveAs,
+    handleWorkspaceFileSelect,
+    handleTabClose,
+    toggleSidebarCollapsed,
+    toggleAIChatCollapsed,
+    isAIChatCollapsed,
+    setIsAIChatCollapsed,
+  ]);
 
   // Keep pointer input in the host document while dragging across iframe-backed editors.
   const startSidebarResize = useResizeDragShield({
@@ -1245,25 +1267,6 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
     void handleWorkspaceFileSelect(`${browserTabType.virtualScheme}${id}?title=${title}`);
   }, [newBrowserTabVersion, extensionFileTypes, handleWorkspaceFileSelect]);
 
-  // React to "toggle AI chat panel" (Cmd+Shift+A) from the menu. The IPC
-  // subscription lives in store/listeners/appCommandListeners.ts.
-  // Use a ref to debounce rapid calls (can happen with menu accelerators).
-  const toggleAIChatPanelVersion = useAtomValue(toggleAIChatPanelRequestAtom);
-  const toggleAIChatInitialVersionRef = useRef(toggleAIChatPanelVersion);
-  const toggleAIChatInProgressRef = useRef(false);
-  useEffect(() => {
-    if (toggleAIChatPanelVersion === toggleAIChatInitialVersionRef.current) return;
-    if (toggleAIChatInProgressRef.current) {
-      console.log('[EditorMode] handleToggleAIChatPanel: ignoring duplicate call');
-      return;
-    }
-    toggleAIChatInProgressRef.current = true;
-    setTimeout(() => { toggleAIChatInProgressRef.current = false; }, 100);
-
-    console.log('[EditorMode] handleToggleAIChatPanel IPC received');
-    setIsAIChatCollapsed(prev => !prev);
-  }, [toggleAIChatPanelVersion]);
-
   // Handle new file creation with file type support
   const handleNewFile = useCallback(async (fileName: string, fileType: NewFileType) => {
     if (!workspacePath || !window.electronAPI) return;
@@ -1377,7 +1380,7 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
               }}
               hideTabBar={false}
               isActive={isActive}
-              onToggleAIChat={() => setIsAIChatCollapsed(prev => !prev)}
+              onToggleAIChat={toggleAIChatCollapsed}
               isAIChatCollapsed={isAIChatCollapsed}
               onTabDoubleClick={toggleEditorMaximized}
             >
@@ -1442,7 +1445,7 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
             workspacePath={workspacePath}
             isActive={isActive}
             isCollapsed={isAIChatCollapsed}
-            onToggleCollapse={() => setIsAIChatCollapsed(prev => !prev)}
+            onToggleCollapse={toggleAIChatCollapsed}
             width={aiChatWidth}
             onWidthChange={setAIChatWidth}
             documentContext={{ filePath: currentFilePath || '' }}

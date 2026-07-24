@@ -10,7 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Trackers now offer an editable grid, field-filter pills, shareable saved views, triage inboxes, release and review workflows, and expanded CLI commands.
 - Sharing a markdown document to your team now offers to share the documents it embeds, and teammates see those embeds live inline.
+- Voice agents can inspect the current Nimbalyst view, selected file, and active session, and capture the app window with explicit permission.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -18,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- Bug fixes go here -->
 - Agent-mode document embeds now recover when their target file is created after the document opens.
+- Claude Code now works when its config directory is set to a non-default location: the usage meter finds your login instead of showing "Authentication expired" indefinitely, and session history, settings, plugins, custom commands, and skills all read from the right place. Codex usage now follows a relocated Codex home the same way.
 - Automations no longer rerun the same scheduled occurrence after restarting while a run is waiting or fails.
 - Voice Mode now explains blocked or missing microphones on Windows and links directly to microphone privacy settings.
 

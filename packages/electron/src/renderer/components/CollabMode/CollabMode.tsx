@@ -15,7 +15,7 @@ import { CollabSidebar } from './CollabSidebar';
 import { TabsProvider, useTabsActions, useTabs, useTabNavigationShortcuts, type TabData } from '../../contexts/TabsContext';
 import { TabManager } from '../TabManager/TabManager';
 import { TabContent } from '../TabContent/TabContent';
-import { ChatSidebar } from '../ChatSidebar';
+import { ChatSidebar, type ChatSidebarRef } from '../ChatSidebar';
 import { useEditorMaximize } from '../../hooks/useEditorMaximize';
 import { useResizeDragShield } from '../../hooks/useResizeDragShield';
 import {
@@ -54,6 +54,7 @@ interface CollabModeProps {
   workspacePath: string;
   isActive: boolean;
   onFileOpen: (path: string) => void;
+  onPanelStateChange?: (state: { sidebarCollapsed: boolean; chatCollapsed: boolean }) => void;
 }
 
 export interface CollabModeRef {
@@ -61,12 +62,15 @@ export interface CollabModeRef {
   reopenLastClosedTab: () => Promise<void>;
   getActiveDocumentPath: () => string | null;
   toggleSidebarCollapsed: () => void;
+  toggleChatCollapsed: () => void;
+  createNewChatSession: () => Promise<void>;
 }
 
 export const CollabMode = forwardRef<CollabModeRef, CollabModeProps>(function CollabMode({
   workspacePath,
   isActive,
   onFileOpen,
+  onPanelStateChange,
 }, ref) {
   // Initialize shared documents sync from TeamRoom.
   // Retry when user activates collab mode, in case the initial attempt
@@ -96,6 +100,7 @@ export const CollabMode = forwardRef<CollabModeRef, CollabModeProps>(function Co
         workspacePath={workspacePath}
         isActive={isActive}
         onFileOpen={onFileOpen}
+        onPanelStateChange={onPanelStateChange}
       />
     </TabsProvider>
   );
@@ -160,6 +165,7 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(functi
   workspacePath,
   isActive,
   onFileOpen,
+  onPanelStateChange,
 }, ref) {
   const tabsActions = useTabsActions();
   const { tabs, activeTabId } = useTabs();
@@ -174,6 +180,11 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(functi
   const [chatWidth, setChatWidth] = useState(COLLAB_CHAT_DEFAULT);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState(false);
+  const chatSidebarRef = useRef<ChatSidebarRef>(null);
+
+  useEffect(() => {
+    onPanelStateChange?.({ sidebarCollapsed, chatCollapsed });
+  }, [sidebarCollapsed, chatCollapsed, onPanelStateChange]);
 
   // The Shared Docs Home is a singleton virtual tab (NIM-1790). Opening it
   // dedupes by URI, so this focuses the existing tab if present.
@@ -653,7 +664,21 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(functi
       return activeTab?.filePath ?? null;
     },
     toggleSidebarCollapsed,
-  }), [activeTabId, tabs, tabsActions, toggleSidebarCollapsed]);
+    toggleChatCollapsed,
+    createNewChatSession: async () => {
+      if (chatCollapsed) {
+        setChatCollapsed(false);
+      }
+      await chatSidebarRef.current?.createNewSession();
+    },
+  }), [
+    activeTabId,
+    tabs,
+    tabsActions,
+    toggleSidebarCollapsed,
+    toggleChatCollapsed,
+    chatCollapsed,
+  ]);
 
   const hasTabs = tabs.length > 0;
 
@@ -712,6 +737,7 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(functi
           collapsible). Shown on every tab, including the Shared Docs Home. */}
       {hasTabs && (
         <ChatSidebar
+          ref={chatSidebarRef}
           workspacePath={workspacePath}
           isActive={isActive}
           isCollapsed={chatCollapsed}

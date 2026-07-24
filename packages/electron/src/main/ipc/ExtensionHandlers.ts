@@ -54,6 +54,7 @@ import type {
   BackendModuleContribution,
   ExtensionManifest,
 } from '@nimbalyst/extension-sdk';
+import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeConfigDir';
 
 /**
  * Validate the SHAPE of `contributions.backendModules` on a parsed manifest.
@@ -650,8 +651,7 @@ async function getClaudeCliPluginPaths(workspacePath?: string): Promise<Array<{ 
   const plugins: Array<{ type: 'local'; path: string }> = [];
 
   try {
-    const os = await import('os');
-    const installedPluginsPath = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
+    const installedPluginsPath = path.join(resolveClaudeConfigDir(), 'plugins', 'installed_plugins.json');
 
     let content: string;
     try {

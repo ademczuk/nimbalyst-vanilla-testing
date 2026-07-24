@@ -29,6 +29,10 @@ import { addNimAssetRoot } from '../protocols/nimAssetProtocol';
 import { addNimPreviewWorkspaceRoot } from '../protocols/nimPreviewProtocol';
 import { windows, windowStates, anyWindowReferencesWorkspace, resolveDocumentServicePath, getWindowIdForWindow } from './windowState';
 import { shouldSaveSessionOnWindowClose } from './sessionSaveOnClose';
+import {
+    registerCustomTitleBarWindow,
+    titleBarOptionsForWindow,
+} from './windowChrome';
 
 // Window management
 export { windows, windowStates };
@@ -259,7 +263,11 @@ export function createWindow(
                 webviewTag: false
             },
             show: false,
-            titleBarStyle: process.platform === 'darwin' ? undefined : 'default',
+            ...titleBarOptionsForWindow({
+                customTitleBar: isWorkspaceMode,
+                platform: process.platform,
+                overlayColors: getTitleBarColors(),
+            }),
         };
 
         if (iconPath) {
@@ -267,6 +275,9 @@ export function createWindow(
         }
 
         const window = new BrowserWindow(windowOptions);
+        if (isWorkspaceMode) {
+            registerCustomTitleBarWindow(window);
+        }
 
         // Generate a unique window ID
         const windowId = ++windowIdCounter;

@@ -28,6 +28,12 @@ import { createVoiceSessionHandoff } from './voiceSessionHandoff';
 import { getAgentWorkflowService } from '../AgentWorkflowService';
 import { loadFreshVoiceCommandContext } from './voiceCommandContext';
 import { ensureVoiceMicrophoneAccess } from './microphoneAccess';
+import {
+  captureActiveVoiceWindow,
+  sanitizeVoiceUiContext,
+  type RawVoiceUiContext,
+  type VoiceUiContext,
+} from './voiceUiContext';
 
 // Store active voice session info
 interface VoiceSession {
@@ -87,6 +93,81 @@ function requestExtensionVoiceContext(
       resolve(typeof data?.context === 'string' ? data.context : '');
     });
     window.webContents.send('voice-mode:collect-extension-context', { input, resultChannel });
+  });
+}
+
+const UI_CONTEXT_TIMEOUT_MS = 2000;
+
+interface RendererUiContextResponse {
+  workspacePath?: string;
+  context?: RawVoiceUiContext;
+  error?: string;
+}
+
+/**
+ * Ask the voice-owning renderer for a fresh Jotai snapshot. The dynamic result
+ * channel is accepted only from the expected webContents and must echo the
+ * workspace path, preventing another workspace window from supplying context.
+ */
+function requestVoiceUiContext(
+  window: BrowserWindow,
+  workspacePath: string,
+): Promise<{ success: true; context: VoiceUiContext } | { success: false; error: string }> {
+  return new Promise((resolve) => {
+    if (!window || window.isDestroyed()) {
+      resolve({ success: false, error: 'The Nimbalyst window is not available.' });
+      return;
+    }
+    if (!workspacePath) {
+      resolve({ success: false, error: 'The active workspace is not available.' });
+      return;
+    }
+
+    const resultChannel = `voice-mode:ui-context-result-${randomUUID()}`;
+    let settled = false;
+    const finish = (
+      result: { success: true; context: VoiceUiContext } | { success: false; error: string },
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      ipcMain.removeListener(resultChannel, handleResult);
+      resolve(result);
+    };
+    const handleResult = (
+      event: Electron.IpcMainEvent,
+      data: RendererUiContextResponse,
+    ) => {
+      if (event.sender.id !== window.webContents.id) return;
+      if (data?.workspacePath !== workspacePath) {
+        finish({ success: false, error: 'The UI context response was for a different workspace.' });
+        return;
+      }
+      if (data?.error) {
+        finish({ success: false, error: data.error });
+        return;
+      }
+      try {
+        finish({
+          success: true,
+          context: sanitizeVoiceUiContext(data?.context || {}, workspacePath),
+        });
+      } catch (error) {
+        finish({
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+    const timeout = setTimeout(() => {
+      finish({ success: false, error: 'Timed out while reading the current UI context.' });
+    }, UI_CONTEXT_TIMEOUT_MS);
+
+    ipcMain.on(resultChannel, handleResult);
+    window.webContents.send('voice-mode:request-ui-context', {
+      workspacePath,
+      resultChannel,
+    });
   });
 }
 
@@ -686,6 +767,32 @@ export function initVoiceModeService() {
           summary: result.summary,
           error: result.error,
         };
+      });
+
+      poc.setOnGetUiContext(async () => {
+        const wp = activeVoiceSession?.workspacePath ?? workspacePath;
+        if (!wp) {
+          return { success: false, error: 'The active workspace is not available.' };
+        }
+        return requestVoiceUiContext(window, wp);
+      });
+
+      poc.setOnCaptureUiScreenshot(async () => {
+        const wp = activeVoiceSession?.workspacePath ?? workspacePath;
+        if (!wp) {
+          return { success: false, error: 'The active workspace is not available.' };
+        }
+        const uiContextResult = await requestVoiceUiContext(window, wp);
+        const context = uiContextResult.success ? uiContextResult.context : undefined;
+        try {
+          return await captureActiveVoiceWindow(window, context);
+        } catch (error) {
+          console.error('[VoiceModeService] Failed to capture active UI:', error);
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
       });
 
       // Respond to interactive prompts (AskUserQuestion, ExitPlanMode, etc.)

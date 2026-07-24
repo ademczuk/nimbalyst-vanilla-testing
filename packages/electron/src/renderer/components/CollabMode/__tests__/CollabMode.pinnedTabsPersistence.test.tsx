@@ -1,6 +1,7 @@
-import React from 'react';
+// @vitest-environment jsdom
+import React, { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, render, waitFor } from '@testing-library/react';
 
 const persistenceMocks = vi.hoisted(() => ({
   load: vi.fn(),
@@ -70,7 +71,7 @@ vi.mock('../../ChatSidebar', () => ({
 }));
 
 import { TabsProvider, useTabs } from '../../../contexts/TabsContext';
-import { CollabModeInner } from '../CollabMode';
+import { CollabModeInner, type CollabModeRef } from '../CollabMode';
 
 function TabProbe() {
   const { tabs } = useTabs();
@@ -167,5 +168,51 @@ describe('CollabMode pinned tab persistence', () => {
         expect.objectContaining({ documentId: 'regular-doc', isPinned: false }),
       ],
     ));
+  });
+
+  it('exposes the existing persisted pane toggles and reports their state', async () => {
+    const ref = createRef<CollabModeRef>();
+    const onPanelStateChange = vi.fn();
+
+    render(
+      <TabsProvider workspacePath="/workspace" disablePersistence>
+        <CollabModeInner
+          ref={ref}
+          workspacePath="/workspace"
+          isActive
+          onFileOpen={() => {}}
+          onPanelStateChange={onPanelStateChange}
+        />
+      </TabsProvider>,
+    );
+
+    await waitFor(() => expect(ref.current).not.toBeNull());
+    await act(async () => {
+      ref.current?.toggleSidebarCollapsed();
+    });
+    await waitFor(() => expect(onPanelStateChange).toHaveBeenLastCalledWith({
+      sidebarCollapsed: true,
+      chatCollapsed: false,
+    }));
+    await act(async () => {
+      ref.current?.toggleChatCollapsed();
+    });
+
+    await waitFor(() => expect(onPanelStateChange).toHaveBeenLastCalledWith({
+      sidebarCollapsed: true,
+      chatCollapsed: true,
+    }));
+    await waitFor(() => {
+      expect(window.electronAPI.invoke).toHaveBeenCalledWith(
+        'workspace:update-state',
+        '/workspace',
+        expect.objectContaining({
+          collabLayout: expect.objectContaining({
+            sidebarCollapsed: true,
+            chatCollapsed: true,
+          }),
+        }),
+      );
+    });
   });
 });

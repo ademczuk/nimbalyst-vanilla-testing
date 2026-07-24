@@ -31,6 +31,7 @@ import { FloatingPortal, useFloatingMenu } from '../../hooks/useFloatingMenu';
 import { dispatchOpenSessionInTab } from '../../store/actions/sessionHistoryActions';
 import { setWindowModeAtom } from '../../store/atoms/windowMode';
 import { statusOptionFor, trackerColorStyle } from './PrTrackerBadge';
+import { compareTrackerUpdatedAtDesc } from './prTrackerSort';
 import { usePrTrackerContext } from './usePrTrackerContext';
 import type { SessionMeta } from '../../store/atoms/sessions';
 
@@ -222,7 +223,7 @@ function LinkTrackerItemButton({
           getRecordTitle(item).toLowerCase().includes(q) ||
           item.issueKey?.toLowerCase().includes(q),
       )
-      .sort((a, b) => (b.system.updatedAt || '').localeCompare(a.system.updatedAt || ''))
+      .sort(compareTrackerUpdatedAtDesc)
       .slice(0, 8);
   }, [allItems, alreadyLinkedIds, query]);
 

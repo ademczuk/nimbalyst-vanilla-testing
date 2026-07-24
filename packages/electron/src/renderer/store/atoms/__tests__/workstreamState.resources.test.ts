@@ -20,6 +20,10 @@ import {
   fileResource,
   trackerResource,
   trackerResourceId,
+  setWorkstreamRightPanelModeAtom,
+  workstreamRightPanelModeAtom,
+  setWorkstreamSessionChatIdAtom,
+  workstreamSessionChatIdsAtom,
 } from '../workstreamState';
 
 /**
@@ -320,5 +324,54 @@ describe('per-tab tracker content focus', () => {
       (t) => t.resource.resourceId === trackerResourceId('T1')
     );
     expect(trackerTab?.presentation?.trackerContentFocus).toBe(true);
+  });
+});
+
+describe('Agent right panel mode', () => {
+  it('defaults to Edited Files and switches modes without hiding the panel', () => {
+    const testStore = createStore();
+    const workstreamId = 'right-panel-workstream';
+
+    expect(testStore.get(workstreamRightPanelModeAtom(workstreamId))).toBe('edited-files');
+    expect(testStore.get(workstreamStateAtom(workstreamId)).filesSidebarVisible).toBe(true);
+
+    testStore.set(setWorkstreamRightPanelModeAtom, {
+      workstreamId,
+      mode: 'review',
+    });
+
+    expect(testStore.get(workstreamRightPanelModeAtom(workstreamId))).toBe('review');
+    expect(testStore.get(workstreamStateAtom(workstreamId)).filesSidebarVisible).toBe(true);
+  });
+
+  it('persists one normal chat pairing per source session', () => {
+    const testStore = createStore();
+    const workstreamId = 'right-panel-workstream';
+
+    testStore.set(setWorkstreamSessionChatIdAtom, {
+      workstreamId,
+      targetSessionId: 'source-a',
+      chatSessionId: 'chat-a',
+    });
+    testStore.set(setWorkstreamSessionChatIdAtom, {
+      workstreamId,
+      targetSessionId: 'source-b',
+      chatSessionId: 'chat-b',
+    });
+
+    expect(testStore.get(workstreamSessionChatIdsAtom(workstreamId))).toEqual({
+      'source-a': 'chat-a',
+      'source-b': 'chat-b',
+    });
+
+    testStore.set(setWorkstreamSessionChatIdAtom, {
+      workstreamId,
+      targetSessionId: 'source-a',
+      chatSessionId: null,
+    });
+
+    expect(testStore.get(workstreamSessionChatIdsAtom(workstreamId))).toEqual({
+      'source-b': 'chat-b',
+    });
   });
 });

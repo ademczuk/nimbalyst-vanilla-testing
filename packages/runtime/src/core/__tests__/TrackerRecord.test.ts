@@ -287,6 +287,37 @@ describe('dbRowToRecord', () => {
     expect(record.fields.status).toBe('open');
   });
 
+  it('normalizes timestamp values from parsed database JSON', () => {
+    const row = {
+      id: 'x',
+      type: 'bug',
+      type_tags: ['bug'],
+      data: {
+        title: 'Timestamp shapes',
+        created: new Date('2026-07-23T10:00:00.000Z'),
+        updated: Date.parse('2026-07-24T11:30:00.000Z'),
+      },
+      workspace: '/ws',
+      document_path: '',
+      line_number: null,
+      created: new Date('2026-07-23T10:00:00.000Z'),
+      updated: new Date('2026-07-24T11:30:00.000Z'),
+      last_indexed: new Date('2026-07-24T11:30:00.000Z'),
+      issue_number: null,
+      issue_key: null,
+      content: null,
+      archived: false,
+      source: 'native',
+      source_ref: null,
+      sync_status: 'local',
+    };
+
+    const record = dbRowToRecord(row);
+
+    expect(record.system.createdAt).toBe('2026-07-23T10:00:00.000Z');
+    expect(record.system.updatedAt).toBe('2026-07-24T11:30:00.000Z');
+  });
+
   it('falls back to [type] when type_tags is empty', () => {
     const row = {
       id: 'x',
