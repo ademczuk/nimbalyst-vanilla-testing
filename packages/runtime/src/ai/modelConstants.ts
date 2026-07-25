@@ -249,7 +249,7 @@ export const OPENAI_MODELS: ModelDefinition[] = [
  *   `opus` to the next version.
  */
 export type ClaudeCodeVariant = 'fable' | 'opus' | 'sonnet' | 'haiku' | 'opus-4-8' | 'opus-4-7' | 'opus-4-6' | 'sonnet-4-6';
-export type ClaudeCodeVariantInput = ClaudeCodeVariant | 'opus-5' | 'fable-5';
+export type ClaudeCodeVariantInput = ClaudeCodeVariant | 'opus-5' | 'sonnet-5' | 'fable-5';
 
 /**
  * Accepted input aliases for Claude Agent model identifiers.
@@ -257,8 +257,9 @@ export type ClaudeCodeVariantInput = ClaudeCodeVariant | 'opus-5' | 'fable-5';
  * `opus-5` is intentionally accepted as an alias for the canonical `opus`
  * variant so legacy code paths (meta-agent, Agent tool, imported session IDs)
  * can request the current Opus generation explicitly without requiring a
- * duplicate visible picker entry. `fable-5` is accepted as an alias for
- * `fable` for the same reason. `opus-4-8` is now a pinned previous-generation
+ * duplicate visible picker entry. `sonnet-5` and `fable-5` are accepted as
+ * aliases for `sonnet` and `fable` for the same reason.
+ * `opus-4-8` is now a pinned previous-generation
  * variant (its own row), not an alias — it resolves to that specific model.
  */
 export const CLAUDE_CODE_ACCEPTED_VARIANT_INPUTS: readonly ClaudeCodeVariantInput[] = [
@@ -270,6 +271,7 @@ export const CLAUDE_CODE_ACCEPTED_VARIANT_INPUTS: readonly ClaudeCodeVariantInpu
   'opus-4-7',
   'opus-4-6',
   'sonnet',
+  'sonnet-5',
   'sonnet-4-6',
   'haiku',
 ] as const;
@@ -283,6 +285,7 @@ const CLAUDE_CODE_VARIANT_INPUT_MAP: Readonly<Record<ClaudeCodeVariantInput, Cla
   'opus-4-7': 'opus-4-7',
   'opus-4-6': 'opus-4-6',
   sonnet: 'sonnet',
+  'sonnet-5': 'sonnet',
   'sonnet-4-6': 'sonnet-4-6',
   haiku: 'haiku',
 };

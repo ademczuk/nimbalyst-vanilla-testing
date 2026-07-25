@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- New Claude Agent sessions now accept Sonnet 5 saved as an explicit default instead of failing before the first prompt runs.
+- Tracker saved views can be saved from any view state and exited with a Close control.
+- The grouping dropdown in tracker Display Options now groups rows.
+- Tracker filters can match items by the status they changed to or from.
+- Clicking a tracker grid column header toggles sorting.
 
 ### Removed
 <!-- Removed features go here -->
@@ -40,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Session-pane session, workstream, and worktree labels now reveal their complete names in wrapped hover tooltips.
 - Remote MCP server OAuth now recognizes successful authorization instead of reporting it as rejected, and gives slower sign-ins more time to complete.
 - Resolved SQLite migration errors on startup and no longer offers the dry-run and migrate controls once you are already on SQLite.
 - Comment highlights in collaborative documents are now legible in dark mode.
@@ -48,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Code and Codex now honor relocated config directories, so usage, session history, settings, plugins, commands, and skills all resolve correctly.
 - Automations no longer rerun the same scheduled occurrence after restarting while a run is waiting or fails.
 - Voice Mode now explains blocked or missing microphones on Windows and links directly to microphone privacy settings.
+- The worktree name shown above the Commit panel no longer changes to the session title once the agent names the session.
 - Frontmatter plans now share to your team after a cold discovery pass instead of silently staying local.
 - Shared tracker saved views survive the view migration again.
 - Git actions are hidden in projects that are not git repositories.

@@ -41,6 +41,7 @@ import {
 import {
   withEffectiveUpdated,
   filterTrackerRecords,
+  groupTrackerRecords,
   sortTrackerRecords,
 } from './trackerRowData';
 import { DisplayOptionsPanel } from './DisplayOptionsPanel';
@@ -154,10 +155,26 @@ export function TrackerTableGrid({
     if (preserveItemOrder) return filteredItems;
     return sortTrackerRecords(filteredItems, currentSortBy, currentSortDirection);
   }, [filteredItems, currentSortBy, currentSortDirection, preserveItemOrder]);
+  const groupedRecords = useMemo(
+    () => groupTrackerRecords(sortedItems, effectiveColumnConfig.groupBy),
+    [effectiveColumnConfig.groupBy, sortedItems],
+  );
+  const displayItems = useMemo(
+    () => groupedRecords.flatMap(group => group.items),
+    [groupedRecords],
+  );
+  const groupHeadersByItemId = useMemo(() => {
+    const headers = new Map<string, { label: string; count: number }>();
+    for (const group of groupedRecords) {
+      const first = group.items[0];
+      if (group.label && first) headers.set(first.id, { label: group.label, count: group.items.length });
+    }
+    return headers;
+  }, [groupedRecords]);
 
   // Row interaction (shared with TrackerTable)
   const rows = useTrackerRows({
-    items: sortedItems,
+    items: displayItems,
     activeTypeFilter,
     onItemSelect,
     onDeleteItems,
@@ -405,29 +422,43 @@ export function TrackerTableGrid({
             })}
 
             {/* Body rows -- each row uses display: contents so its cells join the parent grid */}
-            {sortedItems.map((item, rowIndex) => (
-              <GridRow
-                key={item.id || rowIndex}
-                item={item}
-                rowIndex={rowIndex}
-                columns={visibleColumnDefs}
-                selectedIds={selectedIds}
-                selectedItemId={selectedItemId}
-                focusedIndex={focusedIndex}
-                editingCell={editingCell}
-                setEditingCell={setEditingCell}
-                editingTitle={editingTitle}
-                setEditingTitle={setEditingTitle}
-                titleInputRef={titleInputRef}
-                handleFieldUpdate={handleFieldUpdate}
-                isItemEditable={isItemEditable}
-                handleRowClick={handleRowClick}
-                handleContextMenu={handleContextMenu}
-                openItemInEditor={openItemInEditor}
-                favoriteItemIds={favoriteItemIds}
-                onToggleFavorite={onToggleFavorite}
-              />
-            ))}
+            {displayItems.map((item, rowIndex) => {
+              const groupHeader = groupHeadersByItemId.get(item.id);
+              return (
+                <React.Fragment key={item.id || rowIndex}>
+                  {groupHeader && (
+                    <div
+                      className="tracker-table-grid-group-header sticky top-[28px] z-[9] flex items-center gap-2 border-b border-nim bg-nim-secondary px-3 py-1.5 text-[11px] font-semibold text-nim"
+                      style={{ gridColumn: '1 / -1' }}
+                      data-testid="tracker-table-grid-group-header"
+                    >
+                      <span>{groupHeader.label}</span>
+                      <span className="font-normal tabular-nums text-nim-faint">{groupHeader.count}</span>
+                    </div>
+                  )}
+                  <GridRow
+                    item={item}
+                    rowIndex={rowIndex}
+                    columns={visibleColumnDefs}
+                    selectedIds={selectedIds}
+                    selectedItemId={selectedItemId}
+                    focusedIndex={focusedIndex}
+                    editingCell={editingCell}
+                    setEditingCell={setEditingCell}
+                    editingTitle={editingTitle}
+                    setEditingTitle={setEditingTitle}
+                    titleInputRef={titleInputRef}
+                    handleFieldUpdate={handleFieldUpdate}
+                    isItemEditable={isItemEditable}
+                    handleRowClick={handleRowClick}
+                    handleContextMenu={handleContextMenu}
+                    openItemInEditor={openItemInEditor}
+                    favoriteItemIds={favoriteItemIds}
+                    onToggleFavorite={onToggleFavorite}
+                  />
+                </React.Fragment>
+              );
+            })}
           </div>
         )}
       </div>

@@ -38,6 +38,7 @@ import { TrackerUnreadDot } from '../../../readReceipts/TrackerUnreadDot';
 import { DisplayOptionsPanel } from './DisplayOptionsPanel';
 import { useTrackerRows } from './useTrackerRows';
 import { TrackerFavoriteStar } from './TrackerFavoriteStar';
+import { groupTrackerRecords } from './trackerRowData';
 
 export type SortColumn = 'title' | 'type' | 'status' | 'priority' | 'progress' | 'module' | 'lastIndexed' | (string & {});
 export type SortDirection = 'asc' | 'desc';
@@ -950,10 +951,26 @@ export function TrackerTable({
 
   // console.log('[TrackerTable] Render - items:', items.length, 'filtered:', filteredItems.length, 'typeFilter:', typeFilter);
   const sortedItems = preserveItemOrder ? filteredItems : sortItems(filteredItems, currentSortBy, currentSortDirection);
+  const groupedRecords = useMemo(
+    () => groupTrackerRecords(sortedItems, effectiveColumnConfig.groupBy),
+    [effectiveColumnConfig.groupBy, sortedItems],
+  );
+  const displayItems = useMemo(
+    () => groupedRecords.flatMap(group => group.items),
+    [groupedRecords],
+  );
+  const groupHeadersByItemId = useMemo(() => {
+    const headers = new Map<string, { label: string; count: number }>();
+    for (const group of groupedRecords) {
+      const first = group.items[0];
+      if (group.label && first) headers.set(first.id, { label: group.label, count: group.items.length });
+    }
+    return headers;
+  }, [groupedRecords]);
 
   // Row interaction model -- shared with TrackerTableGrid via useTrackerRows.
   const rows = useTrackerRows({
-    items: sortedItems,
+    items: displayItems,
     activeTypeFilter,
     onItemSelect,
     onDeleteItems,
@@ -1320,31 +1337,41 @@ export function TrackerTable({
             )}
           </div>
         ) : (
-          sortedItems.map((item, index) => {
+          displayItems.map((item, index) => {
             const title = getRecordTitle(item);
             const status = getRecordStatus(item);
             const priority = getRecordPriority(item);
             const statusColor = getStatusColor(status, item.primaryType);
             const lastIndexed = item.system.lastIndexed ? new Date(item.system.lastIndexed) : new Date(0);
             const editable = isItemEditable(item);
+            const groupHeader = groupHeadersByItemId.get(item.id);
 
             return (
-              <div
-                key={item.id || index}
-                className={`tracker-table-row flex items-center gap-3 px-3 py-[7px] border-b border-[var(--nim-border)] cursor-pointer transition-colors duration-100 hover:bg-[var(--nim-bg-secondary)] select-none ${
-                  selectedIds.has(item.id) ? 'bg-[var(--nim-bg-secondary)]' : ''
-                } ${
-                  selectedItemId && item.id === selectedItemId ? 'bg-[var(--nim-bg-secondary)]' : ''
-                } ${
-                  focusedIndex === index ? 'outline outline-1 outline-[var(--nim-primary)] -outline-offset-1' : ''
-                }`}
-                data-testid="tracker-table-row"
-                data-item-id={item.id}
-                data-item-title={item.fields.title as string}
-                onClick={(e) => handleRowClick(item, index, e)}
-                onDoubleClick={() => { if (item.system.documentPath) openItemInEditor(item); }}
-                onContextMenu={(e) => handleContextMenu(e, item, index)}
-              >
+              <React.Fragment key={item.id || index}>
+                {groupHeader && (
+                  <div
+                    className="tracker-table-group-header sticky top-0 z-[1] flex items-center gap-2 border-b border-nim bg-nim-secondary px-3 py-1.5 text-[11px] font-semibold text-nim"
+                    data-testid="tracker-table-group-header"
+                  >
+                    <span>{groupHeader.label}</span>
+                    <span className="font-normal tabular-nums text-nim-faint">{groupHeader.count}</span>
+                  </div>
+                )}
+                <div
+                  className={`tracker-table-row flex items-center gap-3 px-3 py-[7px] border-b border-[var(--nim-border)] cursor-pointer transition-colors duration-100 hover:bg-[var(--nim-bg-secondary)] select-none ${
+                    selectedIds.has(item.id) ? 'bg-[var(--nim-bg-secondary)]' : ''
+                  } ${
+                    selectedItemId && item.id === selectedItemId ? 'bg-[var(--nim-bg-secondary)]' : ''
+                  } ${
+                    focusedIndex === index ? 'outline outline-1 outline-[var(--nim-primary)] -outline-offset-1' : ''
+                  }`}
+                  data-testid="tracker-table-row"
+                  data-item-id={item.id}
+                  data-item-title={item.fields.title as string}
+                  onClick={(e) => handleRowClick(item, index, e)}
+                  onDoubleClick={() => { if (item.system.documentPath) openItemInEditor(item); }}
+                  onContextMenu={(e) => handleContextMenu(e, item, index)}
+                >
                 {/* Unread dot (nothing when read) */}
                 <TrackerUnreadDot itemId={item.id} className="w-2" />
                 <TrackerFavoriteStar
@@ -1398,7 +1425,8 @@ export function TrackerTable({
                     );
                   })}
                 </div>
-              </div>
+                </div>
+              </React.Fragment>
             );
           })
         )}

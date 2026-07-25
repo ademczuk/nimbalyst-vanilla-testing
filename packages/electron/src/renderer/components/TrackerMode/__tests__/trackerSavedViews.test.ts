@@ -5,13 +5,17 @@ import {
   countFilteredTrackerItemsByTypes,
   filterTrackerItems,
   getTrackerFilterValue,
+  getStatusTransitionValues,
   groupTrackerItems,
+  hasSavableViewState,
   legacyFilterChipsToClauses,
   normalizeViewDefinition,
   createDefaultViewDefinition,
   mergeSavedViews,
   parseSharedSavedView,
   serializeSharedSavedView,
+  STATUS_CHANGED_FROM_FILTER_FIELD,
+  STATUS_CHANGED_TO_FILTER_FIELD,
   type SavedView,
 } from '../trackerSavedViews';
 
@@ -47,6 +51,40 @@ const other: TrackerIdentity = {
 };
 
 describe('filterTrackerItems', () => {
+  it('filters on status transition direction from durable activity history', () => {
+    const transitioned = {
+      ...makeItem('transitioned', { status: 'done' }, 'task'),
+      system: {
+        ...makeItem('transitioned-system', {}).system,
+        activity: [{
+          id: 'activity-1',
+          action: 'status_changed' as const,
+          field: 'status',
+          oldValue: 'in-progress',
+          newValue: 'done',
+          timestamp: 1,
+          authorIdentity: other,
+        }],
+      },
+    };
+    const untouched = makeItem('untouched', { status: 'done' }, 'task');
+
+    expect(getStatusTransitionValues(transitioned, 'from')).toEqual(['in-progress']);
+    expect(getStatusTransitionValues(transitioned, 'to')).toEqual(['done']);
+    expect(getTrackerFilterValue(transitioned, STATUS_CHANGED_FROM_FILTER_FIELD)).toEqual(['in-progress']);
+    expect(filterTrackerItems(
+      [transitioned, untouched],
+      {
+        activeFilters: [],
+        tagFilter: [],
+        columnFilters: {
+          combinator: 'and',
+          clauses: [{ field: STATUS_CHANGED_TO_FILTER_FIELD, op: '=', value: 'done' }],
+        },
+      },
+    ).map(item => item.id)).toEqual(['transitioned']);
+  });
+
   it('evaluates saved relative-person, date, viewed, and favorite clauses with personal context', () => {
     const nowMs = Date.UTC(2026, 6, 24);
     const day = 24 * 60 * 60 * 1000;
@@ -428,6 +466,19 @@ describe('filterTrackerItems', () => {
     ];
     const out = filterTrackerItems(items, { activeFilters: ['high-priority'], tagFilter: ['ui'] });
     expect(out.map((i) => i.id)).toEqual(['1']);
+  });
+});
+
+describe('hasSavableViewState', () => {
+  it('treats a selected tracker type as savable without requiring a filter', () => {
+    expect(hasSavableViewState({
+      ...createDefaultViewDefinition(),
+      selectedType: 'bug',
+    })).toBe(true);
+  });
+
+  it('keeps the untouched default view out of the save flow', () => {
+    expect(hasSavableViewState(createDefaultViewDefinition())).toBe(false);
   });
 });
 

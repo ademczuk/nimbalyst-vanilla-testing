@@ -18,6 +18,7 @@ import type {
   BeforeSaveDataDetails,
   ColumnRegular,
   FocusAfterRenderEvent,
+  SortingConfig,
 } from '@revolist/revogrid';
 import { useAtomValue } from 'jotai';
 import type { TrackerItemType } from '@nimbalyst/runtime/core/DocumentService';
@@ -31,6 +32,7 @@ import {
   coerceCellValue,
   withEffectiveUpdated,
   filterTrackerRecords,
+  getTrackerGroupLabel,
   sortTrackerRecords,
   type TrackerColumnDef,
   type TypeColumnConfig,
@@ -60,6 +62,14 @@ import {
 } from './TrackerFilterValueMenu';
 import type { TrackerFilterField } from './TrackerViewHeaderControls';
 import './grid/trackerGrid.css';
+
+const ROW_GROUP_LABEL = '__trackerGroupLabel';
+
+interface BeforeSortingDetail {
+  column: ColumnRegular;
+  order: 'asc' | 'desc';
+  additive: boolean;
+}
 
 interface TrackerGridViewProps {
   filterType?: TrackerItemType | 'all';
@@ -227,6 +237,7 @@ export function TrackerGridView({
       .filter((c): c is TrackerColumnDef => c !== undefined);
   }, [effectiveColumnConfig.visibleColumns, allColumnDefs]);
 
+  const sortingEnabled = Boolean(onSortChange);
   const gridColumns = useMemo(
     () => buildGridColumns(visibleColumnDefs, {
       trackerType: schemaType,
@@ -237,21 +248,59 @@ export function TrackerGridView({
       onOpenFilter: onColumnFiltersChange
         ? (columnId, rect) => setFilterTarget({ columnId, rect })
         : undefined,
-      sortBy,
-      sortDirection,
-      onSort: onSortChange,
+      sortingEnabled,
     }),
     [
       visibleColumnDefs, schemaType, effectiveColumnConfig.columnWidths,
       isRowEditable, relationshipCandidates, filteredColumnIds, onColumnFiltersChange,
-      sortBy, sortDirection, onSortChange,
+      sortingEnabled,
     ],
   );
+  const gridSorting = useMemo<SortingConfig | undefined>(() => {
+    if (
+      !sortingEnabled
+      || !visibleColumnDefs.some(column => column.id === sortBy)
+    ) {
+      return undefined;
+    }
+    return {
+      columns: [{ prop: sortBy, order: sortDirection }],
+    };
+  }, [sortBy, sortDirection, sortingEnabled, visibleColumnDefs]);
+  const gridRenderKey = `${schemaType}:${sortBy}:${sortDirection}`;
 
   const gridSource = useMemo(
-    () => buildGridSource(sortedItems, visibleColumnDefs),
-    [sortedItems, visibleColumnDefs],
+    () => buildGridSource(sortedItems, visibleColumnDefs).map((row, index) => ({
+      ...row,
+      [ROW_GROUP_LABEL]: getTrackerGroupLabel(
+        sortedItems[index],
+        effectiveColumnConfig.groupBy,
+      ),
+    })),
+    [effectiveColumnConfig.groupBy, sortedItems, visibleColumnDefs],
   );
+  const gridGrouping = useMemo(
+    () => effectiveColumnConfig.groupBy
+      ? { props: [ROW_GROUP_LABEL], expandedAll: true }
+      : undefined,
+    [effectiveColumnConfig.groupBy],
+  );
+
+  const resolveGridRowItem = useCallback(async (rowIndex: number): Promise<TrackerRecord | null> => {
+    const grid = gridRef.current;
+    if (grid && typeof grid.getVisibleSource === 'function') {
+      try {
+        const visibleSource = await grid.getVisibleSource('rgRow');
+        if (Array.isArray(visibleSource) && rowIndex < visibleSource.length) {
+          const itemId = visibleSource[rowIndex]?.[ROW_ITEM_ID];
+          return typeof itemId === 'string' ? (itemsById.get(itemId) ?? null) : null;
+        }
+      } catch {
+        // The element may still be upgrading; the ungrouped source index is a safe fallback.
+      }
+    }
+    return sortedItemsRef.current[rowIndex] ?? null;
+  }, [itemsById]);
 
   const handleColumnResize = useCallback((
     event: RevoGridCustomEvent<{ [index: number]: ColumnRegular }>,
@@ -271,7 +320,7 @@ export function TrackerGridView({
     rowIndex: number,
     changes: Record<string, unknown>,
   ): Promise<void> => {
-    const item = sortedItemsRef.current[rowIndex];
+    const item = await resolveGridRowItem(rowIndex);
     if (!item || !isItemEditable(item)) return;
 
     const updates: Record<string, unknown> = {};
@@ -292,7 +341,7 @@ export function TrackerGridView({
     if (Object.keys(updates).length > 0) {
       await handleItemUpdate(item, updates);
     }
-  }, [isItemEditable, visibleColumnDefs, schemaType, handleItemUpdate]);
+  }, [handleItemUpdate, isItemEditable, resolveGridRowItem, visibleColumnDefs]);
 
   const handleAfterEdit = useCallback((event: RevoGridCustomEvent<AfterEditEvent>) => {
     const detail = event.detail;
@@ -316,9 +365,9 @@ export function TrackerGridView({
     const focused = await gridRef.current?.getFocused();
     const rowIndex = focused?.cell.y;
     if (typeof rowIndex !== 'number') return;
-    const item = sortedItemsRef.current[rowIndex];
+    const item = await resolveGridRowItem(rowIndex);
     if (item && onItemSelect) onItemSelect(item.id);
-  }, [onItemSelect]);
+  }, [onItemSelect, resolveGridRowItem]);
 
   const editFocusedCell = useCallback(async (): Promise<void> => {
     const grid = gridRef.current;
@@ -385,14 +434,33 @@ export function TrackerGridView({
     const keyboardFocused = focusOriginRef.current === 'keyboard';
     focusOriginRef.current = null;
     if (typeof rowIndex !== 'number') return;
-    const item = sortedItemsRef.current[rowIndex];
-
     // A mouse focus opens details as before. Keyboard focus only changes the
     // row while browsing; once details are open, it keeps the panel in sync.
-    if (item && onItemSelect && (!keyboardFocused || selectedItemId)) {
-      onItemSelect(item.id);
+    if (onItemSelect && (!keyboardFocused || selectedItemId)) {
+      if (!effectiveColumnConfig.groupBy) {
+        const item = sortedItemsRef.current[rowIndex];
+        if (item) onItemSelect(item.id);
+        return;
+      }
+      void resolveGridRowItem(rowIndex).then(item => {
+        if (item) onItemSelect(item.id);
+      });
     }
-  }, [onItemSelect, selectedItemId]);
+  }, [effectiveColumnConfig.groupBy, onItemSelect, resolveGridRowItem, selectedItemId]);
+
+  const handleBeforeSorting = useCallback((
+    event: RevoGridCustomEvent<BeforeSortingDetail>,
+  ) => {
+    if (!onSortChange) return;
+    // RevoGrid's in-place VDOM patch crashes when its native sort indicator
+    // changes beside a custom column template. Keep its header-click contract,
+    // but remount the grid for the next sort state instead of patching it.
+    event.preventDefault();
+    const column = String(event.detail.column.prop);
+    const direction = sortBy === column && sortDirection === 'desc' ? 'asc' : 'desc';
+    event.detail.order = direction;
+    onSortChange(column, direction);
+  }, [onSortChange, sortBy, sortDirection]);
 
   // @revolist/react-datagrid's forwarded ref and custom-event bridge are not
   // reliable under the renderer's React version. Resolve the upgraded element
@@ -414,8 +482,10 @@ export function TrackerGridView({
 
       const hydrateGridData = (): void => {
         if (cancelled || boundGrid !== grid) return;
-        grid.columns = gridColumns;
-        grid.source = gridSource;
+        if (grid.columns !== gridColumns) grid.columns = gridColumns;
+        if (grid.source !== gridSource) grid.source = gridSource;
+        if (grid.grouping !== gridGrouping) grid.grouping = gridGrouping ?? {};
+        if (grid.sorting !== gridSorting) grid.sorting = gridSorting;
       };
       const afterEdit = (event: Event): void => {
         handleAfterEdit(event as RevoGridCustomEvent<AfterEditEvent>);
@@ -425,6 +495,9 @@ export function TrackerGridView({
       };
       const afterColumnResize = (event: Event): void => {
         handleColumnResize(event as RevoGridCustomEvent<{ [index: number]: ColumnRegular }>);
+      };
+      const beforeSorting = (event: Event): void => {
+        handleBeforeSorting(event as RevoGridCustomEvent<BeforeSortingDetail>);
       };
       const persistGridOrder = (): void => {
         if (!onColumnConfigChange || typeof grid.getColumnStore !== 'function') return;
@@ -448,12 +521,14 @@ export function TrackerGridView({
       grid.addEventListener('afteredit', afterEdit);
       grid.addEventListener('afterfocus', afterFocus);
       grid.addEventListener('aftercolumnresize', afterColumnResize);
+      grid.addEventListener('beforesorting', beforeSorting);
       grid.addEventListener('columndragend', persistGridOrder);
       removeGridListeners = () => {
         grid.removeEventListener('aftergridinit', hydrateGridData);
         grid.removeEventListener('afteredit', afterEdit);
         grid.removeEventListener('afterfocus', afterFocus);
         grid.removeEventListener('aftercolumnresize', afterColumnResize);
+        grid.removeEventListener('beforesorting', beforeSorting);
         grid.removeEventListener('columndragend', persistGridOrder);
       };
 
@@ -488,7 +563,10 @@ export function TrackerGridView({
     effectiveColumnConfig,
     gridColumns,
     gridSource,
+    gridGrouping,
+    gridSorting,
     handleAfterEdit,
+    handleBeforeSorting,
     handleCellFocus,
     handleColumnResize,
     onColumnConfigChange,
@@ -536,9 +614,12 @@ export function TrackerGridView({
           </div>
         ) : (
           <RevoGrid
+            key={`dbg-d:${gridRenderKey}`}
             ref={gridRef}
             columns={gridColumns}
             source={gridSource}
+            grouping={gridGrouping}
+            sorting={gridSorting}
             theme="compact"
             resize
             range

@@ -62,7 +62,10 @@ import { buildTrackerTagOptions } from './trackerTagFilterUtils';
 import {
   filterTrackerItems,
   getTrackerFilterValue,
+  normalizeTrackerGroupBy,
   recordSourceKey,
+  STATUS_CHANGED_FROM_FILTER_FIELD,
+  STATUS_CHANGED_TO_FILTER_FIELD,
   type SavedView,
 } from './trackerSavedViews';
 import { useTrackerUnread } from '../../hooks/useTrackerUnread';
@@ -117,6 +120,7 @@ interface TrackerMainViewProps {
   onSaveView: (name: string) => void;
   onRenameSavedView: (name: string) => void;
   onUpdateSavedView: () => void;
+  onExitSavedView: () => void;
 }
 
 export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
@@ -142,6 +146,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   onSaveView,
   onRenameSavedView,
   onUpdateSavedView,
+  onExitSavedView,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [quickAddType, setQuickAddType] = useState<string | null>(null);
@@ -184,7 +189,10 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     const persisted = modeLayout.typeColumnConfigs[columnConfigKey];
     // If persisted config is missing or has too few columns (stale), use fresh defaults
     if (!persisted || persisted.visibleColumns.length < 3) {
-      return getDefaultColumnConfig(columnConfigKey === 'all' ? '' : columnConfigKey);
+      const defaults = getDefaultColumnConfig(columnConfigKey === 'all' ? '' : columnConfigKey);
+      return modeLayout.groupBy === 'none'
+        ? defaults
+        : { ...defaults, groupBy: modeLayout.groupBy };
     }
     // Silent migration: inject the structural 'key' column (issue key)
     // right after 'type' for users who saved configs before this column
@@ -198,10 +206,11 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       return { ...persisted, visibleColumns };
     }
     return persisted;
-  }, [modeLayout.typeColumnConfigs, columnConfigKey]);
+  }, [modeLayout.groupBy, modeLayout.typeColumnConfigs, columnConfigKey]);
 
   const handleColumnConfigChange = useCallback((config: TypeColumnConfig) => {
     setModeLayout({
+      groupBy: normalizeTrackerGroupBy(config.groupBy),
       typeColumnConfigs: {
         ...modeLayout.typeColumnConfigs,
         [columnConfigKey]: config,
@@ -362,6 +371,46 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     if (!fields.some(field => field.id === 'archived')) {
       fields.push({ id: 'archived', label: 'Archived', type: 'boolean', group: 'system' });
     }
+    const statusOptions = new Map<string, {
+      value: string;
+      label: string;
+      color?: string;
+      icon?: string;
+    }>();
+    for (const model of trackerTypes) {
+      const statusFieldName = model.roles?.workflowStatus;
+      const statusField = statusFieldName
+        ? model.fields.find(field => field.name === statusFieldName)
+        : undefined;
+      for (const option of statusField?.options ?? []) {
+        statusOptions.set(option.value, {
+          value: option.value,
+          label: option.label,
+          color: option.color,
+          icon: option.icon,
+        });
+      }
+    }
+    const transitionFields: TrackerFilterField[] = [
+      {
+        id: STATUS_CHANGED_TO_FILTER_FIELD,
+        label: 'Status changed to',
+        type: 'select',
+        group: 'common',
+        options: Array.from(statusOptions.values()),
+      },
+      {
+        id: STATUS_CHANGED_FROM_FILTER_FIELD,
+        label: 'Status changed from',
+        type: 'select',
+        group: 'common',
+        options: Array.from(statusOptions.values()),
+      },
+    ];
+    const statusIndex = fields.findIndex(field => availableColumns.some(
+      column => column.id === field.id && column.role === 'workflowStatus',
+    ));
+    fields.splice(statusIndex >= 0 ? statusIndex + 1 : Math.min(1, fields.length), 0, ...transitionFields);
     return fields;
   }, [availableColumns, schemaType, trackerTypes]);
 
@@ -1023,6 +1072,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
           onSaveView={onSaveView}
           onRenameSavedView={onRenameSavedView}
           onUpdateSavedView={onUpdateSavedView}
+          onExitSavedView={onExitSavedView}
         />
 
         {/* Search */}

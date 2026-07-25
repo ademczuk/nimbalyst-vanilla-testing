@@ -1055,7 +1055,10 @@ export {
   sortTrackerRecords,
   searchMatchesRecord,
   compareRecords,
+  getTrackerGroupLabel,
+  groupTrackerRecords,
 } from './components/trackerRowData';
+export type { TrackerRecordGroup } from './components/trackerRowData';
 export type { TrackerFieldEditorProps } from './components/TrackerFieldEditor';
 
 // Export tracker data atoms (cross-platform reactive state)

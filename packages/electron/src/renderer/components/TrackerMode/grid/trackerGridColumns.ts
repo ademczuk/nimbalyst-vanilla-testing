@@ -166,10 +166,8 @@ export interface BuildGridColumnsOptions {
   filteredColumnIds?: ReadonlySet<string>;
   /** Open the column filter popover, anchored to the clicked header cell. */
   onOpenFilter?: (columnId: string, anchorRect: DOMRect) => void;
-  /** Current view-owned sort, rendered as a compact explicit header control. */
-  sortBy?: string;
-  sortDirection?: 'asc' | 'desc';
-  onSort?: (columnId: string, direction: 'asc' | 'desc') => void;
+  /** Let RevoGrid own sortable header clicks and its built-in sort indicator. */
+  sortingEnabled?: boolean;
 }
 
 /**
@@ -180,43 +178,14 @@ export interface BuildGridColumnsOptions {
 function buildColumnTemplate(
   col: TrackerColumnDef,
   isFiltered: boolean,
-  sortBy: string | undefined,
-  sortDirection: 'asc' | 'desc' | undefined,
   onOpenFilter?: (columnId: string, anchorRect: DOMRect) => void,
-  onSort?: (columnId: string, direction: 'asc' | 'desc') => void,
 ) {
-  const isSorted = sortBy === col.id;
   return (createElement: HyperFunc<VNode>): VNode => createElement(
     'span',
     { class: 'tracker-grid-header' },
     [
       createElement('span', { class: 'tracker-grid-header-label' }, col.label),
       createElement('span', { class: 'tracker-grid-header-actions' }, [
-        ...(onSort && col.sortable
-          ? [createElement(
-            'span',
-            {
-              class: isSorted
-                ? 'tracker-grid-header-sort is-sorted'
-                : 'tracker-grid-header-sort',
-              title: isSorted
-                ? `Sorted ${sortDirection === 'asc' ? 'ascending' : 'descending'}`
-                : `Sort by ${col.label}`,
-              onClick: (e: MouseEvent) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onSort(col.id, isSorted && sortDirection === 'desc' ? 'asc' : 'desc');
-              },
-            },
-            createElement(
-              'span',
-              { class: 'material-symbols-outlined tracker-grid-header-sort-icon' },
-              isSorted
-                ? sortDirection === 'asc' ? 'arrow_upward' : 'arrow_downward'
-                : 'unfold_more',
-            ),
-          )]
-          : []),
         ...(onOpenFilter
           ? [createElement(
             'span',
@@ -259,9 +228,7 @@ export function buildGridColumns(
     editorContext = {},
     filteredColumnIds,
     onOpenFilter,
-    sortBy,
-    sortDirection,
-    onSort,
+    sortingEnabled = false,
   }: BuildGridColumnsOptions,
 ): ColumnRegular[] {
   return columns.map((col): ColumnRegular => {
@@ -282,7 +249,7 @@ export function buildGridColumns(
       name: col.label,
       size: columnWidths[col.id] ?? (typeof col.width === 'number' ? col.width : 280),
       minSize: col.minWidth ?? 60,
-      sortable: false, // Sorting is owned by the view so it matches the other surfaces.
+      sortable: sortingEnabled && col.sortable,
       editor,
       readonly: ({ model }) => {
         if (!editor) return true;
@@ -295,15 +262,12 @@ export function buildGridColumns(
         return typeof itemId === 'string' ? !isRowEditable(itemId) : true;
       },
       cellTemplate: buildCellTemplate(col, trackerType),
-      ...(onOpenFilter || onSort
+      ...(onOpenFilter
         ? {
           columnTemplate: buildColumnTemplate(
             col,
             filteredColumnIds?.has(col.id) ?? false,
-            sortBy,
-            sortDirection,
             onOpenFilter,
-            onSort,
           ),
         }
         : {}),
