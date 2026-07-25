@@ -10,15 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Claude Opus 5 is now the default Claude model and is selectable across all Claude providers, with the previous Opus 4.8 still selectable as a pinned choice.
 - Trackers now offer an editable grid, field-filter pills, shareable saved views, triage inboxes, release and review workflows, and expanded CLI commands.
 - Sharing a markdown document to your team now offers to share the documents it embeds, and teammates see those embeds live inline.
 - Voice agents can inspect the current Nimbalyst view, selected file, and active session, and capture the app window with explicit permission.
+- AI agents can read, reply to, and create inline comments on shared documents, attributed to the agent's own session.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Remote MCP server OAuth now recognizes successful authorization instead of reporting it as rejected, and gives slower sign-ins more time to complete.
+- Resolved SQLite migration errors on startup and no longer offers the dry-run and migrate controls once you are already on SQLite.
+- Comment highlights in collaborative documents are now legible in dark mode.
+- Collaborative tracker items can now be filtered by who created them.
 - Agent-mode document embeds now recover when their target file is created after the document opens.
 - Claude Code now works when its config directory is set to a non-default location: the usage meter finds your login instead of showing "Authentication expired" indefinitely, and session history, settings, plugins, custom commands, and skills all read from the right place. Codex usage now follows a relocated Codex home the same way.
 - Automations no longer rerun the same scheduled occurrence after restarting while a run is waiting or fails.
