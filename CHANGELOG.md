@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- File links in a transcript now open the right file when the extension is longer than eight characters, such as `.excalidraw`.
 - Session-pane title reveals now appear only for clipped names and expand from the truncated text.
 - New Claude Agent sessions now accept Sonnet 5 saved as an explicit default instead of failing before the first prompt runs.
 - Tracker saved views can be saved from any view state and exited with a Close control.
