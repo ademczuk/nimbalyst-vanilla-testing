@@ -40,10 +40,17 @@ import { WorkstreamGroup } from '../WorkstreamGroup';
 const groupTitle = 'A workstream name that is long enough to be clipped by the session pane';
 const childTitle = 'A child session name that is long enough to be clipped by the session pane';
 
+const setElementWidth = (element: Element, { clientWidth, scrollWidth }: { clientWidth: number; scrollWidth: number }) => {
+  Object.defineProperties(element, {
+    clientWidth: { configurable: true, value: clientWidth },
+    scrollWidth: { configurable: true, value: scrollWidth },
+  });
+};
+
 afterEach(() => cleanup());
 
 describe('WorkstreamGroup - full name on hover', () => {
-  it('wraps complete workstream and child session names in in-app tooltips', () => {
+  it('shows complete workstream and child session names only when clipped', () => {
     const { container } = render(
       <WorkstreamGroup
         type="workstream"
@@ -59,13 +66,20 @@ describe('WorkstreamGroup - full name on hover', () => {
       />,
     );
 
-    const groupName = container.querySelector('.workstream-group-name');
-    fireEvent.mouseEnter(groupName!);
+    const groupName = container.querySelector('.workstream-group-name')!;
+    setElementWidth(groupName, { clientWidth: 160, scrollWidth: 320 });
+    fireEvent.mouseEnter(groupName);
     expect(screen.getByRole('tooltip').textContent).toBe(groupTitle);
 
-    fireEvent.mouseLeave(groupName!);
-    const childName = container.querySelector('.workstream-session-item-title');
-    fireEvent.mouseEnter(childName!);
+    fireEvent.mouseLeave(groupName);
+    const childName = container.querySelector('.workstream-session-item-title')!;
+    setElementWidth(childName, { clientWidth: 160, scrollWidth: 300 });
+    fireEvent.mouseEnter(childName);
     expect(screen.getByRole('tooltip').textContent).toBe(childTitle);
+
+    fireEvent.mouseLeave(childName);
+    setElementWidth(childName, { clientWidth: 320, scrollWidth: 300 });
+    fireEvent.mouseEnter(childName);
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });

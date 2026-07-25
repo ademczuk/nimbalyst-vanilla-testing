@@ -383,11 +383,7 @@ export const SessionListItem = memo<SessionListItemProps>(({
     }
   }, [isRenaming]);
 
-  // Get the first line of the title (truncate if too long)
   const displayTitle = title || 'Untitled Session';
-  const truncatedTitle = displayTitle.length > 40
-    ? displayTitle.substring(0, 40) + '...'
-    : displayTitle;
 
   // Per-session live activity. Bumped on every `ai:message-logged`; only
   // this list item re-renders when its own activity ticks, instead of the
@@ -517,7 +513,7 @@ export const SessionListItem = memo<SessionListItemProps>(({
               label={displayTitle}
               className={`session-list-item-title block text-[0.8125rem] text-[var(--nim-text)] font-medium overflow-hidden text-ellipsis whitespace-nowrap mb-0.5 transition-colors duration-150 ${isActive ? 'font-semibold' : ''} ${isArchived ? 'text-[var(--nim-text-faint)]' : ''}`}
             >
-              {truncatedTitle}
+              {displayTitle}
             </FullTitleTooltip>
             <div className="session-list-item-meta flex gap-1.5 text-[0.6875rem] text-[var(--nim-text-faint)] items-center mt-0.5">
               <span className="session-list-item-datetime text-[0.6875rem] text-[var(--nim-text-faint)] whitespace-nowrap transition-colors duration-150" title={fullDateTime}>{relativeTime}</span>
