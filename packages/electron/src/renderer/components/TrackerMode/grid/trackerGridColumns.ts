@@ -123,12 +123,66 @@ function formatValue(col: TrackerColumnDef, value: unknown, trackerType: string)
   }
 }
 
+/** Favorite affordance for the title cell, matching the list view's star. */
+function favoriteNode(
+  createElement: HyperFunc<VNode>,
+  itemId: string,
+  isFavorite: boolean,
+  onToggleFavorite: (itemId: string) => void,
+): VNode {
+  return createElement(
+    'span',
+    {
+      class: isFavorite
+        ? 'tracker-grid-cell-favorite is-favorite'
+        : 'tracker-grid-cell-favorite',
+      title: isFavorite ? 'Remove from favorites' : 'Add to favorites',
+      // The grid focuses a cell on pointerdown, which would open the detail
+      // panel behind the star. Swallow both events so the star is a pure toggle.
+      onPointerDown: (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      onClick: (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onToggleFavorite(itemId);
+      },
+    },
+    createElement(
+      'span',
+      { class: 'material-symbols-outlined tracker-grid-cell-favorite-icon' },
+      isFavorite ? 'star' : 'star_outline',
+    ),
+  );
+}
+
 /** Colored-badge columns get a pill; everything else renders as plain text. */
-function buildCellTemplate(col: TrackerColumnDef, trackerType: string) {
+function buildCellTemplate(
+  col: TrackerColumnDef,
+  trackerType: string,
+  favorites?: FavoritesOptions,
+) {
   return (createElement: HyperFunc<VNode>, props: CellTemplateProp): VNode => {
     const value = props.model?.[col.id];
     const rowType = trackerType || String(props.model?.[ROW_ITEM_TYPE] ?? '');
     const text = formatValue(col, value, rowType);
+
+    // The title column carries the favorite star, so it renders even when the
+    // title itself is empty.
+    if (favorites && col.role === 'title') {
+      const itemId = String(props.model?.[ROW_ITEM_ID] ?? '');
+      return createElement('span', { class: 'tracker-grid-cell-title' }, [
+        favoriteNode(
+          createElement,
+          itemId,
+          favorites.favoriteItemIds.has(itemId),
+          favorites.onToggleFavorite,
+        ),
+        textNode(createElement, text),
+      ]);
+    }
+
     if (!text) return textNode(createElement, '');
 
     if (col.render === 'badge' || col.render === 'type-icon') {
@@ -153,6 +207,11 @@ function buildCellTemplate(col: TrackerColumnDef, trackerType: string) {
   };
 }
 
+export interface FavoritesOptions {
+  favoriteItemIds: ReadonlySet<string>;
+  onToggleFavorite: (itemId: string) => void;
+}
+
 export interface BuildGridColumnsOptions {
   /** Active tracker type; `'all'` means a mixed-type view. */
   trackerType: string;
@@ -168,6 +227,8 @@ export interface BuildGridColumnsOptions {
   onOpenFilter?: (columnId: string, anchorRect: DOMRect) => void;
   /** Let RevoGrid own sortable header clicks and its built-in sort indicator. */
   sortingEnabled?: boolean;
+  /** Renders the favorite star in the title cell; omit to hide it. */
+  favorites?: FavoritesOptions;
 }
 
 /**
@@ -229,6 +290,7 @@ export function buildGridColumns(
     filteredColumnIds,
     onOpenFilter,
     sortingEnabled = false,
+    favorites,
   }: BuildGridColumnsOptions,
 ): ColumnRegular[] {
   return columns.map((col): ColumnRegular => {
@@ -261,7 +323,7 @@ export function buildGridColumns(
         }
         return typeof itemId === 'string' ? !isRowEditable(itemId) : true;
       },
-      cellTemplate: buildCellTemplate(col, trackerType),
+      cellTemplate: buildCellTemplate(col, trackerType, favorites),
       ...(onOpenFilter
         ? {
           columnTemplate: buildColumnTemplate(

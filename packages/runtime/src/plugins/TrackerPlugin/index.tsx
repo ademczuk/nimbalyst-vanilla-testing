@@ -1017,9 +1017,10 @@ export { globalRegistry, getRoleField, getFieldByRole } from './models/TrackerDa
 
 // Export components
 export { StatusBar } from './components/StatusBar';
-export { TrackerTable, convertFullDocumentToTrackerItems, resolveTrackerFrontmatter, renderCell, ContextSubmenu } from './components/TrackerTable';
+export { TrackerTable, convertFullDocumentToTrackerItems, resolveTrackerFrontmatter, renderCell } from './components/TrackerTable';
 export type { SortColumn, SortDirection } from './components/TrackerTable';
-export { TrackerTableGrid } from './components/TrackerTableGrid';
+export { TrackerRowContextMenu, ContextSubmenu } from './components/TrackerRowContextMenu';
+export type { TrackerRowContextMenuProps } from './components/TrackerRowContextMenu';
 export { TrackerFavoriteStar } from './components/TrackerFavoriteStar';
 export { useTrackerRows } from './components/useTrackerRows';
 export type { UseTrackerRowsOptions, UseTrackerRowsResult, EditingCellRef, EditingField } from './components/useTrackerRows';

@@ -39,7 +39,7 @@ import { PullRequestListView } from './PullRequestListView';
 import { PullRequestDetail } from './PullRequestDetail';
 import { buildReviewContributionDraft } from './prFormat';
 import { usePrAiContext } from './usePrAiContext';
-import { usePrTrackerReferences } from './usePrTrackerContext';
+import { usePrTrackerContext, usePrTrackerReferences } from './usePrTrackerContext';
 
 interface PullRequestModeProps {
   workspacePath: string;
@@ -167,6 +167,15 @@ export const PullRequestMode = forwardRef<PullRequestModeRef, PullRequestModePro
     isActive,
   );
 
+  // Tracker/session context for the selected PR, resolved once here and handed
+  // to the detail header — the chat pane and the header chips must agree on
+  // which sessions belong to this PR.
+  const prTrackerContext = usePrTrackerContext(
+    workspacePath,
+    remoteForWorkspace,
+    selectedPr?.number ?? 0,
+  );
+
   useEffect(() => {
     onPanelStateChange?.({ chatCollapsed: layout.chatCollapsed });
   }, [layout.chatCollapsed, onPanelStateChange]);
@@ -203,6 +212,29 @@ export const PullRequestMode = forwardRef<PullRequestModeRef, PullRequestModePro
     }
     chatSidebarRef.current?.loadSession(sessionId);
   }, [layout.chatCollapsed, setLayout]);
+
+  /**
+   * Selecting a PR points the chat pane at that PR's most recent linked
+   * session, so the review conversation follows the selection. Kept per PR id
+   * so a manual session switch within one PR isn't undone by a re-render, and
+   * skipped when the PR has no linked session — the pane keeps what it had.
+   * A collapsed pane stays collapsed; selecting a PR isn't a request to open
+   * the chat.
+   */
+  const autoOpenedPrIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedPr) {
+      autoOpenedPrIdRef.current = null;
+      return;
+    }
+    if (autoOpenedPrIdRef.current === selectedPr.id) return;
+    // Sessions resolve asynchronously (tracker items, worktree lookup); until
+    // one shows up this effect re-runs and stays a no-op.
+    const [mostRecent] = prTrackerContext.sessions;
+    if (!mostRecent) return;
+    autoOpenedPrIdRef.current = selectedPr.id;
+    chatSidebarRef.current?.loadSession(mostRecent.id);
+  }, [selectedPr, prTrackerContext.sessions]);
 
   const handleStartReviewSession = useCallback(async () => {
     if (!selectedPr || !remoteForWorkspace) return;
@@ -292,6 +324,7 @@ export const PullRequestMode = forwardRef<PullRequestModeRef, PullRequestModePro
             workspaceId={workspacePath}
             remote={remoteForWorkspace}
             pr={selectedPr}
+            trackerContext={prTrackerContext}
             onClose={() => setLayout({ selectedItemId: null })}
             onStartReviewSession={handleStartReviewSession}
             onOpenSession={handleOpenSessionInChat}

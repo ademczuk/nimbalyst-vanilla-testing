@@ -11,15 +11,9 @@ import { sessionRefMapAtom } from '@nimbalyst/runtime';
 import type { SessionMeta } from '../../../store/atoms/sessions';
 
 const openSessionInTab = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const trackerContext = vi.hoisted(() => ({
-  value: { items: [], primary: null, sessions: [] as SessionMeta[] },
-}));
 
 vi.mock('../../../store/actions/sessionHistoryActions', () => ({
   dispatchOpenSessionInTab: openSessionInTab,
-}));
-vi.mock('../usePrTrackerContext', () => ({
-  usePrTrackerContext: () => trackerContext.value,
 }));
 
 const { PrTrackerStrip } = await import('../PrTrackerStrip');
@@ -31,7 +25,6 @@ function session(id: string, title: string, provider: string): SessionMeta {
 const onOpenSession = vi.fn();
 
 function renderStrip(sessions: SessionMeta[], hostHandler?: (id: string) => void) {
-  trackerContext.value = { items: [], primary: null, sessions };
   const store = createStore();
   store.set(
     sessionRefMapAtom,
@@ -40,9 +33,9 @@ function renderStrip(sessions: SessionMeta[], hostHandler?: (id: string) => void
   return render(
     <JotaiProvider store={store}>
       <PrTrackerStrip
-        workspacePath="/workspace"
         remote="nimbalyst/nimbalyst"
         prNumber={978}
+        context={{ items: [], primary: null, sessions }}
         onOpenSession={hostHandler}
       />
     </JotaiProvider>,

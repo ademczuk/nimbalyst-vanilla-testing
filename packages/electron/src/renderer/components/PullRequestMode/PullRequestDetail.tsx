@@ -25,11 +25,14 @@ import { ConversationTab } from './tabs/ConversationTab';
 import { FilesChangedTab } from './tabs/FilesChangedTab';
 import { CommitsTab } from './tabs/CommitsTab';
 import { ChecksTab } from './tabs/ChecksTab';
+import type { PrTrackerContext } from './usePrTrackerContext';
 
 interface PullRequestDetailProps {
   workspaceId: string;
   remote: string;
   pr: PullRequestRow;
+  /** Tracker items + linked sessions for this PR, resolved by the mode. */
+  trackerContext: PrTrackerContext;
   onClose: () => void;
   /** Starts an AI session in the PR review pane with the review command prefilled. */
   onStartReviewSession: () => void;
@@ -57,6 +60,7 @@ export function PullRequestDetail({
   workspaceId,
   remote,
   pr,
+  trackerContext,
   onClose,
   onStartReviewSession,
   onOpenSession,
@@ -137,9 +141,9 @@ export function PullRequestDetail({
         {/* Tracker / session context for this PR */}
         <div className="mt-1.5">
           <PrTrackerStrip
-            workspacePath={workspaceId}
             remote={remote}
             prNumber={pr.number}
+            context={trackerContext}
             prState={pr.state}
             onOpenSession={onOpenSession}
           />

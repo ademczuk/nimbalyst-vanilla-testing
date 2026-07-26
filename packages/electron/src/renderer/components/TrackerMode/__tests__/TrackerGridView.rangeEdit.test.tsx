@@ -74,10 +74,23 @@ vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@nimbalyst/runtime/plugins/TrackerPlugin')>();
   return {
     ...actual,
+    // Only the edit path is under test here; the rest of the hook's surface is
+    // stubbed so the grid's context menu renders closed.
     useTrackerRows: () => ({
-      handleItemUpdate,
+      handleItemUpdate: handleItemUpdate,
       isItemEditable: () => true,
       containerRef: { current: null },
+      selectedIds: new Set<string>(),
+      setSelectedIds: vi.fn(),
+      contextAnchor: null,
+      contextRefs: { setFloating: vi.fn(), setReference: vi.fn() },
+      contextFloatingStyles: {},
+      openContextMenuForIds: vi.fn(),
+      closeContextMenu: vi.fn(),
+      handleBulkStatusUpdate: vi.fn(),
+      handleBulkPriorityUpdate: vi.fn(),
+      handleAddSelectionToCollection: vi.fn(),
+      statusOptionsForBulk: [],
     }),
   };
 });

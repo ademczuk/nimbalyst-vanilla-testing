@@ -131,6 +131,28 @@ export function hasSavableViewState(definition: SavedViewDefinition): boolean {
 }
 
 /**
+ * Coerce a persisted `viewMode` to one this build still renders.
+ *
+ * `'grid'` was the RevoGrid table's own mode while it sat beside the
+ * hand-rolled table; RevoGrid is the table now, so it folds into `'table'`.
+ * Saved views also travel between users on different builds, so an unknown
+ * literal falls back rather than leaving the main view with no branch to take.
+ */
+export function normalizeViewMode(raw: unknown, fallback: ViewMode): ViewMode {
+  if (raw === 'grid') return 'table';
+  if (
+    raw === 'list'
+    || raw === 'table'
+    || raw === 'kanban'
+    || raw === 'tag-board'
+    || raw === 'inbox'
+  ) {
+    return raw;
+  }
+  return fallback;
+}
+
+/**
  * Merge a possibly-partial persisted definition with defaults so older saved
  * views (missing fields added later) load safely.
  */
@@ -140,7 +162,7 @@ export function normalizeViewDefinition(raw: Partial<SavedViewDefinition> | unde
   return {
     selectedType: typeof raw.selectedType === 'string' ? raw.selectedType : base.selectedType,
     activeFilters: Array.isArray(raw.activeFilters) ? raw.activeFilters : base.activeFilters,
-    viewMode: (raw.viewMode as ViewMode) ?? base.viewMode,
+    viewMode: normalizeViewMode(raw.viewMode, base.viewMode),
     tagFilter: Array.isArray(raw.tagFilter) ? raw.tagFilter.filter((t): t is string => typeof t === 'string') : base.tagFilter,
     groupBy: normalizeTrackerGroupBy(raw.groupBy),
     sortBy: typeof raw.sortBy === 'string' ? raw.sortBy : base.sortBy,

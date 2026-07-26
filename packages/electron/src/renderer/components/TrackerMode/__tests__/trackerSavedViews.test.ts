@@ -545,6 +545,17 @@ describe('normalizeViewDefinition', () => {
     });
   });
 
+  it("folds a saved view's retired 'grid' mode into the RevoGrid table", () => {
+    // Saved views travel between users on different builds, so a view saved
+    // while the RevoGrid table had its own mode must still open on this one.
+    expect(normalizeViewDefinition({ viewMode: 'grid' as never }).viewMode).toBe('table');
+  });
+
+  it('falls back to the default for a viewMode this build cannot render', () => {
+    expect(normalizeViewDefinition({ viewMode: 'spreadsheet' as never }).viewMode)
+      .toBe(createDefaultViewDefinition().viewMode);
+  });
+
   it('drops non-string tags', () => {
     const def = normalizeViewDefinition({ tagFilter: ['ok', 5 as unknown as string, 'fine'] });
     expect(def.tagFilter).toEqual(['ok', 'fine']);

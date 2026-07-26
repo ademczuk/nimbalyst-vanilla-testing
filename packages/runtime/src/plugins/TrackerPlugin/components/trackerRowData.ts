@@ -1,7 +1,7 @@
 /**
  * Shared record shaping for tracker table surfaces.
  *
- * `TrackerTableGrid` (CSS grid) and `TrackerGridView` (RevoGrid) must show the
+ * `TrackerTable` (the row list) and `TrackerGridView` (RevoGrid) must show the
  * same rows in the same order for the same filters, so the normalize/filter/sort
  * steps live here rather than being re-implemented per surface.
  */

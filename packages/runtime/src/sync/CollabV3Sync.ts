@@ -20,6 +20,7 @@ import type { AgentMessage } from '../ai/server/types';
 import { shouldSyncMessageForSessionRoom, truncateContentForSync } from './syncContentTruncator';
 import { appendSyncClientParams } from './syncClientInfo';
 import { buildSyncedSessionIndexFields } from './sessionIndexEntryFields';
+import { resolveIndexSortTimestamp } from './sessionSortTimestamp';
 import { deriveTrackerPersonalStateKey } from './trackerPersonalStateKey';
 import type {
   SyncConfig,
@@ -808,8 +809,18 @@ interface SessionConnection {
   lastActivity: number;
 }
 
+// Only a genuinely terminal room state disables a session's message sync. The
+// row-count ceiling is terminal: nothing will ever be appendable again.
 const FATAL_MESSAGE_SYNC_ERROR_CODES = new Set([
   'message_limit_exceeded',
+]);
+
+// Per-message rejections. One oversized message -- typically a screenshot that
+// could not be shrunk enough -- must not take the rest of the session's
+// transcript off mobile with it. The room may also have room for smaller
+// messages even when it just refused a large one, so we keep going and let the
+// message be retried on a later resync.
+const SKIPPABLE_MESSAGE_SYNC_ERROR_CODES = new Set([
   'message_too_large',
   'storage_limit_exceeded',
 ]);
@@ -818,7 +829,12 @@ function isFatalMessageSyncErrorCode(code?: string): boolean {
   return code !== undefined && FATAL_MESSAGE_SYNC_ERROR_CODES.has(code);
 }
 
+function isSkippableMessageSyncErrorCode(code?: string): boolean {
+  return code !== undefined && SKIPPABLE_MESSAGE_SYNC_ERROR_CODES.has(code);
+}
+
 export { isFatalMessageSyncErrorCode as isFatalMessageSyncErrorCodeForTest };
+export { isSkippableMessageSyncErrorCode as isSkippableMessageSyncErrorCodeForTest };
 
 // Cache of session index entries for partial update merging
 // This cache stores DECRYPTED values locally
@@ -1571,6 +1587,16 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           console.error(`[CollabV3] Server error for ${sessionId}:`, message.code, message.message);
           if (isFatalMessageSyncErrorCode(message.code)) {
             disableMessageSync(sessionId, message.code, message.message);
+            break;
+          }
+          if (isSkippableMessageSyncErrorCode(message.code)) {
+            // Drop this one message on the floor; the rest of the session keeps
+            // syncing. Deliberately does not set status.error -- a single
+            // rejected screenshot is not a session-level failure to surface.
+            console.warn(
+              `[CollabV3] Skipping a message the server refused for ${sessionId}` +
+              ` (${message.code}): ${message.message}`
+            );
             break;
           }
           updateStatus(sessionId, { error: message.message });
@@ -2885,9 +2911,19 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         // sessionIndexEntryFields.ts / __tests__/sessionIndexEntryFields.test.ts.
         ...buildSyncedSessionIndexFields(session),
         messageCount: session.messageCount,
+        // lastMessageAt keeps advancing per message so mobile unread state
+        // (Session.hasUnread: lastMessageAt > lastReadAt) stays live mid-turn.
         lastMessageAt: session.updatedAt,
         createdAt: session.createdAt,
-        updatedAt: session.updatedAt,
+        // updatedAt is the mobile sort key and is held steady while a session
+        // executes, so per-message drift doesn't reshuffle the iOS list every
+        // sync pass. Turn boundaries still move it via
+        // pushExecutionStateToMobile. See sessionSortTimestamp.ts (NIM-2167).
+        updatedAt: resolveIndexSortTimestamp({
+          localUpdatedAt: session.updatedAt,
+          cachedUpdatedAt: existingCache?.updatedAt,
+          isExecuting: cachedIsExecuting,
+        }),
         isExecuting: cachedIsExecuting,
         queuedPromptCount: cachedQueuedPromptCount,
         lastReadAt: cachedLastReadAt,
@@ -2955,7 +2991,10 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         messageCount: session.messageCount,
         lastMessageAt: session.updatedAt,
         createdAt: session.createdAt,
-        updatedAt: session.updatedAt,
+        // Mirror the value actually sent, not the local one -- otherwise the
+        // next sync pass reads a drifted "cached" timestamp and the mid-turn
+        // hold in resolveIndexSortTimestamp leaks. (NIM-2167)
+        updatedAt: entry.updatedAt,
         currentContext: clientMeta?.currentContext,
         isExecuting: cachedIsExecuting,
         queuedPrompts: cachedQueuedPrompts,

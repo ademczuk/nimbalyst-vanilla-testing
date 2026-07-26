@@ -9,6 +9,7 @@ import {
   initPrModeLayout,
   prListAtom,
   prRemoteAtom,
+  setPrModeLayoutAtom,
 } from '../../../store/atoms/pullRequests';
 import { windowModeAtom } from '../../../store/atoms/windowMode';
 import { PullRequestMode } from '../PullRequestMode';
@@ -21,6 +22,11 @@ const mocks = vi.hoisted(() => ({
   stopPolling: vi.fn(),
   setFocus: vi.fn(),
   pollNow: vi.fn(),
+  emptyTrackerContext: { items: [], primary: null, sessions: [] as Array<{ id: string }> },
+  trackerContextByPr: new Map<
+    number,
+    { items: unknown[]; primary: unknown; sessions: Array<{ id: string }> }
+  >(),
 }));
 
 vi.mock('@nimbalyst/runtime', () => ({
@@ -43,6 +49,8 @@ vi.mock('../../../services/RendererPullRequestService', () => ({
 
 vi.mock('../usePrTrackerContext', () => ({
   usePrTrackerReferences: () => new Map([[1408, [{ id: 'tracker-1' }]]]),
+  usePrTrackerContext: (_workspacePath: string, _remote: string | null, prNumber: number) =>
+    mocks.trackerContextByPr.get(prNumber) ?? mocks.emptyTrackerContext,
 }));
 
 vi.mock('../../ChatSidebar', async () => {
@@ -135,10 +143,13 @@ const pr: PullRequestRow = {
   fetchedAt: 3,
 };
 
+const otherPr: PullRequestRow = { ...pr, id: 'pr-1409', number: 1409, title: 'Another PR' };
+
 describe('PullRequestMode review session action', () => {
   const invoke = vi.fn();
 
   beforeEach(async () => {
+    mocks.trackerContextByPr.clear();
     mocks.createSession.mockReset().mockResolvedValue('session-review');
     mocks.loadSession.mockReset();
     mocks.createChatSession.mockReset();
@@ -231,5 +242,100 @@ describe('PullRequestMode review session action', () => {
     expect(
       screen.getByTestId('mock-chat-sidebar').getAttribute('data-collapsed'),
     ).toBe('false');
+  });
+});
+
+describe('PullRequestMode session follows PR selection', () => {
+  const invoke = vi.fn();
+
+  beforeEach(async () => {
+    mocks.trackerContextByPr.clear();
+    mocks.loadSession.mockReset();
+    mocks.createSession.mockReset().mockResolvedValue('session-review');
+    mocks.createChatSession.mockReset();
+    mocks.startPolling.mockReset().mockResolvedValue(undefined);
+    mocks.stopPolling.mockReset().mockResolvedValue(undefined);
+    mocks.setFocus.mockReset();
+    mocks.pollNow.mockReset().mockResolvedValue(undefined);
+    invoke.mockReset().mockImplementation(async (channel: string) => {
+      if (channel === 'workspace:get-state') {
+        return { prModeLayout: { selectedItemId: 'pr-1408', chatCollapsed: false } };
+      }
+      return { success: true };
+    });
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: { invoke },
+    });
+
+    await initPrModeLayout('/workspace');
+    store.set(prRemoteAtom, {
+      workspacePath: '/workspace',
+      remote: 'nimbalyst/nimbalyst',
+      host: 'github.com',
+    });
+    store.set(prListAtom, [pr, otherPr]);
+    store.set(windowModeAtom, 'pr-review');
+  });
+
+  afterEach(() => {
+    cleanup();
+    store.set(prRemoteAtom, null);
+    store.set(prListAtom, []);
+  });
+
+  function renderMode() {
+    return render(
+      <JotaiProvider store={store}>
+        <PullRequestMode workspacePath="/workspace" workspaceName="workspace" isActive />
+      </JotaiProvider>,
+    );
+  }
+
+  it('loads the selected PR’s most recent linked session into the chat pane', async () => {
+    mocks.trackerContextByPr.set(1408, {
+      items: [],
+      primary: null,
+      sessions: [{ id: 'session-1408-newest' }, { id: 'session-1408-older' }],
+    });
+
+    renderMode();
+
+    await waitFor(() => {
+      expect(mocks.loadSession).toHaveBeenCalledWith('session-1408-newest');
+    });
+  });
+
+  it('leaves the chat pane alone when the selected PR has no linked session', async () => {
+    renderMode();
+    await act(async () => {});
+
+    expect(mocks.loadSession).not.toHaveBeenCalled();
+  });
+
+  it('follows the selection to another PR’s session', async () => {
+    mocks.trackerContextByPr.set(1408, {
+      items: [],
+      primary: null,
+      sessions: [{ id: 'session-1408' }],
+    });
+    mocks.trackerContextByPr.set(1409, {
+      items: [],
+      primary: null,
+      sessions: [{ id: 'session-1409' }],
+    });
+
+    renderMode();
+    await waitFor(() => {
+      expect(mocks.loadSession).toHaveBeenCalledWith('session-1408');
+    });
+
+    await act(async () => {
+      store.set(setPrModeLayoutAtom, { selectedItemId: 'pr-1409' });
+    });
+
+    await waitFor(() => {
+      expect(mocks.loadSession).toHaveBeenCalledWith('session-1409');
+    });
   });
 });

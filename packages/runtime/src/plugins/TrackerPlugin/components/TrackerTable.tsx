@@ -5,13 +5,13 @@
 
 import type { JSX } from 'react';
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { useFloating, offset, flip, shift, FloatingPortal } from '@floating-ui/react';
 import { useAtomValue } from 'jotai';
 import type {
   TrackerItemType,
 } from '../../../core/DocumentService';
 import type { TrackerRecord } from '../../../core/TrackerRecord';
 import { trackerItemsByTypeAtom, trackerDataLoadedAtom } from '../trackerDataAtoms';
+import { TrackerRowContextMenu } from './TrackerRowContextMenu';
 import {
   EXTENSION_OWNED_KEYS,
   LEGACY_KEY_TO_TYPE,
@@ -469,7 +469,7 @@ export function convertFullDocumentToTrackerItems(metadata: any[], trackerType: 
  * Render a cell value based on column definition.
  * Extracted to keep the row rendering clean.
  *
- * Exported so the new `TrackerTableGrid` view can render the same cell
+ * Exported so other tracker surfaces can render the same cell
  * content without duplicating the field-by-field switch.
  */
 export function renderCell(
@@ -968,7 +968,7 @@ export function TrackerTable({
     return headers;
   }, [groupedRecords]);
 
-  // Row interaction model -- shared with TrackerTableGrid via useTrackerRows.
+  // Row interaction model -- shared with TrackerGridView via useTrackerRows.
   const rows = useTrackerRows({
     items: displayItems,
     activeTypeFilter,
@@ -1000,6 +1000,7 @@ export function TrackerTable({
     closeContextMenu,
     handleBulkStatusUpdate,
     handleBulkPriorityUpdate,
+    statusOptionsForBulk,
   } = rows;
 
   const handleColumnClick = (column: SortColumn) => {
@@ -1432,172 +1433,22 @@ export function TrackerTable({
         )}
       </div>
 
-      {/* Context menu */}
-      {contextAnchor && selectedIds.size > 0 && (
-        <FloatingPortal>
-        <div
-          ref={contextRefs.setFloating}
-          className="z-50 min-w-[180px] bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded-md shadow-lg py-1 text-[13px]"
-          style={contextFloatingStyles}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="px-3 py-1 text-[11px] text-[var(--nim-text-faint)] font-medium">
-            {selectedIds.size} item{selectedIds.size > 1 ? 's' : ''} selected
-          </div>
-          <div className="border-b border-[var(--nim-border)] my-1" />
-
-          {/* Status submenu */}
-          <ContextSubmenu label="Set Status" icon="swap_horiz">
-            {(() => {
-              const tracker = activeTypeFilter !== 'all' ? globalRegistry.get(activeTypeFilter) : null;
-              const statusFieldName = activeTypeFilter !== 'all' ? resolveRoleFieldName(activeTypeFilter, 'workflowStatus') : 'status';
-              const statusField = tracker?.fields.find(f => f.name === statusFieldName);
-              const rawOptions: Array<string | { value: string; label: string }> = statusField?.options || [
-                { value: 'to-do', label: 'To Do' },
-                { value: 'in-progress', label: 'In Progress' },
-                { value: 'in-review', label: 'In Review' },
-                { value: 'done', label: 'Done' },
-                { value: 'blocked', label: 'Blocked' },
-              ];
-              return rawOptions.map(opt => {
-                const val = typeof opt === 'string' ? opt : opt.value;
-                const label = typeof opt === 'string' ? opt.split('-').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : opt.label;
-                return (
-                  <button
-                    key={val}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] cursor-pointer"
-                    onClick={() => handleBulkStatusUpdate(val)}
-                  >
-                    <span
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: getStatusColor(val as string, activeTypeFilter !== 'all' ? activeTypeFilter : undefined) }}
-                    />
-                    {label}
-                  </button>
-                );
-              });
-            })()}
-          </ContextSubmenu>
-
-          {/* Priority submenu */}
-          <ContextSubmenu label="Set Priority" icon="flag">
-            {['critical', 'high', 'medium', 'low'].map(p => (
-              <button
-                key={p}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] cursor-pointer"
-                onClick={() => handleBulkPriorityUpdate(p)}
-              >
-                <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: getPriorityColor(p as string) }}
-                />
-                {p.charAt(0).toUpperCase() + p.slice(1)}
-              </button>
-            ))}
-          </ContextSubmenu>
-
-          <div className="border-b border-[var(--nim-border)] my-1" />
-
-          {/* Copy Link (single-selection only) */}
-          {onCopyDeepLink && selectedIds.size === 1 && (
-            <button
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] cursor-pointer"
-              onClick={() => {
-                const [onlyId] = selectedIds;
-                closeContextMenu();
-                onCopyDeepLink(onlyId);
-              }}
-            >
-              <span className="material-symbols-outlined text-sm">link</span>
-              Copy Link
-            </button>
-          )}
-
-          {/* Archive */}
-          {onArchiveItems && (
-            <button
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] cursor-pointer"
-              onClick={() => {
-                closeContextMenu();
-                onArchiveItems(Array.from(selectedIds), true);
-                setSelectedIds(new Set());
-              }}
-            >
-              <span className="material-symbols-outlined text-sm">archive</span>
-              Archive
-            </button>
-          )}
-
-          {/* Delete */}
-          {onDeleteItems && (
-            <button
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[#ef4444] hover:bg-[var(--nim-bg-hover)] cursor-pointer"
-              onClick={() => {
-                closeContextMenu();
-                const ids = Array.from(selectedIds);
-                if (window.confirm(`Delete ${ids.length} item${ids.length > 1 ? 's' : ''}? This cannot be undone.`)) {
-                  onDeleteItems(ids);
-                  setSelectedIds(new Set());
-                }
-              }}
-            >
-              <span className="material-symbols-outlined text-sm">delete</span>
-              Delete
-            </button>
-          )}
-        </div>
-        </FloatingPortal>
-      )}
+      {/* Context menu -- shared with the RevoGrid table view */}
+      <TrackerRowContextMenu
+        anchor={contextAnchor}
+        refs={contextRefs}
+        floatingStyles={contextFloatingStyles}
+        selectedIds={selectedIds}
+        activeTypeFilter={activeTypeFilter}
+        statusOptions={statusOptionsForBulk}
+        onSetStatus={handleBulkStatusUpdate}
+        onSetPriority={handleBulkPriorityUpdate}
+        onCopyDeepLink={onCopyDeepLink}
+        onArchiveItems={onArchiveItems}
+        onDeleteItems={onDeleteItems}
+        closeContextMenu={closeContextMenu}
+        clearSelection={() => setSelectedIds(new Set())}
+      />
     </div>
   );
 }
-
-/** Context menu submenu with hover-expand. Exported for reuse in the new
- *  TrackerTableGrid context menu. */
-export const ContextSubmenu: React.FC<{
-  label: string;
-  icon: string;
-  children: React.ReactNode;
-}> = ({ label, icon, children }) => {
-  const [open, setOpen] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { refs, floatingStyles } = useFloating({
-    placement: 'right-start',
-    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 })],
-  });
-
-  const handleEnter = () => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    setOpen(true);
-  };
-  const handleLeave = () => {
-    timeoutRef.current = setTimeout(() => setOpen(false), 150);
-  };
-
-  return (
-    <div
-      ref={refs.setReference as React.RefCallback<HTMLDivElement>}
-      onMouseEnter={handleEnter}
-      onMouseLeave={handleLeave}
-    >
-      <div className="flex items-center gap-2 px-3 py-1.5 text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] cursor-pointer">
-        <span className="material-symbols-outlined text-sm">{icon}</span>
-        <span className="flex-1">{label}</span>
-        <span className="material-symbols-outlined text-xs text-[var(--nim-text-faint)]">chevron_right</span>
-      </div>
-      {open && (
-        <FloatingPortal>
-          <div
-            ref={refs.setFloating}
-            className="min-w-[140px] bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded-md shadow-lg py-1 z-[60]"
-            style={floatingStyles}
-            onMouseEnter={handleEnter}
-            onMouseLeave={handleLeave}
-          >
-            {children}
-          </div>
-        </FloatingPortal>
-      )}
-    </div>
-  );
-};

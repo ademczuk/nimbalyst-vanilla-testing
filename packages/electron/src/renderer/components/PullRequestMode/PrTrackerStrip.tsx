@@ -32,13 +32,17 @@ import { dispatchOpenSessionInTab } from '../../store/actions/sessionHistoryActi
 import { setWindowModeAtom } from '../../store/atoms/windowMode';
 import { statusOptionFor, trackerColorStyle } from './PrTrackerBadge';
 import { compareTrackerUpdatedAtDesc } from './prTrackerSort';
-import { usePrTrackerContext } from './usePrTrackerContext';
+import type { PrTrackerContext } from './usePrTrackerContext';
 import type { SessionMeta } from '../../store/atoms/sessions';
 
 interface PrTrackerStripProps {
-  workspacePath: string;
   remote: string;
   prNumber: number;
+  /**
+   * Tracker items + linked sessions for this PR. Owned by PullRequestMode so
+   * the strip and the chat pane resolve the same sessions exactly once.
+   */
+  context: PrTrackerContext;
   /** PR state, for surfacing externally merged/closed PRs with active items. */
   prState?: 'open' | 'merged' | 'closed';
   /**
@@ -356,13 +360,13 @@ function StaleItemHint({ record }: { record: TrackerRecord }): JSX.Element | nul
 }
 
 export function PrTrackerStrip({
-  workspacePath,
   remote,
   prNumber,
+  context,
   prState,
   onOpenSession,
 }: PrTrackerStripProps): JSX.Element {
-  const { items, primary, sessions } = usePrTrackerContext(workspacePath, remote, prNumber);
+  const { items, primary, sessions } = context;
   const alreadyLinkedIds = useMemo(() => new Set(items.map((i) => i.id)), [items]);
   const setWindowMode = useSetAtom(setWindowModeAtom);
 
