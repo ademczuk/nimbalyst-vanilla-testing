@@ -58,6 +58,30 @@ export interface WindowTopBarProps {
   newSessionControl?: WindowTopBarNewSessionControl;
 }
 
+const GIT_FEEDBACK_MAX_LINES = 6;
+const GIT_FEEDBACK_MAX_CHARS = 300;
+const GIT_FEEDBACK_TOOLTIP_MAX_CHARS = 2000;
+
+/**
+ * Git failures can carry an entire pre-push hook log (tens of thousands of
+ * characters). The menu is a dropdown, not a log viewer — clamp before render so
+ * a long error can't blow out the menu's size.
+ */
+export function clampGitFeedbackMessage(
+  message: string,
+  maxLines = GIT_FEEDBACK_MAX_LINES,
+  maxChars = GIT_FEEDBACK_MAX_CHARS,
+): string {
+  const lines = message.trim().split('\n');
+  let clamped = lines.slice(0, maxLines).join('\n');
+  let truncated = lines.length > maxLines;
+  if (clamped.length > maxChars) {
+    clamped = clamped.slice(0, maxChars).trimEnd();
+    truncated = true;
+  }
+  return truncated ? `${clamped}…` : clamped;
+}
+
 function PanelButton({
   side,
   control,
@@ -269,10 +293,16 @@ function GitStatusMenu({
             {actions.feedback && (
               <div
                 className="window-top-bar__git-feedback"
+                data-testid="window-top-bar-git-feedback"
                 data-kind={actions.feedback.kind}
                 role={actions.feedback.kind === 'error' ? 'alert' : 'status'}
+                title={clampGitFeedbackMessage(
+                  actions.feedback.message,
+                  Number.POSITIVE_INFINITY,
+                  GIT_FEEDBACK_TOOLTIP_MAX_CHARS,
+                )}
               >
-                {actions.feedback.message}
+                {clampGitFeedbackMessage(actions.feedback.message)}
               </div>
             )}
           </div>

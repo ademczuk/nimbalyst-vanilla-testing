@@ -3,6 +3,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import {
+  explainGitPushFailure,
   isDetachedHeadState,
   normalizeBranchSelection,
   normalizeCurrentBranch,
@@ -83,5 +84,72 @@ describe('detached HEAD helpers', () => {
     expect(normalizeBranchSelection('HEAD')).toBe('HEAD');
     expect(normalizeBranchSelection('release/2026.05')).toBe('release/2026.05');
     expect(normalizeBranchSelection('')).toBeUndefined();
+  });
+});
+
+describe('explainGitPushFailure', () => {
+  const context = { remote: 'origin', branch: 'main' };
+
+  // Verbatim `git push` output from a diverged branch.
+  const FETCH_FIRST = [
+    'To github.com:nimbalyst/nimbalyst.git',
+    ' ! [rejected]        main -> main (fetch first)',
+    "error: failed to push some refs to 'github.com:nimbalyst/nimbalyst.git'",
+    'hint: Updates were rejected because the remote contains work that you do not',
+    'hint: have locally. This is usually caused by another repository pushing to',
+    'hint: the same ref. If you want to integrate the remote changes, use',
+    "hint: 'git pull' before pushing again.",
+    "hint: See the 'Note about fast-forwards' in 'git push --help' for details.",
+  ].join('\n');
+
+  it('leads with a pull-first summary when the remote has commits we lack', () => {
+    const explained = explainGitPushFailure(FETCH_FIRST, context);
+
+    expect(explained?.split('\n')[0]).toBe(
+      "Push rejected: origin/main has commits you don't have locally. Pull first, then push again.",
+    );
+    // The raw output stays underneath — the menu tooltip shows the full text.
+    expect(explained).toContain(FETCH_FIRST);
+  });
+
+  it('summarizes a non-fast-forward rejection the same way', () => {
+    const raw = [
+      ' ! [rejected]        main -> main (non-fast-forward)',
+      "error: failed to push some refs to 'github.com:nimbalyst/nimbalyst.git'",
+      'hint: Updates were rejected because the tip of your current branch is behind',
+    ].join('\n');
+
+    expect(explainGitPushFailure(raw, context)?.split('\n')[0]).toBe(
+      "Push rejected: origin/main has commits you don't have locally. Pull first, then push again.",
+    );
+  });
+
+  it('tells the user to fetch when --force-with-lease sees stale info', () => {
+    const raw = [
+      ' ! [rejected]        main -> main (stale info)',
+      "error: failed to push some refs to 'github.com:nimbalyst/nimbalyst.git'",
+    ].join('\n');
+
+    expect(explainGitPushFailure(raw, context)?.split('\n')[0]).toBe(
+      'Push rejected: origin/main moved since your last fetch. Pull first, then push again.',
+    );
+  });
+
+  // A failing pre-push hook prints the SAME `failed to push some refs` tail as a
+  // diverged push, so keying on that line alone would mislabel a red test suite
+  // as "you need to pull".
+  it('leaves a pre-push hook failure untouched', () => {
+    const raw = [
+      '[pre-push] Running non-provider unit tests...',
+      ' FAIL  packages/electron/src/main/services/ai/__tests__/example.test.ts',
+      "error: failed to push some refs to 'github.com:nimbalyst/nimbalyst.git'",
+    ].join('\n');
+
+    expect(explainGitPushFailure(raw, context)).toBe(raw);
+  });
+
+  it('passes through empty and missing errors', () => {
+    expect(explainGitPushFailure(undefined, context)).toBeUndefined();
+    expect(explainGitPushFailure('', context)).toBe('');
   });
 });

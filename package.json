@@ -46,6 +46,7 @@
     "android:screenshots": "bash packages/android/scripts/take-screenshots.sh",
     "android:walkthrough": "bash packages/android/scripts/record-walkthrough.sh",
     "test:extensions": "bash scripts/run-extension-tests.sh",
+    "electron:resign": "bash scripts/resign-dev-electron.sh",
     "postinstall": "patch-package"
   },
   "devDependencies": {

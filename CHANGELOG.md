@@ -16,7 +16,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
-- Long or multi-line messages sent to a Claude Code CLI session are no longer truncated or split into several pasted-text placeholders.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.71.2] - 2026-07-26
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- The composer's Extended thinking choice now sticks across new sessions instead of resetting each time.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Long or multi-line prompts sent to a Claude Code CLI session are no longer truncated or split across several pasted-text placeholders.
+- Sessions no longer stay stuck showing "awaiting input" once the AI has stopped waiting.
+- The transcript's scroll-to-bottom arrow no longer blocks clicks, selection, and scrolling across the full width of the pane.
+- Long git errors no longer stretch the title bar's Git menu across the window, and a rejected push now says to pull first.
+- Creating a plan or decision from an AI session no longer fails schema validation, and new items start on their type's own default status. (#1037)
+- Pinning or unpinning a session inside an expanded workstream updates its icon, menu, and position immediately. (#972)
 
 ### Removed
 <!-- Removed features go here -->
@@ -42,9 +63,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Android screens no longer show a white background behind their content on light-mode devices.
 - Session-pane title reveals now appear only for clipped names and expand from the truncated text.
 - New Claude Agent sessions now accept Sonnet 5 saved as an explicit default instead of failing before the first prompt runs.
-- Creating a plan or decision from an AI session now works instead of being rejected by schema validation, and new items start on their type's own default status instead of "to-do".
-- Tracker filters can match items by the status they changed to or from.
-- Clicking a tracker grid column header toggles sorting.
 - Tracker grid column headers toggle sorting, and the Display Options grouping dropdown actually groups rows.
 - Tracker saved views can be saved from any view state and exited with a Close control, and filters can match the status an item changed to or from.
 - The nim CLI now reports an error and exits non-zero when the app rejects a tracker create or update, instead of printing success.
@@ -83,7 +101,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent-mode document embeds now recover when their target file is created after the document opens.
 - Claude Code and Codex now honor relocated config directories, so usage, session history, settings, plugins, commands, and skills all resolve correctly.
 - Automations no longer rerun the same scheduled occurrence after restarting while a run is waiting or fails.
-- Pinning or unpinning a session inside an expanded workstream now updates its icon, menu, and position immediately.
 - Voice Mode now explains blocked or missing microphones on Windows and links directly to microphone privacy settings.
 - The worktree name shown above the Commit panel no longer changes to the session title once the agent names the session.
 - Frontmatter plans now share to your team after a cold discovery pass instead of silently staying local.
