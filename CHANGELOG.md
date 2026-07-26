@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Android screens no longer show a white background behind their content on light-mode devices.
 - Session-pane title reveals now appear only for clipped names and expand from the truncated text.
 - New Claude Agent sessions now accept Sonnet 5 saved as an explicit default instead of failing before the first prompt runs.
+- Creating a plan or decision from an AI session now works instead of being rejected by schema validation, and new items start on their type's own default status instead of "to-do".
+- Tracker filters can match items by the status they changed to or from.
+- Clicking a tracker grid column header toggles sorting.
 - Tracker grid column headers toggle sorting, and the Display Options grouping dropdown actually groups rows.
 - Tracker saved views can be saved from any view state and exited with a Close control, and filters can match the status an item changed to or from.
 - The nim CLI now reports an error and exits non-zero when the app rejects a tracker create or update, instead of printing success.
