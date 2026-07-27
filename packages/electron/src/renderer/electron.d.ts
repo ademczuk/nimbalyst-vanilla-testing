@@ -219,6 +219,11 @@ interface ElectronAPI {
   onOpenFeedback: (callback: () => void) => () => void;
   onThemeChange: (callback: (theme: string) => void) => () => void;
   setTitleBarOverlayColors: (colors: { color: string; symbolColor: string }) => void;
+  getWindowMenuBar: () => Promise<import('../shared/menuBar').SerializedMenuBar>;
+  invokeWindowMenuItem: (
+    id: string,
+    revision: number,
+  ) => Promise<{ invoked: boolean; staleRevision?: boolean }>;
   onMcpConfigChanged: (callback: (data: { scope: 'user' | 'workspace'; workspacePath?: string }) => void) => () => void;
 
   // Offscreen editor IPC

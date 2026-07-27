@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Windows and Linux get the File/Edit/View menus back, now drawn in the project window's title bar.
 
 ### Removed
 <!-- Removed features go here -->

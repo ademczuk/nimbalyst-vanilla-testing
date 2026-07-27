@@ -44,6 +44,7 @@ import { getFocusedWindow } from '../utils/windowFocus';
 import { showSplashScreen } from '../window/SplashScreen';
 import { autoUpdaterService } from '../services/autoUpdater';
 import { KeyboardShortcuts } from './KeyboardShortcuts';
+import { notifyWindowMenuChanged } from './menuBarBridge';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { FeatureTrackingService } from '../services/analytics/FeatureTrackingService';
 import { getDialogDefaultPath, rememberDialogSelection } from '../utils/dialogPaths';
@@ -1914,6 +1915,9 @@ export async function createApplicationMenu() {
     }
 
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+    // Windows/Linux hide the native strip behind the custom title bar, so the
+    // renderer mirrors this menu — tell it the model changed.
+    notifyWindowMenuChanged();
 }
 
 // Update application menu

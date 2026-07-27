@@ -265,6 +265,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setTitleBarOverlayColors: (colors: { color: string; symbolColor: string }) =>
     ipcRenderer.send('window-chrome:set-overlay-colors', colors),
 
+  // In-window menu bar (Windows/Linux; macOS keeps its system menu bar)
+  getWindowMenuBar: () => ipcRenderer.invoke('window-menu:get'),
+  invokeWindowMenuItem: (id: string, revision: number) =>
+    ipcRenderer.invoke('window-menu:invoke', id, revision),
+
   // File operations
   openFile: () => ipcRenderer.invoke('open-file'),
   openFileDialog: (options?: {

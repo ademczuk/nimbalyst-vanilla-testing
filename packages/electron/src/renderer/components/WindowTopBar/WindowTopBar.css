@@ -28,6 +28,11 @@
   min-width: 0;
 }
 
+.window-top-bar__left {
+  display: flex;
+  overflow: hidden;
+}
+
 .window-top-bar__right {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

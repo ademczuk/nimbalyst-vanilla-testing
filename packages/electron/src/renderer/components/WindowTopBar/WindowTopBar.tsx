@@ -2,6 +2,7 @@ import React from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import { MAIN_WINDOW_TITLE_BAR_HEIGHT } from '../../../shared/windowChrome';
 import { FloatingPortal, useFloatingMenu } from '../../hooks/useFloatingMenu';
+import { WindowMenuBar } from './WindowMenuBar';
 import './WindowTopBar.css';
 
 export interface WindowTopBarGitStatus {
@@ -331,7 +332,11 @@ export function WindowTopBar({
       }}
     >
       <div className="window-top-bar__available-area">
-        <div className="window-top-bar__left" />
+        {/* Windows/Linux only: macOS keeps the menu in the system menu bar and
+            WindowMenuBar renders nothing there. */}
+        <div className="window-top-bar__left">
+          <WindowMenuBar />
+        </div>
 
         <div className="window-top-bar__identity">
           <span
