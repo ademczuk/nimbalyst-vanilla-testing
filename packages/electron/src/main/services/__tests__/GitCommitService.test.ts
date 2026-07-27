@@ -82,6 +82,44 @@ describe('GitCommitService', () => {
     expect(result.commitHash).toBeTruthy();
   });
 
+  it('ignores inherited repository-selection env and commits only in the requested workspace', async () => {
+    await initScratchRepo(tmpRoot);
+    const selectedPath = path.join(tmpRoot, 'a.txt');
+    await fs.writeFile(selectedPath, 'scratch\n', 'utf8');
+
+    const decoyRoot = await fs.mkdtemp(path.join(testTempRoot, 'nim-git-commit-decoy-'));
+    await initScratchRepo(decoyRoot);
+    await fs.writeFile(path.join(decoyRoot, 'seed.txt'), 'seed\n', 'utf8');
+    await git(['add', 'seed.txt'], decoyRoot);
+    await git(['commit', '-q', '-m', 'decoy baseline'], decoyRoot);
+    const decoyHeadBefore = (await gitOutput(['rev-parse', 'HEAD'], decoyRoot)).trim();
+    await fs.writeFile(path.join(decoyRoot, 'a.txt'), 'must stay uncommitted\n', 'utf8');
+
+    const inheritedKeys = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE'] as const;
+    const previousValues = new Map(
+      inheritedKeys.map((key) => [key, process.env[key]])
+    );
+    process.env.GIT_DIR = path.join(decoyRoot, '.git');
+    process.env.GIT_WORK_TREE = decoyRoot;
+    process.env.GIT_INDEX_FILE = path.join(decoyRoot, '.git', 'index');
+
+    try {
+      const result = await executeGitCommit(tmpRoot, 'commit requested workspace', [selectedPath]);
+
+      expect(result.success).toBe(true);
+      expect((await gitOutput(['rev-parse', 'HEAD'], decoyRoot)).trim()).toBe(decoyHeadBefore);
+      expect(await gitOutput(['status', '--porcelain', '--', 'a.txt'], decoyRoot)).toBe('?? a.txt\n');
+      expect(await gitOutput(['log', '-1', '--format=%s'], tmpRoot)).toBe('commit requested workspace\n');
+    } finally {
+      for (const key of inheritedKeys) {
+        const previousValue = previousValues.get(key);
+        if (previousValue === undefined) delete process.env[key];
+        else process.env[key] = previousValue;
+      }
+      await fs.rm(decoyRoot, { recursive: true, force: true });
+    }
+  });
+
   it('commits only the selected file while preserving unrelated staged and unstaged hunks', async () => {
     await initScratchRepo(tmpRoot);
 

@@ -30,7 +30,9 @@ describe('GitWorktreeService.validateWorkspaceHasCommits', () => {
   });
 
   it('throws WorkspaceHasNoCommitsError for a `git init`-ed repo with no commits', async () => {
-    const git = simpleGit(tmpDir);
+    // Never let a pre-push hook's GIT_DIR redirect this mutating init into the
+    // developer's shared repository.
+    const git = simpleGit(tmpDir).env(gitSandboxEnv(undefined, { pinConfigPaths: false }));
     await git.init();
 
     await expect(service.validateWorkspaceHasCommits(tmpDir))

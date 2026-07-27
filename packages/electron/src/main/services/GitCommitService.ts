@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import simpleGit, { SimpleGit } from 'simple-git';
 import { gitOperationLock } from './GitOperationLock';
 import { GIT_INHERITED_ENV_UNSAFE } from './gitInheritedEnvUnsafe';
+import { sanitizeGitRepositoryEnv } from './gitRepositoryEnv';
 
 export interface GitCommitExecutionResult {
   success: boolean;
@@ -168,7 +169,8 @@ export async function executeGitCommit(
      * Environment for the git subprocess (and any hooks it runs). Production callers
      * pass an enhanced env (see getGitSubprocessEnv) so husky hooks invoking nvm/Homebrew
      * binaries like `yarn` resolve, since GUI-launched apps don't inherit the shell PATH.
-     * When omitted, git inherits process.env as usual.
+     * Repository-selection variables are always removed so workspacePath remains
+     * authoritative. When omitted, all other values come from process.env.
      */
     env?: Record<string, string>;
     /** Stream git and hook output while the commit workflow is running. */
@@ -213,9 +215,11 @@ export async function executeGitCommit(
         return restored;
       };
       try {
-        const git: SimpleGit = options?.env
-          ? simpleGit(workspacePath, { unsafe: GIT_INHERITED_ENV_UNSAFE }).env(options.env)
-          : simpleGit(workspacePath);
+        const gitEnv = sanitizeGitRepositoryEnv(options?.env ?? process.env);
+        const git: SimpleGit = simpleGit(
+          workspacePath,
+          { unsafe: GIT_INHERITED_ENV_UNSAFE }
+        ).env(gitEnv);
         if (options?.onOutput) {
           git.outputHandler((_command, stdout, stderr) => {
             stdout.on('data', (chunk: Buffer | string) => options.onOutput?.('stdout', chunk.toString()));

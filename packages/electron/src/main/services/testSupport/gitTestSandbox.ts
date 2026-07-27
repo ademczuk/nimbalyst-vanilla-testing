@@ -59,8 +59,10 @@ export function gitSandboxEnv(
     if (key.startsWith('GIT_')) delete env[key];
   }
   // A test must never launch an interactive editor (it would hang the suite),
-  // and simple-git refuses to run at all when EDITOR is forwarded.
+  // pager, or visual tool. simple-git also rejects these inherited variables
+  // unless callers enable unsafe flags, which sandboxed fixtures should not.
   delete env.EDITOR;
+  delete env.PAGER;
   delete env.VISUAL;
   if (pinConfigPaths) {
     // A path that does not exist reads as an empty config, so the developer's
