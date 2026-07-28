@@ -13,13 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Teams is still in alpha and new signups limited.
 
 ### Fixed
 <!-- Bug fixes go here -->
 - Windows and Linux get the File/Edit/View menus back, now drawn in the project window's title bar.
+- Menus and popups that open over the title bar respond to clicks again on Windows and Linux, including "Open folder…" in the project switcher (#1052).
+- Tracker types defined in one project no longer overwrite another open project's identically-named types (#1035).
+- Codex sessions now reach for Nimbalyst's browser tools instead of dead-ending on the ChatGPT desktop app's in-app browser plugin.
 
 ### Removed
 <!-- Removed features go here -->
+- Organizations still on the original client-managed encryption are no longer supported and must be set up again; all team collaboration — including attachments in shared documents — now uses Nimbalyst-managed encryption.
 
 ## [0.71.2] - 2026-07-26
 

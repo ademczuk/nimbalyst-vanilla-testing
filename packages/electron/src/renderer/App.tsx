@@ -117,6 +117,8 @@ import { initFileChangeListeners } from './store/listeners/fileChangeListeners';
 import { initMcpListeners } from './store/listeners/mcpListeners';
 import { initMenuCommandListeners } from './store/listeners/menuCommandListeners';
 import { initNetworkAvailabilityListeners } from './store/listeners/networkAvailabilityListeners';
+import { initTeamInboxListeners } from './store/listeners/teamInboxListeners';
+import { initConversationListeners } from './store/listeners/conversationListeners';
 import { initCollabReplicaListeners } from './store/listeners/collabReplicaListeners';
 import { initCollabConversionListeners } from './store/listeners/collabConversionListeners';
 import { initNotificationListeners } from './store/listeners/notificationListeners';
@@ -369,6 +371,8 @@ export default function App() {
     const cleanupWalkthrough = initWalkthroughListeners();
     const cleanupWakeup = initWakeupListeners();
     const cleanupNetworkAvailability = initNetworkAvailabilityListeners();
+    const cleanupTeamInbox = initTeamInboxListeners();
+    const cleanupConversations = initConversationListeners();
     const cleanupCollabReplicas = initCollabReplicaListeners();
     const cleanupCollabConversion = initCollabConversionListeners();
     const cleanupWindowMenu = initWindowMenuListener();
@@ -404,6 +408,8 @@ export default function App() {
       cleanupWalkthrough?.();
       cleanupWakeup?.();
       cleanupNetworkAvailability?.();
+      cleanupTeamInbox?.();
+      cleanupConversations?.();
       cleanupCollabReplicas?.();
       cleanupCollabConversion?.();
     };
