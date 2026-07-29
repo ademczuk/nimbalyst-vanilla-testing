@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   TeamInboxFanIn,
   TeamInboxOrgClient,
+  type TeamPresenceMember,
   type TeamInboxOrgClientLike,
   type TeamInboxOrgDescriptor,
   type TeamInboxOrgEvent,
@@ -95,6 +96,120 @@ class FakeOrgClient implements TeamInboxOrgClientLike {
 }
 
 describe('TeamInboxOrgClient', () => {
+  it('sends presence heartbeats on the team inbox connection and emits roster updates', async () => {
+    const socket = new FakeWebSocket();
+    const client = new TeamInboxOrgClient({
+      serverUrl: 'https://sync.example.test',
+      org: {
+        orgId: 'org-a',
+        orgName: 'Acme',
+        teamMemberId: asTeamMemberId('member-a'),
+      },
+      getTeamJwt: async () => asTeamJwt('team-jwt'),
+      createWebSocket: () => socket as unknown as WebSocket,
+      heartbeatIntervalMs: 1000,
+      getPresenceStatus: () => 'away',
+      now: () => 10,
+    });
+    const events: TeamInboxOrgEvent[] = [];
+    client.subscribe((event) => events.push(event));
+
+    await client.connect();
+    socket.open();
+    socket.receive({
+      type: 'presenceRoster',
+      orgId: 'org-a',
+      members: [{
+        teamMemberId: 'member-a',
+        status: 'away',
+        lastHeartbeatAt: 10,
+        updatedAt: 10,
+      }],
+    });
+
+    expect(socket.sent.map((message) => JSON.parse(message))).toContainEqual({
+      type: 'presenceHeartbeat',
+      status: 'away',
+      sentAt: 10,
+    });
+    expect(events).toContainEqual({
+      type: 'presenceRoster',
+      members: [{
+        teamMemberId: 'member-a',
+        status: 'away',
+        lastHeartbeatAt: 10,
+        updatedAt: 10,
+      }],
+    });
+    client.destroy();
+  });
+});
+
+describe('TeamInboxFanIn presence', () => {
+  const orgA: TeamInboxOrgDescriptor = {
+    orgId: 'org-a',
+    orgName: 'Acme',
+    teamMemberId: asTeamMemberId('member-a'),
+  };
+
+  it('reconciles roster snapshots and deltas into the merged snapshot', async () => {
+    const clients = new Map<string, FakeOrgClient>();
+    const fanIn = new TeamInboxFanIn({
+      createClient(org) {
+        const client = new FakeOrgClient(org);
+        clients.set(org.orgId, client);
+        return client;
+      },
+    });
+    await fanIn.start([orgA]);
+
+    const online: TeamPresenceMember = {
+      teamMemberId: 'member-a',
+      status: 'online',
+      lastHeartbeatAt: 100,
+      updatedAt: 100,
+    };
+    clients.get('org-a')!.emit({
+      type: 'presenceRoster',
+      members: [online],
+    });
+    clients.get('org-a')!.emit({
+      type: 'presenceDelta',
+      member: {
+        teamMemberId: 'member-b',
+        status: 'away',
+        lastHeartbeatAt: 110,
+        updatedAt: 110,
+      },
+    });
+    clients.get('org-a')!.emit({
+      type: 'presenceDelta',
+      member: {
+        teamMemberId: 'member-a',
+        status: 'offline',
+        updatedAt: 200,
+      },
+    });
+
+    expect(fanIn.getSnapshot().presence).toEqual({
+      'org-a': {
+        'member-a': {
+          teamMemberId: 'member-a',
+          status: 'offline',
+          updatedAt: 200,
+        },
+        'member-b': {
+          teamMemberId: 'member-b',
+          status: 'away',
+          lastHeartbeatAt: 110,
+          updatedAt: 110,
+        },
+      },
+    });
+  });
+});
+
+describe('TeamInboxOrgClient', () => {
   it('uses the team-org JWT and team member id for the organization inbox room', async () => {
     const socket = new FakeWebSocket();
     const getTeamJwt = vi.fn(async () => asTeamJwt('team-jwt'));
@@ -182,6 +297,42 @@ describe('TeamInboxFanIn', () => {
     await fanIn.dismiss('b-new');
     expect(clients.get('org-b')!.dismiss).toHaveBeenCalledWith(['b-new']);
     expect(clients.get('org-a')!.dismiss).not.toHaveBeenCalled();
+  });
+
+  it('emits only newly accepted live deliveries, never hydration or duplicate replay', async () => {
+    const clients = new Map<string, FakeOrgClient>();
+    const onDelivery = vi.fn();
+    const fanIn = new TeamInboxFanIn({
+      createClient(org) {
+        const client = new FakeOrgClient(org);
+        clients.set(org.orgId, client);
+        return client;
+      },
+      onDelivery,
+    });
+    await fanIn.start([orgA]);
+
+    const hydrated = delivery('org-a', 'hydrated', 100);
+    clients.get('org-a')!.emit({
+      type: 'sync',
+      deliveries: [hydrated],
+      watermarks: [],
+      subscriptions: [],
+    });
+    clients.get('org-a')!.emit({
+      type: 'delivery',
+      delivery: hydrated,
+    });
+    const live = delivery('org-a', 'live', 200);
+    clients.get('org-a')!.emit({ type: 'delivery', delivery: live });
+    clients.get('org-a')!.emit({ type: 'delivery', delivery: live });
+
+    expect(onDelivery).toHaveBeenCalledTimes(1);
+    expect(onDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'live',
+      orgId: 'org-a',
+      orgName: 'Acme',
+    }));
   });
 
   it('isolates a legacy-custody org while healthy organizations stay ready', async () => {
