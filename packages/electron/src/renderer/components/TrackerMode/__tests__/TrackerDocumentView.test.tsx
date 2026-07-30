@@ -16,6 +16,7 @@ import {
   replaceAllTrackerItemsAtom,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import { TrackerDocumentView } from '../TrackerDocumentView';
+import { useSuppressedDocumentHeaderProviderIds } from '../../TabEditor/DocumentHeaderSuppressionContext';
 import { setTrackerModeLayoutAtom, trackerModeLayoutAtom } from '../../../store/atoms/trackers';
 import { WindowTopBar } from '../../WindowTopBar/WindowTopBar';
 
@@ -112,6 +113,27 @@ function renderView(overrides: Partial<Parameters<typeof TrackerDocumentView>[0]
 }
 
 describe('TrackerDocumentView', () => {
+  it('mounts the list-pane search between the pane header and the list, document view only', () => {
+    const { unmount } = renderView({
+      listPaneSearch: <div data-testid="stub-list-search">search</div>,
+    });
+
+    const listPane = screen.getByTestId('tracker-document-list-pane');
+    const search = screen.getByTestId('stub-list-search');
+    expect(listPane.contains(search)).toBe(true);
+    expect(search.compareDocumentPosition(screen.getByTestId('stub-list')))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    unmount();
+
+    // The ordinary presentation keeps its toolbar search; no second box.
+    renderView({
+      presentation: 'item',
+      documentItemId: null,
+      listPaneSearch: <div data-testid="stub-list-search">search</div>,
+    });
+    expect(screen.queryByTestId('stub-list-search')).toBeNull();
+  });
+
   it('lets the list pane reach the top and keeps selected-item chrome over the document', () => {
     renderView();
 
@@ -157,6 +179,45 @@ describe('TrackerDocumentView', () => {
 
     fireEvent.click(screen.getByTestId('tracker-document-collapse'));
     expect(onCollapseToTracker).toHaveBeenCalledTimes(1);
+  });
+
+  it('puts a labelled back button in the list pane and keeps the close button in the document header', () => {
+    const { onCollapseToTracker } = renderView();
+
+    const listHeader = screen.getByTestId('tracker-document-list-pane-header');
+    const header = screen.getByTestId('tracker-document-view-header');
+    const back = screen.getByTestId('tracker-document-back');
+    const close = screen.getByTestId('tracker-document-collapse');
+    expect(listHeader.contains(back)).toBe(true);
+    expect(header.contains(back)).toBe(false);
+    expect(back.textContent).toContain('arrow_back');
+    expect(back.textContent).toContain('Back to tracker');
+    expect(screen.getByTestId('tracker-document-title')
+      .compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(back);
+    expect(onCollapseToTracker).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the document editor the header already shows the tracker fields', () => {
+    const suppression = { document: [] as readonly string[], item: [] as readonly string[] };
+    const Probe: React.FC<{ into: 'document' | 'item' }> = ({ into }) => {
+      suppression[into] = useSuppressedDocumentHeaderProviderIds();
+      return <div data-testid="stub-document">document</div>;
+    };
+
+    const documentView = renderView({ detail: <Probe into="document" /> });
+    // The chips in the header above are the same Status/Priority/Owner form the
+    // in-document plan header would draw, so the editor drops its copy.
+    expect(suppression.document).toEqual(['tracker-document-header']);
+    documentView.unmount();
+
+    renderView({
+      presentation: 'item',
+      documentItemId: null,
+      detail: <Probe into="item" />,
+    });
+    expect(suppression.item).toEqual([]);
   });
 
   it('exits document view on Escape', () => {

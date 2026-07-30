@@ -23,114 +23,17 @@
   container-type: inline-size;
 }
 
-.tracker-document-field-pills {
-  display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 4px;
-  max-height: 58px;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-.tracker-document-field-pill {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  max-width: 190px;
-  height: 24px;
-  margin: 0;
-  padding: 2px 8px;
-  font: inherit;
-  font-size: 10px;
-  line-height: 1;
-  color: var(--nim-text-muted);
-  background: var(--nim-bg-secondary);
-  border: 1px solid var(--nim-border);
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.tracker-document-field-pill:hover,
-.tracker-document-field-pill[aria-expanded='true'] {
-  color: var(--nim-text);
-  background: var(--nim-bg-hover);
-}
-
-.tracker-document-field-pill:focus-visible {
-  outline: 2px solid var(--nim-border-focus);
-  outline-offset: 1px;
-}
-
-.tracker-document-field-pill-empty {
-  color: var(--nim-text-faint);
-  background: transparent;
-  border-style: dashed;
-}
-
-.tracker-document-field-pill:disabled {
-  color: var(--nim-text-disabled);
-  cursor: default;
-}
-
-.tracker-document-field-pill-value {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /*
- * Keep bracket/comma-heavy arbitrary Tailwind classes off portaled surfaces:
- * jsdom's selector engine can turn those class names into invalid :has()
- * selectors while tests inspect an open popover.
+ * The chip row itself is shared (TrackerFieldPills.css in the runtime package).
+ * Only the header's own width behaviour is scoped here.
  */
-.tracker-document-field-popover {
-  z-index: 10000;
-  width: min(320px, calc(100vw - 16px));
-  min-width: 220px;
-  padding: 10px;
-  overflow-y: auto;
-  color: var(--nim-text);
-  background: var(--nim-bg-secondary);
-  border: 1px solid var(--nim-border);
-  border-radius: 7px;
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--nim-text) 16%, transparent);
-}
-
-.tracker-document-field-choice-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 180px;
-}
-
-.tracker-document-field-choice {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 8px;
-  color: var(--nim-text);
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.tracker-document-field-choice:hover,
-.tracker-document-field-choice-selected {
-  background: var(--nim-bg-hover);
-}
-
 @container tracker-document-header (max-width: 720px) {
-  .tracker-document-field-pill {
+  .tracker-document-field-pills .tracker-field-pill {
     max-width: 140px;
+  }
+
+  .tracker-document-field-pills .tracker-field-pill-empty {
+    max-width: 110px;
   }
 }
 

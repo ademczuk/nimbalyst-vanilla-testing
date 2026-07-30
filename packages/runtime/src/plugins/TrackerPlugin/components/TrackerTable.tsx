@@ -38,7 +38,7 @@ import { TrackerUnreadDot } from '../../../readReceipts/TrackerUnreadDot';
 import { DisplayOptionsPanel } from './DisplayOptionsPanel';
 import { useTrackerRows } from './useTrackerRows';
 import { TrackerFavoriteStar } from './TrackerFavoriteStar';
-import { groupTrackerRecords } from './trackerRowData';
+import { groupTrackerRecords, searchMatchesRecord } from './trackerRowData';
 
 export type SortColumn = 'title' | 'type' | 'status' | 'priority' | 'progress' | 'module' | 'lastIndexed' | (string & {});
 export type SortDirection = 'asc' | 'desc';
@@ -920,18 +920,8 @@ export function TrackerTable({
 
   const filteredItems = items
     .filter(item => {
-      // Apply search filter
-      if (searchTerm) {
-        const searchLower = searchTerm.toLowerCase();
-        const matchesSearch =
-          item.issueKey?.toLowerCase().includes(searchLower) ||
-          String(item.issueNumber ?? '').includes(searchLower) ||
-          getRecordTitle(item).toLowerCase().includes(searchLower) ||
-          (item.system.documentPath ?? '').toLowerCase().includes(searchLower) ||
-          (String(getFieldByRole(item, 'assignee') ?? '')).toLowerCase().includes(searchLower) ||
-          (Array.isArray(getFieldByRole(item, 'tags')) && (getFieldByRole(item, 'tags') as string[]).some((tag: string) => tag.toLowerCase().includes(searchLower)));
-        if (!matchesSearch) return false;
-      }
+      // Apply search filter -- the same predicate the tracker's other views use.
+      if (!searchMatchesRecord(item, searchTerm)) return false;
 
       // Apply type filter
       if (activeTypeFilter !== 'all' && item.primaryType !== activeTypeFilter) {

@@ -8,6 +8,7 @@ import {
 } from '@nimbalyst/collab-protocol';
 import { act } from '@testing-library/react';
 import { DRAG_DROP_PASTE } from '@lexical/rich-text';
+import { PASTE_COMMAND } from 'lexical';
 
 import { CommentComposer } from '../CommentComposer';
 import {
@@ -192,6 +193,68 @@ describe('CommentComposer resource attachment', () => {
       expect(within(tray).getByTestId('comment-composer-attachment-document').textContent).toContain('Unavailable'),
     );
     expect(tray.textContent).not.toContain('Compensation review Q3');
+  });
+
+  it.each([
+    {
+      name: 'tracker',
+      pasted: 'nimbalyst://tracker/itm-2212?orgId=org-nimbalyst',
+      label: 'Tracker',
+    },
+    {
+      name: 'plan',
+      pasted: 'nimbalyst://tracker/itm-2212?orgId=org-nimbalyst&view=document',
+      label: 'Plan',
+    },
+  ])('turns a pasted $name link into a resource chip and sends its reference', async ({
+    pasted,
+    label,
+  }) => {
+    const { onSubmit } = renderComposer();
+    const event = new Event('paste', {
+      bubbles: true,
+      cancelable: true,
+    }) as ClipboardEvent;
+    Object.defineProperty(event, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? pasted : ''),
+        types: ['text/plain'],
+      },
+    });
+
+    act(() => {
+      const editor = composerEditor();
+      editor.dispatchCommand(PASTE_COMMAND, event);
+      editor.update(() => {}, { discrete: true });
+    });
+
+    await waitFor(() => {
+      expect(composerText()).toBe(
+        `[${label}](nimbalyst://tracker/itm-2212) `,
+      );
+    });
+    expect(screen.getByTestId('composer-pill-resource')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('comment-composer-send'));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].resourceRefs).toEqual([
+      {
+        orgId: 'org-nimbalyst',
+        kind: 'tracker',
+        sourceId: 'itm-2212',
+      },
+    ]);
+    expect(onSubmit.mock.calls[0][0].body.entities).toEqual([
+      {
+        start: 0,
+        end: new TextEncoder().encode(
+          `[${label}](nimbalyst://tracker/itm-2212)`,
+        ).byteLength,
+        kind: 'resource',
+        refIndex: 0,
+      },
+    ]);
   });
 });
 

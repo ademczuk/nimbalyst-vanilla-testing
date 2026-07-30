@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   TrackerColumnDef,
@@ -347,6 +347,71 @@ describe('TrackerViewHeaderControls', () => {
       columnWidths: {},
       groupBy: null,
     });
+  });
+
+  it('keeps a long display-options panel within the viewport and scrollable', async () => {
+    const manyColumns = [
+      ...columns,
+      ...Array.from({ length: 20 }, (_, index) => ({
+        ...columns[0],
+        id: `custom-${index}`,
+        label: `Custom ${index}`,
+        defaultVisible: false,
+        builtin: false,
+      })),
+    ] satisfies TrackerColumnDef[];
+
+    renderControls({ availableColumns: manyColumns });
+    fireEvent.click(screen.getByTestId('tracker-view-display-options'));
+
+    const panel = screen.getByTestId('tracker-display-options-panel');
+    await waitFor(() => {
+      expect(panel.style.position).toBe('fixed');
+      expect(panel.style.maxHeight).toMatch(/^\d+(?:\.\d+)?px$/);
+    });
+    expect(screen.getByTestId('tracker-display-options-scroll-region').className)
+      .toContain('overflow-y-auto');
+  });
+
+  it('gives the starred field a star icon and finds it by its stored id', () => {
+    renderControls({
+      filterFields: [
+        ...filterFields,
+        { id: 'favorite', label: 'Starred', type: 'boolean' as const },
+      ],
+    });
+    fireEvent.click(screen.getByTestId('tracker-view-filter-button'));
+
+    // Typing the persisted id still finds the renamed field.
+    fireEvent.change(screen.getByTestId('tracker-filter-command-search'), {
+      target: { value: 'favorite' },
+    });
+    const row = screen.getByTestId('tracker-filter-field-favorite');
+    expect(row.textContent).toContain('Starred');
+    expect(row.querySelector('.material-symbols-outlined')?.textContent).toBe('star');
+    expect(screen.queryByTestId('tracker-filter-field-status')).toBeNull();
+  });
+
+  it('names the active filter value the way the field does', () => {
+    renderControls({
+      filterFields: [
+        ...filterFields,
+        {
+          id: 'favorite',
+          label: 'Starred',
+          type: 'boolean' as const,
+          options: [
+            { value: 'true', label: 'Yes' },
+            { value: 'false', label: 'No' },
+          ],
+        },
+      ],
+      filters: { combinator: 'and', clauses: [{ field: 'favorite', op: '=', value: true }] },
+    });
+    fireEvent.click(screen.getByTestId('tracker-view-filter-button'));
+
+    expect(screen.getByTestId('tracker-filter-active-list').textContent)
+      .toContain('Starred is Yes');
   });
 
   it('hides column controls for non-column views while preserving filters and count', () => {

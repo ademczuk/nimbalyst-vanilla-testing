@@ -1,8 +1,13 @@
 import React from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
+import {
+  TrackerReferenceChip,
+  useResolvedTrackerReference,
+} from '@nimbalyst/runtime/plugins/TrackerLinkPlugin';
 
 import { ResourcePill } from './ResourcePill';
 import type { BodySegment, MessageAttachmentView, ResourcePillView } from './commentTypes';
+import { parseResourceUrn } from './resourceUrn';
 
 /**
  * Segment renderer.
@@ -126,7 +131,7 @@ function Segment({
       );
 
     case 'resource':
-      return <ResourcePill pill={segment.pill} onOpen={onOpenResource} />;
+      return <MessageResourceReference pill={segment.pill} onOpenResource={onOpenResource} />;
 
     case 'attachments':
       return <AttachmentBlock attachments={segment.attachments} />;
@@ -134,6 +139,39 @@ function Segment({
     default:
       return null;
   }
+}
+
+/**
+ * Tracker references reuse the canonical live chip when the current workspace
+ * has resolved the record. That is what gives plans and ordinary tracker items
+ * their existing type, title, status and preview treatment inside messaging.
+ *
+ * The generic redacted pill remains the fallback for unavailable resources and
+ * for references that have not reached the local tracker store yet.
+ */
+function MessageResourceReference({
+  pill,
+  onOpenResource,
+}: {
+  pill: ResourcePillView;
+  onOpenResource?: (pill: ResourcePillView) => void;
+}) {
+  const trackerReferenceKey =
+    pill.kind === 'tracker'
+      ? parseResourceUrn(pill.urn, 'message-resource')?.sourceId ?? null
+      : null;
+  const resolvedTracker = useResolvedTrackerReference(trackerReferenceKey ?? '');
+
+  if (
+    trackerReferenceKey
+    && resolvedTracker
+    && pill.availability !== 'unavailable'
+    && pill.availability !== 'notInWorkspace'
+  ) {
+    return <TrackerReferenceChip referenceKey={trackerReferenceKey} />;
+  }
+
+  return <ResourcePill pill={pill} onOpen={onOpenResource} />;
 }
 
 /**

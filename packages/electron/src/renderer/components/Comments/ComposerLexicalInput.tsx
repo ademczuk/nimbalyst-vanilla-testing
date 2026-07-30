@@ -24,6 +24,7 @@ import {
   COMMAND_PRIORITY_HIGH,
   COMMAND_PRIORITY_LOW,
   KEY_ENTER_COMMAND,
+  PASTE_COMMAND,
   type EditorState,
   type ElementNode,
   type LexicalNode,
@@ -82,6 +83,8 @@ export interface ComposerLexicalInputProps {
   mentionCandidatesFor: (query: string) => MentionCandidate[];
   /** Records the mention in the pool and returns the pill to insert. */
   onMentionSelected: (candidate: MentionCandidate) => ComposerPillPayload;
+  /** Converts an exact pasted Nimbalyst link into an atomic resource pill. */
+  onResourceLinkPasted?: (value: string) => ComposerPillPayload | null;
   emojiSuggestionsFor: (query: string) => EmojiEntry[];
   /**
    * Files pasted or dropped onto the input. Absent on surfaces that cannot
@@ -111,6 +114,7 @@ export const ComposerLexicalInput = forwardRef<ComposerInputHandle, ComposerLexi
       onSubmit,
       mentionCandidatesFor,
       onMentionSelected,
+      onResourceLinkPasted,
       emojiSuggestionsFor,
       onFiles,
     },
@@ -186,6 +190,7 @@ export const ComposerLexicalInput = forwardRef<ComposerInputHandle, ComposerLexi
             <MarkdownShortcutPlugin transformers={COMPOSER_TRANSFORMERS} />
             {autoFocus && <AutoFocusPlugin />}
             <SubmitOnEnterPlugin onSubmit={onSubmit} typeaheadOpen={typeaheadOpen} />
+            {onResourceLinkPasted && <ResourceLinkPastePlugin onPaste={onResourceLinkPasted} />}
             {onFiles && <FileDropPlugin onFiles={onFiles} />}
             <ImperativeHandlePlugin forwardedRef={ref} />
             <MentionTypeaheadPlugin
@@ -200,6 +205,47 @@ export const ComposerLexicalInput = forwardRef<ComposerInputHandle, ComposerLexi
     );
   },
 );
+
+/**
+ * A copied Nimbalyst resource URL is one semantic object, not prose.
+ *
+ * Only an exact plain-text paste is intercepted. Pasting a sentence that
+ * happens to contain a URL keeps the browser's normal text behavior, and file
+ * pastes stay owned by `FileDropPlugin`.
+ */
+function ResourceLinkPastePlugin({
+  onPaste,
+}: {
+  onPaste: (value: string) => ComposerPillPayload | null;
+}) {
+  const [editor] = useLexicalComposerContext();
+
+  React.useEffect(
+    () =>
+      editor.registerCommand(
+        PASTE_COMMAND,
+        (event: ClipboardEvent) => {
+          const clipboardData = event.clipboardData;
+          if (!clipboardData || clipboardData.files.length > 0) return false;
+
+          const value = clipboardData.getData('text/plain');
+          const payload = onPaste(value);
+          if (!payload) return false;
+
+          event.preventDefault();
+          const pill = $createComposerPillNode(payload);
+          const space = $createTextNode(' ');
+          $insertAtCaret([pill, space]);
+          space.selectEnd();
+          return true;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+    [editor, onPaste],
+  );
+
+  return null;
+}
 
 /**
  * Report the seeded state once.

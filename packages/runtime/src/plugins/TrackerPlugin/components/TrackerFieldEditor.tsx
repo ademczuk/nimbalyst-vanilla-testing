@@ -29,6 +29,11 @@ export interface TrackerFieldEditorProps {
   relationshipCandidates?: RelationshipCandidate[];
   /** Open a related tracker item (relationship pill click). */
   onOpenRelationship?: (itemId: string) => void;
+  /**
+   * Render the field-name label above the control. Surfaces that already name
+   * the field (the chip popover header) turn this off to avoid saying it twice.
+   */
+  showLabel?: boolean;
 }
 
 const labelClasses = "text-[11px] font-medium text-[var(--nim-text-muted)] uppercase tracking-[0.5px]";
@@ -89,11 +94,16 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
   teamMembers,
   relationshipCandidates,
   onOpenRelationship,
+  showLabel = true,
 }) => {
   const fieldId = `field-${field.name}`;
   const label = formatFieldLabel(field.name);
   // Field type is authoritative from the schema definition
   const effectiveType = field.type;
+
+  const renderLabel = (htmlFor?: string): React.ReactNode => showLabel
+    ? <label htmlFor={htmlFor} className={labelClasses}>{label}</label>
+    : null;
 
   const wrapperClasses = layout === 'horizontal'
     ? "flex flex-row items-center gap-2 min-w-[120px]"
@@ -104,7 +114,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
     const { display, title } = formatDateTimeDisplay(value);
     return (
       <div className={wrapperClasses}>
-        <label className={labelClasses}>{label}</label>
+        {renderLabel()}
         <span
           className="text-[13px] text-[var(--nim-text-muted)] py-1.5"
           title={title}
@@ -119,7 +129,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
     case 'select':
       return (
         <div className={wrapperClasses}>
-          <label htmlFor={fieldId} className={labelClasses}>{label}</label>
+          {renderLabel(fieldId)}
           <CustomSelect
             value={value || field.default || ''}
             options={field.options || []}
@@ -136,7 +146,9 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
         return (
           <div className={`${wrapperClasses} status-bar-field-slider`}>
             <div className="slider-header flex justify-between items-center gap-2 mb-1 w-full">
-              <label htmlFor={fieldId} className={`${labelClasses} flex-1 mb-0`}>{label}</label>
+              {showLabel && (
+                <label htmlFor={fieldId} className={`${labelClasses} flex-1 mb-0`}>{label}</label>
+              )}
               <input
                 type="number"
                 className="w-[60px] py-1 px-2 border border-[var(--nim-border)] rounded bg-[var(--nim-bg)] text-[var(--nim-text)] text-[13px] font-semibold font-inherit text-center transition-colors duration-200 focus:outline-none focus:border-[var(--nim-primary)] focus:shadow-[0_0_0_2px_rgba(59,130,246,0.1)]"
@@ -166,7 +178,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
 
       return (
         <div className={wrapperClasses}>
-          <label htmlFor={fieldId} className={labelClasses}>{label}</label>
+          {renderLabel(fieldId)}
           <input
             id={fieldId}
             type="number"
@@ -191,7 +203,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
       }
       return (
         <div className={wrapperClasses}>
-          <label htmlFor={fieldId} className={labelClasses}>{label}</label>
+          {renderLabel(fieldId)}
           <input
             id={fieldId}
             type="date"
@@ -206,7 +218,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
     case 'text':
       return (
         <div className={wrapperClasses}>
-          <label htmlFor={fieldId} className={labelClasses}>{label}</label>
+          {renderLabel(fieldId)}
           <textarea
             id={fieldId}
             className={`${inputClasses} min-h-[80px] resize-y`}
@@ -220,7 +232,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
     case 'user':
       return (
         <div className={wrapperClasses}>
-          <label htmlFor={fieldId} className={labelClasses}>{label}</label>
+          {renderLabel(fieldId)}
           <UserFieldInput
             value={value || ''}
             onChange={onChange}
@@ -233,7 +245,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
     case 'string':
       return (
         <div className={wrapperClasses}>
-          <label htmlFor={fieldId} className={labelClasses}>{label}</label>
+          {renderLabel(fieldId)}
           <input
             id={fieldId}
             type="text"
@@ -248,7 +260,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
     case 'array':
       return (
         <div className={wrapperClasses}>
-          <label htmlFor={fieldId} className={labelClasses}>{label}</label>
+          {renderLabel(fieldId)}
           <TagChipsInput
             value={Array.isArray(value) ? value : []}
             onChange={onChange}
@@ -259,7 +271,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
     case 'url':
       return (
         <div className={wrapperClasses}>
-          <label htmlFor={fieldId} className={labelClasses}>{label}</label>
+          {renderLabel(fieldId)}
           <UrlFieldInput
             id={fieldId}
             value={value}
@@ -289,7 +301,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
     case 'reference':
       return (
         <div className={wrapperClasses}>
-          <label className={labelClasses}>{label}</label>
+          {renderLabel()}
           <RelationshipFieldEditor
             field={field}
             value={value}

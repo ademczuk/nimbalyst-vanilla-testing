@@ -12,6 +12,7 @@
 
 import React, { useCallback, useMemo, useSyncExternalStore } from 'react';
 import {
+  copyToClipboard,
   getEmbeddableExtensions,
   getShowInFileBrowserLabel,
   MaterialSymbol,
@@ -21,6 +22,7 @@ import { useAtomValue } from 'jotai';
 import { useFileActions } from '../hooks/useFileActions';
 import {
   activeTeamOrgIdAtom,
+  buildSharedDocumentDeepLink,
   trashSharedDocument,
   workspaceHasTeamAtom,
 } from '../store/atoms/collabDocuments';
@@ -339,6 +341,22 @@ export function CommonFileActions({
       return;
     }
     const finalTitle = createdDocument.title;
+    const teamOrgId = store.get(activeTeamOrgIdAtom);
+    const copyLinkAction = teamOrgId
+      ? {
+          label: 'Copy Link',
+          onClick: () => {
+            const deepLink = buildSharedDocumentDeepLink(createdDocument.documentId, teamOrgId);
+            void copyToClipboard(deepLink).catch((error: unknown) => {
+              console.error('[CommonFileActions] Failed to copy shared document link:', error);
+              errorNotificationService.showError(
+                'Copy failed',
+                'Could not write the link to the clipboard.',
+              );
+            });
+          },
+        }
+      : undefined;
     const linkedCount = embeddedShareResult.sharedReferences.size;
     const linkedFailureCount = embeddedShareResult.failures.length;
     const assetCount = (migrationToast.okCount ?? 0) + (migrationToast.failedCount ?? 0);
@@ -401,10 +419,14 @@ export function CommonFileActions({
           errorNotificationService.showWarning(
             'Shared with missing linked documents',
             body,
-            { details: linkedDetails, duration: 10000 },
+            { details: linkedDetails, duration: 10000, action: copyLinkAction },
           );
         } else {
-          errorNotificationService.showInfo('Shared to team', body, { duration: 4000 });
+          errorNotificationService.showInfo(
+            'Shared to team',
+            body,
+            { duration: 4000, action: copyLinkAction },
+          );
         }
         break;
       }
@@ -412,14 +434,14 @@ export function CommonFileActions({
         errorNotificationService.showWarning(
           'Shared with missing attachments',
           `"${finalTitle}" was shared but ${migrationToast.failedCount} attachment${migrationToast.failedCount === 1 ? '' : 's'} failed to upload.${linkedSummary}`,
-          { details: linkedDetails, duration: 8000 },
+          { details: linkedDetails, duration: 8000, action: copyLinkAction },
         );
         break;
       case 'unavailable':
         errorNotificationService.showWarning(
           'Shared to team',
           `"${finalTitle}" is now collaborative, but image attachments could not be migrated${migrationToast.message ? `: ${migrationToast.message}` : '.'}${linkedSummary}`,
-          { details: linkedDetails, duration: 8000 },
+          { details: linkedDetails, duration: 8000, action: copyLinkAction },
         );
         break;
     }

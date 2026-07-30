@@ -13,6 +13,26 @@ vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span data-icon={icon} />,
 }));
 
+vi.mock('@nimbalyst/runtime/plugins/TrackerLinkPlugin', () => ({
+  useResolvedTrackerReference: (referenceKey: string) =>
+    referenceKey === 'itm-pasted-plan'
+      ? {
+          id: referenceKey,
+          issueKey: 'NIM-2299',
+          title: 'Messaging link chips',
+          type: 'plan',
+          status: 'in-progress',
+        }
+      : null,
+  TrackerReferenceChip: ({ referenceKey }: { referenceKey: string }) => (
+    <span
+      className="tracker-reference-chip"
+      data-testid="tracker-reference-chip"
+      data-reference-key={referenceKey}
+    />
+  ),
+}));
+
 const NOW = Date.parse('2026-07-26T18:00:00.000Z');
 
 async function previewsFor(comments: Comment[]): Promise<Record<string, ResourcePreviewState>> {
@@ -454,5 +474,36 @@ describe('CommentRow resource pills', () => {
     expect(screen.getByRole('article').textContent).not.toContain(
       resourceRefToUrn({ orgId: 'org-nimbalyst', kind: 'tracker', sourceId: 'itm-2212' }),
     );
+  });
+
+  it('uses the live tracker reference chip when the pasted tracker is locally resolved', () => {
+    const [base] = commentsOf();
+    const trackerRef = {
+      orgId: 'org-nimbalyst',
+      kind: 'tracker' as const,
+      sourceId: 'itm-pasted-plan',
+    };
+    const token = '[Plan](nimbalyst://tracker/itm-pasted-plan)';
+    renderRow({
+      ...base,
+      body: {
+        version: 1,
+        format: 'nimbalystMarkdown',
+        text: token,
+        entities: [
+          {
+            start: 0,
+            end: new TextEncoder().encode(token).byteLength,
+            kind: 'resource',
+            refIndex: 0,
+          },
+        ],
+      },
+      resourceRefs: [trackerRef],
+    });
+
+    const chip = screen.getByTestId('tracker-reference-chip');
+    expect(chip.getAttribute('data-reference-key')).toBe('itm-pasted-plan');
+    expect(screen.queryByTestId('resource-pill-tracker')).toBeNull();
   });
 });

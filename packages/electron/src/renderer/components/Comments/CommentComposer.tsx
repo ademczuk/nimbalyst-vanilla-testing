@@ -24,7 +24,7 @@ import {
   type DraftPool,
 } from './composerDraft';
 import { useResourcePreviews } from './useResourcePreviews';
-import { resourceRefToUrn } from './resourceUrn';
+import { parsePastedResourceLink, resourceRefToUrn } from './resourceUrn';
 import { formatAttachmentSize, toAttachmentView } from './commentBodyParser';
 import type {
   AttachmentComposerHost,
@@ -229,6 +229,23 @@ export function CommentComposer({
     [pool],
   );
 
+  const attachPastedResourceLink = useCallback(
+    (value: string): ComposerPillPayload | null => {
+      const parsed = parsePastedResourceLink(value, orgId);
+      if (!parsed) return null;
+
+      const { pool: nextPool, urn } = addRefToPool(pool, parsed.ref);
+      setPool(nextPool);
+      return {
+        label: parsed.label,
+        urn,
+        kind: 'resource',
+        icon: resourceIcon(parsed.ref.kind),
+      };
+    },
+    [orgId, pool],
+  );
+
   const removeAttachment = useCallback((urn: string) => {
     // Remove the pill, not just the ref, so the body and the derived list
     // cannot disagree about what the message references.
@@ -428,6 +445,7 @@ export function CommentComposer({
         onSubmit={() => void submit()}
         mentionCandidatesFor={candidatesFor}
         onMentionSelected={selectMention}
+        onResourceLinkPasted={attachPastedResourceLink}
         emojiSuggestionsFor={emojiSuggestionsFor}
         onFiles={attachmentHost ? addFiles : undefined}
       />

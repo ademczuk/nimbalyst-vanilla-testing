@@ -35,6 +35,7 @@ import {
   DOCUMENT_RIGHT_PANEL_MIN_WIDTH,
 } from '../../store/atoms/trackers';
 import { useResizeDragShield } from '../../hooks/useResizeDragShield';
+import { DocumentHeaderSuppressionProvider } from '../TabEditor/DocumentHeaderSuppressionContext';
 import { UnifiedEditorHeaderBar } from '../TabEditor/UnifiedEditorHeaderBar';
 import { TrackerDetailPanelResizable } from './TrackerDetailPanelResizable';
 import { TrackerDocumentHeaderMeta } from './TrackerDocumentHeaderMeta';
@@ -62,6 +63,12 @@ interface TrackerDocumentViewProps {
   itemChrome: React.ReactNode;
   /** List region: the full view stack normally, a slim tracker list in document view. */
   listPane: React.ReactNode;
+  /**
+   * Search/filter row above the list in document view. The toolbar (and its
+   * search box) is hidden in this presentation, so the list pane carries its
+   * own -- driving the same search query and filter set.
+   */
+  listPaneSearch?: React.ReactNode;
   /** The item detail. Kept at one JSX position across both presentations. */
   detail: React.ReactNode;
   /**
@@ -90,6 +97,7 @@ export const TrackerDocumentView: React.FC<TrackerDocumentViewProps> = ({
   workspacePath,
   itemChrome,
   listPane,
+  listPaneSearch,
   detail,
   contentMode,
   bodyEditor,
@@ -274,9 +282,11 @@ export const TrackerDocumentView: React.FC<TrackerDocumentViewProps> = ({
               <TrackerDocumentListPaneHeader
                 collectionLabel="Trackers"
                 typeLabel={model?.displayNamePlural ?? model?.displayName ?? item?.primaryType ?? 'Items'}
+                onCollapseToTracker={onCollapseToTracker}
                 onNavigateToTypeList={handleNavigateToTypeList}
               />
             )}
+            {documentMode && listPaneSearch}
             <div className={documentMode ? 'min-h-0 flex-1 overflow-hidden' : 'contents'}>
               {listPane}
             </div>
@@ -342,9 +352,19 @@ export const TrackerDocumentView: React.FC<TrackerDocumentViewProps> = ({
                 extraActionItems={documentBarActions}
               />
             )}
-            <div className="min-h-0 flex-1 overflow-hidden">
-              {detail}
-            </div>
+            {/*
+              The header above already shows the item's key, title and every
+              schema field as an editable chip, so a frontmatter-projected file
+              rendered here must not repeat that form as an in-document header.
+              Ordinary file tabs mount outside this provider and keep theirs.
+            */}
+            <DocumentHeaderSuppressionProvider
+              providerIds={documentMode ? ['tracker-document-header'] : []}
+            >
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {detail}
+              </div>
+            </DocumentHeaderSuppressionProvider>
           </TrackerDetailPanelResizable>
         )}
 

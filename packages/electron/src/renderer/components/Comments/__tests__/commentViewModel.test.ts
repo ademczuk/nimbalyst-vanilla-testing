@@ -25,7 +25,12 @@ import {
   createCommentFixtures,
   createFixtureResolver,
 } from '../commentFixtures';
-import { messageUrn, parseResourceUrn, resourceRefToUrn } from '../resourceUrn';
+import {
+  messageUrn,
+  parsePastedResourceLink,
+  parseResourceUrn,
+  resourceRefToUrn,
+} from '../resourceUrn';
 import type { Comment, CommentRef, CommentView, ResourceRef } from '../commentTypes';
 
 const NOW = Date.parse('2026-07-26T18:00:00.000Z');
@@ -59,6 +64,47 @@ describe('resource URN round-trip', () => {
     expect(parseResourceUrn('nimbalyst://tracker', ORG)).toBeNull();
     expect(parseResourceUrn('nimbalyst://unknownkind/1', ORG)).toBeNull();
     expect(parseResourceUrn('nimbalyst://file/foo.ts', ORG)).toBeNull();
+  });
+});
+
+describe('pasted Nimbalyst resource links', () => {
+  it('recognizes copied tracker and plan-document links for this organization', () => {
+    expect(
+      parsePastedResourceLink(
+        'nimbalyst://tracker/tracker%2Fone?orgId=org-nimbalyst',
+        ORG,
+      ),
+    ).toEqual({
+      ref: {
+        orgId: ORG,
+        kind: 'tracker',
+        sourceId: 'tracker/one',
+      },
+      label: 'Tracker',
+    });
+
+    expect(
+      parsePastedResourceLink(
+        'nimbalyst://tracker/plan-42?orgId=org-nimbalyst&view=document',
+        ORG,
+      ),
+    ).toEqual({
+      ref: {
+        orgId: ORG,
+        kind: 'tracker',
+        sourceId: 'plan-42',
+      },
+      label: 'Plan',
+    });
+  });
+
+  it('does not authorize a tracker link copied from another organization', () => {
+    expect(
+      parsePastedResourceLink(
+        'nimbalyst://tracker/tracker-1?orgId=another-org',
+        ORG,
+      ),
+    ).toBeNull();
   });
 });
 

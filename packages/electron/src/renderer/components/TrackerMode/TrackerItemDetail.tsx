@@ -19,10 +19,13 @@ import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models'
 import type { FieldDefinition } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
 import { getRecordTitle, getRecordStatus, getRecordPriority, getRecordField, isItemSharedWithTeam } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { TrackerFieldEditor, type TeamMemberOption } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/TrackerFieldEditor';
-import type { RelationshipCandidate } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/RelationshipFieldEditor';
+import { TrackerFieldPills } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/TrackerFieldPills';
+import { getTrackerTagsField, useTrackerChipFieldSections } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerChipFields';
+import { isTrackerFieldEmpty } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerFieldLayout';
+import { useTrackerRelationshipCandidates } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/useTrackerRelationshipCandidates';
 import { UserAvatar } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/UserAvatar';
 import { trackerItemByIdAtom, trackerItemsMapAtom, trackerDataLoadedAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
-import { resolveRelationshipType, isRelationshipField } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
+import { resolveRelationshipType } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import { refreshSessionListAtom, sessionRegistryAtom, type SessionMeta } from '../../store/atoms/sessions';
 import { resolveLinkedSessions } from '../../utils/resolveLinkedSessions';
 import { prRemoteAtom, navigateToPullRequest } from '../../store/atoms/pullRequests';
@@ -41,11 +44,13 @@ import { TrackerCommentsSection } from './TrackerCommentsSection';
 import { resolveTrackerContentFocus } from './trackerContentFocus';
 import { TrackerCollabAvatars, TrackerCollabSyncDot } from './trackerCollabChrome';
 import { formatTrackerActivity } from './trackerActivityPresentation';
+import { createCollectionItem } from './createCollectionItem';
 import { TabEditor } from '../TabEditor/TabEditor';
 import {
   collabAwarenessAtom,
   collabProductStatusAtom,
 } from '../../store/atoms/collabEditor';
+import './TrackerItemDetail.css';
 
 interface TrackerItemDetailProps {
   itemId: string;
@@ -267,8 +272,6 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
   // Whether the tracker store has finished its initial load — lets us show a
   // loading state vs. an "unavailable" state when `item` is absent.
   const trackerDataLoaded = useAtomValue(trackerDataLoadedAtom);
-  // Loaded items, used to build relationship-field typeahead candidates.
-  const itemsMap = useAtomValue(trackerItemsMapAtom);
   const sessionRegistry = useAtomValue(sessionRegistryAtom);
   const refreshSessionList = useSetAtom(refreshSessionListAtom);
 
@@ -1076,59 +1079,38 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
     }
   }, [item, refreshSessionList]);
 
-  // Separate fields into categories for layout
-  const { primaryFields, customFields } = useMemo(() => {
-    if (!model) return { primaryFields: [] as FieldDefinition[], customFields: [] as FieldDefinition[] };
-
-    const builtinNames = new Set(['title', 'description', 'created', 'updated']);
-    // Resolve primary field names from schema roles instead of hardcoding
-    const primaryNames = new Set<string>();
-    for (const role of ['workflowStatus', 'priority', 'assignee', 'reporter', 'dueDate'] as const) {
-      const fieldName = model.roles?.[role];
-      if (fieldName) primaryNames.add(fieldName);
-    }
-    // Fallback conventional names when roles aren't declared
-    if (primaryNames.size === 0) {
-      for (const name of ['status', 'priority', 'owner', 'assigneeEmail', 'reporterEmail', 'dueDate']) {
-        if (model.fields.some(f => f.name === name)) primaryNames.add(name);
-      }
-    }
-    const primary: FieldDefinition[] = [];
-    const custom: FieldDefinition[] = [];
-
-    for (const field of model.fields) {
-      if (builtinNames.has(field.name)) continue;
-      if (primaryNames.has(field.name)) {
-        primary.push(field);
-      } else {
-        custom.push(field);
-      }
-    }
-
-    return { primaryFields: primary, customFields: custom };
-  }, [model]);
-
   /**
-   * Candidate target items for a relationship field's typeahead: every loaded
-   * item except this one, narrowed to the field's allowed target tracker types.
+   * Tags are the one field that stays an always-open row: they're edited far
+   * more often than they're read, so a chip that has to be opened first would
+   * cost a click on every edit.
    */
-  const buildRelationshipCandidates = useCallback((field: FieldDefinition): RelationshipCandidate[] => {
-    const targets = field.targetTrackerTypes;
-    const candidates: RelationshipCandidate[] = [];
-    for (const rec of itemsMap.values()) {
-      if (rec.id === itemId) continue;
-      if (targets && targets !== '*' && !targets.includes(rec.primaryType)) continue;
-      candidates.push({
-        itemId: rec.id,
-        // Resolve the display title via the schema's title role -- custom types
-        // (e.g. customer-contact) store their title under a non-"title" field.
-        title: getRecordTitle(rec) || undefined,
-        issueKey: rec.issueKey || undefined,
-        trackerType: rec.primaryType,
-      });
-    }
-    return candidates;
-  }, [itemsMap, itemId]);
+  const tagsField = useMemo(
+    () => getTrackerTagsField(item?.primaryType ?? ''),
+    [item?.primaryType],
+  );
+
+  // The chip row and its leftovers come from the shared layout rules, so this
+  // pane shows the same fields in the same order as every other surface.
+  const { chipFields, overflowFields } = useTrackerChipFieldSections(
+    item?.primaryType ?? '',
+    tagsField ? [tagsField.name] : [],
+  );
+
+  const relationshipCandidates = useTrackerRelationshipCandidates(item, chipFields);
+
+  /** Field values with any in-progress local edit applied. */
+  const chipValues = useMemo(
+    () => ({ ...(item?.fields ?? {}), ...localCustomFields }),
+    [item?.fields, localCustomFields],
+  );
+
+  /** Overflow fields that actually hold a value; empty ones add nothing. */
+  const overflowValues = useMemo(
+    () => overflowFields
+      .map((field) => ({ field, value: chipValues[field.name] }))
+      .filter(({ value }) => !isTrackerFieldEmpty(value)),
+    [overflowFields, chipValues],
+  );
 
   /** Get field value -- use in-progress local state for text fields, atom for select/etc */
   const getFieldValue = useCallback((fieldName: string): any => {
@@ -1150,6 +1132,18 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
       handleImmediateFieldChange(field.name, value);
     }
   }, [handleTextFieldChange, handleImmediateFieldChange]);
+
+  /** Persist one chip edit through the ordinary field save path. */
+  const handleChipSave = useCallback((fieldName: string, value: unknown) => {
+    const field = chipFields.find((candidate) => candidate.name === fieldName);
+    if (!field) return;
+    handleFieldChange(field, value);
+  }, [chipFields, handleFieldChange]);
+
+  const handleCreateCollection = useCallback((title: string, type: string) => {
+    if (!workspacePath) return Promise.resolve(null);
+    return createCollectionItem({ workspacePath, title, type });
+  }, [workspacePath]);
 
   // Focus is a layout state; the collab chrome is the part that needs a
   // collaborative body. See trackerContentFocus.ts for the rule and its tests.
@@ -1657,28 +1651,36 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
           </div>
         )}
 
-        {/* Primary fields grid (status, priority, owner) */}
-        {primaryFields.length > 0 && (
-          <div className="grid grid-cols-2 gap-3 pt-1 border-t border-nim">
-            {primaryFields.map((field) => (
-              <div key={field.name}>
-                {editable ? (
-                  <TrackerFieldEditor
-                    field={field}
-                    value={getFieldValue(field.name)}
-                    onChange={(value) => handleFieldChange(field, value)}
-                    teamMembers={teamMembers}
-                    relationshipCandidates={isRelationshipField(field) ? buildRelationshipCandidates(field) : undefined}
-                    onOpenRelationship={onOpenItem}
-                  />
-                ) : (
-                  <ReadOnlyField
-                    field={field}
-                    value={getFieldValue(field.name)}
-                  />
-                )}
-              </div>
-            ))}
+        {/* Metadata chips -- the canonical presentation of a tracker's fields */}
+        {chipFields.length > 0 && (
+          <div className="tracker-detail-fields pt-1 border-t border-nim">
+            <TrackerFieldPills
+              fields={chipFields}
+              values={chipValues}
+              editable={editable}
+              teamMembers={teamMembers}
+              relationshipCandidates={relationshipCandidates}
+              onSave={handleChipSave}
+              onOpenItem={onOpenItem}
+              onCreateCollection={workspacePath ? handleCreateCollection : undefined}
+              className="tracker-detail-field-pills"
+              testIdBase="tracker-detail-field"
+            />
+          </div>
+        )}
+
+        {/* Tags stay open: they're edited far more often than they're read */}
+        {tagsField && (
+          <div className="tracker-detail-tags" data-testid="tracker-detail-tags">
+            {editable ? (
+              <TrackerFieldEditor
+                field={tagsField}
+                value={getFieldValue(tagsField.name)}
+                onChange={(value) => handleFieldChange(tagsField, value)}
+              />
+            ) : (
+              <ReadOnlyField field={tagsField} value={getFieldValue(tagsField.name)} />
+            )}
           </div>
         )}
 
@@ -1698,27 +1700,15 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
           />
         )}
 
-        {/* Custom fields */}
-        {customFields.length > 0 && (
-          <div className="space-y-3 pt-1 border-t border-nim">
-            {customFields.map((field) => (
-              <div key={field.name}>
-                {editable ? (
-                  <TrackerFieldEditor
-                    field={field}
-                    value={getFieldValue(field.name)}
-                    onChange={(value) => handleFieldChange(field, value)}
-                    teamMembers={teamMembers}
-                    relationshipCandidates={isRelationshipField(field) ? buildRelationshipCandidates(field) : undefined}
-                    onOpenRelationship={onOpenItem}
-                  />
-                ) : (
-                  <ReadOnlyField
-                    field={field}
-                    value={getFieldValue(field.name)}
-                  />
-                )}
-              </div>
+        {/*
+          Fields no chip can carry -- opaque objects, multiselects, arrays of
+          objects, and schema values the item can't edit. They read as plain
+          rows, and only when they hold something.
+        */}
+        {overflowValues.length > 0 && (
+          <div className="tracker-detail-overflow-fields space-y-3 pt-1 border-t border-nim">
+            {overflowValues.map(({ field, value }) => (
+              <ReadOnlyField key={field.name} field={field} value={value} />
             ))}
           </div>
         )}
@@ -1993,7 +1983,9 @@ const ReadOnlyField: React.FC<{ field: FieldDefinition; value: any }> = ({ field
   if (value == null || value === '') {
     displayValue = '\u2014';
   } else if (Array.isArray(value)) {
-    displayValue = value.join(', ') || '\u2014';
+    displayValue = value.map((entry) => (
+      entry && typeof entry === 'object' ? JSON.stringify(entry) : String(entry)
+    )).join(', ') || '\u2014';
   } else if (value instanceof Date) {
     displayValue = value.toLocaleDateString();
   } else if (typeof value === 'boolean') {

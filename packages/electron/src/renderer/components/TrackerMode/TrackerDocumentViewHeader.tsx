@@ -6,7 +6,8 @@
  * below owns everything the collaborative document tab already owns -- the
  * breadcrumb, connection state, presence, table of contents, and the document
  * menu. This header is therefore only the tracker's identity row: issue key,
- * title, editable field pills, and the way back out.
+ * title, editable field pills, and a trailing close. The labelled back action
+ * lives above the neighboring tracker list, where it returns to.
  *
  * Purely presentational so it can be tested without the tracker store: the
  * container resolves the record, status option, and dirty state.
@@ -80,16 +81,13 @@ export const TrackerDocumentViewHeader: React.FC<TrackerDocumentViewHeaderProps>
 
         <button
           type="button"
-          className="shrink-0 inline-flex items-center gap-1 rounded border border-nim px-2 py-1 text-[11px] font-medium text-nim-muted transition-colors hover:bg-nim-tertiary hover:text-nim"
+          className="tracker-document-collapse-button shrink-0 inline-flex items-center justify-center rounded p-1 text-nim-muted transition-colors hover:bg-nim-tertiary hover:text-nim"
           onClick={onCollapseToTracker}
           title="Collapse to tracker (Esc)"
+          aria-label="Collapse to tracker"
           data-testid="tracker-document-collapse"
         >
-          <MaterialSymbol icon="close_fullscreen" size={14} />
-          Collapse to tracker
-          <kbd className="ml-0.5 rounded border border-nim px-1 font-sans text-[9px] leading-[14px] text-nim-faint">
-            Esc
-          </kbd>
+          <MaterialSymbol icon="close" size={16} />
         </button>
       </div>
 
@@ -105,24 +103,39 @@ export const TrackerDocumentViewHeader: React.FC<TrackerDocumentViewHeaderProps>
 interface TrackerDocumentListPaneHeaderProps {
   collectionLabel: string;
   typeLabel: string;
+  onCollapseToTracker: () => void;
   onNavigateToTypeList: () => void;
 }
 
 /**
- * Collection navigation belongs to the list it scopes, not to the selected
- * document. Both breadcrumb segments return to the type's ordinary list.
+ * The labelled back action and collection navigation belong to the list they
+ * return to, not to the selected document. Both breadcrumb segments return to
+ * the type's ordinary list.
  */
 export const TrackerDocumentListPaneHeader: React.FC<TrackerDocumentListPaneHeaderProps> = ({
   collectionLabel,
   typeLabel,
+  onCollapseToTracker,
   onNavigateToTypeList,
 }) => (
   <header
-    className="tracker-document-list-pane-header flex h-[42px] shrink-0 items-center border-b border-nim px-3"
+    className="tracker-document-list-pane-header flex min-h-[68px] shrink-0 flex-col items-start justify-center gap-1 border-b border-nim px-3 py-2"
     data-testid="tracker-document-list-pane-header"
   >
+    <button
+      type="button"
+      className="tracker-document-back-button inline-flex items-center gap-1.5 rounded border border-nim bg-transparent px-2 py-1 text-[11px] font-medium text-nim-muted transition-colors hover:bg-nim-hover hover:text-nim"
+      onClick={onCollapseToTracker}
+      title="Back to tracker (Esc)"
+      aria-label="Back to tracker"
+      data-testid="tracker-document-back"
+    >
+      <MaterialSymbol icon="arrow_back" size={15} />
+      <span>Back to tracker</span>
+    </button>
+
     <nav
-      className="flex min-w-0 items-center gap-1 text-[11px] font-medium text-nim-faint"
+      className="flex min-w-0 max-w-full items-center gap-1 text-[10px] font-medium text-nim-faint"
       aria-label="Tracker collection"
       data-testid="tracker-document-list-breadcrumb"
     >

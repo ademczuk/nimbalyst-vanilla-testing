@@ -53,21 +53,28 @@ describe('TrackerDocumentViewHeader', () => {
   });
 
   it('puts clickable collection and type navigation in the list-pane header', () => {
+    const onCollapseToTracker = vi.fn();
     const onNavigateToTypeList = vi.fn();
     render(
       <TrackerDocumentListPaneHeader
         collectionLabel="Trackers"
         typeLabel="Tasks"
+        onCollapseToTracker={onCollapseToTracker}
         onNavigateToTypeList={onNavigateToTypeList}
       />,
     );
 
+    const back = screen.getByTestId('tracker-document-back');
     const breadcrumb = screen.getByTestId('tracker-document-list-breadcrumb');
+    expect(back.textContent).toContain('arrow_back');
+    expect(back.textContent).toContain('Back to tracker');
     expect(breadcrumb.textContent).toContain('Trackers');
     expect(breadcrumb.textContent).toContain('Tasks');
 
+    fireEvent.click(back);
     fireEvent.click(screen.getByTestId('tracker-document-collection-navigation'));
     fireEvent.click(screen.getByTestId('tracker-document-type-navigation'));
+    expect(onCollapseToTracker).toHaveBeenCalledTimes(1);
     expect(onNavigateToTypeList).toHaveBeenCalledTimes(2);
   });
 
@@ -81,6 +88,28 @@ describe('TrackerDocumentViewHeader', () => {
     expect(screen.queryByTestId('tracker-document-collection-navigation')).toBeNull();
     fireEvent.click(screen.getByTestId('tracker-document-collapse'));
     expect(onCollapseToTracker).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the document-header exit as a trailing close', () => {
+    const { onCollapseToTracker } = renderHeader();
+
+    const close = screen.getByTestId('tracker-document-collapse');
+    expect(screen.queryByTestId('tracker-document-back')).toBeNull();
+    expect(close.getAttribute('aria-label')).toBe('Collapse to tracker');
+    expect(close.getAttribute('title')).toContain('Esc');
+
+    fireEvent.click(close);
+    expect(onCollapseToTracker).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the document header to one icon-only exit', () => {
+    renderHeader();
+
+    const header = screen.getByTestId('tracker-document-view-header');
+    const exits = header.querySelectorAll('button');
+    expect(exits.length).toBe(1);
+    expect(header.textContent).not.toContain('Collapse to tracker');
+    expect(header.textContent).not.toContain('Back to tracker');
   });
 
   it('leaves breadcrumb, connection state and document actions to the header bar', () => {

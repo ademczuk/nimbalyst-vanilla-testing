@@ -4069,8 +4069,33 @@ export function setupDocumentServiceHandlers(resolver: DocumentServiceResolver) 
     updates: Record<string, any>;
   }) => {
     try {
-      const item = await requireDocumentService(event).updateTrackerItemInFile(payload.itemId, payload.updates);
+      const svc = requireDocumentService(event);
+
+      // Capture pre-update relationship values so inverse propagation (below) can
+      // diff added/dropped targets. Same best-effort read as the non-file update
+      // handler: no old row means we skip propagation rather than guess.
+      let oldData: Record<string, unknown> = {};
+      try {
+        const oldRow = await database.query<any>(`SELECT data FROM tracker_items WHERE id = $1`, [payload.itemId]);
+        if (oldRow.rows[0]) oldData = parseJsonColumn<Record<string, unknown>>(oldRow.rows[0].data) ?? {};
+      } catch { /* skip inverse propagation if old data is unavailable */ }
+
+      const item = await svc.updateTrackerItemInFile(payload.itemId, payload.updates);
       const policy = getEffectiveTrackerSyncPolicy(item.workspace, item.type);
+
+      // A file-backed item's relationship fields have the same inverses as a
+      // native one's: assigning a frontmatter-backed plan to a milestone must
+      // still add that plan to the milestone's members. Without this the
+      // Collection chip looked like it worked but only wrote the member side.
+      try {
+        await svc.propagateInverseForUpdate(
+          { id: item.id, type: item.type, issueKey: item.issueKey, title: item.title },
+          payload.updates,
+          oldData,
+        );
+      } catch (invErr) {
+        console.error('[DocumentService] inverse relationship propagation failed (in-file):', invErr);
+      }
       trackTrackerMutation({
         itemId: payload.itemId,
         action: trackerMutationAction(payload.updates),

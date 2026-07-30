@@ -5,13 +5,22 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 const mocks = vi.hoisted(() => ({
   resolveShareability: vi.fn(),
+  resolveMetadata: vi.fn(),
   openDialog: vi.fn(),
   activeTeamOrgIdAtom: Symbol('activeTeamOrgId'),
   trashSharedDocument: vi.fn(),
+  createCollaborativeDocument: vi.fn(),
+  buildSharedDocumentDeepLink: vi.fn((documentId: string, orgId: string) =>
+    `nimbalyst://doc/${encodeURIComponent(documentId)}?orgId=${encodeURIComponent(orgId)}`),
+  copyToClipboard: vi.fn(),
+  showError: vi.fn(),
+  showInfo: vi.fn(),
+  showWarning: vi.fn(),
 }));
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span data-icon={icon} />,
+  copyToClipboard: mocks.copyToClipboard,
   getEmbeddableExtensions: () => ['.mockup.html'],
   getShowInFileBrowserLabel: () => 'Show in Explorer',
   parseEmbedAttrs: () => ({}),
@@ -36,6 +45,7 @@ vi.mock('../../hooks/useFileActions', () => ({
 vi.mock('../../store/atoms/collabDocuments', () => ({
   workspaceHasTeamAtom: Symbol('workspaceHasTeam'),
   activeTeamOrgIdAtom: mocks.activeTeamOrgIdAtom,
+  buildSharedDocumentDeepLink: mocks.buildSharedDocumentDeepLink,
   trashSharedDocument: mocks.trashSharedDocument,
 }));
 vi.mock('../../store/atoms/openProjects', () => ({ activeWorkspacePathAtom: Symbol('activeWorkspace') }));
@@ -48,13 +58,20 @@ vi.mock('../../services/CollaborativeDocumentTypeCatalog', () => ({
     subscribe: () => () => {},
     getSnapshot: () => 0,
     resolveShareability: mocks.resolveShareability,
-    resolveMetadata: vi.fn(),
+    resolveMetadata: mocks.resolveMetadata,
     editorIdForDescriptor: vi.fn(),
   }),
 }));
 vi.mock('../../services/collaborativeDocumentCreationOrchestrator', () => ({
   CollaborativeDocumentCreationError: class extends Error {},
-  createCollaborativeDocument: vi.fn(),
+  createCollaborativeDocument: mocks.createCollaborativeDocument,
+}));
+vi.mock('../../services/ErrorNotificationService', () => ({
+  errorNotificationService: {
+    showError: mocks.showError,
+    showInfo: mocks.showInfo,
+    showWarning: mocks.showWarning,
+  },
 }));
 
 import { CommonFileActions, readShareToTeamSourceContent } from '../CommonFileActions';
@@ -182,6 +199,57 @@ describe('CommonFileActions Share to Team catalog eligibility', () => {
       fileName: 'people.tsv',
       descriptor: spreadsheetDescriptor,
     }));
+  });
+
+  it('adds a Copy Link action to the successful share toast', async () => {
+    mocks.resolveShareability.mockReturnValue({ state: 'ready', descriptor: spreadsheetDescriptor });
+    mocks.resolveMetadata.mockReturnValue({ state: 'ready', descriptor: spreadsheetDescriptor });
+    mocks.createCollaborativeDocument.mockResolvedValue({
+      documentId: 'document/one',
+      title: 'people.csv',
+      documentType: 'csv',
+      parentFolderId: null,
+    });
+    mocks.copyToClipboard.mockResolvedValue(undefined);
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        readFileContent: vi.fn(async () => ({
+          success: true,
+          content: 'name\nAda',
+          isBinary: false,
+        })),
+        invoke: vi.fn(async () => undefined),
+      },
+    });
+
+    renderActions('people.csv');
+    fireEvent.click(screen.getByRole('button', { name: 'Share to Team' }));
+    const dialogData = mocks.openDialog.mock.calls[0]?.[1];
+    await dialogData.onConfirm({
+      folderId: null,
+      folderPath: '',
+      sharedName: 'people.csv',
+      selectedEmbeddedDocumentPaths: [],
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.showInfo).toHaveBeenCalledWith(
+        'Shared to team',
+        '"people.csv" is now a collaborative document.',
+        expect.objectContaining({
+          action: expect.objectContaining({ label: 'Copy Link' }),
+        }),
+      );
+    });
+
+    const action = mocks.showInfo.mock.calls[0]?.[2]?.action;
+    await action.onClick();
+
+    expect(mocks.buildSharedDocumentDeepLink).toHaveBeenCalledWith('document/one', 'team-1');
+    expect(mocks.copyToClipboard).toHaveBeenCalledWith(
+      'nimbalyst://doc/document%2Fone?orgId=team-1',
+    );
   });
 
   it('keeps Monaco files visible but disabled with the catalog reason', () => {
