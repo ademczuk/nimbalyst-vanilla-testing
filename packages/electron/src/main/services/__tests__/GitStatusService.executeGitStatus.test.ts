@@ -54,7 +54,8 @@ describe('GitStatusService executeGitStatus', () => {
     expect(execFileMock).toHaveBeenCalledTimes(1);
     expect(execFileMock).toHaveBeenCalledWith(
       'git',
-      ['status', '--porcelain'],
+      // `--no-optional-locks` keeps this read-only call off `.git/index` (NIM-2285).
+      ['--no-optional-locks', 'status', '--porcelain'],
       expect.objectContaining({ cwd: '/workspace', encoding: 'utf8', timeout: 5000 }),
       expect.any(Function),
     );

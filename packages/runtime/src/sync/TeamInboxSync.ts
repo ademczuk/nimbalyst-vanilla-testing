@@ -24,6 +24,7 @@ const CUSTODY_ERROR_CODES = new Set([
   'ORG_SERVER_MANAGED_DEK_REQUIRED',
   'ORG_SERVER_MANAGED_DEK_MISSING',
 ]);
+const PROTOCOL_REJECTION_CODES = new Set(['unknownInboxMessage']);
 
 export interface TeamInboxOrgDescriptor {
   orgId: string;
@@ -337,6 +338,8 @@ export class TeamInboxOrgClient implements TeamInboxOrgClientLike {
             const ws = this.ws;
             this.ws = null;
             ws?.close();
+          } else if (PROTOCOL_REJECTION_CODES.has(code)) {
+            this.ws?.close();
           }
           return;
         }
@@ -349,6 +352,7 @@ export class TeamInboxOrgClient implements TeamInboxOrgClientLike {
         code: 'TEAM_INBOX_PROTOCOL_ERROR',
         message: error instanceof Error ? error.message : String(error),
       });
+      this.ws?.close();
     }
   }
 
@@ -544,7 +548,7 @@ export class TeamInboxFanIn {
 
     switch (event.type) {
       case 'connecting':
-        state.status = state.deliveries.size > 0 ? 'offline' : 'connecting';
+        state.status = 'connecting';
         break;
       case 'sync':
         state.status = 'ready';

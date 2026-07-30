@@ -89,7 +89,7 @@ export function CommentRow({
 
   return (
     <div
-      className={`comment-row ${compact ? 'comment-row-compact gap-2 py-[3px]' : 'gap-2.5 py-1.5'} group relative flex px-3 ${
+      className={`comment-row ${compact ? 'comment-row-compact items-baseline gap-2 py-[3px]' : 'gap-2.5 py-1.5'} group relative flex px-3 ${
         view.failed ? 'bg-[color-mix(in_srgb,var(--nim-error)_7%,transparent)]' : 'hover:bg-[var(--nim-bg-hover)]'
       }`}
       data-testid={`comment-row-${view.ref.commentId}`}
@@ -234,7 +234,7 @@ function ClockGutter({
 }) {
   const label = timestampMs !== undefined ? formatClockTime(timestampMs) : view.timestampLabel;
   return (
-    <div className="comment-row-gutter comment-row-clock-gutter w-[58px] shrink-0 pt-[3px] text-right">
+    <div className="comment-row-gutter comment-row-clock-gutter w-[58px] shrink-0 text-right">
       <span
         className={`comment-row-clock text-[11px] tabular-nums text-[var(--nim-text-faint)] ${
           grouped ? 'opacity-0 group-hover:opacity-100' : ''

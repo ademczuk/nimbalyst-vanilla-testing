@@ -96,6 +96,42 @@ class FakeOrgClient implements TeamInboxOrgClientLike {
 }
 
 describe('TeamInboxOrgClient', () => {
+  it('reconnects when the server rejects a client protocol message', async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets: FakeWebSocket[] = [];
+      const client = new TeamInboxOrgClient({
+        serverUrl: 'https://sync.example.test',
+        org: {
+          orgId: 'org-a',
+          orgName: 'Acme',
+          teamMemberId: asTeamMemberId('member-a'),
+        },
+        getTeamJwt: async () => asTeamJwt('team-jwt'),
+        createWebSocket: () => {
+          const socket = new FakeWebSocket();
+          sockets.push(socket);
+          return socket as unknown as WebSocket;
+        },
+      });
+
+      await client.connect();
+      sockets[0].open();
+      sockets[0].receive({
+        type: 'inboxError',
+        code: 'unknownInboxMessage',
+        message: 'Unknown inbox message type',
+      });
+
+      expect(sockets[0].readyState).toBe(FakeWebSocket.CLOSED);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(sockets).toHaveLength(2);
+      client.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('sends presence heartbeats on the team inbox connection and emits roster updates', async () => {
     const socket = new FakeWebSocket();
     const client = new TeamInboxOrgClient({
@@ -362,6 +398,25 @@ describe('TeamInboxFanIn', () => {
         },
         { orgId: 'org-b', status: 'ready' },
       ],
+    });
+  });
+
+  it('reports reconnecting while cached deliveries survive a retry', async () => {
+    const { fanIn, clients } = setup();
+    await fanIn.start([orgA]);
+    clients.get('org-a')!.emit({
+      type: 'sync',
+      deliveries: [delivery('org-a', 'cached', 100)],
+      watermarks: [],
+      subscriptions: [],
+    });
+    clients.get('org-a')!.emit({ type: 'disconnected' });
+    clients.get('org-a')!.emit({ type: 'connecting' });
+
+    expect(fanIn.getSnapshot()).toMatchObject({
+      status: 'reconnecting',
+      deliveries: [{ id: 'cached' }],
+      organizations: [{ orgId: 'org-a', status: 'connecting' }],
     });
   });
 

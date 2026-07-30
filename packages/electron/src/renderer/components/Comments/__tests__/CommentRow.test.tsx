@@ -318,12 +318,15 @@ describe('CommentRow compact density', () => {
 
     const row = screen.getByRole('article');
     expect(row.getAttribute('data-density')).toBe('compact');
+    expect(row.className).toContain('items-baseline');
     expect(screen.queryByTestId('comment-row-avatar')).toBeNull();
     expect(screen.queryByTestId('comment-row-agent-glyph')).toBeNull();
 
     // The gutter carries a wall clock, not the relative label the comfortable
-    // header uses.
+    // header uses. It participates in the row's baseline alignment instead of
+    // compensating with top padding, which drifts below the sender and body.
     const clock = screen.getByTestId('comment-row-clock');
+    expect(clock.parentElement?.className).not.toContain('pt-[3px]');
     expect(clock.textContent).toBe(formatClockTime(POSTED_AT));
     expect(clock.textContent).toMatch(/\d{1,2}:\d{2}/);
 

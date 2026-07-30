@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- The new-worktree dialog can now search branches, narrowing the local and remote lists as you type.
 - The organization window gains rooms and direct messages, a rich message composer with attachments and mentions, unread badges, and desktop notifications for new messages.
 - Tracker items can now be opened as a full document, with collaborative body editing, inline comments, field pills, a side-by-side AI chat panel, and shareable links that reopen the item. The document gets the same header as a shared document: breadcrumb, connection status, who else is viewing, table of contents, and export.
 
@@ -19,12 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Desktop AI notifications now lead with the originating session name and open that exact session and project, including child sessions, instead of following whichever project is currently visible.
 - File reveal menus now name Finder on macOS, Explorer on Windows, and the containing folder on Linux.
 - AI sessions that preview a web page no longer strand a blank, unclosable window on a second monitor.
 - Tracker list progress cells now use the selected theme's background instead of a light block.
 - Sorting a tracker view by Updated, or any other date column, now orders rows by date instead of alphabetically by month name.
 - Embedded mockups and diagrams written as a plain relative link inside a shared document now open the shared copy instead of failing to load.
 - Shared-document references no longer make recovery exports empty or turn into tracker links.
+- Tracker sidebar type counts no longer read 0 for types that have items, and listing archived items no longer comes back empty.
+- Committing with the AI commit widget no longer leaves the just-committed files showing as deleted or reverted, and no longer discards changes you staged elsewhere at the same time.
+- Projects with many new, uncommitted folders no longer stall while the file tree and changed-files list refresh, and ignored files inside those folders no longer show up as changed.
 
 ### Removed
 <!-- Removed features go here -->
