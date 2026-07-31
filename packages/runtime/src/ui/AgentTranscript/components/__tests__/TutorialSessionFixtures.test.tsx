@@ -24,6 +24,8 @@ const FIXTURE_DIRECTORY = path.resolve(
 const TUTORIAL_ROOT = path.resolve("/tmp/Tutorial Fixture Projection");
 const DRAFT_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const TRIAGE_SESSION_ID = "22222222-2222-4222-8222-222222222222";
+const EXAMPLE_BUG_ID = "tk_tutorial_example_bug";
+const EXAMPLE_BUG_KEY = "NIM-6";
 
 interface Fixture {
   session: { provider: string; title: string };
@@ -50,16 +52,23 @@ async function loadAndProject(
     content: message.content
       .replaceAll("{{TUTORIAL_ROOT}}", TUTORIAL_ROOT)
       .replaceAll("{{SESSION_ID:DRAFT_THE_PRODUCT_BRIEF}}", DRAFT_SESSION_ID)
-      .replaceAll("{{SESSION_ID:TRIAGE_THE_LAUNCH_BUG}}", TRIAGE_SESSION_ID),
+      .replaceAll("{{SESSION_ID:TRIAGE_THE_LAUNCH_BUG}}", TRIAGE_SESSION_ID)
+      .replaceAll("{{TRACKER_ID:EXAMPLE_BUG}}", EXAMPLE_BUG_ID)
+      .replaceAll("{{TRACKER_ISSUE_KEY:EXAMPLE_BUG}}", EXAMPLE_BUG_KEY),
     createdAt: new Date(1_800_000_000_000 + index * 1_000),
     hidden: message.hidden,
   }));
-  return projectRawMessagesToViewMessages(rawMessages, fixture.session.provider);
+  return projectRawMessagesToViewMessages(
+    rawMessages,
+    fixture.session.provider
+  );
 }
 
 function toolMessages(messages: TranscriptViewMessage[]) {
   return messages.filter(
-    (message): message is TranscriptViewMessage & {
+    (
+      message
+    ): message is TranscriptViewMessage & {
       toolCall: NonNullable<TranscriptViewMessage["toolCall"]>;
     } => Boolean(message.toolCall)
   );
@@ -68,10 +77,7 @@ function toolMessages(messages: TranscriptViewMessage[]) {
 describe("tutorial session fixtures", () => {
   it("projects the product-brief rich content through the production parser", async () => {
     const messages = toolMessages(
-      await loadAndProject(
-        "01-draft-product-brief.json",
-        DRAFT_SESSION_ID
-      )
+      await loadAndProject("01-draft-product-brief.json", DRAFT_SESSION_ID)
     );
     const byName = new Map(
       messages.map((message) => [message.toolCall.toolName, message])
@@ -83,19 +89,19 @@ describe("tutorial session fixtures", () => {
       "AskUserQuestion",
       "mcp__nimbalyst__capture_editor_screenshot",
     ]);
-    expect(messages.every((message) => message.toolCall.status === "completed")).toBe(true);
+    expect(
+      messages.every((message) => message.toolCall.status === "completed")
+    ).toBe(true);
     expect(getCustomToolWidget("mcp__nimbalyst__display_to_user")).toBe(
       VisualDisplayWidget
     );
-    expect(getCustomToolWidget("AskUserQuestion")).toBe(
-      AskUserQuestionWidget
-    );
+    expect(getCustomToolWidget("AskUserQuestion")).toBe(AskUserQuestionWidget);
     expect(
       getCustomToolWidget("mcp__nimbalyst__capture_editor_screenshot")
     ).toBe(EditorScreenshotWidget);
     expect(getCustomToolWidget("Edit")).toBeUndefined();
     expect(byName.get("Edit")?.toolCall.arguments).toMatchObject({
-      file_path: path.join(TUTORIAL_ROOT, "documents/product-brief.md"),
+      file_path: path.join(TUTORIAL_ROOT, "product-brief.md"),
       old_string: "The first version is for a team preparing a product launch.",
     });
     expect(
@@ -121,9 +127,7 @@ describe("tutorial session fixtures", () => {
     expect(screen.getByTestId("ask-user-question-completed")).toBeDefined();
     expect(screen.queryByTestId("ask-user-question-pending")).toBeNull();
 
-    const screenshot = byName.get(
-      "mcp__nimbalyst__capture_editor_screenshot"
-    );
+    const screenshot = byName.get("mcp__nimbalyst__capture_editor_screenshot");
     const readFile = vi.fn();
     render(
       <EditorScreenshotWidget
@@ -135,9 +139,7 @@ describe("tutorial session fixtures", () => {
         readFile={readFile}
       />
     );
-    const screenshotImage = await screen.findByAltText(
-      "dashboard.mockup.html"
-    );
+    const screenshotImage = await screen.findByAltText("dashboard.mockup.html");
     expect(screenshotImage.getAttribute("src")).toContain(
       "data:image/jpeg;base64,"
     );
@@ -154,10 +156,12 @@ describe("tutorial session fixtures", () => {
       "mcp__nimbalyst-trackers__tracker_link_session",
       "mcp__nimbalyst-host__spawn_session",
     ]);
-    expect(messages.every((message) => message.toolCall.status === "completed")).toBe(true);
     expect(
-      getCustomToolWidget("mcp__nimbalyst-trackers__tracker_create")
-    ).toBe(TrackerToolWidget);
+      messages.every((message) => message.toolCall.status === "completed")
+    ).toBe(true);
+    expect(getCustomToolWidget("mcp__nimbalyst-trackers__tracker_create")).toBe(
+      TrackerToolWidget
+    );
     expect(
       getCustomToolWidget("mcp__nimbalyst-trackers__tracker_link_session")
     ).toBe(TrackerToolWidget);
@@ -165,6 +169,26 @@ describe("tutorial session fixtures", () => {
       CrossSessionToolWidget
     );
     expect(messages.at(-1)?.toolCall.result).toContain(DRAFT_SESSION_ID);
+    expect(messages[1]?.toolCall.arguments).toMatchObject({
+      trackerId: EXAMPLE_BUG_ID,
+    });
+  });
+
+  it("ends both sample sessions with the continuation note", async () => {
+    const note =
+      "Note to the user: You can type into the window below and continue this session or start a new one";
+    for (const filename of [
+      "01-draft-product-brief.json",
+      "02-triage-launch-bug.json",
+    ] as const) {
+      const fixture = JSON.parse(
+        await fs.readFile(path.join(FIXTURE_DIRECTORY, filename), "utf8")
+      ) as Fixture;
+      const finalPayload = JSON.parse(fixture.messages.at(-1)!.content) as {
+        message: { content: Array<{ text?: string }> };
+      };
+      expect(finalPayload.message.content.at(-1)?.text).toBe(note);
+    }
   });
 
   it("references tutorial files that ship in the materialized project", async () => {
@@ -175,11 +199,13 @@ describe("tutorial session fixtures", () => {
     await expect(
       Promise.all(
         [
-          "data/revenue.csv",
-          "design/dashboard.mockup.html",
-          "documents/product-brief.md",
-          "planning/bug-example.md",
-        ].map((relativePath) => fs.access(path.join(resourceRoot, relativePath)))
+          "revenue.csv",
+          "dashboard.mockup.html",
+          "product-brief.md",
+          "planning/plan-tutorial-walkthrough.md",
+        ].map((relativePath) =>
+          fs.access(path.join(resourceRoot, relativePath))
+        )
       )
     ).resolves.toHaveLength(4);
   });

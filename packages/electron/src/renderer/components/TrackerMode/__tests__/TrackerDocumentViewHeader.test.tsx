@@ -102,6 +102,18 @@ describe('TrackerDocumentViewHeader', () => {
     expect(onCollapseToTracker).toHaveBeenCalledTimes(1);
   });
 
+  it('shows a copy-link button for a shared tracker and reports the action', () => {
+    const onCopyDocumentLink = vi.fn();
+    renderHeader({ onCopyDocumentLink });
+
+    const copyLink = screen.getByTestId('tracker-document-copy-link');
+    expect(copyLink.getAttribute('aria-label')).toBe('Copy collaborative tracker link');
+    expect(copyLink.getAttribute('title')).toBe('Copy collaborative tracker link');
+
+    fireEvent.click(copyLink);
+    expect(onCopyDocumentLink).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the document header to one icon-only exit', () => {
     renderHeader();
 
@@ -112,11 +124,10 @@ describe('TrackerDocumentViewHeader', () => {
     expect(header.textContent).not.toContain('Back to tracker');
   });
 
-  it('leaves breadcrumb, connection state and document actions to the header bar', () => {
+  it('omits shared-tracker actions when no collaborative link is available', () => {
     renderHeader();
 
-    // These all moved to the UnifiedEditorHeaderBar below this header, so a
-    // reader never sees the same path, sync dot, or link action twice.
+    // Local trackers have no organization-scoped collaborative URL to copy.
     expect(screen.queryByTestId('tracker-document-breadcrumb')).toBeNull();
     expect(screen.queryByTestId('tracker-collab-sync-dot')).toBeNull();
     expect(screen.queryByTestId('tracker-document-copy-link')).toBeNull();

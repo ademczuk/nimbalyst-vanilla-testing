@@ -17,9 +17,9 @@ The first version is for a team preparing a product launch. They already have mo
 
 ## The current concept
 
-[Dashboard concept](../design/dashboard.mockup.html "width=800 height=420")
+[Dashboard concept](dashboard.mockup.html "width=800 height=420")
 
-The visual uses the [monthly revenue data](../data/revenue.csv) and the assumptions in the [metrics model](../data/metrics.calc.md). Open either source to see how a polished artifact stays connected to the work behind it.
+The visual uses the [monthly revenue data](revenue.csv) and the assumptions in the [metrics model](metrics.calc.md). Open either source to see how a polished artifact stays connected to the work behind it.
 
 ## Scope for the first launch
 

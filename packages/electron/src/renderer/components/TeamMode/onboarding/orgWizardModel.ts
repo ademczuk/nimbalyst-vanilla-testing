@@ -15,9 +15,10 @@
 
 import type { CreateConversationInput } from '../../../../shared/conversationDirectory';
 
-export type OrgWizardStepId = 'identity' | 'invite' | 'rooms' | 'done';
+export type OrgWizardStepId = 'account' | 'identity' | 'invite' | 'rooms' | 'done';
 
 export const ORG_WIZARD_STEPS: readonly OrgWizardStepId[] = [
+  'account',
   'identity',
   'invite',
   'rooms',
@@ -25,11 +26,18 @@ export const ORG_WIZARD_STEPS: readonly OrgWizardStepId[] = [
 ];
 
 export const ORG_WIZARD_STEP_LABELS: Record<OrgWizardStepId, string> = {
-  identity: 'Name your org',
-  invite: 'Invite your team',
-  rooms: 'Starting rooms',
+  // One word each: five chips share the dialog's width, and anything longer
+  // wraps onto a second line.
+  account: 'Account',
+  identity: 'Name',
+  invite: 'Invite',
+  rooms: 'Rooms',
   done: 'Done',
 };
+
+export function orgWizardSteps(isAuthenticated: boolean): readonly OrgWizardStepId[] {
+  return isAuthenticated ? ORG_WIZARD_STEPS.slice(1) : ORG_WIZARD_STEPS;
+}
 
 export interface StarterRoomOption {
   /** Slug the room is addressed by, e.g. `dev` renders as `#dev`. */
@@ -51,11 +59,30 @@ export const STARTER_ROOM_OPTIONS: readonly StarterRoomOption[] = [
 /** The room every organization already has; shown as included, never created. */
 export const GENERAL_ROOM_ID = 'general';
 
+export interface PendingOrgInvitation {
+  orgId: string;
+  name: string;
+  email: string;
+}
+
 export interface OrgWizardState {
   step: OrgWizardStepId;
   orgName: string;
+  /**
+   * Identity the draft belongs to, stamped once the user is authenticated and
+   * null while they are not. The draft is stored per machine, so without this a
+   * different account signing in on the same machine inherits the previous
+   * user's org name, invite list and account choice.
+   */
+  owner: string | null;
   /** Which signed-in personal account owns the new organization. */
   sourcePersonalOrgId: string;
+  /**
+   * Project the new organization should adopt on creation. Set when the wizard
+   * is opened from a project's Sharing settings, which is the only entry point
+   * that has a project in hand; null everywhere else.
+   */
+  workspacePath: string | null;
   /**
    * Set once the organization exists. Its presence is the create-step
    * idempotency guard: closing the wizard here still leaves a valid org, and
@@ -70,26 +97,190 @@ export interface OrgWizardState {
   /** Starter rooms the conversations API has already created. */
   createdRoomIds: string[];
   welcomePosted: boolean;
+  pendingInvitation: PendingOrgInvitation | null;
+  inviteLookupStatus: 'idle' | 'checking' | 'complete';
   busy: boolean;
   error: string | null;
 }
 
 export function createOrgWizardState(
-  initial: Partial<Pick<OrgWizardState, 'orgName' | 'sourcePersonalOrgId'>> = {},
+  initial: Partial<
+    Pick<OrgWizardState, 'orgName' | 'owner' | 'sourcePersonalOrgId' | 'workspacePath'>
+    & { isAuthenticated: boolean }
+  > = {},
 ): OrgWizardState {
   return {
-    step: 'identity',
+    step: initial.isAuthenticated === false ? 'account' : 'identity',
     orgName: initial.orgName ?? '',
+    owner: initial.owner ?? null,
     sourcePersonalOrgId: initial.sourcePersonalOrgId ?? '',
+    workspacePath: initial.workspacePath ?? null,
     createdOrgId: null,
     emails: [],
     invitedEmails: [],
     selectedRoomIds: [],
     createdRoomIds: [],
     welcomePosted: false,
+    pendingInvitation: null,
+    inviteLookupStatus: 'idle',
     busy: false,
     error: null,
   };
+}
+
+export function resolveAuthenticatedAccount(
+  state: OrgWizardState,
+  pendingInvitation: PendingOrgInvitation | null,
+): OrgWizardState {
+  return {
+    ...state,
+    step: 'identity',
+    pendingInvitation,
+    inviteLookupStatus: 'complete',
+    error: null,
+  };
+}
+
+export interface OrgWizardDraft {
+  version: 1;
+  step: OrgWizardStepId;
+  orgName: string;
+  /**
+   * Absent on drafts written before sign-in, and on drafts written by versions
+   * that predate owner scoping — both hydrate for whoever opens the wizard next,
+   * because neither can be attributed to a different user.
+   */
+  owner?: string | null;
+  sourcePersonalOrgId: string;
+  workspacePath: string | null;
+  createdOrgId: string | null;
+  emails: string[];
+  invitedEmails: string[];
+  selectedRoomIds: string[];
+  createdRoomIds: string[];
+  welcomePosted: boolean;
+}
+
+/** Lower-cased so a differently-typed email is still the same identity. */
+export function normalizeOwnerId(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? normalized : null;
+}
+
+/**
+ * Whether a stored draft may be handed to the identity currently signed in.
+ * An owner-less draft belongs to nobody yet; an owned one belongs to exactly
+ * the identity that stamped it.
+ */
+export function draftOwnerMatches(
+  draftOwner: string | null,
+  currentOwner: string | null,
+): boolean {
+  if (draftOwner === null) return true;
+  return draftOwner === normalizeOwnerId(currentOwner);
+}
+
+export function serializeOrgWizardDraft(state: OrgWizardState): OrgWizardDraft {
+  return {
+    version: 1,
+    step: state.step,
+    orgName: state.orgName,
+    owner: state.owner,
+    sourcePersonalOrgId: state.sourcePersonalOrgId,
+    workspacePath: state.workspacePath,
+    createdOrgId: state.createdOrgId,
+    emails: [...state.emails],
+    invitedEmails: [...state.invitedEmails],
+    selectedRoomIds: [...state.selectedRoomIds],
+    createdRoomIds: [...state.createdRoomIds],
+    welcomePosted: state.welcomePosted,
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+}
+
+/** Steps that only make sense once the organization exists. */
+const POST_CREATE_STEPS: readonly OrgWizardStepId[] = ['invite', 'rooms', 'done'];
+
+export function rehydrateOrgWizardDraft(stored: unknown): OrgWizardState | null {
+  if (!stored || typeof stored !== 'object') return null;
+  const draft = stored as Partial<OrgWizardDraft>;
+  if (draft.version !== 1) return null;
+  if (!draft.step || !ORG_WIZARD_STEPS.includes(draft.step)) return null;
+
+  const owner = normalizeOwnerId(draft.owner);
+  const createdOrgId = typeof draft.createdOrgId === 'string' ? draft.createdOrgId : null;
+  // A truncated or hand-edited draft can name a step whose whole screen is about
+  // an organization it has no id for. Resume where the wizard can still act:
+  // naming it, or signing in first if nobody ever did.
+  const step = POST_CREATE_STEPS.includes(draft.step) && !createdOrgId
+    ? (owner ? 'identity' : 'account')
+    : draft.step;
+
+  return {
+    ...createOrgWizardState({ isAuthenticated: step !== 'account' }),
+    step,
+    owner,
+    orgName: typeof draft.orgName === 'string' ? draft.orgName : '',
+    sourcePersonalOrgId:
+      typeof draft.sourcePersonalOrgId === 'string' ? draft.sourcePersonalOrgId : '',
+    workspacePath: typeof draft.workspacePath === 'string' ? draft.workspacePath : null,
+    createdOrgId,
+    emails: stringArray(draft.emails),
+    invitedEmails: stringArray(draft.invitedEmails),
+    selectedRoomIds: stringArray(draft.selectedRoomIds),
+    createdRoomIds: stringArray(draft.createdRoomIds),
+    welcomePosted: draft.welcomePosted === true,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Owning personal account
+// ---------------------------------------------------------------------------
+
+/** The subset of `stytch:get-accounts` rows the wizard's chooser needs. */
+export interface OrgWizardPersonalAccount {
+  personalOrgId: string;
+  email?: string | null;
+  isSyncAccount?: boolean;
+  sessionStatus?: 'active' | 'expired';
+}
+
+/**
+ * Which account owns a new organization when the user has not picked one.
+ *
+ * The sync account is the one the app is actually signed in as everywhere else,
+ * so ambient list order is the wrong answer — the retired CreateTeamDialog
+ * preferred it, and folding that dialog into the wizard must not lose it. An
+ * expired session cannot create anything, so it only wins if nothing else is
+ * usable (leaving the picker showing the account the user has to reconnect).
+ */
+export function defaultSourcePersonalOrgId(
+  accounts: readonly OrgWizardPersonalAccount[],
+): string {
+  const usable = accounts.filter((account) => account.sessionStatus !== 'expired');
+  const pool = usable.length > 0 ? usable : accounts;
+  return pool.find((account) => account.isSyncAccount)?.personalOrgId
+    ?? pool[0]?.personalOrgId
+    ?? '';
+}
+
+/**
+ * Keep a restored draft's account choice only while that account still exists:
+ * a signed-out or removed account would otherwise create the org under an id
+ * the picker cannot even show.
+ */
+export function resolveSourcePersonalOrgId(
+  current: string,
+  accounts: readonly OrgWizardPersonalAccount[],
+): string {
+  if (accounts.length === 0) return current;
+  if (accounts.some((account) => account.personalOrgId === current)) return current;
+  return defaultSourcePersonalOrgId(accounts);
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +314,7 @@ export function stepStatus(
 /** Whether the primary action on the current step can run. */
 export function canAdvance(state: OrgWizardState): boolean {
   if (state.busy) return false;
+  if (state.step === 'account') return false;
   if (state.step === 'identity') return state.orgName.trim().length > 0;
   return state.createdOrgId !== null;
 }

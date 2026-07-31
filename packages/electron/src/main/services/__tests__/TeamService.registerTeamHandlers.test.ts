@@ -11,9 +11,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * fails loudly here instead of at runtime.
  */
 
-const { fetchMock, safeHandleMock, handlers } = vi.hoisted(() => {
+const { accountsMock, fetchMock, safeHandleMock, handlers } = vi.hoisted(() => {
   const handlers = new Map<string, (...args: any[]) => any>();
   return {
+    accountsMock: vi.fn(() => [{
+      personalOrgId: 'personal-1',
+      email: 'user@test.com',
+      sessionStatus: 'active',
+    }]),
     fetchMock: vi.fn(),
     handlers,
     safeHandleMock: vi.fn((channel: string, handler: (...args: any[]) => any) => {
@@ -56,7 +61,7 @@ vi.mock('../jwtOrg', () => ({
 }));
 
 vi.mock('../StytchAuthService', () => ({
-  getAccounts: vi.fn(() => [{ personalOrgId: 'personal-1', email: 'user@test.com' }]),
+  getAccounts: accountsMock,
   getPersonalSessionJwt: vi.fn(() => 'personal-jwt'),
   getPersonalSessionJwtForAccount: vi.fn(() => 'personal-jwt'),
   getSessionToken: vi.fn(() => 'session-token'),
@@ -78,6 +83,8 @@ vi.mock('@nimbalyst/runtime', () => ({
   asTeamJwt: (jwt: string) => jwt,
 }));
 
+vi.mock('../../menu/organizationMenuState', () => ({ setHasOrganizationsForMenu: vi.fn() }));
+
 vi.mock('../../database/initialize', () => ({}));
 vi.mock('../OrgProjectionService', () => ({}));
 vi.mock('../OrgAccessResolver', () => ({}));
@@ -87,7 +94,12 @@ vi.mock('../CollabBackupService', () => ({}));
 // runAuthenticatedTeamBootstrap), so the mock must return a callable factory.
 vi.mock('../TeamAuthBootstrap', () => ({ createTeamAuthBootstrap: (fn: unknown) => fn }));
 
-import { registerTeamHandlers } from '../TeamService';
+import {
+  invalidateListTeamsCache,
+  pendingInviteForEmail,
+  registerTeamHandlers,
+} from '../TeamService';
+import type { TeamDetails } from '../TeamService';
 import { registerTeamCustodyHandlers } from '../TeamCustodyService';
 
 const EXPECTED_TEAM_CHANNELS = [
@@ -97,6 +109,7 @@ const EXPECTED_TEAM_CHANNELS = [
   'team:create',
   'team:delete',
   'team:find-for-workspace',
+  'team:find-pending-invite-for-email',
   'team:get',
   'team:get-git-remote',
   'team:invite',
@@ -158,5 +171,127 @@ describe('registerTeamHandlers channel registration', () => {
       .filter((channel) => !handlers.has(channel) && !externallyRegistered.has(channel))
       .sort();
     expect(unregistered).toEqual([]);
+  });
+
+  it('matches only a pending invitation owned by the signed-in email', () => {
+    const teams = [
+      {
+        orgId: 'org-active',
+        name: 'Already joined',
+        membershipType: 'active_member',
+        sourceEmail: 'member@example.com',
+      },
+      {
+        orgId: 'org-other',
+        name: 'Other account',
+        membershipType: 'pending_member',
+        sourceEmail: 'other@example.com',
+      },
+      {
+        orgId: 'org-invite',
+        name: 'Acme Robotics',
+        membershipType: 'pending_member',
+        sourceEmail: 'MEMBER@example.com',
+      },
+    ] as TeamDetails[];
+
+    expect(pendingInviteForEmail(teams, 'member@example.com')?.orgId).toBe('org-invite');
+    expect(pendingInviteForEmail(teams, 'missing@example.com')).toBeNull();
+  });
+});
+
+/**
+ * The wizard's invitation branch is only as good as the channel behind it, and
+ * the matcher above is one of four things the handler does: it also validates
+ * the argument, refuses an email the signed-in accounts do not own, and turns a
+ * directory failure into a result rather than an unhandled rejection.
+ */
+describe('team:find-pending-invite-for-email handler', () => {
+  const invite = (email: string) => ({
+    orgId: 'org-invite',
+    name: 'Acme Robotics',
+    membershipType: 'pending_member',
+    sourceEmail: email,
+  });
+
+  function respondWithTeams(teams: unknown[]) {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ teams }),
+    });
+  }
+
+  async function invokeHandler(email: unknown) {
+    const handler = handlers.get('team:find-pending-invite-for-email');
+    if (!handler) throw new Error('team:find-pending-invite-for-email is not registered');
+    return handler({}, email);
+  }
+
+  beforeEach(() => {
+    handlers.clear();
+    safeHandleMock.mockClear();
+    fetchMock.mockReset();
+    accountsMock.mockReturnValue([{
+      personalOrgId: 'personal-1',
+      email: 'member@example.com',
+      sessionStatus: 'active',
+    }]);
+    invalidateListTeamsCache();
+    registerTeamHandlers();
+  });
+
+  it('rejects an email that is not a usable string', async () => {
+    respondWithTeams([invite('member@example.com')]);
+
+    await expect(invokeHandler(undefined)).resolves.toMatchObject({ success: false });
+    await expect(invokeHandler('   ')).resolves.toMatchObject({ success: false });
+    await expect(invokeHandler(42)).resolves.toMatchObject({ success: false });
+    // Nothing was looked up, so nothing could have leaked.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The email comes from the renderer. Answering for an address the signed-in
+   * accounts do not own would report another person's pending invitation to
+   * whoever typed their address.
+   */
+  it('reports no invitation for an email no signed-in account owns', async () => {
+    respondWithTeams([invite('someone-else@example.com')]);
+
+    await expect(invokeHandler('someone-else@example.com'))
+      .resolves.toEqual({ success: true, invitation: null });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns the pending invitation for an owned email', async () => {
+    respondWithTeams([
+      { orgId: 'org-joined', name: 'Already joined', membershipType: 'active_member', sourceEmail: 'member@example.com' },
+      invite('MEMBER@example.com'),
+    ]);
+
+    const result = await invokeHandler('member@example.com');
+
+    expect(result.success).toBe(true);
+    expect(result.invitation).toMatchObject({ orgId: 'org-invite', name: 'Acme Robotics' });
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it('reports no invitation when the owned email has none pending', async () => {
+    respondWithTeams([
+      { orgId: 'org-joined', name: 'Already joined', membershipType: 'active_member', sourceEmail: 'member@example.com' },
+    ]);
+
+    await expect(invokeHandler('member@example.com'))
+      .resolves.toEqual({ success: true, invitation: null });
+  });
+
+  // Invitation discovery is optional to the wizard; a directory outage must not
+  // reach the renderer as a rejected invoke.
+  it('answers with no invitation when the directory lookup fails', async () => {
+    fetchMock.mockRejectedValue(new Error('network down'));
+
+    await expect(invokeHandler('member@example.com'))
+      .resolves.toEqual({ success: true, invitation: null });
   });
 });

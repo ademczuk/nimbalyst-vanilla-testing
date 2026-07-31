@@ -15,6 +15,7 @@ import { $convertFromEnhancedMarkdownString, getEditorTransformers } from '@nimb
 import { $getRoot, $setSelection } from 'lexical';
 import * as Y from 'yjs';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
+import { isFileBackedRecord, isNativeItem, resolveTrackerContentMode } from './trackerContentMode';
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import type { FieldDefinition } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
 import { getRecordTitle, getRecordStatus, getRecordPriority, getRecordField, isItemSharedWithTeam } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
@@ -148,11 +149,6 @@ function formatTimestamp(value: string | Date | number | undefined): string {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-/** Whether this record is a native DB item (no file backing) */
-function isNativeItem(record: TrackerRecord): boolean {
-  return record.source === 'native' || !record.system.documentPath;
 }
 
 /** Whether this record's metadata fields are editable */
@@ -672,20 +668,10 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
     return isItemSharedWithTeam(item);
   }, [item]);
 
-  const contentMode = useMemo(() => {
-    if (!item || !isNativeItem(item)) return 'file-backed' as const;
-    if (syncMode === 'local') return 'local-pglite' as const;
-    // Hybrid trackers are per-item: an unshared hybrid item edits locally and
-    // never connects its body room. (Sharing flips this to collaborative.)
-    if (syncMode === 'hybrid' && !isItemShared) return 'local-pglite' as const;
-    // Shared/hybrid trackers need a team for collaborative editing. Without
-    // one, content is purely local. While the team check is still pending
-    // (`teamOrgId === undefined`) stay in collaborative mode so the loading
-    // UI runs -- otherwise the local editor would mount and risk being
-    // clobbered if a team is then discovered.
-    if (teamOrgId === null) return 'local-pglite' as const;
-    return 'collaborative' as const;
-  }, [item, syncMode, teamOrgId, isItemShared]);
+  const contentMode = useMemo(
+    () => resolveTrackerContentMode({ item, syncMode, isItemShared, teamOrgId }),
+    [item, syncMode, teamOrgId, isItemShared],
+  );
 
   const fileBackedDocumentPath = useMemo(() => {
     const documentPath = item?.system.documentPath;
@@ -752,14 +738,14 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
   // deletes the local row, so unsharing a native item would lose it. So a
   // shared native item's toggle is locked (share is one-way until the engine
   // gains a "remove from room, keep local" primitive).
-  const isFileBacked = Boolean(item && (item.source === 'frontmatter' || item.source === 'import'));
+  const isFileBacked = Boolean(item && isFileBackedRecord(item));
   const unshareLocked = isItemShared && !isFileBacked;
   const [sharePending, setSharePending] = useState(false);
   const handleToggleShare = useCallback(async () => {
     if (!item || sharePending) return;
     const next = !isItemShared;
     // Guard: never attempt to unshare a native item (would delete it).
-    if (!next && !(item.source === 'frontmatter' || item.source === 'import')) return;
+    if (!next && !isFileBackedRecord(item)) return;
     setSharePending(true);
     try {
       const res = await window.electronAPI.documentService.setTrackerItemShared({

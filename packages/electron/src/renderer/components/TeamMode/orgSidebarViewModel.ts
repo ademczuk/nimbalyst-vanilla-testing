@@ -35,8 +35,6 @@ export interface OrgSidebarModel {
    * so hiding a section is a courtesy, never the security boundary.
    */
   gating: OrgMessagingGating;
-  /** The Admin entries this viewer's role may see, in shipped order. */
-  adminTabs: OrgAdminTabDescriptor[];
 }
 
 export interface OrgAdminTabDescriptor {
@@ -51,7 +49,9 @@ export interface OrgAdminTabDescriptor {
 }
 
 /**
- * The administration panels, in the order they appear inside the Admin group.
+ * The administration panels, in the order they appear in the management
+ * dialog's tab column (NIM-2322 moved them out of this window's sidebar; the
+ * list and its role gating are unchanged, so the two never drifted apart).
  *
  * Members and Projects stay visible to everyone — the roster is org-wide
  * knowledge and their panels already reduce to read-only actions for members.
@@ -66,7 +66,7 @@ export const ORG_ADMIN_TABS: readonly OrgAdminTabDescriptor[] = [
   { id: 'danger', label: 'Danger zone', icon: 'warning', adminOnly: true },
 ];
 
-/** The Admin entries one viewer may see. Presentation gating, as ever. */
+/** The administration tabs one viewer may see. Presentation gating, as ever. */
 export function visibleAdminTabs(
   isOrgAdmin: boolean | undefined,
 ): OrgAdminTabDescriptor[] {
@@ -99,8 +99,8 @@ export interface OrgMessagingGating {
  *
  * Rooms and DMs are independently toggleable, and `roomCreation: 'admins'`
  * only narrows who may create — members keep reading and posting in the rooms
- * that exist. The Inbox and the Admin group are never gated: the inbox also
- * carries tracker and document activity, which is not chat.
+ * that exist. The Inbox is never gated: it also carries tracker and document
+ * activity, which is not chat.
  */
 export function resolveOrgMessagingGating(
   settings: OrgSettings = DEFAULT_ORG_SETTINGS,
@@ -217,12 +217,7 @@ export function buildOrgSidebar(input: OrgSidebarInput): OrgSidebarModel {
 
   rooms.sort(compareSidebarItems);
   dms.sort(compareSidebarItems);
-  return {
-    rooms,
-    dms,
-    gating,
-    adminTabs: visibleAdminTabs(input.isOrgAdmin),
-  };
+  return { rooms, dms, gating };
 }
 
 /**

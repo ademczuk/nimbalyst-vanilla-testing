@@ -182,11 +182,14 @@ describe('gateOrgWindowRoute', () => {
     expect(gateOrgWindowRoute(route, roomsOff, [])).toBe(route);
   });
 
-  it('never gates the inbox or the admin group', () => {
+  it('never gates the inbox, and sends administration out of the window', () => {
     expect(gateOrgWindowRoute({ view: 'inbox' }, roomsOff, conversations))
       .toEqual({ view: 'inbox' });
+    // Administration is the ORG_MANAGEMENT dialog now, so its old route lands
+    // on the inbox rather than on an empty content region.
     const admin = { view: 'admin' as const, adminTab: 'settings' as const };
-    expect(gateOrgWindowRoute(admin, roomsOff, conversations)).toBe(admin);
+    expect(gateOrgWindowRoute(admin, roomsOff, conversations))
+      .toEqual({ view: 'inbox' });
   });
 });
 

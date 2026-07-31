@@ -1,30 +1,25 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import { useAtomValue } from 'jotai';
 
 import { HelpTooltip } from '../../help';
 import { FloatingPortal, useFloatingMenu } from '../../hooks/useFloatingMenu';
 import type { OrgSidebarItem, OrgSidebarModel } from './orgSidebarViewModel';
-import { ORG_ADMIN_TABS } from './orgSidebarViewModel';
 import type { OrgWindowRoute } from './orgWindowState';
 import {
   DIRECTORY_ROUTE,
   INBOX_ROUTE,
-  adminRoute,
   conversationRoute,
   orgWindowRouteKey,
   orgWindowRouteSelectedAtomFamily,
 } from './orgWindowState';
 
 /**
- * Every administration panel, in the order they appear inside the Admin group.
- * What one viewer actually sees is `model.adminTabs`, which drops the entries
- * their role may not open.
- */
-export const ADMIN_TABS = ORG_ADMIN_TABS;
-
-/**
- * The window's navigation column.
+ * The window's navigation column — messaging only.
+ *
+ * The Admin group it used to end with is gone: administration is the
+ * `ORG_MANAGEMENT` dialog, reached from the profile menu below rather than from
+ * a row here (Greg, NIM-2322: the sidebar stays purely messaging).
  *
  * Memoized, and deliberately not given the active route: a navigation must not
  * repaint the whole column. Each row subscribes to its own
@@ -70,7 +65,6 @@ export const OrgSidebar = React.memo(function OrgSidebar({
   /** Pinned footer below the scrolling sections — the signed-in identity. */
   bottomContent?: React.ReactNode;
 }) {
-  const [adminOpen, setAdminOpen] = useState(true);
   // Presentation gating only: an organization that turned rooms or DMs off
   // loses the sections, and the server rejects the disabled kinds regardless.
   const { gating } = model;
@@ -192,30 +186,6 @@ export const OrgSidebar = React.memo(function OrgSidebar({
       )}
 
       {projectsContent}
-
-      <HelpTooltip testId="org-admin-toggle">
-        <button
-          type="button"
-          className="org-admin-toggle org-window-no-drag mt-2 flex items-center gap-1 rounded-md px-3 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--nim-text-faint)] hover:bg-[var(--nim-bg-hover)]"
-          data-testid="org-admin-toggle"
-          aria-expanded={adminOpen}
-          onClick={() => setAdminOpen((open) => !open)}
-        >
-          <MaterialSymbol icon={adminOpen ? 'expand_more' : 'chevron_right'} size={14} />
-          Admin
-        </button>
-      </HelpTooltip>
-        {adminOpen && model.adminTabs.map((item) => (
-          <SidebarRow
-            key={item.id}
-            className={`org-admin-item org-admin-item-${item.id}`}
-            testId={`team-tab-${item.id}`}
-            icon={item.icon}
-            label={item.label}
-            route={adminRoute(item.id)}
-            onNavigate={onNavigate}
-          />
-        ))}
       </div>
       {bottomContent}
     </nav>

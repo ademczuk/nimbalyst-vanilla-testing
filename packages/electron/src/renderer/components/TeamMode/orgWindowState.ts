@@ -15,9 +15,15 @@ import type { OrgMessagingGating } from './orgSidebarViewModel';
  * and inbox deep links all need to, so selection lives in an atom and is
  * addressed as a route rather than a tab id.
  */
+/**
+ * `'admin'` is retained as a destination this window *recognizes*, not one it
+ * renders: administration moved to the `ORG_MANAGEMENT` dialog (NIM-2322), and
+ * an admin route left over from before that — a stale hand-off, a deep link —
+ * is redirected to the messaging landing view rather than rendering nothing.
+ */
 export type OrgWindowView = 'inbox' | 'conversation' | 'directory' | 'admin';
 
-/** The administration panels, which are now one group inside the sidebar. */
+/** The administration panels, which are the management dialog's tabs. */
 export type AdminTab =
   | 'members'
   | 'projects'
@@ -48,7 +54,6 @@ export const orgWindowRouteAtom = atom<OrgWindowRoute>(
 );
 
 const CONVERSATION_ROUTES = new Map<string, OrgWindowRoute>();
-const ADMIN_ROUTES = new Map<AdminTab, OrgWindowRoute>();
 
 /**
  * Cached per id, so a row that re-renders hands the same route object back and
@@ -60,14 +65,6 @@ export function conversationRoute(conversationId: string): OrgWindowRoute {
   if (cached) return cached;
   const route: OrgWindowRoute = { view: 'conversation', conversationId };
   CONVERSATION_ROUTES.set(conversationId, route);
-  return route;
-}
-
-export function adminRoute(adminTab: AdminTab): OrgWindowRoute {
-  const cached = ADMIN_ROUTES.get(adminTab);
-  if (cached) return cached;
-  const route: OrgWindowRoute = { view: 'admin', adminTab };
-  ADMIN_ROUTES.set(adminTab, route);
   return route;
 }
 
@@ -99,15 +96,6 @@ export const orgWindowRouteKeyAtom = atom((get) =>
 export const orgWindowRouteSelectedAtomFamily = atomFamily(
   (routeKey: string) => atom((get) => get(orgWindowRouteKeyAtom) === routeKey),
 );
-
-/**
- * Conversations, the Inbox and the directory are their own full-bleed surfaces
- * (list plus pane, message list plus composer). Only the administration panels
- * keep the shared form-width column, which is what they were designed for.
- */
-export function isFullWidthRoute(route: OrgWindowRoute): boolean {
-  return route.view !== 'admin';
-}
 
 export function isRouteSelected(
   route: OrgWindowRoute,
@@ -141,7 +129,7 @@ export function routeAfterOrgChange(
 
 /**
  * Move the window off a destination its organization has turned off, or that
- * this viewer's role may not see.
+ * this window no longer has.
  *
  * Turning rooms or DMs off while someone is reading one has to land them
  * somewhere, and the Inbox is never gated. A conversation the directory has
@@ -149,25 +137,17 @@ export function routeAfterOrgChange(
  * available" arm covers it, and bouncing would break deep links that arrive
  * before the listing does.
  *
- * `visibleAdminTabs` is omitted while the roster is still resolving, which
- * leaves an admin route alone rather than bouncing an admin off their own
- * Danger zone for the moment before their role arrives.
+ * Administration is not gated by role here any more; it is not in this window
+ * at all (NIM-2322), so every admin route lands on the messaging default
+ * regardless of the viewer's role or which panel was addressed.
  */
 export function gateOrgWindowRoute(
   route: OrgWindowRoute,
   gating: OrgMessagingGating,
   conversations: readonly ConversationDirectoryEntry[] = [],
-  visibleAdminTabs?: readonly AdminTab[],
 ): OrgWindowRoute {
+  if (route.view === 'admin') return DEFAULT_ORG_WINDOW_ROUTE;
   if (route.view === 'directory' && !gating.roomsVisible) {
-    return DEFAULT_ORG_WINDOW_ROUTE;
-  }
-  if (
-    route.view === 'admin'
-    && route.adminTab
-    && visibleAdminTabs
-    && !visibleAdminTabs.includes(route.adminTab)
-  ) {
     return DEFAULT_ORG_WINDOW_ROUTE;
   }
   if (route.view === 'conversation') {

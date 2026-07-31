@@ -332,3 +332,38 @@ describe('PGLiteSessionStore.updateMetadata defense-in-depth', () => {
     warn.mockRestore();
   });
 });
+
+describe('PGLiteSessionStore.updateMetadata nullable column clears', () => {
+  // NIM-2308 / GH #1098: an expired Claude Code session could never be
+  // recovered because the "clear the dead provider session id" write was a
+  // silent no-op. Every column here is guarded by `!== undefined`, so the
+  // clear must travel as an explicit null or it never reaches SQL.
+  it('writes SQL NULL when provider_session_id is cleared with null', async () => {
+    const db = { query: vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] })) };
+    const store = createPGLiteSessionStore(db as any);
+
+    await store.updateMetadata('s1', { providerSessionId: null });
+
+    const updateCall = db.query.mock.calls.find((c: any[]) =>
+      typeof c[0] === 'string' && /UPDATE\s+ai_sessions\s+SET/i.test(c[0])
+    );
+    expect(updateCall).toBeDefined();
+    expect(updateCall![0]).toContain('provider_session_id =');
+    // values[0] is the session id; the bound clear value must be null, not
+    // undefined -- undefined would leave the stale id on the row.
+    expect(updateCall![1]).toEqual(['s1', null]);
+  });
+
+  it('still skips the column when providerSessionId is absent from the payload', async () => {
+    const db = { query: vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] })) };
+    const store = createPGLiteSessionStore(db as any);
+
+    await store.updateMetadata('s1', { title: 'Renamed' });
+
+    const updateCall = db.query.mock.calls.find((c: any[]) =>
+      typeof c[0] === 'string' && /UPDATE\s+ai_sessions\s+SET/i.test(c[0])
+    );
+    expect(updateCall).toBeDefined();
+    expect(updateCall![0]).not.toContain('provider_session_id =');
+  });
+});

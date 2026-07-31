@@ -15,6 +15,14 @@ import {
   withDismissedOrgId,
   type OrgWindowPendingRoute,
 } from './orgWelcomeModel';
+import {
+  draftOwnerMatches,
+  rehydrateOrgWizardDraft,
+  serializeOrgWizardDraft,
+  type OrgWizardState,
+} from './orgWizardModel';
+
+export const ORG_WIZARD_DRAFT_SETTING_KEY = 'orgWizardDraft';
 
 async function readSetting(key: string): Promise<unknown> {
   try {
@@ -60,6 +68,33 @@ export async function queueOrgWindowGeneralRoute(orgId: string): Promise<boolean
     ORG_WINDOW_PENDING_ROUTE_SETTING_KEY,
     pendingGeneralRoute(orgId),
   );
+}
+
+export async function persistOrgWizardDraft(state: OrgWizardState): Promise<boolean> {
+  return writeSetting(ORG_WIZARD_DRAFT_SETTING_KEY, serializeOrgWizardDraft(state));
+}
+
+/**
+ * The draft for `currentOwner` (null while signed out), or nothing.
+ *
+ * One machine can host several accounts, and the draft key is global: a draft
+ * stamped with another identity is not this user's to resume, so it is dropped
+ * rather than shown — its org name and invite list are the other user's.
+ */
+export async function readOrgWizardDraft(
+  currentOwner: string | null,
+): Promise<OrgWizardState | null> {
+  const state = rehydrateOrgWizardDraft(await readSetting(ORG_WIZARD_DRAFT_SETTING_KEY));
+  if (!state) return null;
+  if (!draftOwnerMatches(state.owner, currentOwner)) {
+    await clearOrgWizardDraft();
+    return null;
+  }
+  return state;
+}
+
+export async function clearOrgWizardDraft(): Promise<boolean> {
+  return writeSetting(ORG_WIZARD_DRAFT_SETTING_KEY, null);
 }
 
 export async function readOrgWindowPendingRoute(): Promise<unknown> {

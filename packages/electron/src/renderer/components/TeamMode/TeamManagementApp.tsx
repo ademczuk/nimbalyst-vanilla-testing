@@ -30,13 +30,16 @@ const IS_MAC = typeof navigator !== 'undefined'
   && navigator.platform.startsWith('Mac');
 
 /**
- * Root of the dedicated org-management ("Team") OS window.
+ * Root of the organization messages ("Team") OS window.
  *
- * Rendered when the SPA boots with `?mode=team-management` (see App.tsx).
- * Org administration is its own window, not a mode inside the project window
- * (2026-07-17 decision-log correction). This host reads the initial target from
- * the URL, keeps it in sync when the single reusable window is retargeted at a
- * different org, and rehosts the existing TeamMode component tree unchanged.
+ * Rendered when the SPA boots with `?mode=team-management` (see App.tsx). The
+ * window is the organization's Inbox, rooms and DMs; administration is the
+ * `ORG_MANAGEMENT` dialog, which opens in whichever window the user is already
+ * in — this one included, through its own `DialogProvider` below (NIM-2322,
+ * superseding the 2026-07-17 "administration is its own window" correction).
+ * This host reads the initial target from the URL, keeps it in sync when the
+ * single reusable window is retargeted at a different org, and rehosts the
+ * TeamMode component tree unchanged.
  *
  * Auth/org atoms are hydrated by App's top-level effects (initStytchAuthListeners
  * etc.), which run for every window mode before the early return; TeamMode and
@@ -86,7 +89,7 @@ export function TeamManagementApp() {
 
   // Seed the selected-org atom from the current target so TeamMode targets the
   // right org, and retarget when the reusable window is pointed elsewhere.
-  // Opened without an orgId (Window > Organization Manager), an explicit
+  // Opened without an orgId (Window > Organization Messages), an explicit
   // pending onboarding destination wins; otherwise use the last selected org,
   // then the first active membership.
   useEffect(() => {
@@ -135,7 +138,7 @@ export function TeamManagementApp() {
   ]);
 
   useEffect(() => {
-    window.electronAPI?.setTitle?.('Organization - Nimbalyst');
+    window.electronAPI?.setTitle?.('Organization Messages - Nimbalyst');
   }, []);
 
   // Accepting an invite or finishing the creation wizard queues "#general" for

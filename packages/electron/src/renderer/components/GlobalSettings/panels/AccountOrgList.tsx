@@ -2,7 +2,7 @@
  * The organizations a single signed-in login belongs to, rendered inline under
  * its account row in Account settings. This is the one place that answers
  * "which organizations am I in, and under which login?" — and the universal
- * entry point into the org management window for any of them.
+ * entry point into administering any of them.
  *
  * Data comes from `groupOrganizationsByAccount`; this component only renders and
  * dispatches actions (no IPC subscriptions — the central Stytch listener owns
@@ -25,8 +25,17 @@ import {
 } from '../../TeamMode/onboarding/orgOnboardingStorage';
 import type { AccountOrganizationEntry, AccountOrganizationGroup } from './accountOrganizations';
 
-function openOrgWindow(orgId?: string) {
+/**
+ * The organization's messages, which is all the organization window is now
+ * (NIM-2322). Administration is the dialog below, in whichever window the user
+ * already has open.
+ */
+function openOrgMessages(orgId?: string) {
   void window.electronAPI?.team?.openManagementWindow(orgId ? { orgId } : undefined);
+}
+
+function openOrgManagement(orgId: string) {
+  dialogRef.current?.open(DIALOG_IDS.ORG_MANAGEMENT, { orgId });
 }
 
 /** Tell the app the directory changed so the central listener re-runs team:list. */
@@ -57,18 +66,18 @@ function AccountOrgRow({ organization }: { organization: AccountOrganizationEntr
 
   const handleOpen = async () => {
     setError(null);
-    // Following the provider's invite link can activate the membership before
-    // the desktop sees it, so there is no Accept button in that path. An
-    // undismissed org is still first-open onboarding: queue the same durable
-    // #general destination before opening its window.
+    // Manage now opens administration here rather than starting a window, but
+    // following the provider's invite link can activate a membership before the
+    // desktop sees it — there is no Accept button in that path. An undismissed
+    // org is still first-open onboarding, so the durable #general destination is
+    // queued for whenever they do open the organization's messages. A failed
+    // write only costs that landing, so it does not block administration.
     if (!(await readOrgWelcomeDismissed(organization.orgId))) {
-      const queued = await queueOrgWindowGeneralRoute(organization.orgId);
-      if (!queued) {
-        setError('Could not save the organization destination. Try again.');
-        return;
+      if (!(await queueOrgWindowGeneralRoute(organization.orgId))) {
+        setError('Could not save where to open this organization’s messages.');
       }
     }
-    openOrgWindow(organization.orgId);
+    openOrgManagement(organization.orgId);
   };
 
   const handleAccept = async () => {
@@ -84,9 +93,10 @@ function AccountOrgRow({ organization }: { organization: AccountOrganizationEntr
           );
         }
         announceOrganizationsChanged();
-        // Accepting used to end here, in a settings list. The new member now
-        // lands in the organization window on #general.
-        openOrgWindow(organization.orgId);
+        // Accepting used to end here, in a settings list. The new member still
+        // lands in the organization's messages on #general — a conversation
+        // destination, so this one keeps opening that window.
+        openOrgMessages(organization.orgId);
       } else {
         setError(result?.error || 'Could not accept the invitation');
       }
@@ -158,13 +168,28 @@ function AccountOrgRow({ organization }: { organization: AccountOrganizationEntr
   );
 }
 
-export function AccountOrgList({ group }: { group: AccountOrganizationGroup }) {
-  // Teams is invite-only alpha: with no memberships and no creation affordance
-  // there is nothing actionable here, so the section disappears entirely.
+/**
+ * `indented` marks the list as belonging to one login among several. With a
+ * single stored account there is nothing to attribute, so the caller turns the
+ * indent off and the organizations read as the app's organizations.
+ */
+export function AccountOrgList({
+  group,
+  indented = true,
+}: {
+  group: AccountOrganizationGroup;
+  indented?: boolean;
+}) {
+  // Organization creation is disabled while Teams is finished: with no
+  // memberships and no creation affordance there is nothing actionable here, so
+  // the section disappears entirely.
   if (group.organizations.length === 0 && !organizationCreationEnabled) return null;
 
   return (
-    <div className="account-org-list mt-2 flex flex-col gap-1.5 pl-3" data-testid="account-org-list">
+    <div
+      className={`account-org-list mt-2 flex flex-col gap-1.5 ${indented ? 'pl-3' : ''}`}
+      data-testid="account-org-list"
+    >
       {group.organizations.map((organization) => (
         <AccountOrgRow key={organization.orgId} organization={organization} />
       ))}

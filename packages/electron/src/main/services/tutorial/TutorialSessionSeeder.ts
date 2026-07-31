@@ -13,9 +13,12 @@ import {
   getBaseAgentMessagesStore,
   getBaseSessionStore,
 } from "../RepositoryManager";
+import type { SeededTutorialTracker } from "./TutorialTrackerSeeder";
 
 const TUTORIAL_ROOT_PLACEHOLDER = "{{TUTORIAL_ROOT}}";
 const SESSION_ID_PLACEHOLDER = /\{\{SESSION_ID:([A-Z0-9_]+)\}\}/g;
+const TRACKER_ID_PLACEHOLDER = /\{\{TRACKER_ID:([A-Z0-9_]+)\}\}/g;
+const TRACKER_ISSUE_KEY_PLACEHOLDER = /\{\{TRACKER_ISSUE_KEY:([A-Z0-9_]+)\}\}/g;
 const KNOWN_TRANSCRIPT_PROVIDERS = new Set([
   "claude-code",
   "codex",
@@ -48,6 +51,10 @@ export interface SeededTutorialSession {
   metadata: Record<string, unknown>;
 }
 
+export interface TutorialSessionSeedOptions {
+  trackerReferences?: SeededTutorialTracker[];
+}
+
 export interface TutorialSessionSeederDependencies {
   getSessionStore: () => SessionStore;
   getMessagesStore: () => AgentMessagesStore;
@@ -73,7 +80,9 @@ function validateFixture(
   fixturePath: string
 ): TutorialSessionFixture {
   if (!value || typeof value !== "object") {
-    throw new Error(`Tutorial session fixture is not an object: ${fixturePath}`);
+    throw new Error(
+      `Tutorial session fixture is not an object: ${fixturePath}`
+    );
   }
 
   const fixture = value as Partial<TutorialSessionFixture>;
@@ -84,7 +93,9 @@ function validateFixture(
     typeof session.title !== "string" ||
     !Array.isArray(fixture.messages)
   ) {
-    throw new Error(`Tutorial session fixture has an invalid shape: ${fixturePath}`);
+    throw new Error(
+      `Tutorial session fixture has an invalid shape: ${fixturePath}`
+    );
   }
   if (!KNOWN_TRANSCRIPT_PROVIDERS.has(session.provider)) {
     throw new Error(
@@ -149,7 +160,8 @@ const defaultDependencies: TutorialSessionSeederDependencies = {
   // Read fixtures from the bundled template, NOT the materialized project.
   // The copy step excludes `sessions/` so the user's tutorial folder shows a
   // curated file tree instead of two unexplained raw JSON transcripts.
-  getFixtureDirectory: () => path.join(getTutorialTemplateDirectory(), "sessions"),
+  getFixtureDirectory: () =>
+    path.join(getTutorialTemplateDirectory(), "sessions"),
   generateSessionId: randomUUID,
   now: Date.now,
   linkTrackerSessions,
@@ -158,12 +170,11 @@ const defaultDependencies: TutorialSessionSeederDependencies = {
 function replaceFixturePlaceholders(
   content: string,
   workspacePath: string,
-  sessionIdsByKey: Map<string, string>
+  sessionIdsByKey: Map<string, string>,
+  trackersByKey: Map<string, SeededTutorialTracker>
 ): string {
-  const withRoot = content
-    .split(TUTORIAL_ROOT_PLACEHOLDER)
-    .join(workspacePath);
-  return withRoot.replace(
+  const withRoot = content.split(TUTORIAL_ROOT_PLACEHOLDER).join(workspacePath);
+  const withSessions = withRoot.replace(
     SESSION_ID_PLACEHOLDER,
     (_placeholder: string, key: string) => {
       const sessionId = sessionIdsByKey.get(key);
@@ -175,10 +186,75 @@ function replaceFixturePlaceholders(
       return sessionId;
     }
   );
+  const withTrackerIds = withSessions.replace(
+    TRACKER_ID_PLACEHOLDER,
+    (_placeholder: string, key: string) => {
+      const tracker = trackersByKey.get(key);
+      if (!tracker) {
+        throw new Error(
+          `Tutorial session fixture references unknown tracker key: ${key}`
+        );
+      }
+      return tracker.id;
+    }
+  );
+  return withTrackerIds.replace(
+    TRACKER_ISSUE_KEY_PLACEHOLDER,
+    (_placeholder: string, key: string) => {
+      const tracker = trackersByKey.get(key);
+      if (!tracker) {
+        throw new Error(
+          `Tutorial session fixture references unknown tracker key: ${key}`
+        );
+      }
+      return tracker.issueKey ?? tracker.id;
+    }
+  );
+}
+
+function replaceMetadataPlaceholders(
+  value: unknown,
+  workspacePath: string,
+  sessionIdsByKey: Map<string, string>,
+  trackersByKey: Map<string, SeededTutorialTracker>
+): unknown {
+  if (typeof value === "string") {
+    return replaceFixturePlaceholders(
+      value,
+      workspacePath,
+      sessionIdsByKey,
+      trackersByKey
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) =>
+      replaceMetadataPlaceholders(
+        entry,
+        workspacePath,
+        sessionIdsByKey,
+        trackersByKey
+      )
+    );
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        replaceMetadataPlaceholders(
+          entry,
+          workspacePath,
+          sessionIdsByKey,
+          trackersByKey
+        ),
+      ])
+    );
+  }
+  return value;
 }
 
 export async function seedTutorialSessions(
   workspacePath: string,
+  options: TutorialSessionSeedOptions = {},
   dependencies: Partial<TutorialSessionSeederDependencies> = {}
 ): Promise<SeededTutorialSession[]> {
   const deps = { ...defaultDependencies, ...dependencies };
@@ -187,11 +263,16 @@ export async function seedTutorialSessions(
     deps.getFixtureDirectory(absoluteWorkspacePath)
   );
   const sessionIdsByKey = new Map<string, string>();
+  const trackersByKey = new Map(
+    (options.trackerReferences ?? []).map((tracker) => [tracker.key, tracker])
+  );
 
   for (const fixture of fixtures) {
     const key = fixtureKey(fixture.session.title);
     if (sessionIdsByKey.has(key)) {
-      throw new Error(`Duplicate tutorial session fixture title: ${fixture.session.title}`);
+      throw new Error(
+        `Duplicate tutorial session fixture title: ${fixture.session.title}`
+      );
     }
     sessionIdsByKey.set(key, deps.generateSessionId());
   }
@@ -205,8 +286,14 @@ export async function seedTutorialSessions(
   try {
     for (const [fixtureIndex, fixture] of fixtures.entries()) {
       const sessionId = sessionIdsByKey.get(fixtureKey(fixture.session.title))!;
+      const fixtureMetadata = replaceMetadataPlaceholders(
+        fixture.session.metadata ?? {},
+        absoluteWorkspacePath,
+        sessionIdsByKey,
+        trackersByKey
+      ) as Record<string, unknown>;
       const metadata = {
-        ...(fixture.session.metadata ?? {}),
+        ...fixtureMetadata,
         tutorial: true,
       };
       const createdAt = baseTimestamp + fixtureIndex * 60_000;
@@ -237,7 +324,8 @@ export async function seedTutorialSessions(
           content: replaceFixturePlaceholders(
             message.content,
             absoluteWorkspacePath,
-            sessionIdsByKey
+            sessionIdsByKey,
+            trackersByKey
           ),
           messageKind: message.messageKind,
           hidden: message.hidden,
@@ -265,7 +353,10 @@ export async function seedTutorialSessions(
       const linkedTrackerItemIds = session.metadata.linkedTrackerItemIds;
       if (!Array.isArray(linkedTrackerItemIds)) continue;
       for (const trackerItemId of linkedTrackerItemIds) {
-        if (typeof trackerItemId !== "string" || trackerItemId.startsWith("file:")) {
+        if (
+          typeof trackerItemId !== "string" ||
+          trackerItemId.startsWith("file:")
+        ) {
           continue;
         }
         const sessionIds = linkedSessionsByTracker.get(trackerItemId) ?? [];

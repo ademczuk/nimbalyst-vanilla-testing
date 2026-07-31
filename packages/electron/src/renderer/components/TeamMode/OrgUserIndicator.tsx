@@ -14,6 +14,14 @@ import {
 } from '@floating-ui/react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 
+import {
+  ProfileMenuDivider,
+  ProfileMenuOrgChip,
+  ProfileMenuRow,
+  PROFILE_MENU_ROW_CLASS,
+} from '../Accounts/profileMenuRows';
+import { dialogRef } from '../../contexts/DialogContext';
+import { DIALOG_IDS } from '../../dialogs/registry';
 import { settingAtom } from '../../store/atoms/settingAtomFamily';
 import { teamInboxSnapshotAtom } from '../../store/atoms/teamInbox';
 import { connectionSummary } from './orgWindowRailViewModel';
@@ -45,6 +53,14 @@ function initialsForIdentity(name: string | null | undefined, email: string | nu
  * only part of the window's chrome that has to repaint on connection and
  * presence changes, and passing it down forced every host above it to
  * re-render on the same traffic.
+ *
+ * The popover follows the project window's `AccountInspectorPopover` row
+ * grammar — settings rows, organization row, account row at the bottom — so the
+ * two bottom-left profile menus read the same (NIM-2322). The organization row
+ * opens the org-management dialog in *this* window: the sidebar stays purely
+ * messaging, so this menu is the only management entry point here. "Account
+ * settings" still bounces to the project window because the org window has no
+ * settings surface of its own.
  */
 export function OrgUserIndicator({
   selectedOrgId,
@@ -63,6 +79,7 @@ export function OrgUserIndicator({
 }) {
   const [open, setOpen] = useState(false);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
+  const [orgName, setOrgName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inboxSnapshot = useAtomValue(teamInboxSnapshotAtom);
   const [desiredPresence, setDesiredPresence] = useAtom(
@@ -83,6 +100,7 @@ export function OrgUserIndicator({
   const email = selectedEmail ?? account?.email ?? null;
   const name = account?.userName ?? email?.split('@')[0] ?? 'Signed in';
   const initials = initialsForIdentity(name, email);
+  const expired = account?.sessionStatus === 'expired';
 
   useEffect(() => {
     let cancelled = false;
@@ -95,6 +113,27 @@ export function OrgUserIndicator({
       });
     return () => { cancelled = true; };
   }, []);
+
+  // The organization row names the org it manages. Resolved here rather than
+  // taken as a prop so the menu stays self-contained in both of its hosts;
+  // `team:list` is cached in main, so this costs one hit per mount.
+  useEffect(() => {
+    if (!selectedOrgId) {
+      setOrgName(null);
+      return;
+    }
+    let cancelled = false;
+    void window.electronAPI.organization.list()
+      .then((result: { success?: boolean; teams?: Array<{ orgId: string; name?: string }> }) => {
+        if (cancelled) return;
+        const match = result?.teams?.find((team) => team.orgId === selectedOrgId);
+        setOrgName(match?.name ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setOrgName(null);
+      });
+    return () => { cancelled = true; };
+  }, [selectedOrgId]);
 
   const { refs, floatingStyles, context } = useFloating({
     open,
@@ -150,88 +189,103 @@ export function OrgUserIndicator({
             ref={refs.setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
-            className="org-user-popover org-window-no-drag z-[1000] w-[270px] overflow-hidden rounded-lg border border-[var(--nim-border)] bg-[var(--nim-bg)] shadow-lg"
+            className="org-user-popover org-window-no-drag z-[1000] w-[300px] overflow-hidden rounded-lg border border-[var(--nim-border)] bg-[var(--nim-bg)] text-[var(--nim-text)] shadow-2xl"
             data-testid="org-user-popover"
             data-component="OrgUserIndicatorPopover"
           >
-            <div className="org-user-popover-identity flex items-center gap-2.5 border-b border-[var(--nim-border)] px-3 py-3">
-              <span className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--nim-primary)_62%,var(--nim-bg))] text-xs font-semibold text-[var(--nim-on-primary)]">
-                {initials}
-                <span className={`absolute bottom-0 right-0 size-2.5 rounded-full border-2 border-[var(--nim-bg)] ${dotClass}`} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold text-[var(--nim-text)]">{name}</span>
-                <span className="block truncate text-xs text-[var(--nim-text-muted)]">{email ?? 'No email available'}</span>
-              </span>
-            </div>
-            <div className="org-user-popover-status flex items-center gap-2 border-b border-[var(--nim-border)] px-3 py-2 text-xs text-[var(--nim-text-muted)]">
-              <span className={`size-2 rounded-full ${dotClass}`} />
-              <span className="min-w-0 flex-1 truncate">{presenceLabel}</span>
-              <span className="shrink-0">{connectionLine}</span>
-            </div>
-            <div className="org-user-popover-actions py-1">
-              <button
-                type="button"
-                className="org-user-popover-action flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)]"
-                data-testid="org-user-popover-preferences"
+            {/* Settings-style rows, matching the project window's popover. */}
+            <div className="org-user-popover-actions">
+              <ProfileMenuRow
+                icon="tune"
+                label="Organization Preferences"
+                testId="org-user-popover-preferences"
+                className="org-user-popover-action"
                 onClick={() => {
                   setOpen(false);
                   onOpenPreferences();
                 }}
-              >
-                <MaterialSymbol icon="tune" size={15} />
-                <span className="min-w-0 flex-1 truncate">Preferences…</span>
-              </button>
-              <button
-                type="button"
-                className="org-user-popover-action flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)]"
-                data-testid="org-user-popover-web-console"
+              />
+              <ProfileMenuRow
+                icon="open_in_new"
+                label="Web Console"
+                testId="org-user-popover-web-console"
+                className="org-user-popover-action"
                 onClick={() => {
                   setOpen(false);
                   onOpenWebConsole();
                 }}
-              >
-                <MaterialSymbol icon="open_in_new" size={15} />
-                <span className="min-w-0 flex-1 truncate">Open web console</span>
-              </button>
-              <button
-                type="button"
-                className="org-user-popover-action flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)]"
-                data-testid="org-user-popover-manage-accounts"
-                onClick={() => {
-                  setError(null);
-                  void window.electronAPI.openAccountSettings()
-                    .then((result) => {
-                      if (!result?.success) setError(result?.error ?? 'Could not open account settings.');
-                      else setOpen(false);
-                    })
-                    .catch((reason) => setError(String(reason)));
-                }}
-              >
-                <MaterialSymbol icon="manage_accounts" size={15} />
-                <span className="min-w-0 flex-1 truncate">Manage accounts…</span>
-              </button>
-              <button
-                type="button"
-                className="org-user-popover-action flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)]"
-                data-testid="org-user-popover-presence-extension"
+              />
+              <ProfileMenuRow
+                icon={desiredPresence === 'away' ? 'check_circle' : 'schedule'}
+                label={desiredPresence === 'away' ? 'Set yourself online' : 'Set yourself away'}
+                testId="org-user-popover-presence-extension"
+                className="org-user-popover-action"
+                chevron={false}
                 onClick={() => {
                   void setDesiredPresence(
                     desiredPresence === 'away' ? 'online' : 'away',
                   );
                 }}
-              >
-                <MaterialSymbol
-                  icon={desiredPresence === 'away' ? 'check_circle' : 'schedule'}
-                  size={15}
-                />
-                <span className="min-w-0 flex-1 truncate">
-                  {desiredPresence === 'away'
-                    ? 'Set yourself online'
-                    : 'Set yourself away'}
-                </span>
-              </button>
+              />
             </div>
+
+            {/* Organization row → the management dialog, opened in this window
+                through the shared registry rather than a new OS window. */}
+            {selectedOrgId && (
+              <>
+                <ProfileMenuDivider />
+                <button
+                  type="button"
+                  className={`${PROFILE_MENU_ROW_CLASS} org-user-popover-organization py-2`}
+                  data-testid="org-user-popover-organization-row"
+                  onClick={() => {
+                    setOpen(false);
+                    dialogRef.current?.open(DIALOG_IDS.ORG_MANAGEMENT, { orgId: selectedOrgId });
+                  }}
+                >
+                  <ProfileMenuOrgChip name={orgName ?? 'Organization'} />
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                    {orgName ?? 'Organization'}
+                  </span>
+                  <MaterialSymbol icon="chevron_right" size={18} className="text-[var(--nim-text-faint)]" />
+                </button>
+              </>
+            )}
+
+            <ProfileMenuDivider />
+
+            {/* Account row (bottom). No settings surface exists in this window,
+                so it bounces to the project window's Account screen. */}
+            <button
+              type="button"
+              className={`${PROFILE_MENU_ROW_CLASS} org-user-popover-account`}
+              data-testid="org-user-popover-account-row"
+              onClick={() => {
+                setError(null);
+                void window.electronAPI.openAccountSettings()
+                  .then((result) => {
+                    if (!result?.success) setError(result?.error ?? 'Could not open account settings.');
+                    else setOpen(false);
+                  })
+                  .catch((reason) => setError(String(reason)));
+              }}
+            >
+              <span className={`org-user-popover-avatar relative flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${expired ? 'bg-[var(--nim-bg-tertiary)] text-[var(--nim-warning)]' : 'bg-[color-mix(in_srgb,var(--nim-primary)_62%,var(--nim-bg))] text-[var(--nim-on-primary)]'}`}>
+                {initials}
+                <span
+                  className={`org-user-popover-dot absolute bottom-0 right-0 size-2.5 rounded-full border-2 border-[var(--nim-bg)] ${dotClass}`}
+                  aria-hidden="true"
+                />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[10px] font-semibold uppercase tracking-wide text-[var(--nim-text-faint)]">Account</span>
+                <span className="block truncate text-sm font-medium">{email ?? name}</span>
+                <span className={`block truncate text-[11px] ${expired ? 'text-[var(--nim-warning)]' : 'text-[var(--nim-text-muted)]'}`}>
+                  {expired ? 'Session expired — reconnect' : `${presenceLabel} · ${connectionLine}`}
+                </span>
+              </span>
+              <MaterialSymbol icon="chevron_right" size={18} className="text-[var(--nim-text-faint)]" />
+            </button>
             {error && (
               <div className="org-user-popover-error border-t border-[var(--nim-border)] px-3 py-2 text-xs text-[var(--nim-error)]">
                 {error}

@@ -19,12 +19,17 @@ import {
   starterRoomCreateInput,
   welcomeMessageBody,
   type OrgWizardState,
+  type PendingOrgInvitation,
 } from './orgWizardModel';
 
 export interface OrgWizardApi {
+  findPendingInvitation(email: string): Promise<PendingOrgInvitation | null>;
+  acceptInvitation(orgId: string): Promise<{ orgId: string }>;
   createOrganization(input: {
     name: string;
     sourcePersonalOrgId?: string;
+    /** Adopts this project into the new org, as the Sharing panel used to. */
+    workspacePath?: string;
   }): Promise<{ orgId: string }>;
   inviteMember(orgId: string, email: string): Promise<void>;
   listConversations(orgId: string): Promise<ConversationDirectoryEntry[]>;
@@ -58,6 +63,7 @@ export async function runCreateOrganization(
     const { orgId } = await api.createOrganization({
       name,
       sourcePersonalOrgId: state.sourcePersonalOrgId || undefined,
+      workspacePath: state.workspacePath || undefined,
     });
     return { ...state, createdOrgId: orgId, error: null };
   } catch (reason) {

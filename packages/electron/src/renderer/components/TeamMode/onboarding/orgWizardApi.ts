@@ -18,10 +18,33 @@ function mutationId(): string {
 
 export function createOrgWizardApi(): OrgWizardApi {
   return {
-    async createOrganization({ name, sourcePersonalOrgId }) {
+    async findPendingInvitation(email) {
+      const result = await window.electronAPI.organization.findPendingInvitation(email);
+      if (result?.success === false) {
+        throw new Error(result.error ?? 'Could not check pending invitations');
+      }
+      const invitation = result?.invitation;
+      if (!invitation?.orgId) return null;
+      return {
+        orgId: invitation.orgId as string,
+        name: typeof invitation.name === 'string' ? invitation.name : 'Organization',
+        email,
+      };
+    },
+
+    async acceptInvitation(orgId) {
+      const result = await window.electronAPI.organization.acceptInvitation(orgId);
+      if (!result?.success || !result.team?.orgId) {
+        throw new Error(result?.error ?? 'Could not accept the invitation');
+      }
+      return { orgId: result.team.orgId as string };
+    },
+
+    async createOrganization({ name, sourcePersonalOrgId, workspacePath }) {
       const result = await window.electronAPI.organization.create({
         name,
         sourcePersonalOrgId,
+        workspacePath,
       });
       if (!result?.success || !result.team?.orgId) {
         throw new Error(result?.error ?? 'Could not create the organization');

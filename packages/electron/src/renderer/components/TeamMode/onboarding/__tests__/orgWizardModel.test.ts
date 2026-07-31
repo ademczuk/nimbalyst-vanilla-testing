@@ -7,12 +7,19 @@ import {
   canAdvance,
   canSkip,
   createOrgWizardState,
+  defaultSourcePersonalOrgId,
   deriveRoomId,
+  draftOwnerMatches,
   isLikelyEmail,
   markInvited,
   markRoomsCreated,
   orgAvatarColor,
   orgAvatarInitials,
+  orgWizardSteps,
+  rehydrateOrgWizardDraft,
+  resolveAuthenticatedAccount,
+  resolveSourcePersonalOrgId,
+  serializeOrgWizardDraft,
   parseEmailInput,
   pendingInvites,
   pendingStarterRooms,
@@ -35,9 +42,27 @@ function created(overrides: Partial<OrgWizardState> = {}): OrgWizardState {
 }
 
 describe('step machine', () => {
-  it('walks the four steps in order and stops at the end', () => {
-    let state = createOrgWizardState({ orgName: 'Acme' });
-    expect(state.step).toBe('identity');
+  it('starts signed-out users at account and skips account for signed-in users', () => {
+    expect(orgWizardSteps(false)).toEqual([
+      'account',
+      'identity',
+      'invite',
+      'rooms',
+      'done',
+    ]);
+    expect(orgWizardSteps(true)).toEqual([
+      'identity',
+      'invite',
+      'rooms',
+      'done',
+    ]);
+    expect(createOrgWizardState({ isAuthenticated: false }).step).toBe('account');
+    expect(createOrgWizardState({ isAuthenticated: true }).step).toBe('identity');
+  });
+
+  it('walks the five steps in order and stops at the end', () => {
+    let state = createOrgWizardState({ orgName: 'Acme', isAuthenticated: false });
+    expect(state.step).toBe('account');
     for (const step of ORG_WIZARD_STEPS.slice(1)) {
       state = advance(state);
       expect(state.step).toBe(step);
@@ -76,6 +101,185 @@ describe('step machine', () => {
     // Closing the wizard after step 1 leaves a valid org; the inverse — being
     // past step 1 without one — must never let an invite or room fire.
     expect(canAdvance({ ...createOrgWizardState({ orgName: 'Acme' }), step: 'invite' })).toBe(false);
+  });
+});
+
+describe('authentication branch', () => {
+  it('exposes a pending invitation matching the signed-in email', () => {
+    const state = resolveAuthenticatedAccount(
+      createOrgWizardState({ isAuthenticated: false }),
+      {
+        orgId: 'org-acme',
+        name: 'Acme Robotics',
+        email: 'member@example.com',
+      },
+    );
+
+    expect(state.step).toBe('identity');
+    expect(state.pendingInvitation).toEqual({
+      orgId: 'org-acme',
+      name: 'Acme Robotics',
+      email: 'member@example.com',
+    });
+  });
+
+  it('continues directly to identity when there is no matching invitation', () => {
+    const state = resolveAuthenticatedAccount(
+      createOrgWizardState({ isAuthenticated: false }),
+      null,
+    );
+
+    expect(state.step).toBe('identity');
+    expect(state.pendingInvitation).toBeNull();
+  });
+});
+
+describe('draft persistence', () => {
+  it('rehydrates the organization name and staged choices', () => {
+    const draft = serializeOrgWizardDraft({
+      ...createOrgWizardState({ orgName: 'Acme Robotics' }),
+      emails: ['member@example.com'],
+      selectedRoomIds: ['dev'],
+    });
+
+    expect(rehydrateOrgWizardDraft(draft)).toMatchObject({
+      orgName: 'Acme Robotics',
+      emails: ['member@example.com'],
+      selectedRoomIds: ['dev'],
+    });
+  });
+
+  /**
+   * One machine, several accounts: the draft key is global, so the identity
+   * that typed it is the only thing that can tell whose org name this is.
+   */
+  it('round-trips the owner and only matches that identity', () => {
+    const draft = serializeOrgWizardDraft({
+      ...createOrgWizardState({ orgName: 'Acme Robotics', owner: 'me@example.com' }),
+    });
+
+    expect(draft.owner).toBe('me@example.com');
+    expect(rehydrateOrgWizardDraft(draft)?.owner).toBe('me@example.com');
+    expect(draftOwnerMatches('me@example.com', 'ME@Example.com')).toBe(true);
+    expect(draftOwnerMatches('me@example.com', 'other@example.com')).toBe(false);
+    expect(draftOwnerMatches('me@example.com', null)).toBe(false);
+  });
+
+  it('treats a draft typed before sign-in as belonging to whoever signs in', () => {
+    const draft = serializeOrgWizardDraft(
+      createOrgWizardState({ orgName: 'Acme Robotics', isAuthenticated: false }),
+    );
+
+    expect(draft.owner).toBeNull();
+    expect(draftOwnerMatches(null, 'me@example.com')).toBe(true);
+    expect(draftOwnerMatches(null, null)).toBe(true);
+  });
+
+  // Drafts written before owner scoping existed have no `owner` key at all.
+  it('reads a version-1 draft with no owner field as owner-less', () => {
+    const state = rehydrateOrgWizardDraft({
+      version: 1,
+      step: 'identity',
+      orgName: 'Legacy',
+      sourcePersonalOrgId: '',
+      workspacePath: null,
+      createdOrgId: null,
+      emails: [],
+      invitedEmails: [],
+      selectedRoomIds: [],
+      createdRoomIds: [],
+      welcomePosted: false,
+    });
+
+    expect(state?.owner).toBeNull();
+    expect(state?.orgName).toBe('Legacy');
+  });
+
+  /**
+   * Invite, rooms and done are entirely about an organization. A draft that
+   * names one of them without an id would render a screen whose every action
+   * needs an org that does not exist.
+   */
+  it('rewinds a post-create step that has no created organization', () => {
+    const base = {
+      version: 1 as const,
+      orgName: 'Acme',
+      sourcePersonalOrgId: '',
+      workspacePath: null,
+      createdOrgId: null,
+      emails: [],
+      invitedEmails: [],
+      selectedRoomIds: [],
+      createdRoomIds: [],
+      welcomePosted: false,
+    };
+
+    for (const step of ['invite', 'rooms', 'done'] as const) {
+      expect(rehydrateOrgWizardDraft({ ...base, step, owner: 'me@example.com' })?.step)
+        .toBe('identity');
+      // Nobody ever signed in, so naming an org is not the next thing either.
+      expect(rehydrateOrgWizardDraft({ ...base, step })?.step).toBe('account');
+    }
+  });
+
+  it('keeps a post-create step that does have its organization', () => {
+    const state = rehydrateOrgWizardDraft({
+      version: 1,
+      step: 'rooms',
+      orgName: 'Acme',
+      owner: 'me@example.com',
+      sourcePersonalOrgId: '',
+      workspacePath: null,
+      createdOrgId: 'org-1',
+      emails: [],
+      invitedEmails: [],
+      selectedRoomIds: ['dev'],
+      createdRoomIds: [],
+      welcomePosted: false,
+    });
+
+    expect(state?.step).toBe('rooms');
+    expect(state?.createdOrgId).toBe('org-1');
+  });
+});
+
+/**
+ * The retired CreateTeamDialog picked the sync account, not the first row the
+ * accounts directory happened to return; folding it into the wizard kept the
+ * picker but had lost that preference.
+ */
+describe('owning personal account', () => {
+  const accounts = [
+    { personalOrgId: 'work', email: 'work@example.com', isSyncAccount: false, sessionStatus: 'active' as const },
+    { personalOrgId: 'personal', email: 'me@example.com', isSyncAccount: true, sessionStatus: 'active' as const },
+  ];
+
+  it('defaults to the sync account instead of ambient account order', () => {
+    expect(defaultSourcePersonalOrgId(accounts)).toBe('personal');
+  });
+
+  it('falls back to the first account when none is the sync account', () => {
+    expect(defaultSourcePersonalOrgId([
+      { personalOrgId: 'work', email: 'work@example.com', isSyncAccount: false },
+      { personalOrgId: 'other', email: 'other@example.com', isSyncAccount: false },
+    ])).toBe('work');
+    expect(defaultSourcePersonalOrgId([])).toBe('');
+  });
+
+  // An expired session cannot create anything, so it does not win the default
+  // just for being the sync account.
+  it('skips an expired session while another account is usable', () => {
+    expect(defaultSourcePersonalOrgId([
+      { personalOrgId: 'work', email: 'work@example.com', isSyncAccount: false, sessionStatus: 'active' },
+      { personalOrgId: 'personal', email: 'me@example.com', isSyncAccount: true, sessionStatus: 'expired' },
+    ])).toBe('work');
+  });
+
+  it('keeps a restored choice that still exists and resets one that does not', () => {
+    expect(resolveSourcePersonalOrgId('work', accounts)).toBe('work');
+    expect(resolveSourcePersonalOrgId('removed', accounts)).toBe('personal');
+    // No account list is not evidence the choice is gone.
+    expect(resolveSourcePersonalOrgId('work', [])).toBe('work');
   });
 });
 

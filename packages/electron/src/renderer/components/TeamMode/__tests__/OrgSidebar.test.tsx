@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { OrgSidebar } from '../OrgSidebar';
 import type { OrgSidebarModel } from '../orgSidebarViewModel';
-import { visibleAdminTabs } from '../orgSidebarViewModel';
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
@@ -25,22 +24,24 @@ const model: OrgSidebarModel = {
     canCreateRoom: true,
     canCreateDirectMessage: true,
   },
-  adminTabs: visibleAdminTabs(true),
 };
 
 describe('OrgSidebar', () => {
   afterEach(() => cleanup());
 
-  it('lists rooms, DMs and the admin group with stable markers', () => {
+  it('lists rooms and DMs with stable markers, and nothing else', () => {
     const { container } = render(
       <OrgSidebar model={model} inboxUnread={3} onNavigate={vi.fn()} />,
     );
 
     expect(container.querySelectorAll('.org-room-item')).toHaveLength(2);
     expect(container.querySelectorAll('.org-dm-item')).toHaveLength(1);
-    // The administration entries keep the ids the rest of the suite addresses.
-    expect(screen.getByTestId('team-tab-members')).toBeTruthy();
-    expect(screen.getByTestId('team-tab-danger')).toBeTruthy();
+    // Greg, NIM-2322: the sidebar stays purely messaging. Administration is the
+    // ORG_MANAGEMENT dialog, reached from the profile menu in the footer.
+    expect(screen.queryByTestId('org-admin-toggle')).toBeNull();
+    for (const tab of ['members', 'projects', 'settings', 'billing', 'danger']) {
+      expect(screen.queryByTestId(`team-tab-${tab}`)).toBeNull();
+    }
   });
 
   it('pins bottomContent below the scrolling sections', () => {
@@ -84,8 +85,10 @@ describe('OrgSidebar', () => {
     fireEvent.click(screen.getByTestId('org-browse-rooms'));
     expect(onNavigate).toHaveBeenCalledWith({ view: 'directory' });
 
-    fireEvent.click(screen.getByTestId('team-tab-projects'));
-    expect(onNavigate).toHaveBeenCalledWith({ view: 'admin', adminTab: 'projects' });
+    fireEvent.click(screen.getByTestId('team-tab-inbox'));
+    expect(onNavigate).toHaveBeenCalledWith({ view: 'inbox' });
+    // Nothing in this column can produce an administration route any more.
+    expect(onNavigate.mock.calls.every(([route]) => route.view !== 'admin')).toBe(true);
   });
 
   // A failed directory read used to render "No rooms yet. Create one with + or
@@ -130,7 +133,7 @@ describe('OrgSidebar', () => {
     expect(screen.queryByTestId('org-rooms-error-retry')).toBeNull();
   });
 
-  it('collapses the admin group and disables the create controls until they exist', () => {
+  it('disables the create controls until they exist', () => {
     render(<OrgSidebar model={model} inboxUnread={0} onNavigate={vi.fn()} />);
 
     // The rooms + opens a menu, so the trigger stays live and the create item
@@ -140,9 +143,6 @@ describe('OrgSidebar', () => {
     expect((screen.getByTestId('org-create-room') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.keyDown(document, { key: 'Escape' });
     expect((screen.getByTestId('org-dms-section-add') as HTMLButtonElement).disabled).toBe(true);
-
-    fireEvent.click(screen.getByTestId('org-admin-toggle'));
-    expect(screen.queryByTestId('team-tab-members')).toBeNull();
   });
 
   it('hides the rooms section and browse entry when rooms are turned off', () => {
@@ -161,9 +161,8 @@ describe('OrgSidebar', () => {
     // now lives in its menu is unreachable too.
     expect(screen.queryByTestId('org-rooms-section-add')).toBeNull();
     expect(screen.queryByTestId('org-browse-rooms')).toBeNull();
-    // The inbox and the admin group are never gated.
+    // The inbox is never gated.
     expect(screen.getByTestId('team-tab-inbox')).toBeTruthy();
-    expect(screen.getByTestId('team-tab-settings')).toBeTruthy();
     expect(screen.getByTestId('org-dms-section')).toBeTruthy();
   });
 
@@ -179,21 +178,6 @@ describe('OrgSidebar', () => {
 
     expect(screen.queryByTestId('org-dms-section')).toBeNull();
     expect(screen.getByTestId('org-rooms-section')).toBeTruthy();
-  });
-
-  it('drops the administration-only entries for a member', () => {
-    render(
-      <OrgSidebar
-        model={{ ...model, adminTabs: visibleAdminTabs(false) }}
-        inboxUnread={0}
-        onNavigate={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByTestId('team-tab-members')).toBeTruthy();
-    expect(screen.getByTestId('team-tab-settings')).toBeTruthy();
-    expect(screen.queryByTestId('team-tab-billing')).toBeNull();
-    expect(screen.queryByTestId('team-tab-danger')).toBeNull();
   });
 
   it('points an empty rooms section at the way out of it', () => {

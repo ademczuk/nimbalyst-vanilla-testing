@@ -15,6 +15,7 @@ import { CodexUsageIndicator } from '../CodexUsageIndicator';
 import { GeminiUsageIndicator } from '../GeminiUsageIndicator';
 import { VoiceModeButton } from '../UnifiedAI/VoiceModeButton';
 import { useExtensionGutterButtons, useExtensionBottomPanelButtons } from '../../extensions/panels/usePanels';
+import { openOrganizationSurface } from './openOrganizationSurface';
 import { HelpTooltip } from '../../help';
 import {
   developerModeAtom,
@@ -555,12 +556,7 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
               }}
               onManageOrganization={(orgId) => {
                 setUserMenuOpen(false);
-                // Org administration opens in its own window (2026-07-17
-                // decision-log correction), not a mode in the project window.
-                void window.electronAPI?.team?.openManagementWindow({
-                  orgId,
-                  workspacePath: workspacePath ?? undefined,
-                });
+                openOrganizationSurface(orgId, workspacePath);
               }}
             />
           )}

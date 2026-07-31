@@ -1067,7 +1067,7 @@ export async function listTeams(): Promise<TeamDetails[]> {
       if (!allAccountLookupsSucceeded && listTeamsCache?.promise === promise) {
         listTeamsCache = null;
       }
-      // Drive the Organization Manager menu item's visibility. A partial lookup
+      // Drive the Organization Messages menu item's visibility. A partial lookup
       // may under-report, so only an authoritative empty result hides the item.
       if (teams.length > 0) {
         setHasOrganizationsForMenu(true);
@@ -1163,6 +1163,45 @@ export async function findPendingInviteForWorkspace(workspacePath: string): Prom
     return match;
   } catch (err) {
     logger.main.error('[TeamService] findPendingInviteForWorkspace error:', err);
+    return null;
+  }
+}
+
+export function pendingInviteForEmail(
+  teams: readonly TeamDetails[],
+  email: string,
+): TeamDetails | null {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return null;
+  return teams.find((team) => (
+    team.membershipType !== undefined
+    && team.membershipType !== 'active_member'
+    && team.sourceEmail?.trim().toLowerCase() === normalizedEmail
+  )) ?? null;
+}
+
+/**
+ * Find an invitation owned by the signed-in account for `email`.
+ *
+ * The team directory is already account-attributed by `listTeams`, so this is
+ * the same lookup seam as the workspace matcher without requiring a git remote
+ * before a new user has chosen a project.
+ */
+export async function findPendingInviteForEmail(email: string): Promise<TeamDetails | null> {
+  if (!isAuthenticated()) return null;
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return null;
+  const ownsEmail = getAccounts().some((account) => (
+    account.sessionStatus === 'active'
+    && account.email?.trim().toLowerCase() === normalizedEmail
+  ));
+  if (!ownsEmail) return null;
+
+  try {
+    const teams = await listTeams();
+    return pendingInviteForEmail(teams, normalizedEmail);
+  } catch (error) {
+    logger.main.error('[TeamService] findPendingInviteForEmail error:', error);
     return null;
   }
 }
@@ -1863,6 +1902,18 @@ export function registerTeamHandlers(): void {
   safeHandle('team:find-for-workspace', async (_event, workspacePath: string) => {
     try {
       return await findForWorkspaceSingleFlight(workspacePath, () => findTeamOrPendingInviteForWorkspace(workspacePath));
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  safeHandle('team:find-pending-invite-for-email', async (_event, email: string) => {
+    try {
+      if (typeof email !== 'string' || !email.trim()) {
+        return { success: false, error: 'team:find-pending-invite-for-email requires email' };
+      }
+      const invitation = await findPendingInviteForEmail(email);
+      return { success: true, invitation };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }

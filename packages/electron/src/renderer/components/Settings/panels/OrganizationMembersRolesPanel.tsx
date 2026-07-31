@@ -92,7 +92,7 @@ export function OrganizationMembersRolesPanel({
                 </div>
                 <button
                   type="button"
-                  className="pending-invitation-accept rounded-md bg-[var(--nim-primary)] px-3 py-1.5 text-xs font-semibold text-white"
+                  className="pending-invitation-accept rounded-md bg-[var(--nim-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--nim-on-primary)]"
                   data-testid="pending-invitation-accept"
                   onClick={() => void window.electronAPI.organization.acceptInvitation(invitation.orgId)
                     .then(async (result) => {
@@ -109,6 +109,11 @@ export function OrganizationMembersRolesPanel({
                           'Invitation accepted, but the organization destination could not be saved. Try again.',
                         );
                       }
+                      // Deliberately still the window: #general is a
+                      // conversation, and conversations are what
+                      // `openManagementWindow` opens since NIM-2322 moved
+                      // administration into the ORG_MANAGEMENT dialog. This
+                      // panel is itself one of that dialog's tabs.
                       void window.electronAPI?.team?.openManagementWindow?.({ orgId: invitation.orgId });
                       return refresh();
                     })
@@ -140,7 +145,7 @@ export function OrganizationMembersRolesPanel({
             </div>
             <button
               type="button"
-              className="new-organization-launch rounded bg-[var(--nim-primary)] px-3 py-2 text-sm font-semibold text-white"
+              className="new-organization-launch rounded bg-[var(--nim-primary)] px-3 py-2 text-sm font-semibold text-[var(--nim-on-primary)]"
               data-testid="new-organization-launch"
               onClick={() => dialogRef.current?.open(DIALOG_IDS.ORG_CREATION_WIZARD, {
                 onOrganizationCreated: () => { void refresh(); },
@@ -238,7 +243,7 @@ export function OrganizationMembersRolesPanel({
               }}
             >
               <input className="min-w-0 flex-1 rounded border border-[var(--nim-border)] bg-[var(--nim-bg)] px-3 py-2 text-sm" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="teammate@example.com" />
-              <button className="rounded bg-[var(--nim-primary)] px-3 py-2 text-sm font-semibold text-white" type="submit">Invite</button>
+              <button className="rounded bg-[var(--nim-primary)] px-3 py-2 text-sm font-semibold text-[var(--nim-on-primary)]" type="submit">Invite</button>
             </form>
           </ActionGuard>
         </>

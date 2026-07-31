@@ -5,7 +5,6 @@ import type { InboxRowView } from '../Inbox/inboxTypes';
 import {
   DEFAULT_ORG_WINDOW_ROUTE,
   gateOrgWindowRoute,
-  isFullWidthRoute,
   isRouteSelected,
   routeForInboxRow,
   withOrgWindowRouting,
@@ -43,13 +42,6 @@ function provider(navigate = vi.fn().mockResolvedValue(true)): InboxProvider {
 }
 
 describe('org window routes', () => {
-  it('gives every surface but the administration panels the full window', () => {
-    expect(isFullWidthRoute({ view: 'inbox' })).toBe(true);
-    expect(isFullWidthRoute({ view: 'directory' })).toBe(true);
-    expect(isFullWidthRoute({ view: 'conversation', conversationId: 'general' })).toBe(true);
-    expect(isFullWidthRoute({ view: 'admin', adminTab: 'billing' })).toBe(false);
-  });
-
   it('selects on the addressed conversation and admin panel, not just the view', () => {
     const route = { view: 'conversation' as const, conversationId: 'general' };
     expect(isRouteSelected(route, { view: 'conversation', conversationId: 'general' })).toBe(true);
@@ -65,25 +57,20 @@ describe('org window routes', () => {
 describe('gateOrgWindowRoute', () => {
   const gating = resolveOrgMessagingGating();
 
-  it('moves the window off an admin panel this viewer may not see', () => {
-    expect(gateOrgWindowRoute(
-      { view: 'admin', adminTab: 'danger' },
-      gating,
-      [],
-      ['members', 'projects', 'settings'],
-    )).toEqual(DEFAULT_ORG_WINDOW_ROUTE);
-  });
+  // Administration is not in this window any more (NIM-2322), so an admin
+  // route is redirected regardless of the panel or the viewer's role — a stale
+  // hand-off or deep link must land on messaging, not on nothing.
+  it.each(['members', 'projects', 'settings', 'billing', 'danger'] as const)(
+    'redirects a stale %s route to the messaging landing view',
+    (adminTab) => {
+      expect(gateOrgWindowRoute({ view: 'admin', adminTab }, gating, []))
+        .toEqual(DEFAULT_ORG_WINDOW_ROUTE);
+    },
+  );
 
-  it('leaves a panel the viewer may see alone', () => {
-    const route = { view: 'admin' as const, adminTab: 'members' as const };
-    expect(gateOrgWindowRoute(route, gating, [], ['members'])).toBe(route);
-  });
-
-  it('leaves an admin route alone while the role is still unknown', () => {
-    // Bouncing here would throw an admin off their own Danger zone for the
-    // frame between opening the window and the roster answering.
-    const route = { view: 'admin' as const, adminTab: 'danger' as const };
-    expect(gateOrgWindowRoute(route, gating, [])).toBe(route);
+  it('redirects an admin route carrying no panel at all', () => {
+    expect(gateOrgWindowRoute({ view: 'admin' }, gating, []))
+      .toEqual(DEFAULT_ORG_WINDOW_ROUTE);
   });
 });
 

@@ -156,7 +156,7 @@ import {
 } from './protocols/collabAssetProtocol';
 import { SessionNamingService } from './services/SessionNamingService';
 import { SessionWakeupScheduler } from './services/SessionWakeupScheduler';
-import { getSessionWakeupsStore } from './services/RepositoryManager';
+import { getSessionWakeupsStore, repositoryManager } from './services/RepositoryManager';
 import { ExtensionDevService } from './services/ExtensionDevService';
 import { MetaAgentService } from './services/MetaAgentService';
 import { notificationService } from './services/NotificationService';
@@ -201,11 +201,18 @@ import { gitRefWatcher } from './file/GitRefWatcher';
 import { autoUpdaterService, AutoUpdaterService } from './services/autoUpdater';
 import { initializeDatabase } from './database/initialize';
 import { database, HandledError } from './database/PGLiteDatabaseWorker';
+import { resolveTrackerDeepLinkId } from './services/tracker/resolveTrackerDeepLinkId';
 import { AnalyticsService } from "./services/analytics/AnalyticsService.ts";
 import { registerAnalyticsHandlers } from "./ipc/AnalyticsHandlers.ts";
 import { registerFeatureUsageHandlers } from "./ipc/FeatureUsageHandlers.ts";
 import { FeatureUsageService, FEATURES } from "./services/FeatureUsageService.ts";
-import { shutdownStytchAuth, handleAuthCallback, isAuthenticated, getPersonalUserId } from './services/StytchAuthService';
+import {
+  shutdownStytchAuth,
+  handleAuthCallbackUrl,
+  isAuthenticated,
+  getPersonalUserId,
+  setAuthCallbackSuccessHandler,
+} from './services/StytchAuthService';
 import { registerTrackerSyncHandlers, initializeTrackerSync } from './services/TrackerSyncManager';
 import { initTrackerSchemaService, updateTrackerSchemaWorkspace } from './services/TrackerSchemaService';
 import { initTrackerNavigationService } from './services/TrackerNavigationService';
@@ -231,6 +238,15 @@ import { pathToFileURL } from 'url';
 import { registerLinuxAppImageProtocolHandler } from './services/LinuxProtocolRegistration';
 import { installWindowOpenGuard } from './window/windowOpenGuard';
 import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeConfigDir';
+
+setAuthCallbackSuccessHandler(async () => {
+  try {
+    await repositoryManager.reinitializeSyncWithNewConfig();
+    logger.main.info('[AuthCallback] Sync reinitialized after auth');
+  } catch (error) {
+    logger.main.error('[AuthCallback] Failed to reinitialize sync after auth:', error);
+  }
+});
 
 // Register before any startup path can create a partition session. Browsed web
 // content stays microphone-denied even after Voice Mode receives an OS grant.
@@ -896,72 +912,11 @@ async function handleDeepLink(url: string): Promise<void> {
     try {
         const parsed = new URL(url);
 
-        // Handle auth callback: nimbalyst://auth/callback?session_token=...
+        // Legacy scheme callbacks are routed through the same validator, which
+        // rejects everything except a nonce-bearing 127.0.0.1 callback whose
+        // port matches the pending-flow ledger.
         if (parsed.host === 'auth' && parsed.pathname === '/callback') {
-            const sessionToken = parsed.searchParams.get('session_token');
-            const sessionJwt = parsed.searchParams.get('session_jwt');
-            const userId = parsed.searchParams.get('user_id');
-            const email = parsed.searchParams.get('email');
-            const expiresAt = parsed.searchParams.get('expires_at');
-
-            // Surface any worker-supplied error indicators before checking for
-            // session_token. The collabv3 worker may redirect back with
-            // `?error=...&error_description=...` instead of a session, and
-            // until now we silently fell into the "missing session_token"
-            // branch with no clue why.
-            const errorCode = parsed.searchParams.get('error');
-            const errorDescription = parsed.searchParams.get('error_description');
-            const stytchErrorType = parsed.searchParams.get('stytch_error_type');
-            if (errorCode || errorDescription || stytchErrorType) {
-                logger.main.error('[DeepLink] Auth callback returned error from server:', {
-                    error: errorCode,
-                    errorDescription,
-                    stytchErrorType,
-                    allParams: summarizeDeepLink(url),
-                });
-                return;
-            }
-
-            if (sessionToken) {
-                const orgId = parsed.searchParams.get('org_id');
-
-                // B2B auth requires org_id - reject callbacks without it
-                if (!orgId) {
-                    logger.main.error('[DeepLink] Auth callback missing org_id - B2B auth requires organization context');
-                    return;
-                }
-
-                logger.main.info('[DeepLink] Auth callback params:', {
-                    hasSessionToken: !!sessionToken,
-                    hasSessionJwt: !!sessionJwt,
-                    userId,
-                    email,
-                    orgId,
-                });
-
-                await handleAuthCallback({
-                    sessionToken,
-                    sessionJwt: sessionJwt || undefined,
-                    userId: userId || undefined,
-                    email: email || undefined,
-                    expiresAt: expiresAt || undefined,
-                    orgId,
-                });
-                logger.main.info('[DeepLink] Auth callback handled successfully');
-
-                // Reinitialize sync now that we're authenticated
-                try {
-                    const { repositoryManager } = await import('./services/RepositoryManager');
-                    await repositoryManager.reinitializeSyncWithNewConfig();
-                    logger.main.info('[DeepLink] Sync reinitialized after auth');
-                } catch (syncError) {
-                    logger.main.error('[DeepLink] Failed to reinitialize sync after auth:', syncError);
-                }
-            } else {
-                // No session_token and no recognized error param -- log everything
-                // we got so the worker's actual response shape is visible.
-                logger.main.error('[DeepLink] Auth callback missing session_token; full params:', summarizeDeepLink(url));
-            }
+            await handleAuthCallbackUrl(url);
         } else if (parsed.host === 'install' || parsed.pathname?.startsWith('/install/')) {
             // Handle extension install: nimbalyst://install/com.nimbalyst.excalidraw
             const extensionId = parsed.host === 'install'
@@ -1267,6 +1222,15 @@ async function openTrackerFromDeepLink(
             });
         }
         return false;
+    }
+
+    // A link may address the item by an id it no longer has: `fm:<type>:<path>`
+    // links were minted before a shared plan was promoted to a stable id, and
+    // issue keys were never row ids to begin with. Resolve here, in main, so the
+    // renderer only ever receives an id it can actually select.
+    trackerLink.trackerId = await resolveTrackerDeepLinkId(database, workspacePath, trackerId);
+    if (trackerLink.trackerId !== trackerId) {
+        logger.main.info('[DeepLink] Resolved tracker id:', { from: trackerId, to: trackerLink.trackerId });
     }
 
     pendingTrackerLinks.set(workspacePath, trackerLink);
@@ -3006,7 +2970,7 @@ app.on('before-quit', async (event) => {
 
     // Shutdown Stytch auth service
     try {
-        shutdownStytchAuth();
+        await shutdownStytchAuth();
     } catch (error) {
         console.error('[QUIT] Error shutting down Stytch auth:', error);
     }

@@ -7,6 +7,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 
 import { OrgSwitcher } from '../OrgSwitcher';
 import { ProjectWindowStatusBar } from '../ProjectWindowStatusBar';
+import { dialogRef } from '../../contexts/DialogContext';
+import { DIALOG_IDS } from '../../dialogs/registry';
 import { activeWorkspacePathAtom } from '../../store/atoms/openProjects';
 import { teamInboxSnapshotAtom } from '../../store/atoms/teamInbox';
 
@@ -19,8 +21,10 @@ vi.mock('@nimbalyst/runtime', () => ({
 const openManagementWindow = vi.fn();
 const findForWorkspace = vi.fn();
 const organizationList = vi.fn();
+const openDialog = vi.fn();
 
 function installApi() {
+  dialogRef.current = { open: openDialog } as unknown as typeof dialogRef.current;
   Object.defineProperty(window, 'electronAPI', {
     configurable: true,
     value: {
@@ -137,6 +141,41 @@ describe('project window unread rendering', () => {
       orgId: 'org-b',
       workspacePath: '/workspace/acme',
     });
+  });
+
+  // The rows above are the menu's unread list, so they open the messages
+  // window. Everything below the divider is administration, which is a dialog
+  // in this window since NIM-2322 — no second OS window for it.
+  it('opens the management dialog from Manage organization and from a pending invite', async () => {
+    installApi();
+    organizationList.mockResolvedValue({
+      teams: [
+        { orgId: 'org-a', name: 'Acme', role: 'admin', membershipType: 'active_member' },
+        { orgId: 'org-invite', name: 'Invited', role: 'member', membershipType: 'invited_member' },
+      ],
+    });
+    findForWorkspace.mockResolvedValue({ team: { orgId: 'org-a' } });
+
+    renderWithStore(<OrgSwitcher />, snapshot([]));
+
+    await waitFor(() => expect(screen.getByTestId('org-switcher')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('org-switcher'));
+
+    await waitFor(() => expect(screen.getByTestId('org-switcher-manage-organization')).toBeTruthy());
+    fireEvent.click(screen.getByTestId('org-switcher-manage-organization'));
+    expect(openDialog).toHaveBeenCalledWith(DIALOG_IDS.ORG_MANAGEMENT, {
+      orgId: 'org-a',
+      initialTab: undefined,
+    });
+
+    fireEvent.click(screen.getByTestId('org-switcher'));
+    // An invitation is acted on in the Members panel, so it lands there.
+    fireEvent.click(screen.getByTestId('org-switcher-pending-invites'));
+    expect(openDialog).toHaveBeenCalledWith(DIALOG_IDS.ORG_MANAGEMENT, {
+      orgId: 'org-invite',
+      initialTab: 'members',
+    });
+    expect(openManagementWindow).not.toHaveBeenCalled();
   });
 
   it('hides the status-bar chip when there are no unread deliveries', () => {

@@ -124,13 +124,12 @@ describe('admin tab visibility', () => {
       .toEqual(['billing', 'danger']);
   });
 
-  it('carries the viewer-visible tabs onto the sidebar model', () => {
-    expect(buildOrgSidebar({ conversations: [], isOrgAdmin: false })
-      .adminTabs.map((tab) => tab.id))
-      .toEqual(['members', 'projects', 'settings']);
-    expect(buildOrgSidebar({ conversations: [], isOrgAdmin: true })
-      .adminTabs.map((tab) => tab.id))
-      .toContain('danger');
+  // The sidebar is messaging only since NIM-2322; the tab list it used to
+  // carry belongs to the management dialog, which reads `visibleAdminTabs`
+  // directly.
+  it('keeps the administration tabs off the sidebar model', () => {
+    expect(buildOrgSidebar({ conversations: [], isOrgAdmin: true }))
+      .not.toHaveProperty('adminTabs');
   });
 });
 

@@ -241,19 +241,6 @@ export const TrackerDocumentView: React.FC<TrackerDocumentViewProps> = ({
     && Boolean(documentItemId)
     && contentMode !== 'file-backed';
 
-  // "Copy document link" is the tracker deep link, not a shared-document link,
-  // so it rides in as an extra action rather than the bar's built-in Copy link.
-  const documentBarActions = useMemo(
-    () => (onCopyDocumentLink
-      ? [{
-          label: 'Copy document link',
-          icon: 'link',
-          onClick: onCopyDocumentLink,
-        }]
-      : []),
-    [onCopyDocumentLink],
-  );
-
   return (
     <div
       className="tracker-document-view tracker-main-view flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-nim"
@@ -323,6 +310,7 @@ export const TrackerDocumentView: React.FC<TrackerDocumentViewProps> = ({
                     onOpenItem={onOpenItem}
                   />
                 ) : undefined}
+                onCopyDocumentLink={onCopyDocumentLink}
                 onCollapseToTracker={onCollapseToTracker}
               />
             )}
@@ -349,7 +337,6 @@ export const TrackerDocumentView: React.FC<TrackerDocumentViewProps> = ({
                 showHistoryAction={false}
                 showCommonFileActions={false}
                 showDocumentTypeAction={false}
-                extraActionItems={documentBarActions}
               />
             )}
             {/*

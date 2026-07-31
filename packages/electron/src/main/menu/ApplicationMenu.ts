@@ -1017,7 +1017,9 @@ export async function createApplicationMenu() {
                     // No orgId: the window opens on the last-selected organization
                     // (or the first one you belong to), same as the switcher's
                     // untargeted entry points.
-                    label: 'Organization Manager (Alpha)',
+                    // The window is messaging only since NIM-2322 —
+                    // administration is a dialog in whichever window you are in.
+                    label: 'Organization Messages',
                     // Orgs are invite-only during the alpha: hidden until
                     // listTeams reports a membership (dev builds always show it
                     // so the create flow stays reachable).
@@ -1955,7 +1957,7 @@ export async function createApplicationMenu() {
 }
 
 // Rebuild when TeamService learns whether the account belongs to any org, so
-// the Organization Manager item can appear/disappear without a restart.
+// the Organization Messages item can appear/disappear without a restart.
 registerOrganizationMenuRebuild(() => { void updateApplicationMenu(); });
 
 // Rebuild when the organization window gains or loses focus, so the Messages

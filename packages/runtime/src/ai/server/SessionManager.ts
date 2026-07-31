@@ -1178,7 +1178,14 @@ export class SessionManager {
   }
 
   async updateProviderSessionData(sessionId: string, providerSessionId?: string): Promise<void> {
-    await AISessionsRepository.updateMetadata(sessionId, { providerSessionId });
+    // Clear must travel as an explicit null. Stores skip any column whose
+    // payload value is `undefined`, so passing undefined through here silently
+    // left the dead provider session id on the row -- and every following
+    // prompt resumed it again, looping the "conversation session has expired"
+    // error with no way out. NIM-2308 / GH #1098.
+    await AISessionsRepository.updateMetadata(sessionId, {
+      providerSessionId: providerSessionId ?? null,
+    });
     if (this.currentSession?.id === sessionId) {
       this.currentSession = { ...this.currentSession, providerSessionId };
     }

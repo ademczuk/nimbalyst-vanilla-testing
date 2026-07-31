@@ -5,12 +5,9 @@ import { trackerItemToRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { replaceAllTrackerItemsAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import { useAtom, useAtomValue, useStore } from 'jotai';
 
-import { OrganizationBillingPanel } from '../Settings/panels/OrganizationBillingPanel';
-import { OrganizationDangerZone } from '../Settings/panels/OrganizationDangerZone';
+// The one administration panel this window still hosts: its unbound arm, where
+// there is no organization to open the management dialog against.
 import { OrganizationMembersRolesPanel } from '../Settings/panels/OrganizationMembersRolesPanel';
-import { OrganizationProjectsPanel } from '../Settings/panels/OrganizationProjectsPanel';
-import { OrganizationSettingsPanel } from '../Settings/panels/OrganizationSettingsPanel';
-import { ProjectSharingPanel } from '../Settings/panels/ProjectSharingPanel';
 import { AlphaBadge } from '../common/AlphaBadge';
 import { TEAM_ALPHA_TOOLTIP, TeamAlphaNotice } from '../common/TeamAlphaNotice';
 import { selectedOrgIdAtom } from '../../store/atoms/orgScope';
@@ -76,9 +73,7 @@ import {
   DIRECTORY_ROUTE,
   conversationRoute,
   gateOrgWindowRoute,
-  isFullWidthRoute,
   orgWindowRouteAtom,
-  orgWindowRouteKey,
   routeAfterOrgChange,
   withOrgWindowRouting,
   type OrgWindowRoute,
@@ -92,7 +87,6 @@ import { trackTeamAnalyticsEvent } from '../../utils/teamAnalytics';
 // Workstream F will replace this interim destination with the shipped console route.
 export const TEAM_CONSOLE_URL = 'https://console.nimbalyst.com';
 
-export { ADMIN_TABS } from './OrgSidebar';
 export type { AdminTab, OrgWindowRoute } from './orgWindowState';
 
 interface TeamSummary {
@@ -115,15 +109,6 @@ export function TeamMode({ workspacePath, isActive = true }: { workspacePath?: s
   const [organizationLoadError, setOrganizationLoadError] = useState<string | null>(null);
   const [organizationReloadNonce, setOrganizationReloadNonce] = useState(0);
   const surfaceOpenRecordedRef = useRef(false);
-
-  const onOrganizationRenamed = useCallback((name: string) => {
-    setTeam((current) => current ? { ...current, name } : current);
-    setOrganizations((current) => current.map((organization) => (
-      organization.orgId === selectedOrgId
-        ? { ...organization, name }
-        : organization
-    )));
-  }, [selectedOrgId]);
 
   const selectOrganization = useCallback((orgId: string) => {
     const selectedOrganization = organizations.find((organization) => organization.orgId === orgId);
@@ -230,7 +215,7 @@ export function TeamMode({ workspacePath, isActive = true }: { workspacePath?: s
               ? 'This organization is not available yet. Your destination has been preserved.'
               : organizationCreationEnabled
                 ? 'Create an organization to collaborate with a team, or accept a pending invitation.'
-                : 'Organizations are invite-only during the alpha. Accept a pending invitation to get started.'}
+                : 'Creating an organization is temporarily unavailable. Accept a pending invitation to get started.'}
           </p>
           <TeamAlphaNotice className="mt-2.5 max-w-[640px]" />
         </header>
@@ -288,13 +273,16 @@ export function TeamMode({ workspacePath, isActive = true }: { workspacePath?: s
       organizations={organizations}
       boundEmail={boundEmail}
       onSelectOrganization={selectOrganization}
-      onOrganizationRenamed={onOrganizationRenamed}
     />
   );
 }
 
 /**
  * The bound-organization window: messaging sidebar plus one main surface.
+ *
+ * Messaging is all of it since NIM-2322 — administration is the
+ * `ORG_MANAGEMENT` dialog, which opens in whichever window the user is already
+ * in, this one included.
  *
  * Split out from `TeamMode` because the org-scoped hooks below (directory,
  * roster, unread derivation) only make sense once an organization is resolved —
@@ -305,13 +293,11 @@ function OrgWindowBody({
   organizations,
   boundEmail,
   onSelectOrganization,
-  onOrganizationRenamed,
 }: {
   team: TeamSummary;
   organizations: TeamSummary[];
   boundEmail: string | null;
   onSelectOrganization: (orgId: string) => void;
-  onOrganizationRenamed: (name: string) => void;
 }) {
   const orgId = team.orgId;
   const trackerStore = useStore();
@@ -321,9 +307,6 @@ function OrgWindowBody({
   // the selected destination reads its own atom instead of taking a prop.
   const [route, setRoute] = useAtom(orgWindowRouteAtom);
   const onRoute = setRoute;
-  // Which org project's access editor is open inside the Projects panel, if any.
-  const [accessProjectId, setAccessProjectId] = useState<string | null>(null);
-  const onAccessProjectId = setAccessProjectId;
   const conversations = useAtomValue(conversationDirectoryAtomFamily(orgId));
   const directoryLoadState = useAtomValue(conversationDirectoryLoadStateAtomFamily(orgId));
   const participantsByConversationId = useAtomValue(
@@ -395,44 +378,20 @@ function OrgWindowBody({
     unreadCounts,
   ]);
   const gating = sidebar.gating;
-  // Only once the roster resolved a role for *this* organization. While it is
-  // unresolved — still loading, or a request that failed — the admin gating is
-  // withheld rather than guessed: gating on an unknown role would bounce an
-  // admin off their own Danger zone, and a transient roster failure must not
-  // demote them either.
-  const rosterResolved = !roster.loading && roster.callerRole !== null;
-  const visibleAdminTabs = useMemo(
-    () => (rosterResolved
-      ? sidebar.adminTabs.map((tab) => tab.id)
-      : undefined),
-    [rosterResolved, sidebar.adminTabs],
-  );
 
   // Turning rooms or DMs off while someone is reading one has to move them:
   // the disabled surface is gone from the sidebar and the server would reject
-  // a post there anyway. The same applies to an admin panel this viewer's role
-  // stopped being allowed to see.
+  // a post there anyway. An administration route left over from before
+  // NIM-2322 lands here too — this window has no such surface any more.
   useEffect(() => {
-    const gated = gateOrgWindowRoute(
-      route,
-      gating,
-      conversations,
-      visibleAdminTabs,
-    );
+    const gated = gateOrgWindowRoute(route, gating, conversations);
     if (gated !== route) onRoute(gated);
-  }, [conversations, gating, onRoute, route, visibleAdminTabs]);
+  }, [conversations, gating, onRoute, route]);
 
   const inboxProvider = useMemo(
     () => withOrgWindowRouting(baseInboxProvider, orgId, onRoute),
     [baseInboxProvider, onRoute, orgId],
   );
-
-  // The gate effect above moves the route on the next tick; this keeps the
-  // panel itself from rendering for the frame in between.
-  const adminTab = visibleAdminTabs && route.adminTab
-    && !visibleAdminTabs.includes(route.adminTab)
-    ? undefined
-    : route.adminTab;
 
   const routedConversation = useRoutedConversation(
     orgId,
@@ -489,7 +448,6 @@ function OrgWindowBody({
   const activeMemberships = activeConversationId
     ? membershipsByConversationId[activeConversationId]
     : undefined;
-  const fullWidth = isFullWidthRoute(route);
 
   // The Inbox is built once and then kept, so hopping between it and a room is
   // a visibility change rather than a rebuild. It is not mounted before it has
@@ -539,12 +497,6 @@ function OrgWindowBody({
       conversationId: activeConversationId,
     }).catch(() => undefined);
   }, [activeConversationId, orgId]);
-
-  // Reset the per-project access editor whenever the org or destination
-  // changes. Keyed on the route's key rather than the route object so it does
-  // not also fire for a re-selection of the same destination.
-  const routeKey = orgWindowRouteKey(route);
-  useEffect(() => { setAccessProjectId(null); }, [orgId, routeKey]);
 
   // Room management dialogs are held here rather than in the global dialog
   // registry: each one reads org-scoped live state (roster, directory) and
@@ -656,15 +608,11 @@ function OrgWindowBody({
           bottomContent={sidebarBottomContent}
         />
 
-        <main
-          className={`team-mode-content min-w-0 flex-1 ${
-            fullWidth
-              ? 'team-mode-content-full overflow-hidden'
-              : 'overflow-y-auto p-6'
-          }`}
-        >
-          {fullWidth ? (
-            <>
+        {/* Every surface in this window is a full-bleed messaging one (list plus
+            pane, message list plus composer); the administration panels that
+            wanted the narrow form column moved to the dialog. */}
+        <main className="team-mode-content team-mode-content-full min-w-0 flex-1 overflow-hidden">
+          <>
               {/* Kept mounted once visited, hidden rather than unmounted, the
                   way the project window's modes are. Every Inbox <-> room hop
                   used to rebuild the whole surface, re-read the stored
@@ -751,39 +699,7 @@ function OrgWindowBody({
                     </div>
                   )
               )}
-            </>
-          ) : (
-          <div className="mx-auto max-w-[900px]">
-            {adminTab === 'members' && <OrganizationMembersRolesPanel orgId={orgId} allowOrganizationCreation={false} />}
-            {adminTab === 'projects' && (
-              accessProjectId
-                ? (
-                  <div className="team-project-access">
-                    <button
-                      type="button"
-                      className="team-project-access-back mb-4 flex items-center gap-1.5 text-xs text-[var(--nim-link)]"
-                      onClick={() => onAccessProjectId(null)}
-                    >
-                      <MaterialSymbol icon="arrow_back" size={14} /> All projects
-                    </button>
-                    <ProjectSharingPanel target={{ kind: 'organizationProject', orgId, projectId: accessProjectId }} />
-                  </div>
-                )
-                : <OrganizationProjectsPanel orgId={orgId} onManageAccess={(_orgId, projectId) => onAccessProjectId(projectId)} />
-            )}
-            {adminTab === 'settings' && (
-              <OrganizationSettingsPanel
-                orgId={orgId}
-                orgName={team.name}
-                ownerEmail={boundEmail}
-                callerRole={roster.callerRole}
-                onRenamed={onOrganizationRenamed}
-              />
-            )}
-            {adminTab === 'billing' && <OrganizationBillingPanel />}
-            {adminTab === 'danger' && <OrganizationDangerZone orgId={orgId} />}
-          </div>
-          )}
+          </>
         </main>
       </div>
 

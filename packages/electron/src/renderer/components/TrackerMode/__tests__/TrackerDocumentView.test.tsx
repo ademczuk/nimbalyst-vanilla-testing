@@ -181,6 +181,14 @@ describe('TrackerDocumentView', () => {
     expect(onCollapseToTracker).toHaveBeenCalledTimes(1);
   });
 
+  it('puts the shared tracker link action in the expanded document header', () => {
+    const onCopyDocumentLink = vi.fn();
+    renderView({ onCopyDocumentLink });
+
+    fireEvent.click(screen.getByTestId('tracker-document-copy-link'));
+    expect(onCopyDocumentLink).toHaveBeenCalledTimes(1);
+  });
+
   it('puts a labelled back button in the list pane and keeps the close button in the document header', () => {
     const { onCollapseToTracker } = renderView();
 

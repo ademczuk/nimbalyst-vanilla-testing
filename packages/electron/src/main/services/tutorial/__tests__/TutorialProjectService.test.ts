@@ -6,8 +6,16 @@ import {
   TutorialProjectService,
   type TutorialProjectServiceDependencies,
 } from "../TutorialProjectService";
+import type { SeededTutorialTracker } from "../TutorialTrackerSeeder";
 
 const createdDirectories: string[] = [];
+const EXAMPLE_BUG: SeededTutorialTracker = {
+  key: "EXAMPLE_BUG",
+  id: "tk_tutorial_example_bug",
+  issueKey: "NIM-6",
+  type: "bug",
+  title: "Export remains disabled after changing the date range",
+};
 
 async function createTempDirectory(prefix: string): Promise<string> {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -23,11 +31,15 @@ async function createHarness() {
   await fs.mkdir(templateDirectory);
   await fs.writeFile(
     path.join(templateDirectory, "README.md"),
-    "# Welcome to Nimbalyst\n\nThis is the tutorial project.\n"
+    "# Welcome to Nimbalyst\n\nOpen the [example bug](nimbalyst://{{TRACKER_ISSUE_KEY:EXAMPLE_BUG}}).\n"
   );
   await fs.writeFile(
     path.join(templateDirectory, ".nimbalyst-tutorial-template.json"),
     JSON.stringify({ authoringOnly: true })
+  );
+  await fs.writeFile(
+    path.join(templateDirectory, "trackers.json"),
+    JSON.stringify([{ authoringOnly: true }])
   );
 
   const workspaceStates = new Map<string, Record<string, unknown>>();
@@ -47,6 +59,8 @@ async function createHarness() {
     findWindowByWorkspace: vi.fn(() => null),
     addToRecentItems: vi.fn(),
     closeWorkspaceManagerWindow: vi.fn(),
+    seedTutorialTrackers: vi.fn(async () => [EXAMPLE_BUG]),
+    deleteTutorialTrackers: vi.fn(async () => undefined),
     seedTutorialSessions: vi.fn(async () => undefined),
   };
 
@@ -82,12 +96,15 @@ describe("TutorialProjectService", () => {
 
     const readmePath = path.join(result.workspacePath, "README.md");
     await expect(fs.readFile(readmePath, "utf8")).resolves.toContain(
-      "Welcome to Nimbalyst"
+      "nimbalyst://NIM-6"
     );
     await expect(
       fs.access(
         path.join(result.workspacePath, ".nimbalyst-tutorial-template.json")
       )
+    ).rejects.toThrow();
+    await expect(
+      fs.access(path.join(result.workspacePath, "trackers.json"))
     ).rejects.toThrow();
     expect(harness.dependencies.setWorkspaceTrusted).toHaveBeenCalledWith(
       result.workspacePath,
@@ -117,8 +134,12 @@ describe("TutorialProjectService", () => {
         ],
       },
     });
-    expect(harness.dependencies.seedTutorialSessions).toHaveBeenCalledWith(
+    expect(harness.dependencies.seedTutorialTrackers).toHaveBeenCalledWith(
       result.workspacePath
+    );
+    expect(harness.dependencies.seedTutorialSessions).toHaveBeenCalledWith(
+      result.workspacePath,
+      [EXAMPLE_BUG]
     );
     expect(harness.dependencies.createWindow).toHaveBeenCalledWith(
       false,
@@ -157,6 +178,7 @@ describe("TutorialProjectService", () => {
     expect(harness.dependencies.saveAgentPermissions).not.toHaveBeenCalled();
     expect(harness.dependencies.updateWorkspaceState).not.toHaveBeenCalled();
     expect(harness.dependencies.seedTutorialSessions).not.toHaveBeenCalled();
+    expect(harness.dependencies.seedTutorialTrackers).not.toHaveBeenCalled();
     expect(harness.dependencies.createWindow).toHaveBeenCalledOnce();
   });
 
@@ -232,5 +254,26 @@ describe("TutorialProjectService", () => {
       fs.access(path.join(harness.documentsDirectory, "Nimbalyst Tutorial"))
     ).rejects.toThrow();
     expect(harness.dependencies.createWindow).not.toHaveBeenCalled();
+  });
+
+  it("removes seeded tracker rows when session seeding fails", async () => {
+    const harness = await createHarness();
+    vi.mocked(harness.dependencies.seedTutorialSessions).mockRejectedValue(
+      new Error("Session fixture unavailable")
+    );
+
+    const result = await harness.service.startTutorial();
+
+    expect(result).toEqual({
+      success: false,
+      error: "Session fixture unavailable",
+    });
+    expect(harness.dependencies.deleteTutorialTrackers).toHaveBeenCalledWith(
+      path.join(harness.documentsDirectory, "Nimbalyst Tutorial"),
+      [EXAMPLE_BUG]
+    );
+    await expect(
+      fs.access(path.join(harness.documentsDirectory, "Nimbalyst Tutorial"))
+    ).rejects.toThrow();
   });
 });

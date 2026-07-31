@@ -17,6 +17,11 @@ import type { ConversationSubscription } from '@nimbalyst/collab-protocol';
 import type { ConversationSetSubscriptionRequest } from '../shared/conversationDirectory.ts';
 import type { TutorialStartResult, TutorialStatusResult } from '../shared/tutorial.ts';
 
+type StytchAuthFlowOptions = {
+  intent: 'sign-in' | 'add-account' | 'reauth';
+  targetPersonalOrgId?: string;
+};
+
 // Nimbalyst is an IDE-like application with many concurrent IPC listeners:
 // - File watching, git status, AI sessions, terminals, extensions, etc.
 // The default limit of 10 is far too low. Setting to 100 is reasonable for
@@ -874,6 +879,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       itemId: string;
       shared: boolean;
     }) => ipcRenderer.invoke('document-service:set-tracker-item-shared', payload) as Promise<{ success: boolean; item?: any; error?: string }>,
+    migrateSharedFrontmatterIds: (payload?: { dryRun?: boolean }) =>
+      ipcRenderer.invoke('document-service:migrate-shared-frontmatter-ids', payload) as Promise<{
+        success: boolean;
+        dryRun?: boolean;
+        migrated?: Array<{ oldId: string; newId: string; issueKey?: string; bodySource: string }>;
+        skipped?: Array<{ id: string; reason: string }>;
+        error?: string;
+      }>,
     updateTrackerItemContent: (payload: {
       itemId: string;
       content: any;
@@ -1565,12 +1578,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setSyncAccount: (personalOrgId: string) =>
       ipcRenderer.invoke('stytch:set-sync-account', personalOrgId),
     isAuthenticated: () => ipcRenderer.invoke('stytch:is-authenticated'),
-    signInWithGoogle: () => ipcRenderer.invoke('stytch:sign-in-google'),
-    sendMagicLink: (email: string) =>
-      ipcRenderer.invoke('stytch:send-magic-link', email),
+    signInWithGoogle: (options?: StytchAuthFlowOptions) =>
+      ipcRenderer.invoke('stytch:sign-in-google', options),
+    sendMagicLink: (email: string, options?: StytchAuthFlowOptions) =>
+      ipcRenderer.invoke('stytch:send-magic-link', email, options),
     signOut: (forceOfflinePurge = false) =>
       ipcRenderer.invoke('stytch:sign-out', forceOfflinePurge),
-    addAccount: () => ipcRenderer.invoke('stytch:add-account'),
     removeAccount: (personalOrgId: string, forceOfflinePurge = false) =>
       ipcRenderer.invoke('stytch:remove-account', personalOrgId, forceOfflinePurge),
     deleteAccount: (personalOrgId?: string) => ipcRenderer.invoke('stytch:delete-account', personalOrgId),
@@ -1640,6 +1653,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('team:rename', orgId, name),
     create: (input: { name: string; workspacePath?: string; sourcePersonalOrgId?: string }) =>
       ipcRenderer.invoke('team:create', input.name, input.workspacePath, input.sourcePersonalOrgId),
+    findPendingInvitation: (email: string) =>
+      ipcRenderer.invoke('team:find-pending-invite-for-email', email),
     acceptInvitation: (orgId: string) => ipcRenderer.invoke('team:accept-invite', orgId),
     listMembers: (orgId: string) => ipcRenderer.invoke('team:list-members', orgId),
     inviteMember: (orgId: string, email: string) => ipcRenderer.invoke('team:invite', orgId, email),

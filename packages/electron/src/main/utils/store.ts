@@ -82,7 +82,7 @@ interface AppStoreSchema {
   // Shared fallback for native file/folder dialogs outside workspace context.
   lastDialogDirectory?: string;
   // Organization the org-management window falls back to when opened without an
-  // explicit orgId (Window > Organization Manager, or the switcher's untargeted
+  // explicit orgId (Window > Organization Messages, or the switcher's untargeted
   // entries). Written whenever the selection changes.
   lastSelectedOrgId?: string;
   // Bounds for the single global organization-management window.

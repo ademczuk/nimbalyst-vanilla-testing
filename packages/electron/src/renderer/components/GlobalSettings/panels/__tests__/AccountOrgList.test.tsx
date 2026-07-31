@@ -42,7 +42,7 @@ describe('AccountOrgList', () => {
 
   afterEach(() => cleanup());
 
-  it('opens a newly discovered active membership on the durable #general hand-off', async () => {
+  it('administers a newly discovered membership here, queuing the #general hand-off for its messages', async () => {
     render(
       <AccountOrgList
         group={group({
@@ -64,7 +64,13 @@ describe('AccountOrgList', () => {
       ORG_WINDOW_PENDING_ROUTE_SETTING_KEY,
       pendingGeneralRoute('org-1'),
     );
-    await waitFor(() => expect(openManagementWindow).toHaveBeenCalledWith({ orgId: 'org-1' }));
+    // NIM-2322: Manage administers in place. The queued destination is still
+    // written, so opening the organization's messages later lands on #general.
+    await waitFor(() => expect(openDialog).toHaveBeenCalledWith(
+      DIALOG_IDS.ORG_MANAGEMENT,
+      { orgId: 'org-1' },
+    ));
+    expect(openManagementWindow).not.toHaveBeenCalled();
   });
 
   it('does not recreate onboarding after the organization welcome was dismissed', async () => {
@@ -86,7 +92,10 @@ describe('AccountOrgList', () => {
 
     screen.getByTestId('account-org-manage').click();
 
-    await waitFor(() => expect(openManagementWindow).toHaveBeenCalledWith({ orgId: 'org-1' }));
+    await waitFor(() => expect(openDialog).toHaveBeenCalledWith(
+      DIALOG_IDS.ORG_MANAGEMENT,
+      { orgId: 'org-1' },
+    ));
     expect(invoke).not.toHaveBeenCalledWith(
       'app-settings:set',
       ORG_WINDOW_PENDING_ROUTE_SETTING_KEY,
@@ -94,7 +103,7 @@ describe('AccountOrgList', () => {
     );
   });
 
-  it('keeps an active membership recoverable when the durable hand-off cannot be saved', async () => {
+  it('still administers when the durable hand-off cannot be saved', async () => {
     invoke.mockImplementation(async (channel: string) => {
       if (channel === 'app-settings:set') {
         throw new Error('settings directory unavailable');
@@ -114,9 +123,15 @@ describe('AccountOrgList', () => {
 
     screen.getByTestId('account-org-manage').click();
 
+    // The failed write only costs the #general landing in the messages window;
+    // administration does not depend on it, so it opens anyway and says so.
     await waitFor(() => expect(screen.getByText(
-      'Could not save the organization destination. Try again.',
+      'Could not save where to open this organization\u2019s messages.',
     )).toBeTruthy());
+    await waitFor(() => expect(openDialog).toHaveBeenCalledWith(
+      DIALOG_IDS.ORG_MANAGEMENT,
+      { orgId: 'org-1' },
+    ));
     expect(openManagementWindow).not.toHaveBeenCalled();
   });
 
@@ -142,9 +157,11 @@ describe('AccountOrgList', () => {
 
     await waitFor(() => expect(acceptInvite).toHaveBeenCalledWith('org-invite'));
     await waitFor(() => expect(changed).toHaveBeenCalled());
-    // Accepting used to end in this list; the new member is now taken into the
-    // organization window (which lands on #general via the queued hand-off).
+    // Accepting used to end in this list; the new member is still taken into the
+    // organization's messages (landing on #general via the queued hand-off) —
+    // a conversation destination, so this one keeps opening that window.
     await waitFor(() => expect(openManagementWindow).toHaveBeenCalledWith({ orgId: 'org-invite' }));
+    expect(openDialog).not.toHaveBeenCalled();
     window.removeEventListener('nimbalyst:organizations-changed', changed);
   });
 

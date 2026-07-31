@@ -115,7 +115,7 @@ describe('TeamMode organization targeting', () => {
     expect(screen.getAllByTestId('team-mode-organization-choice')).toHaveLength(2);
   });
 
-  it('administers the explicitly selected non-workspace organization', async () => {
+  it('targets the explicitly selected non-workspace organization', async () => {
     installApi();
     const store = createStore();
     store.set(selectedOrgIdAtom, 'org-other');
@@ -135,16 +135,17 @@ describe('TeamMode organization targeting', () => {
     for (const control of controlsInsideDragRegions) {
       expect(control.closest('.org-window-no-drag')).not.toBeNull();
     }
-    // The window lands on Inbox; Members is one tab over.
-    fireEvent.click(screen.getByTestId('team-tab-members'));
-    // Members is the full editable roster (no read-only duplicate), scoped to the org.
-    expect(screen.getByTestId('admin-members').getAttribute('data-org-id')).toBe('org-other');
-    // Single left-nav layout: Inbox, Members, Projects, Billing, Danger.
+    // The window is scoped to that organization: its roster is the one read.
+    await waitFor(() => expect(
+      (window as any).electronAPI.organization.listMembers,
+    ).toHaveBeenCalledWith('org-other'));
+    // Messaging only since NIM-2322 — administration is the ORG_MANAGEMENT
+    // dialog, so the window offers Inbox and conversations and nothing else.
     expect(screen.getByTestId('team-tab-inbox')).toBeTruthy();
-    expect(screen.getByTestId('team-tab-members')).toBeTruthy();
-    expect(screen.getByTestId('team-tab-projects')).toBeTruthy();
-    expect(screen.getByTestId('team-tab-billing')).toBeTruthy();
-    expect(screen.getByTestId('team-tab-danger')).toBeTruthy();
+    for (const tab of ['members', 'projects', 'settings', 'billing', 'danger']) {
+      expect(screen.queryByTestId(`team-tab-${tab}`)).toBeNull();
+    }
+    expect(screen.queryByTestId('admin-members')).toBeNull();
   });
 
   it('hydrates canonical tracker records for chips in the dedicated org window', async () => {
@@ -190,11 +191,12 @@ describe('TeamMode organization targeting', () => {
     render(<Provider store={store}><TeamMode workspacePath="/workspace" isActive /></Provider>);
 
     await waitFor(() => expect(orgIdentity()).toContain('Workspace Org'));
-    fireEvent.click(screen.getByTestId('team-tab-members'));
-    expect(screen.getByTestId('admin-members').getAttribute('data-org-id')).toBe('org-workspace');
+    await waitFor(() => expect(
+      (window as any).electronAPI.organization.listMembers,
+    ).toHaveBeenCalledWith('org-workspace'));
   });
 
-  it('renders org-only (no workspace) without a redundant project-sharing tab or a workspace lookup', async () => {
+  it('renders org-only (no workspace) without a workspace lookup', async () => {
     installApi();
     const findForWorkspace = (window as any).electronAPI.team.findForWorkspace;
     const store = createStore();
@@ -203,11 +205,9 @@ describe('TeamMode organization targeting', () => {
     render(<Provider store={store}><TeamMode /></Provider>);
 
     await waitFor(() => expect(orgIdentity()).toContain('Other Org'));
-    fireEvent.click(screen.getByTestId('team-tab-members'));
-    expect(screen.getByTestId('admin-members').getAttribute('data-org-id')).toBe('org-other');
-    // No workspace-scoped "Project sharing" tab; org projects live under Projects.
+    // No workspace-scoped sharing surface, and no workspace lookup at all: the
+    // window targets the organization only.
     expect(screen.queryByRole('button', { name: /project sharing/i })).toBeNull();
-    expect(screen.getByTestId('team-tab-projects')).toBeTruthy();
     expect(findForWorkspace).not.toHaveBeenCalled();
   });
 });

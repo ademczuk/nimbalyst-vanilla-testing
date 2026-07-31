@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { copyToClipboard, MaterialSymbol } from '@nimbalyst/runtime';
 import type { TrackerIdentity } from '@nimbalyst/runtime';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import {
@@ -935,7 +935,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     if (!teamOrgId) return;
     const url = buildTrackerDeepLink(itemId, teamOrgId);
     try {
-      await navigator.clipboard.writeText(url);
+      await copyToClipboard(url);
       errorNotificationService.showInfo(
         'Link copied',
         'Paste it anywhere to open this tracker in Nimbalyst.',
@@ -955,7 +955,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     if (!teamOrgId || !documentItemId) return;
     const url = buildTrackerDocumentDeepLink(documentItemId, teamOrgId);
     try {
-      await navigator.clipboard.writeText(url);
+      await copyToClipboard(url);
       errorNotificationService.showInfo(
         'Document link copied',
         'Paste it anywhere to open this item as a document in Nimbalyst.',

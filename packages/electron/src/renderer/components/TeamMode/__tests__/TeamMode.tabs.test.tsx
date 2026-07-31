@@ -5,8 +5,8 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
-import { ADMIN_TABS, TeamMode } from '../TeamMode';
-import { DEFAULT_ORG_WINDOW_ROUTE, isFullWidthRoute } from '../orgWindowState';
+import { TeamMode } from '../TeamMode';
+import { DEFAULT_ORG_WINDOW_ROUTE, orgWindowRouteAtom } from '../orgWindowState';
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
@@ -48,28 +48,14 @@ function installApi() {
 }
 
 /**
- * The org window lands on the Inbox, and only the administration panels keep
- * the 900px column — the Inbox, conversations and the rooms directory are
- * full-bleed surfaces. Both are deliberate placement decisions, so they are
- * asserted rather than left to whichever edit touches the file next.
+ * The org window lands on the Inbox and every surface it has is full-bleed:
+ * administration — the only thing that wanted the 900px form column — is the
+ * `ORG_MANAGEMENT` dialog since NIM-2322. Both are deliberate placement
+ * decisions, so they are asserted rather than left to whichever edit touches
+ * the file next.
  */
 describe('TeamMode org window navigation', () => {
   afterEach(() => cleanup());
-
-  it('lists the administration panels in the shipped order, Inbox no longer among them', () => {
-    expect(ADMIN_TABS.map((entry) => entry.id)).toEqual([
-      'members',
-      'projects',
-      // Organization settings sit between Projects and Billing.
-      'settings',
-      'billing',
-      'danger',
-    ]);
-    expect(DEFAULT_ORG_WINDOW_ROUTE.view).toBe('inbox');
-    expect(isFullWidthRoute({ view: 'inbox' })).toBe(true);
-    expect(isFullWidthRoute({ view: 'conversation', conversationId: 'general' })).toBe(true);
-    expect(isFullWidthRoute({ view: 'admin', adminTab: 'members' })).toBe(false);
-  });
 
   it('opens on the Inbox, full width, in one content region', async () => {
     installApi();
@@ -77,6 +63,7 @@ describe('TeamMode org window navigation', () => {
     store.set(selectedOrgIdAtom, 'org-1');
     const { container } = render(<Provider store={store}><TeamMode /></Provider>);
 
+    expect(DEFAULT_ORG_WINDOW_ROUTE.view).toBe('inbox');
     await waitFor(() => expect(screen.getByTestId('inbox')).toBeTruthy());
     const mains = container.querySelectorAll('.team-mode-content');
     expect(mains).toHaveLength(1);
@@ -85,20 +72,32 @@ describe('TeamMode org window navigation', () => {
     expect(mains[0].querySelector('.max-w-\\[900px\\]')).toBeNull();
   });
 
-  it('restores the administration column on an administration panel', async () => {
+  it('has no administration destinations left in the sidebar', async () => {
     installApi();
     const store = createStore();
     store.set(selectedOrgIdAtom, 'org-1');
-    const { container } = render(<Provider store={store}><TeamMode /></Provider>);
+    render(<Provider store={store}><TeamMode /></Provider>);
 
-    await waitFor(() => expect(screen.getByTestId('team-tab-members')).toBeTruthy());
-    screen.getByTestId('team-tab-members').click();
+    await waitFor(() => expect(screen.getByTestId('org-sidebar')).toBeTruthy());
+    expect(screen.queryByTestId('org-admin-toggle')).toBeNull();
+    for (const tab of ['members', 'projects', 'settings', 'billing', 'danger']) {
+      expect(screen.queryByTestId(`team-tab-${tab}`)).toBeNull();
+    }
+  });
 
-    await waitFor(() => expect(screen.getByTestId('members')).toBeTruthy());
-    const mains = container.querySelectorAll('.team-mode-content');
-    expect(mains).toHaveLength(1);
-    expect(mains[0].classList.contains('team-mode-content-full')).toBe(false);
-    expect(mains[0].querySelector('.max-w-\\[900px\\]')).not.toBeNull();
+  it('redirects a stale administration route back to the messaging surface', async () => {
+    installApi();
+    const store = createStore();
+    store.set(selectedOrgIdAtom, 'org-1');
+    // A hand-off or deep link left over from when this window administered the
+    // organization. It must not render an empty content region.
+    store.set(orgWindowRouteAtom, { view: 'admin', adminTab: 'members' });
+    render(<Provider store={store}><TeamMode /></Provider>);
+
+    await waitFor(() => expect(store.get(orgWindowRouteAtom))
+      .toEqual(DEFAULT_ORG_WINDOW_ROUTE));
+    await waitFor(() => expect(screen.getByTestId('inbox')).toBeTruthy());
+    expect(screen.queryByTestId('members')).toBeNull();
   });
 
   it('opens the rooms directory from the sidebar', async () => {

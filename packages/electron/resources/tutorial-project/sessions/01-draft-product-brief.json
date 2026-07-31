@@ -5,9 +5,7 @@
     "title": "Draft the product brief",
     "agentRole": "standard",
     "metadata": {
-      "linkedTrackerItemIds": [
-        "file:documents/product-brief.md"
-      ]
+      "linkedTrackerItemIds": ["file:product-brief.md"]
     }
   },
   "messages": [
@@ -28,28 +26,28 @@
     {
       "direction": "output",
       "source": "claude-code",
-      "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tutorial-edit-product-brief\",\"name\":\"Edit\",\"input\":{\"file_path\":\"{{TUTORIAL_ROOT}}/documents/product-brief.md\",\"old_string\":\"The first version is for a team preparing a product launch.\",\"new_string\":\"The first version is for a team preparing a product launch. They already have monthly data, but they need a shared view that keeps planning conversations grounded in the same numbers.\"}}]}}",
+      "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tutorial-edit-product-brief\",\"name\":\"Edit\",\"input\":{\"file_path\":\"{{TUTORIAL_ROOT}}/product-brief.md\",\"old_string\":\"The first version is for a team preparing a product launch.\",\"new_string\":\"The first version is for a team preparing a product launch. They already have monthly data, but they need a shared view that keeps planning conversations grounded in the same numbers.\"}}]}}",
       "messageKind": "tool",
       "hidden": false
     },
     {
       "direction": "output",
       "source": "claude-code",
-      "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tutorial-edit-product-brief\",\"content\":\"Updated {{TUTORIAL_ROOT}}/documents/product-brief.md.\"}]}}",
+      "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tutorial-edit-product-brief\",\"content\":\"Updated {{TUTORIAL_ROOT}}/product-brief.md.\"}]}}",
       "messageKind": "tool",
       "hidden": false
     },
     {
       "direction": "output",
       "source": "claude-code",
-      "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tutorial-display-revenue\",\"name\":\"mcp__nimbalyst__display_to_user\",\"input\":{\"items\":[{\"description\":\"Monthly total revenue from data/revenue.csv, January through June.\",\"chart\":{\"chartType\":\"line\",\"data\":[{\"month\":\"January\",\"revenue\":43400},{\"month\":\"February\",\"revenue\":48900},{\"month\":\"March\",\"revenue\":55400},{\"month\":\"April\",\"revenue\":63500},{\"month\":\"May\",\"revenue\":72500},{\"month\":\"June\",\"revenue\":82600}],\"xAxisKey\":\"month\",\"yAxisKey\":\"revenue\"}}]}}]}}",
+      "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tutorial-display-revenue\",\"name\":\"mcp__nimbalyst__display_to_user\",\"input\":{\"items\":[{\"description\":\"Monthly total revenue from revenue.csv, January through June.\",\"chart\":{\"chartType\":\"line\",\"data\":[{\"month\":\"January\",\"revenue\":43400},{\"month\":\"February\",\"revenue\":48900},{\"month\":\"March\",\"revenue\":55400},{\"month\":\"April\",\"revenue\":63500},{\"month\":\"May\",\"revenue\":72500},{\"month\":\"June\",\"revenue\":82600}],\"xAxisKey\":\"month\",\"yAxisKey\":\"revenue\"}}]}}]}}",
       "messageKind": "tool",
       "hidden": false
     },
     {
       "direction": "output",
       "source": "claude-code",
-      "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tutorial-display-revenue\",\"content\":\"Displayed the revenue trend from {{TUTORIAL_ROOT}}/data/revenue.csv.\"}]}}",
+      "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tutorial-display-revenue\",\"content\":\"Displayed the revenue trend from {{TUTORIAL_ROOT}}/revenue.csv.\"}]}}",
       "messageKind": "tool",
       "hidden": false
     },
@@ -70,7 +68,7 @@
     {
       "direction": "output",
       "source": "claude-code",
-      "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tutorial-dashboard-screenshot\",\"name\":\"mcp__nimbalyst__capture_editor_screenshot\",\"input\":{\"file_path\":\"{{TUTORIAL_ROOT}}/design/dashboard.mockup.html\"}}]}}",
+      "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"tool_use\",\"id\":\"tutorial-dashboard-screenshot\",\"name\":\"mcp__nimbalyst__capture_editor_screenshot\",\"input\":{\"file_path\":\"{{TUTORIAL_ROOT}}/dashboard.mockup.html\"}}]}}",
       "messageKind": "tool",
       "hidden": false
     },
@@ -84,7 +82,14 @@
     {
       "direction": "output",
       "source": "claude-code",
-      "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"text\",\"text\":\"The brief now leads with revenue momentum, cites [data/revenue.csv](data/revenue.csv), and keeps the rendered [dashboard mockup](design/dashboard.mockup.html) beside the written story.\"}]}}",
+      "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"text\",\"text\":\"The brief now leads with revenue momentum, cites [revenue.csv](revenue.csv), and keeps the rendered [dashboard mockup](dashboard.mockup.html) beside the written story.\"}]}}",
+      "messageKind": "assistant",
+      "hidden": false
+    },
+    {
+      "direction": "output",
+      "source": "claude-code",
+      "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"model\":\"claude-sonnet-4-5\",\"content\":[{\"type\":\"text\",\"text\":\"Note to the user: You can type into the window below and continue this session or start a new one\"}]}}",
       "messageKind": "assistant",
       "hidden": false
     }

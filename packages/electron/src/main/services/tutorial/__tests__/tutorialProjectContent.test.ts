@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -20,6 +20,37 @@ function collectShortcutValues(value: unknown): string[] {
 }
 
 describe("tutorial project content", () => {
+  it("keeps the sample file tree flat except for the walkthrough plan", () => {
+    const entries = readdirSync(tutorialRoot, { withFileTypes: true })
+      .filter((entry) => entry.name !== "sessions")
+      .filter((entry) => entry.name !== "trackers.json");
+    const directories = entries.filter((entry) => entry.isDirectory());
+
+    expect(directories.map((entry) => entry.name)).toEqual(["planning"]);
+    expect(readdirSync(resolve(tutorialRoot, "planning"))).toEqual([
+      "plan-tutorial-walkthrough.md",
+    ]);
+    expect(existsSync(resolve(tutorialRoot, "bug-example.md"))).toBe(false);
+  });
+
+  it("contains the current intro and What to try prompts", () => {
+    const readme = readFileSync(readmePath, "utf8");
+
+    expect(readme).toContain(
+      "Open the files, change some text, prompt and interact with the agent , follow a tracker reference"
+    );
+    expect(readme).toContain(
+      "Type in this document. Try typing  / and # and @"
+    );
+    expect(readme).toContain("Ask the agent to make changes to the mockup");
+    expect(readme).toContain(
+      "Go to tracker mode (the third icon from the top on the left nav) and explore integrated trackers"
+    );
+    expect(readme).toContain(
+      "[example bug](nimbalyst://{{TRACKER_ISSUE_KEY:EXAMPLE_BUG}})"
+    );
+  });
+
   it("keeps README file links and documented keyboard shortcuts valid", () => {
     const readme = readFileSync(readmePath, "utf8");
     const markdownLinkPattern = /\[[^\]]+\]\(([^)]+)\)/g;

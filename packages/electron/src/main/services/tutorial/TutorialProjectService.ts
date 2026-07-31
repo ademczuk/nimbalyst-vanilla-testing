@@ -18,6 +18,11 @@ import {
   findWindowByWorkspace,
 } from "../../window/WindowManager";
 import { seedTutorialSessions } from "./TutorialSessionSeeder";
+import {
+  deleteTutorialTrackers,
+  seedTutorialTrackers,
+  type SeededTutorialTracker,
+} from "./TutorialTrackerSeeder";
 import { getTutorialTemplateDirectory } from "./tutorialTemplateDirectory";
 
 const TUTORIAL_DIRECTORY_NAME = "Nimbalyst Tutorial";
@@ -31,6 +36,7 @@ const TEMPLATE_ONLY_METADATA_FILES = new Set([
   "sessions",
   TUTORIAL_MARKER_FILE,
   ".nimbalyst-tutorial-template.json",
+  "trackers.json",
 ]);
 
 type WorkspaceStateUpdater = (state: WorkspaceState) => void | WorkspaceState;
@@ -49,7 +55,17 @@ export interface TutorialProjectServiceDependencies {
   findWindowByWorkspace: (workspacePath: string) => BrowserWindow | null;
   addToRecentItems: typeof addToRecentItems;
   closeWorkspaceManagerWindow: () => void;
-  seedTutorialSessions: (workspacePath: string) => Promise<void>;
+  seedTutorialTrackers: (
+    workspacePath: string
+  ) => Promise<SeededTutorialTracker[]>;
+  deleteTutorialTrackers: (
+    workspacePath: string,
+    items: SeededTutorialTracker[]
+  ) => Promise<void>;
+  seedTutorialSessions: (
+    workspacePath: string,
+    trackerReferences: SeededTutorialTracker[]
+  ) => Promise<void>;
 }
 
 const defaultDependencies: TutorialProjectServiceDependencies = {
@@ -63,8 +79,10 @@ const defaultDependencies: TutorialProjectServiceDependencies = {
   findWindowByWorkspace,
   addToRecentItems,
   closeWorkspaceManagerWindow: () => undefined,
-  seedTutorialSessions: async (workspacePath) => {
-    await seedTutorialSessions(workspacePath);
+  seedTutorialTrackers,
+  deleteTutorialTrackers,
+  seedTutorialSessions: async (workspacePath, trackerReferences) => {
+    await seedTutorialSessions(workspacePath, { trackerReferences });
   },
 };
 
@@ -240,6 +258,7 @@ export class TutorialProjectService {
     );
     const temporaryProject = path.join(temporaryRoot, "project");
     let renamedIntoPlace = false;
+    let seededTrackers: SeededTutorialTracker[] = [];
 
     try {
       await fs.cp(templateDirectory, temporaryProject, {
@@ -265,6 +284,11 @@ export class TutorialProjectService {
         allowAllUsesClassifier: true,
       });
 
+      seededTrackers = await this.dependencies.seedTutorialTrackers(
+        workspacePath
+      );
+      await this.materializeTrackerReferences(workspacePath, seededTrackers);
+
       const readmePath = path.join(workspacePath, "README.md");
       this.dependencies.updateWorkspaceState(workspacePath, (state) => {
         state.activeMode = "files";
@@ -286,8 +310,17 @@ export class TutorialProjectService {
         };
       });
 
-      await this.dependencies.seedTutorialSessions(workspacePath);
+      await this.dependencies.seedTutorialSessions(
+        workspacePath,
+        seededTrackers
+      );
     } catch (error) {
+      if (seededTrackers.length > 0) {
+        await this.dependencies.deleteTutorialTrackers(
+          workspacePath,
+          seededTrackers
+        );
+      }
       if (renamedIntoPlace) {
         await fs.rm(workspacePath, { recursive: true, force: true });
       }
@@ -295,6 +328,30 @@ export class TutorialProjectService {
     } finally {
       await fs.rm(temporaryRoot, { recursive: true, force: true });
     }
+  }
+
+  private async materializeTrackerReferences(
+    workspacePath: string,
+    trackers: SeededTutorialTracker[]
+  ): Promise<void> {
+    const trackersByKey = new Map(
+      trackers.map((tracker) => [tracker.key, tracker])
+    );
+    const readmePath = path.join(workspacePath, "README.md");
+    const readme = await fs.readFile(readmePath, "utf8");
+    const materialized = readme.replace(
+      /\{\{TRACKER_ISSUE_KEY:([A-Z0-9_]+)\}\}/g,
+      (_placeholder, key: string) => {
+        const tracker = trackersByKey.get(key);
+        if (!tracker) {
+          throw new Error(
+            `Tutorial README references unknown tracker key: ${key}`
+          );
+        }
+        return tracker.issueKey ?? tracker.id;
+      }
+    );
+    await fs.writeFile(readmePath, materialized, "utf8");
   }
 
   private openProject(workspacePath: string): void {

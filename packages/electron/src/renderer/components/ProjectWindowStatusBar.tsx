@@ -84,6 +84,9 @@ export function ProjectWindowStatusBar({
         aria-label={`Open organization inbox with ${unreadSummary.totalUnread} unread`}
         title="Open organization inbox"
         onClick={() => {
+          // The chip is an unread count: it opens that organization's Inbox,
+          // which is what the organization window is since NIM-2322 moved
+          // administration into the ORG_MANAGEMENT dialog.
           void api()?.team?.openManagementWindow?.({
             orgId: targetOrgId,
             workspacePath: activePath ?? undefined,

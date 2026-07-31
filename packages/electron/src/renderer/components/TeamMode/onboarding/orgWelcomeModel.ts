@@ -38,7 +38,10 @@ export function isGeneralRoomId(conversationId: string | null | undefined): bool
 }
 
 export function pendingGeneralRoute(orgId: string): OrgWindowPendingRoute {
-  return { orgId, conversationId: GENERAL_ROOM_ID };
+  return {
+    orgId,
+    conversationId: GENERAL_ROOM_ID,
+  };
 }
 
 /** Tolerant of anything the store hands back — the key is user-writable state. */
@@ -49,7 +52,10 @@ export function parsePendingRoute(stored: unknown): OrgWindowPendingRoute | null
   if (typeof candidate.conversationId !== 'string' || !candidate.conversationId) {
     return null;
   }
-  return { orgId: candidate.orgId, conversationId: candidate.conversationId };
+  return {
+    orgId: candidate.orgId,
+    conversationId: candidate.conversationId,
+  };
 }
 
 /**

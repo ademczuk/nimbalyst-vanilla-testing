@@ -1,27 +1,32 @@
 # Welcome to Nimbalyst
 
-This project is a small, connected workspace you can explore without setting anything up. Open the files, change a number, follow a tracker reference, and notice how documents, data, plans, and visual editors stay together.
+This project is a small, connected workspace you can explore without setting anything up. Open the files, change some text, prompt and interact with the agent , follow a tracker reference, and notice how documents, data, plans, and visual editors stay together.
 
 ## What to try
 
-- Shape an interface in the [dashboard mockup](design/dashboard.mockup.html).
-- Explore monthly performance in the [revenue spreadsheet](data/revenue.csv).
-- Change assumptions and watch the results update in the [metrics model](data/metrics.calc.md).
-- Follow the work from source data to launch in the [architecture diagram](design/architecture.excalidraw).
-- Read a document with embedded project artifacts in the [product brief](documents/product-brief.md).
-- Turn a goal into concrete steps with the [launch checklist](documents/launch-checklist.md).
+- Type in this document. Try typing  / and # and @
+- Prompt the agent, ask it to add a summary at the top of this file, review its changes
+- Shape an interface in the [dashboard mockup](dashboard.mockup.html).
+- Ask the agent to make changes to the mockup
+- Switch to agents mode (the < > symbol on the left nav), look at historical agent sessions, see the files those sessions touched (on the right nav) and click into them
+- Explore monthly performance in the [revenue spreadsheet](revenue.csv).
+- Change assumptions and watch the results update in the [metrics model](metrics.calc.md).
+- Follow the work from source data to launch in the [architecture diagram](architecture.excalidraw).
+- Read a document with embedded project artifacts in the [product brief](product-brief.md).
+- Turn a goal into concrete steps with the [launch checklist](launch-checklist.md).
 - See how a markdown document becomes a tracker item in the [tutorial walkthrough plan](planning/plan-tutorial-walkthrough.md).
-- Review a realistic issue in the [example bug](planning/bug-example.md).
+- Review a realistic issue in the [example bug](nimbalyst://{{TRACKER_ISSUE_KEY:EXAMPLE_BUG}}).
+- Go to tracker mode (the third icon from the top on the left nav) and explore integrated trackers
 
 ## A live embed
 
 The dashboard below is the same file that opens in the Mockup editor. You can keep a visual artifact in context without flattening it into an image.
 
-[Dashboard](design/dashboard.mockup.html "width=800 height=420")
+[Dashboard](dashboard.mockup.html "width=800 height=420")
 
 ## Tracked work
 
-Planning documents appear as full tracker items while staying readable markdown files. The [walkthrough plan](planning/plan-tutorial-walkthrough.md) and the [example bug](planning/bug-example.md) are ordinary files on disk, and they also show up in Tracker mode with a status, a type, and a history. Change the status in the file and the tracker follows; change it in the tracker and the file follows.
+The [walkthrough plan](planning/plan-tutorial-walkthrough.md) is a readable Markdown file that also appears as a full tracker item. The [example bug](nimbalyst://{{TRACKER_ISSUE_KEY:EXAMPLE_BUG}}) is a native tracker item with a status, priority, history, and detailed body. Explore Tracker mode to compare both styles of tracked work.
 
 ## Keyboard shortcuts
 

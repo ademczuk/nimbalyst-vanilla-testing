@@ -61,10 +61,6 @@ export const HelpContent: Record<string, HelpEntry> = {
     title: 'Create a room',
     body: 'Add a new organization room. Public rooms are open to everyone; private rooms are limited to the members you add.',
   },
-  'org-admin-toggle': {
-    title: 'Administration',
-    body: 'Members, projects, organization settings and billing. Entries you cannot act on are hidden rather than shown disabled, so this group is shorter for members than for admins.',
-  },
   'org-room-notifications': {
     title: 'Notifications for this conversation',
     body: 'Choose what reaches your Inbox from here:\n\n- **All messages** — every message\n- **Mentions only** — messages that @mention you\n- **Nothing** — nothing at all\n\nThe setting is per conversation and follows you across devices.',

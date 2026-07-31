@@ -31,7 +31,6 @@ function model(
       canCreateRoom: true,
       canCreateDirectMessage: true,
     },
-    adminTabs: [],
   };
 }
 

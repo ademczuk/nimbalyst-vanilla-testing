@@ -100,15 +100,19 @@ function renderWindow(settings: Partial<OrgSettings['messaging']> = {}) {
 describe('TeamMode organization settings gating', () => {
   afterEach(() => cleanup());
 
-  it('opens the Settings admin panel with the viewer role', async () => {
+  // The Settings panel and the rest of administration moved to the
+  // ORG_MANAGEMENT dialog (NIM-2322), which carries the viewer role into them
+  // — see OrgManagementDialog.test.tsx. This window hosts none of them, for an
+  // admin either.
+  it('hosts no administration panel, even for an admin', async () => {
     installApi('admin');
     renderWindow();
 
-    await waitFor(() => expect(screen.getByTestId('team-tab-settings')).toBeTruthy());
-    screen.getByTestId('team-tab-settings').click();
-
-    await waitFor(() => expect(screen.getByTestId('org-settings-panel')).toBeTruthy());
-    expect(screen.getByTestId('org-settings-panel').getAttribute('data-caller-role')).toBe('admin');
+    await waitFor(() => expect(screen.getByTestId('org-sidebar')).toBeTruthy());
+    expect(screen.queryByTestId('org-settings-panel')).toBeNull();
+    for (const tab of ['members', 'projects', 'settings', 'billing', 'danger']) {
+      expect(screen.queryByTestId(`team-tab-${tab}`)).toBeNull();
+    }
   });
 
   it('hides rooms, the directory entry and the create control when rooms are off', async () => {
@@ -121,7 +125,6 @@ describe('TeamMode organization settings gating', () => {
     expect(screen.queryByTestId('org-rooms-section-add')).toBeNull();
     // Never gated.
     expect(screen.getByTestId('team-tab-inbox')).toBeTruthy();
-    expect(screen.getByTestId('team-tab-settings')).toBeTruthy();
   });
 
   it('hides direct messages when DMs are off, leaving rooms alone', async () => {
@@ -147,26 +150,21 @@ describe('TeamMode organization settings gating', () => {
     expect((screen.getByTestId('org-dms-section-add') as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('hides the administration-only panels from a member and bounces a route into one', async () => {
-    installApi('member');
-    const store = renderWindow();
+  // Role no longer decides anything about administration *here*: an admin route
+  // is a destination this window does not have, so it bounces for an owner just
+  // as it does for a plain member.
+  it.each(['member', 'admin'])(
+    'bounces an administration route out of the window for a %s',
+    async (callerRole) => {
+      installApi(callerRole);
+      const store = renderWindow();
 
-    await waitFor(() => expect(screen.getByTestId('team-tab-members')).toBeTruthy());
-    expect(screen.queryByTestId('team-tab-billing')).toBeNull();
-    expect(screen.queryByTestId('team-tab-danger')).toBeNull();
-
-    // A deep link or a demotion can still point the window at one.
-    store.set(orgWindowRouteAtom, { view: 'admin', adminTab: 'danger' });
-    await waitFor(() => expect(store.get(orgWindowRouteAtom)).toEqual({ view: 'inbox' }));
-  });
-
-  it('keeps the administration-only panels for an admin', async () => {
-    installApi('admin');
-    renderWindow();
-
-    await waitFor(() => expect(screen.getByTestId('team-tab-danger')).toBeTruthy());
-    expect(screen.getByTestId('team-tab-billing')).toBeTruthy();
-  });
+      await waitFor(() => expect(screen.getByTestId('org-sidebar')).toBeTruthy());
+      // A deep link or a hand-off left over from before NIM-2322.
+      store.set(orgWindowRouteAtom, { view: 'admin', adminTab: 'danger' });
+      await waitFor(() => expect(store.get(orgWindowRouteAtom)).toEqual({ view: 'inbox' }));
+    },
+  );
 
   it('moves an open room back to the inbox when rooms are turned off', async () => {
     installApi();
