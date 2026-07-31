@@ -23,7 +23,7 @@ import type {
   ConversationContext,
   MentionDirectory,
   ResourceCandidate,
-  ResourcePillView,
+  ResourceOpenHandler,
   ResourcePreviewResolver,
   ResourceRef,
   TimelineEntry,
@@ -86,7 +86,7 @@ export function CommentThread({
   now?: number;
   /** Defaults to the system clipboard. Overridden in tests. */
   onCopyLink?: (urn: string) => void;
-  onOpenResource?: (pill: ResourcePillView) => void;
+  onOpenResource?: ResourceOpenHandler;
   onOpenSession?: (sessionId: string) => void;
   onOpenMention?: (userId: string) => void;
   emptyLabel?: string;

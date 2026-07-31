@@ -5,7 +5,11 @@ import { CommentActionMenu } from './CommentActionMenu';
 import { CommentBody } from './CommentBody';
 import { EmojiPicker, EmojiTriggerButton } from './EmojiPicker';
 import { ReactionBar } from './ReactionBar';
-import type { CommentActionKind, CommentView, ResourcePillView } from './commentTypes';
+import type {
+  CommentActionKind,
+  CommentView,
+  ResourceOpenHandler,
+} from './commentTypes';
 
 /**
  * How much vertical room a message row takes.
@@ -46,7 +50,7 @@ export function CommentRow({
   view: CommentView;
   onAction: (action: CommentActionKind, view: CommentView) => void;
   onToggleReaction: (emoji: string, on: boolean, view: CommentView) => void;
-  onOpenResource?: (pill: ResourcePillView) => void;
+  onOpenResource?: ResourceOpenHandler;
   onOpenMention?: (userId: string) => void;
   onOpenSession?: (sessionId: string) => void;
   onOpenReplyParent?: (commentId: string) => void;

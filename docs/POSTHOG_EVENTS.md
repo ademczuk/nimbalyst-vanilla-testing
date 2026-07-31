@@ -290,7 +290,7 @@ Health-event caps apply to **every outcome equally**. Suppressing only successes
 | --- | --- | --- | --- | --- | --- |
 | `menu_action_used` | `ApplicationMenu.ts:476, 968` | User clicks certain menu items | Varies by menu item | v0.45.25 (2025-11-14) |  |
 | `global_settings_opened` | `ApplicationMenu.ts:517, 1282`<br/>`AIModelsWindow.ts:50` | User opens global settings or AI models window | None | v0.45.25 (2025-11-14) |  |
-| `help_accessed` | `ApplicationMenu.ts:1336, 1348, 1363, 1381, 1396, 1408, 1423` | User clicks help menu items | Varies by help item | v0.45.25 (2025-11-14) |  |
+| `help_accessed` | `ApplicationMenu.ts:1336, 1348, 1363, 1381, 1396, 1408, 1423`<br/>`helpMenuActions.ts:16` | User clicks help menu items | Varies by help item (`helpType: 'tutorial'` for Launch Tutorial) | v0.45.25 (2025-11-14) |  |
 | `keyboard_shortcut_used` | `AnalyticsHandlers.ts:29` | User triggers keyboard shortcut (reported from renderer) | `shortcut`<br/>`context` | v0.45.25 (2025-11-14) |  |
 | `toolbar_button_clicked` | `AnalyticsHandlers.ts:37` | User clicks toolbar button (reported from renderer) | `button`<br/>`isFirstUse` | v0.45.25 (2025-11-14) |  |
 | `social_link_clicked` | `DiscordInvitation.tsx:99` | User clicks a social media link or Discord link in the community popup | `channel` (discord/linkedin/youtube/x/tiktok/instagram) | (pending release) |  |

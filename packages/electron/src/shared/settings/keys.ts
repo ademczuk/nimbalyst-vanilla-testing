@@ -83,7 +83,7 @@ function setting<S extends z.ZodTypeAny>(
  *   - ai.apiKey.<name>  -- per-provider API key (string, may be empty)
  *   - ai.defaultProvider, ai.showToolCalls, ai.chatShowToolCalls, ai.aiDebugLogging,
  *     ai.showPromptAdditions, ai.customClaudeCodePath, ai.autoCommitEnabled,
- *     ai.trackerAutomation, ai.diffPeekSize
+ *     ai.showMcpSessionStatus, ai.trackerAutomation, ai.diffPeekSize
  */
 export const SETTINGS_REGISTRY = {
   // ---- AI providers (per-key) ----
@@ -202,6 +202,11 @@ export const SETTINGS_REGISTRY = {
   'ai.autoCommitEnabled': setting(
     z.boolean(),
     { store: 'ai-settings', path: 'autoCommitEnabled' },
+    false,
+  ),
+  'ai.showMcpSessionStatus': setting(
+    z.boolean(),
+    { store: 'ai-settings', path: 'showMcpSessionStatus' },
     false,
   ),
   'ai.trackerAutomation': setting(

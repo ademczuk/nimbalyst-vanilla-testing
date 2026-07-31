@@ -258,6 +258,26 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
       );
 
     case 'array':
+      if (
+        field.itemType === 'object'
+        || (Array.isArray(value) && value.some((entry) => entry !== null && typeof entry === 'object'))
+      ) {
+        const displayValue = Array.isArray(value) && value.length > 0
+          ? value.map((entry) => (
+              entry !== null && typeof entry === 'object'
+                ? JSON.stringify(entry)
+                : String(entry)
+            )).join(', ')
+          : '--';
+        return (
+          <div className={wrapperClasses}>
+            {renderLabel()}
+            <span className="text-[13px] text-[var(--nim-text-muted)] py-1.5">
+              {displayValue}
+            </span>
+          </div>
+        );
+      }
       return (
         <div className={wrapperClasses}>
           {renderLabel(fieldId)}

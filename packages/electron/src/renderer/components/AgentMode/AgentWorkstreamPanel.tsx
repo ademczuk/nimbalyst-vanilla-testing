@@ -42,6 +42,7 @@ import { FilesEditedSidebar } from './FilesEditedSidebar';
 import { AgentReviewPanel } from './AgentReviewPanel';
 import { ChatSidebar } from '../ChatSidebar/ChatSidebar';
 import { LayoutControls } from '../UnifiedAI/LayoutControls';
+import { ActiveSessionMcpStatusChip } from '../AgenticCoding/McpSessionStatusChip';
 import {
   workstreamSessionsAtom,
   workstreamTitleAtom,
@@ -464,13 +465,20 @@ const WorkstreamHeaderTagsRow: React.FC<{ workstreamId: string }> = ({ workstrea
 const WorkstreamHeader: React.FC<{
   workstreamId: string;
   workspacePath: string;
+  /**
+   * The session currently in view — the workstream's active child, or the
+   * workstream itself when it is a solo session. Per-session chrome (today:
+   * the MCP status chip) keys off this rather than workstreamId, since a
+   * workstream's tabs can be on different providers.
+   */
+  activeSessionId?: string | null;
   worktreeId?: string | null;
   worktreePath?: string | null;
   onArchiveStatusChange?: () => void;
   onOpenTerminal?: () => void;
   onCreateNewTerminal?: () => void;
   onShowArchiveDialog?: () => void;
-}> = React.memo(({ workstreamId, workspacePath, worktreeId, worktreePath, onArchiveStatusChange, onOpenTerminal, onCreateNewTerminal, onShowArchiveDialog }) => {
+}> = React.memo(({ workstreamId, workspacePath, activeSessionId, worktreeId, worktreePath, onArchiveStatusChange, onOpenTerminal, onCreateNewTerminal, onShowArchiveDialog }) => {
   const title = useAtomValue(workstreamTitleAtom(workstreamId));
   const isProcessing = useAtomValue(workstreamProcessingAtom(workstreamId));
   const sessionData = useAtomValue(sessionStoreAtom(workstreamId));
@@ -658,6 +666,11 @@ const WorkstreamHeader: React.FC<{
             <span className="workstream-header-spinner w-4 h-4 border-2 border-[var(--nim-border)] border-t-[var(--nim-primary)] rounded-full animate-spin" />
           </div>
         )}
+
+        {/* MCP servers for the session currently in view. Hides itself for
+            providers with no MCP status channel and for sessions that have not
+            run a turn yet, so a healthy or irrelevant session shows nothing. */}
+        {activeSessionId && <ActiveSessionMcpStatusChip sessionId={activeSessionId} />}
 
         {/* Terminal button - only show for worktree sessions, positioned before layout controls */}
         {worktreeId && onOpenTerminal && (
@@ -1455,6 +1468,7 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
         <WorkstreamHeader
           workstreamId={workstreamId}
           workspacePath={workspacePath}
+          activeSessionId={chatTargetId}
           worktreeId={sessionWorktreeId}
           worktreePath={worktreePath}
           onOpenTerminal={sessionWorktreeId ? handleOpenTerminal : undefined}

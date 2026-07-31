@@ -38,6 +38,10 @@ import { isBedrockToolSearchError } from '@nimbalyst/runtime/ai/server/utils/err
 import { resolveEffortLevel, resolveThinkingMode } from '@nimbalyst/runtime/ai/server/effortLevels';
 import type { RawDocumentContext, DocumentContextService } from '@nimbalyst/runtime';
 import { AISessionsRepository, resolveClaudeCodeParentContextWindow } from '@nimbalyst/runtime';
+import {
+  buildMcpSessionStatusSnapshot,
+  type McpSessionStatusInput,
+} from '@nimbalyst/runtime/types/MCPServerConfig';
 import { toolRegistry } from './tools';
 import { resolveExtensionAgentRef } from './providerResolution';
 import { getAgentProviderRegistry } from '../../extensions/AgentProviderRegistry';
@@ -796,6 +800,34 @@ export class MessageStreamingHandler {
     // Replace this handler's previous 'message:logged' subscription only,
     // so other modules subscribing to the same provider event stay wired.
     this.installListener(provider, 'message:logged', onMessageLogged);
+
+    // Per-session MCP health transitions (NIM-2272 / GH #1089). The provider's
+    // 30s poll runs *between* turns as well as during them — mcpQuery outlives
+    // leadQuery specifically so it can — so this listener has to survive turn
+    // boundaries. installScopedProviderListener replaces only its own prior
+    // subscription, so re-running handle() on the next turn rewires without a
+    // gap. Payload is built by the same function the pull handler uses, so a
+    // pushed snapshot and a pulled one are byte-identical.
+    const onMcpServerStatusChanged = (data: {
+      sessionId?: string;
+      servers?: unknown[];
+      lastCheckedAt?: number | null;
+      configuredNames?: string[] | null;
+    }) => {
+      const mcpSessionId = data?.sessionId || session.id;
+      safeSend(event, 'ai:mcp-status:changed', {
+        ...buildMcpSessionStatusSnapshot({
+          sessionId: mcpSessionId,
+          supported: true,
+          active: true,
+          statuses: (data?.servers || []) as McpSessionStatusInput[],
+          configuredNames: data?.configuredNames ?? null,
+          lastCheckedAt: data?.lastCheckedAt ?? null,
+        }),
+        workspacePath: effectiveWorkspacePath,
+      });
+    };
+    this.installListener(provider, 'mcpServerStatus:changed', onMcpServerStatusChanged);
 
     // Forward any provider-side title updates to all renderers so the session
     // list updates in real time.

@@ -568,6 +568,17 @@ interface ElectronAPI {
     getOpenWorkspaces: () => Promise<string[]>;
   };
 
+  tutorial: {
+    getStatus: () => Promise<
+      | { success: true; exists: boolean; workspacePath?: string }
+      | { success: false; exists: false; error: string }
+    >;
+    start: () => Promise<
+      | { success: true; workspacePath: string; reused: boolean }
+      | { success: false; error: string }
+    >;
+  };
+
   // Project Migration (move/rename)
   projectMigration: {
     canMove: (oldPath: string) => Promise<{ canMove: boolean; reason?: string }>;

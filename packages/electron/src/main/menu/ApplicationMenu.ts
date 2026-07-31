@@ -29,6 +29,7 @@ import * as fs from 'fs';
 import { windowStates, createWindow, findWindowByFilePath, getWindowId } from '../window/WindowManager';
 import { createAboutWindow } from '../window/AboutWindow';
 import { createWorkspaceManagerWindow } from '../window/WorkspaceManagerWindow.ts';
+import { launchTutorialFromMenu } from './helpMenuActions';
 import {
     createTeamManagementWindow,
     isTeamManagementWindowFocused,
@@ -60,7 +61,7 @@ import {
 } from '../services/ExtensionProjectScaffolder';
 
 // Import shared SDK docs path function
-import { getExtensionSDKDocsPath } from '../utils/workspaceDetection';
+import { ensureExtensionSDKDocsTrusted, getExtensionSDKDocsPath } from '../utils/workspaceDetection';
 import { database } from '../database/PGLiteDatabaseWorker';
 import { getRegisteredWalkthroughs, getRegisteredTips } from '../ipc/WalkthroughHandlers';
 
@@ -1615,6 +1616,11 @@ export async function createApplicationMenu() {
                 //     }
                 // },
                 {
+                    label: 'Launch Tutorial',
+                    click: launchTutorialFromMenu
+                },
+                { type: 'separator' },
+                {
                     label: 'Documentation',
                     click: async () => {
                         // Track help accessed
@@ -1645,7 +1651,9 @@ export async function createApplicationMenu() {
                         });
                         const sdkDocsPath = getExtensionSDKDocsPath();
                         if (sdkDocsPath) {
-                            // Open as a workspace window
+                            // Open as a workspace window. The docs ship with the
+                            // app, so trust them rather than prompting.
+                            ensureExtensionSDKDocsTrusted(sdkDocsPath);
                             addToRecentItems('workspaces', sdkDocsPath, 'Extension SDK Docs');
                             createWindow(false, true, sdkDocsPath);
                         } else {
@@ -1762,6 +1770,11 @@ export async function createApplicationMenu() {
             label: 'Help',
             submenu: [
                 {
+                    label: 'Launch Tutorial',
+                    click: launchTutorialFromMenu
+                },
+                { type: 'separator' },
+                {
                     label: 'Welcome',
                     click: async () => {
                         // Track help accessed
@@ -1807,7 +1820,9 @@ export async function createApplicationMenu() {
                         });
                         const sdkDocsPath = getExtensionSDKDocsPath();
                         if (sdkDocsPath) {
-                            // Open as a workspace window
+                            // Open as a workspace window. The docs ship with the
+                            // app, so trust them rather than prompting.
+                            ensureExtensionSDKDocsTrusted(sdkDocsPath);
                             addToRecentItems('workspaces', sdkDocsPath, 'Extension SDK Docs');
                             createWindow(false, true, sdkDocsPath);
                         } else {

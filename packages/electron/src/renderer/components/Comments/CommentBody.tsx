@@ -2,11 +2,15 @@ import React from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import {
   TrackerReferenceChip,
-  useResolvedTrackerReference,
 } from '@nimbalyst/runtime/plugins/TrackerLinkPlugin';
 
 import { ResourcePill } from './ResourcePill';
-import type { BodySegment, MessageAttachmentView, ResourcePillView } from './commentTypes';
+import type {
+  BodySegment,
+  MessageAttachmentView,
+  ResourceOpenHandler,
+  ResourcePillView,
+} from './commentTypes';
 import { parseResourceUrn } from './resourceUrn';
 
 /**
@@ -23,7 +27,7 @@ export function CommentBody({
   onOpenSession,
 }: {
   segments: readonly BodySegment[];
-  onOpenResource?: (pill: ResourcePillView) => void;
+  onOpenResource?: ResourceOpenHandler;
   onOpenMention?: (userId: string) => void;
   onOpenSession?: (sessionId: string) => void;
 }) {
@@ -49,7 +53,7 @@ function Segment({
   onOpenSession,
 }: {
   segment: BodySegment;
-  onOpenResource?: (pill: ResourcePillView) => void;
+  onOpenResource?: ResourceOpenHandler;
   onOpenMention?: (userId: string) => void;
   onOpenSession?: (sessionId: string) => void;
 }) {
@@ -131,7 +135,13 @@ function Segment({
       );
 
     case 'resource':
-      return <MessageResourceReference pill={segment.pill} onOpenResource={onOpenResource} />;
+      return (
+        <MessageResourceReference
+          pill={segment.pill}
+          label={segment.label}
+          onOpenResource={onOpenResource}
+        />
+      );
 
     case 'attachments':
       return <AttachmentBlock attachments={segment.attachments} />;
@@ -142,33 +152,45 @@ function Segment({
 }
 
 /**
- * Tracker references reuse the canonical live chip when the current workspace
- * has resolved the record. That is what gives plans and ordinary tracker items
- * their existing type, title, status and preview treatment inside messaging.
+ * Tracker references reuse the canonical live chip. A project window resolves
+ * its title and status from the tracker atom; a dedicated organization window
+ * can still render the stable reference and route it to the owning project.
  *
- * The generic redacted pill remains the fallback for unavailable resources and
- * for references that have not reached the local tracker store yet.
+ * The generic redacted pill remains the fallback for unavailable resources.
  */
 function MessageResourceReference({
   pill,
+  label,
   onOpenResource,
 }: {
   pill: ResourcePillView;
-  onOpenResource?: (pill: ResourcePillView) => void;
+  label?: string;
+  onOpenResource?: ResourceOpenHandler;
 }) {
   const trackerReferenceKey =
     pill.kind === 'tracker'
       ? parseResourceUrn(pill.urn, 'message-resource')?.sourceId ?? null
       : null;
-  const resolvedTracker = useResolvedTrackerReference(trackerReferenceKey ?? '');
-
   if (
     trackerReferenceKey
-    && resolvedTracker
     && pill.availability !== 'unavailable'
     && pill.availability !== 'notInWorkspace'
   ) {
-    return <TrackerReferenceChip referenceKey={trackerReferenceKey} />;
+    const unresolvedLabel = label === 'Plan' ? 'Plan' : 'Tracker';
+    return (
+      <TrackerReferenceChip
+        referenceKey={trackerReferenceKey}
+        unresolvedLabel={unresolvedLabel}
+        onNavigate={
+          onOpenResource
+            ? () => onOpenResource(
+                pill,
+                label === 'Plan' ? { trackerView: 'document' } : undefined,
+              )
+            : undefined
+        }
+      />
+    );
   }
 
   return <ResourcePill pill={pill} onOpen={onOpenResource} />;

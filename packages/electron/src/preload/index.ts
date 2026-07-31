@@ -15,6 +15,7 @@ import type {
 } from '@nimbalyst/runtime/sync';
 import type { ConversationSubscription } from '@nimbalyst/collab-protocol';
 import type { ConversationSetSubscriptionRequest } from '../shared/conversationDirectory.ts';
+import type { TutorialStartResult, TutorialStatusResult } from '../shared/tutorial.ts';
 
 // Nimbalyst is an IDE-like application with many concurrent IPC listeners:
 // - File watching, git status, AI sessions, terminals, extensions, etc.
@@ -565,6 +566,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aiClearModelCache: () => ipcRenderer.invoke('ai:clearModelCache'),
   aiRefreshSessionProvider: (sessionId: string) => ipcRenderer.invoke('ai:refreshSessionProvider', sessionId),
 
+  // Per-session MCP status (NIM-2272). Pull for first render, push for live
+  // transitions — the push listener only exists once a message has been sent.
+  aiGetMcpSessionStatus: (sessionId: string, provider: string) =>
+    ipcRenderer.invoke('ai:mcp-status:get', { sessionId, provider }),
+  onMcpSessionStatusChanged: (callback: (data: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('ai:mcp-status:changed', handler);
+    return () => ipcRenderer.removeListener('ai:mcp-status:changed', handler);
+  },
+
   // CLI management
   cliCheckInstallation: (tool: string) => ipcRenderer.invoke('cli:checkInstallation', tool),
   cliInstall: (tool: string, options: any) => ipcRenderer.invoke('cli:install', tool, options),
@@ -810,6 +821,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openWorkspace: (workspacePath: string) => ipcRenderer.invoke('workspace-manager:open-workspace', workspacePath),
     removeRecent: (workspacePath: string) => ipcRenderer.invoke('workspace-manager:remove-recent', workspacePath),
     getOpenWorkspaces: () => ipcRenderer.invoke('workspace-manager:get-open-workspaces') as Promise<string[]>,
+  },
+
+  tutorial: {
+    getStatus: () =>
+      ipcRenderer.invoke('tutorial:get-status') as Promise<TutorialStatusResult>,
+    start: () =>
+      ipcRenderer.invoke('tutorial:start') as Promise<TutorialStartResult>,
   },
 
   // Project Migration (move/rename)

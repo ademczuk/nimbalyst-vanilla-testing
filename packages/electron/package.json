@@ -326,6 +326,10 @@
         "to": "claudeCliPermissionHook.cjs"
       },
       {
+        "from": "resources/tutorial-project",
+        "to": "tutorial-project"
+      },
+      {
         "from": "../extensions",
         "to": "extensions",
         "filter": [

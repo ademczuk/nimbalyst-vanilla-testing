@@ -138,6 +138,17 @@ export interface ResourcePreviewResolver {
   resolve(refs: readonly ResourceRef[]): Promise<Record<string, ResourcePreviewState>>;
 }
 
+/** Optional presentation intent carried by the exact resource token clicked. */
+export interface ResourceOpenOptions {
+  /** A pasted plan-document link should reopen in tracker document view. */
+  trackerView?: 'document';
+}
+
+export type ResourceOpenHandler = (
+  pill: ResourcePillView,
+  options?: ResourceOpenOptions,
+) => void;
+
 /**
  * The seam the composer uploads files through.
  *
@@ -204,7 +215,12 @@ export type BodySegment =
   | { type: 'emoji'; shortcode: string; glyph: string }
   | { type: 'mention'; userId: string; displayName: string; initials: string; isViewer: boolean }
   | { type: 'agentMention'; sessionId: string; sessionName: string; ownerDisplayName?: string }
-  | { type: 'resource'; pill: ResourcePillView }
+  | {
+      type: 'resource';
+      pill: ResourcePillView;
+      /** Display-only label from the exact markdown token, never resolver data. */
+      label?: string;
+    }
   /**
    * The message's files, as one trailing block rather than inline runs.
    *

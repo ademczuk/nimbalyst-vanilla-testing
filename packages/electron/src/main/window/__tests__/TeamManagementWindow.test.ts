@@ -299,4 +299,43 @@ describe('TeamManagementWindow', () => {
     expect(instances).toHaveLength(1);
     expect(instances[0].loadURL.mock.calls[0][0]).toContain('orgId=org-9');
   });
+
+  it('lists tracker metadata only for the organization currently hosted by the org window', async () => {
+    const listTrackerItemsForOrg = vi.fn().mockResolvedValue([
+      { id: 'plan-1', issueKey: 'NIM-1', type: 'plan', title: 'Satellite apps' },
+    ]);
+    const { setupTeamManagementHandlers } = await import('../TeamManagementWindow');
+    setupTeamManagementHandlers({ listTrackerItemsForOrg });
+
+    await ipcHandlers.get('team-window:open')!({}, { orgId: 'org-9' });
+    const win = instances[0];
+    ipcListeners.get('team-window:route-state')!(
+      { sender: win.webContents },
+      { orgId: 'org-9', view: 'conversation', conversationId: 'general' },
+    );
+
+    await expect(
+      ipcHandlers.get('team-window:tracker-items-list')!(
+        { sender: win.webContents },
+        { orgId: 'org-9' },
+      ),
+    ).resolves.toEqual([
+      { id: 'plan-1', issueKey: 'NIM-1', type: 'plan', title: 'Satellite apps' },
+    ]);
+    expect(listTrackerItemsForOrg).toHaveBeenCalledWith('org-9');
+
+    await expect(
+      ipcHandlers.get('team-window:tracker-items-list')!(
+        { sender: win.webContents },
+        { orgId: 'org-other' },
+      ),
+    ).resolves.toEqual([]);
+    await expect(
+      ipcHandlers.get('team-window:tracker-items-list')!(
+        { sender: {} },
+        { orgId: 'org-9' },
+      ),
+    ).resolves.toEqual([]);
+    expect(listTrackerItemsForOrg).toHaveBeenCalledTimes(1);
+  });
 });

@@ -4,12 +4,12 @@
 // resolves from inside the packaged tree. The validator catches the failure
 // class where the build is green but the feature is broken in production
 // because the SDK's package.json/exports map is missing or unresolvable --
-// something `validate-extra-resources.js` (input-only validation) cannot
-// detect.
+// something the pre-pack input validation cannot detect.
 
 const path = require('path');
 const fs = require('fs');
 const { spawnSync } = require('child_process');
+const { validatePackagedTutorialProject } = require('./validate-extra-resources.js');
 
 exports.default = async function(context) {
   const { appOutDir, packager } = context;
@@ -143,6 +143,7 @@ exports.default = async function(context) {
   // releases with zero bundled extensions. Assert the output here so it fails
   // the build instead of silently shipping.
   validateBundledExtensions(resourcesDir);
+  validatePackagedTutorialProject(resourcesDir);
 
   console.log('AfterPack: Complete');
 };

@@ -43,8 +43,8 @@ import { ErrorToastContainer } from './components/ErrorToast/ErrorToast';
 import { ExtensionPermissionPrompt } from './components/ExtensionPermissions/ExtensionPermissionPrompt';
 import { errorNotificationService } from './services/ErrorNotificationService';
 // NOTE: ProjectSelectionDialog now managed by DialogProvider
-// NOTE: UnifiedOnboarding now managed by DialogProvider
-import { WorkspaceManager } from './components/WorkspaceManager/WorkspaceManager.tsx';
+// NOTE: Project-window UnifiedOnboarding is managed by DialogProvider.
+import { WorkspaceManagerOnboarding } from './components/WorkspaceManager/WorkspaceManagerOnboarding';
 import { AIUsageReport } from './components/AIUsageReport';
 import { DatabaseBrowser } from './components/DatabaseBrowser/DatabaseBrowser';
 import { DeveloperDashboard } from './components/DeveloperDashboard/DeveloperDashboard';
@@ -177,6 +177,7 @@ import { ExtensionHostComponents } from './components/ExtensionHostComponents';
 // ClaudeCommandsToast removed - commands now provided via extension-based claude plugins
 import { UpdateToast } from './components/UpdateToast';
 import { ProjectTrustToast } from './components/ProjectTrustToast';
+import { StartupSkeleton } from './components/StartupSkeleton';
 import { getTextSelection } from './components/UnifiedAI/TextSelectionIndicator';
 // NOTE: FeedbackIntakeDialog now managed by DialogProvider
 import { buildFeedbackInitialDraft, type FeedbackIntakeLaunchOptions } from './components/Feedback';
@@ -473,7 +474,11 @@ export default function App() {
         window.electronAPI.setTitle('Project Manager - Nimbalyst');
       }
     }, []);
-    return <WorkspaceManager />;
+    return (
+      <WorkspaceManagerOnboarding
+        showOnboarding={urlParams.get('onboarding') === '1'}
+      />
+    );
   }
 
   if (windowMode === 'usage-report') {
@@ -2423,11 +2428,12 @@ export default function App() {
     };
   }, []);
 
-  // Show nothing while initializing - let HTML/CSS background show through
   // Wait for both initial state and extensions to be ready before rendering editors
-  // This ensures extension nodes (like DataModelNode) are published into the runtime extension stores
+  // This ensures extension nodes (like DataModelNode) are published into the runtime extension stores.
+  // Extension registration takes seconds on a machine with several extensions,
+  // so show placeholder chrome rather than an empty window for that whole time.
   if (isInitializing || !extensionsReady) {
-    return <div className="h-screen" />;
+    return <StartupSkeleton workspaceMode={workspaceMode} />;
   }
 
   return (

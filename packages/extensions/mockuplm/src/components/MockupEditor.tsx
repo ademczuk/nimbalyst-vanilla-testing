@@ -15,7 +15,11 @@ import {
   useCollaborativeEditor,
   type EditorHostProps,
 } from '@nimbalyst/extension-sdk';
-import { captureMockupComposite } from '../utils/screenshotUtils';
+import {
+  captureMockupComposite,
+  describeScreenshotCaptureError,
+  sanitizeScreenshotCloneForXml,
+} from '../utils/screenshotUtils';
 import { renderMockupHtml } from '../utils/mockupDomUtils';
 import { MockupDiffViewer } from './MockupDiffViewer';
 import { injectTheme, type MockupTheme } from '../utils/themeEngine';
@@ -611,7 +615,7 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(function MockupEdit
           mimeType: 'image/png',
         });
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
+        const errorMessage = describeScreenshotCaptureError(err);
         await electronAPI.invoke('mockup:screenshot-result', {
           requestId: data.requestId,
           success: false,
@@ -670,6 +674,7 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(function MockupEdit
         height: elemHeight,
         windowWidth: elemWidth,
         windowHeight: elemHeight,
+        onclone: sanitizeScreenshotCloneForXml,
       });
 
       canvas.toBlob(async (blob) => {
@@ -709,7 +714,8 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(function MockupEdit
         }
       }, 'image/png');
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error('[MockupEditor] Screenshot capture failed:', err);
+      const errorMessage = describeScreenshotCaptureError(err);
       alert('Failed to capture screenshot: ' + errorMessage);
     } finally {
       setIsCapturing(false);

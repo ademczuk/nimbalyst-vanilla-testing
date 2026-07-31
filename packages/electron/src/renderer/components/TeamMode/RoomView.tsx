@@ -15,7 +15,11 @@ import { useAtom, useAtomValue, useStore } from 'jotai';
 
 import { CommentThread } from '../Comments/CommentThread';
 import { createConversationCommentAdapter } from '../Comments/ConversationCommentAdapter';
-import type { AttachmentComposerHost } from '../Comments/commentTypes';
+import type {
+  AttachmentComposerHost,
+  ResourceOpenHandler,
+} from '../Comments/commentTypes';
+import { parseResourceUrn } from '../Comments/resourceUrn';
 import { uploadConversationAttachment } from '../../services/conversationAttachments';
 import type { ConversationDirectoryEntry } from '../../../shared/conversationDirectory';
 import { setConversationNotificationLevel } from '../../services/conversationClient';
@@ -24,6 +28,7 @@ import { settingAtom } from '../../store/atoms/settingAtomFamily';
 import { markConversationNotificationLevelChanged } from '../../store/listeners/conversationDirectoryListeners';
 import type { OrgRosterMember } from './useOrgRoster';
 import { HelpTooltip } from '../../help';
+import { buildTrackerDeepLink } from '../../store/atoms/collabDocuments';
 import {
   ROOM_NOTIFICATION_LEVELS,
   buildRoomHeader,
@@ -198,6 +203,29 @@ export function RoomView({
     upload: (file) =>
       uploadConversationAttachment({ orgId, conversationId: entry.id }, file),
   }), [entry.id, orgId]);
+  const openResource = useCallback<ResourceOpenHandler>((pill, options) => {
+    if (pill.kind !== 'tracker') return;
+    const ref = parseResourceUrn(pill.urn, orgId);
+    if (!ref || ref.kind !== 'tracker') return;
+    const deepLink = buildTrackerDeepLink(
+      ref.sourceId,
+      orgId,
+      options?.trackerView ? { view: options.trackerView } : undefined,
+    );
+    void window.electronAPI.invoke(
+      'deep-link:open-inbox-source',
+      deepLink,
+    ).then((opened: boolean) => {
+      if (!opened) {
+        console.warn('[Conversation] Tracker link could not be opened:', {
+          orgId,
+          trackerId: ref.sourceId,
+        });
+      }
+    }).catch((error: unknown) => {
+      console.error('[Conversation] Failed to open tracker link:', error);
+    });
+  }, [orgId]);
 
   // Posting attributes to a team member id. Without one resolved the thread
   // would create messages attributed to an empty actor, so the surface waits.
@@ -308,6 +336,7 @@ export function RoomView({
           orgId={orgId}
           viewerUserId={viewerUserId}
           viewerActor={viewerActor}
+          onOpenResource={openResource}
           emptyLabel={roomEmptyLabel(header, capabilities.comment)}
           // Opening a conversation means you are about to write in it. This is
           // also what closes the Cmd+K loop: pick a destination, start typing,

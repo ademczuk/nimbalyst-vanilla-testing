@@ -24,12 +24,20 @@ vi.mock('@nimbalyst/runtime/plugins/TrackerLinkPlugin', () => ({
           status: 'in-progress',
         }
       : null,
-  TrackerReferenceChip: ({ referenceKey }: { referenceKey: string }) => (
+  TrackerReferenceChip: ({
+    referenceKey,
+    unresolvedLabel,
+  }: {
+    referenceKey: string;
+    unresolvedLabel?: string;
+  }) => (
     <span
       className="tracker-reference-chip"
       data-testid="tracker-reference-chip"
       data-reference-key={referenceKey}
-    />
+    >
+      {unresolvedLabel ?? referenceKey}
+    </span>
   ),
 }));
 
@@ -458,10 +466,10 @@ describe('CommentRow resource pills', () => {
     expect(screen.getByTestId('resource-pill-commit').textContent).toContain('Release v0.71.2');
   });
 
-  it('marks a pill loading, not available, before the resolver answers', () => {
+  it('marks a generic resource pill loading, not available, before the resolver answers', () => {
     const comments = commentsOf();
     renderRow(comments[0], { previews: {} });
-    const pill = screen.getByTestId('resource-pill-tracker');
+    const pill = screen.getByTestId('resource-pill-file');
     expect(pill.getAttribute('data-availability')).toBe('loading');
     expect(pill.tagName).toBe('SPAN');
   });
@@ -504,6 +512,37 @@ describe('CommentRow resource pills', () => {
 
     const chip = screen.getByTestId('tracker-reference-chip');
     expect(chip.getAttribute('data-reference-key')).toBe('itm-pasted-plan');
+    expect(screen.queryByTestId('resource-pill-tracker')).toBeNull();
+  });
+
+  it('keeps a pasted plan as an actionable tracker chip when the org window cannot resolve it locally', () => {
+    const [base] = commentsOf();
+    const token = '[Plan](nimbalyst://tracker/itm-org-window-plan)';
+    renderRow({
+      ...base,
+      body: {
+        version: 1,
+        format: 'nimbalystMarkdown',
+        text: token,
+        entities: [
+          {
+            start: 0,
+            end: new TextEncoder().encode(token).byteLength,
+            kind: 'resource',
+            refIndex: 0,
+          },
+        ],
+      },
+      resourceRefs: [{
+        orgId: 'org-nimbalyst',
+        kind: 'tracker',
+        sourceId: 'itm-org-window-plan',
+      }],
+    });
+
+    const chip = screen.getByTestId('tracker-reference-chip');
+    expect(chip.getAttribute('data-reference-key')).toBe('itm-org-window-plan');
+    expect(chip.textContent).toBe('Plan');
     expect(screen.queryByTestId('resource-pill-tracker')).toBeNull();
   });
 });

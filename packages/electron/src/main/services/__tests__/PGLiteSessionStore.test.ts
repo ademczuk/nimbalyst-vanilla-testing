@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createPGLiteSessionStore } from '../PGLiteSessionStore';
+import {
+  createPGLiteSessionStore,
+  getAllSessionsForSync,
+} from '../PGLiteSessionStore';
 
 describe('PGLiteSessionStore archive filters', () => {
   it('filters out sessions that belong to archived worktrees in list()', async () => {
@@ -32,6 +35,42 @@ describe('PGLiteSessionStore archive filters', () => {
 
     expect(queries[0]).toContain('LEFT JOIN worktrees w ON s.worktree_id = w.id');
     expect(queries[0]).toContain('(s.worktree_id IS NULL OR w.is_archived = FALSE OR w.is_archived IS NULL)');
+  });
+});
+
+describe('PGLiteSessionStore personal sync snapshot', () => {
+  it('excludes tutorial sessions identified by parsed metadata', async () => {
+    const db = {
+      query: vi.fn(async () => ({
+        rows: [
+          {
+            id: 'tutorial-session',
+            workspace_id: '/tutorial',
+            provider: 'claude-code',
+            title: 'Tutorial',
+            created_at: new Date(0),
+            updated_at: new Date(0),
+            metadata: '{"tutorial":true}',
+          },
+          {
+            id: 'personal-session',
+            workspace_id: '/project',
+            provider: 'claude-code',
+            title: 'Personal',
+            created_at: new Date(0),
+            updated_at: new Date(0),
+            metadata: '{"phase":"implementing"}',
+          },
+        ],
+      })),
+    };
+    createPGLiteSessionStore(db as any);
+
+    const sessions = await getAllSessionsForSync();
+
+    expect(sessions.map((session) => session.id)).toEqual([
+      'personal-session',
+    ]);
   });
 });
 

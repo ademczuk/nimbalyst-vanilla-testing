@@ -235,7 +235,11 @@ function parseEntityBody(body: RichCommentBody, ctx: ParseBodyContext): BodySegm
     const start = utf16Offsets.get(entity.start)!;
     const end = utf16Offsets.get(entity.end)!;
     appendSegments(segments, parseInlineText(body.text.slice(cursor, start)));
-    const resolved = resolveEntitySegment(entity, ctx);
+    const resolved = resolveEntitySegment(
+      entity,
+      body.text.slice(start, end),
+      ctx,
+    );
     if (resolved) segments.push(resolved);
     else appendText(segments, body.text.slice(start, end));
     cursor = end;
@@ -270,14 +274,20 @@ function parseInlineText(text: string): BodySegment[] {
   return segments;
 }
 
-function resolveEntitySegment(entity: BodyEntity, ctx: ParseBodyContext): BodySegment | null {
+function resolveEntitySegment(
+  entity: BodyEntity,
+  token: string,
+  ctx: ParseBodyContext,
+): BodySegment | null {
   if (entity.kind === 'userMention') return userMentionSegment(entity.userId, undefined, ctx);
   if (entity.kind === 'agentMention') return agentMentionSegment(entity.sessionId, undefined, ctx);
 
   const ref = ctx.resourceRefs[entity.refIndex];
   if (!ref) return null;
   const pill = ctx.pills[resourceRefToUrn(ref)];
-  return pill ? { type: 'resource', pill } : null;
+  return pill
+    ? { type: 'resource', pill, label: resourceTokenLabel(token) }
+    : null;
 }
 
 function resolveUrnSegment(
@@ -303,7 +313,12 @@ function resolveUrnSegment(
   if (!refUrns.has(urn)) return null;
   const pill = ctx.pills[urn];
   if (!pill) return null;
-  return { type: 'resource', pill };
+  return { type: 'resource', pill, label };
+}
+
+function resourceTokenLabel(token: string): string | undefined {
+  const match = /^\[([^\]\n]{1,160})\]\(nimbalyst:\/\/[^\s)]{1,512}\)$/.exec(token);
+  return match?.[1];
 }
 
 function userMentionSegment(

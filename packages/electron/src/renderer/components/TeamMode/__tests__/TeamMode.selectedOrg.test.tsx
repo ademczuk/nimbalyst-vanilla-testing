@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
 import { organizationDirectoryAtom } from '../../../store/atoms/settingsDomains';
+import { trackerItemsMapAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import { TeamMode } from '../TeamMode';
 
 vi.mock('@nimbalyst/runtime', () => ({
@@ -144,6 +145,42 @@ describe('TeamMode organization targeting', () => {
     expect(screen.getByTestId('team-tab-projects')).toBeTruthy();
     expect(screen.getByTestId('team-tab-billing')).toBeTruthy();
     expect(screen.getByTestId('team-tab-danger')).toBeTruthy();
+  });
+
+  it('hydrates canonical tracker records for chips in the dedicated org window', async () => {
+    installApi();
+    const invoke = (window as any).electronAPI.invoke as ReturnType<typeof vi.fn>;
+    invoke.mockImplementation(async (channel: string, payload?: { orgId?: string }) => {
+      if (channel === 'team-window:tracker-items-list') {
+        expect(payload).toEqual({ orgId: 'org-other' });
+        return [{
+          id: 'plan-1',
+          issueKey: 'NIM-2300',
+          type: 'plan',
+          typeTags: ['plan'],
+          title: 'Satellite apps',
+          status: 'in-progress',
+          workspace: '/workspace',
+          source: 'native',
+        }];
+      }
+      return [];
+    });
+    const store = createStore();
+    store.set(selectedOrgIdAtom, 'org-other');
+
+    render(<Provider store={store}><TeamMode /></Provider>);
+
+    await waitFor(() => expect(
+      store.get(trackerItemsMapAtom).get('plan-1'),
+    ).toMatchObject({
+      issueKey: 'NIM-2300',
+      primaryType: 'plan',
+      fields: {
+        title: 'Satellite apps',
+        status: 'in-progress',
+      },
+    }));
   });
 
   it('falls back to the workspace-bound organization when no organization is selected', async () => {

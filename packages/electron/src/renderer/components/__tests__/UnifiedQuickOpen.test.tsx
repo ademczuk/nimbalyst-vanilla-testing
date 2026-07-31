@@ -29,7 +29,13 @@ vi.mock('../../dialogs', () => ({
 
 vi.mock('@nimbalyst/runtime', async (importOriginal) => ({
   ...await importOriginal<typeof import('@nimbalyst/runtime')>(),
-  MaterialSymbol: () => null,
+  MaterialSymbol: ({
+    icon,
+    className,
+  }: {
+    icon: string;
+    className?: string;
+  }) => <span className={className} data-material-symbol={icon} />,
   ProviderIcon: () => null,
 }));
 
@@ -577,6 +583,54 @@ describe('UnifiedQuickOpen — Team tab', () => {
 
     expect(await screen.findByRole('tab', { name: /Team/ })).toBeTruthy();
     expect(screen.getByText('Product Roadmap')).toBeTruthy();
+  });
+
+  it('renders shortcut modifiers as compact Material Symbols', async () => {
+    const { semanticSearch } = setupElectronApiMock();
+    semanticSearch.isAvailable.mockResolvedValue(true);
+    const { UnifiedQuickOpen } = await import('../UnifiedQuickOpen');
+    const store = createStore();
+    store.set(activeWorkspacePathAtom, '/Users/ghinkle/sources/crystal');
+    store.set(workspaceHasTeamAtom, true);
+
+    render(
+      <JotaiProvider store={store}>
+        <UnifiedQuickOpen
+          isOpen={true}
+          onClose={vi.fn()}
+          workspacePath="/Users/ghinkle/sources/crystal"
+          initialTab="files"
+          onFileSelect={vi.fn()}
+          onSessionSelect={vi.fn()}
+          onPromptSelect={vi.fn()}
+        />
+      </JotaiProvider>
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-tab="search"]')).toBeTruthy();
+    });
+
+    const projectsTab = document.querySelector<HTMLElement>('[data-tab="projects"]')!;
+    const projectsShortcut = projectsTab.querySelector('kbd');
+    expect(projectsShortcut).toBeTruthy();
+    expect(
+      Array.from(projectsShortcut!.querySelectorAll('[data-material-symbol]')).map(
+        (symbol) => symbol.getAttribute('data-material-symbol'),
+      ),
+    ).toEqual(['keyboard_control_key', 'shift']);
+    expect(projectsShortcut!.querySelector('[data-shortcut-key]')?.textContent).toBe('P');
+    expect(projectsTab.title).toBe('Projects (Ctrl+Shift+P)');
+
+    const filesShortcut = document.querySelector('[data-tab="files"]')!.querySelector('kbd');
+    expect(
+      Array.from(filesShortcut!.querySelectorAll('[data-material-symbol]')).map(
+        (symbol) => symbol.getAttribute('data-material-symbol'),
+      ),
+    ).toEqual(['keyboard_control_key']);
+    expect(filesShortcut!.querySelector('[data-shortcut-key]')?.textContent).toBe('O');
+
+    expect(document.querySelectorAll('[role="tab"] kbd')).toHaveLength(7);
   });
 
   it('filters by display name and excludes locked documents', async () => {

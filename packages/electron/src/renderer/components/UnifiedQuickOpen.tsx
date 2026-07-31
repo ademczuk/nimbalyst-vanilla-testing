@@ -113,6 +113,31 @@ const TAB_SPECS: TabSpec[] = [
 
 const FUTURE_TABS: DisabledTabSpec[] = [];
 
+type ShortcutPart =
+  | { type: 'modifier'; icon: string }
+  | { type: 'key'; label: string };
+
+function getShortcutParts(shortcut: string): ShortcutPart[] {
+  return shortcut.split('+').map((part) => {
+    if (part === 'Cmd') {
+      return {
+        type: 'modifier',
+        icon: isMac ? 'keyboard_command_key' : 'keyboard_control_key',
+      };
+    }
+    if (part === 'Ctrl') {
+      return { type: 'modifier', icon: 'keyboard_control_key' };
+    }
+    if (part === 'Shift') {
+      return { type: 'modifier', icon: 'shift' };
+    }
+    if (part === 'Option' || part === 'Alt') {
+      return { type: 'modifier', icon: 'keyboard_option_key' };
+    }
+    return { type: 'key', label: part };
+  });
+}
+
 // File mask options for the Files / In Files filter chip. Values are
 // comma-separated glob patterns — same syntax as the git extension's file
 // mask. The curated list covers common languages; users can type any custom
@@ -547,8 +572,7 @@ export const UnifiedQuickOpen: React.FC<UnifiedQuickOpenProps> = ({
         className="unified-quick-open-modal fixed top-[15%] left-1/2 -translate-x-1/2 w-[92%] max-w-[820px] max-h-[70vh] flex flex-col overflow-hidden rounded-lg z-[99999] bg-nim border border-nim shadow-[0_20px_60px_rgba(0,0,0,0.3)]"
         data-testid="unified-quick-open"
       >
-        {/* Tab strip — equal-width tabs so the row stays stable when switching
-            (the kbd chip widths varied otherwise). */}
+        {/* Tab strip — equal-width tabs so the row stays stable when switching. */}
         <div
           className="unified-quick-open-tabs flex items-stretch border-b border-nim bg-nim-secondary"
           role="tablist"
@@ -560,7 +584,13 @@ export const UnifiedQuickOpen: React.FC<UnifiedQuickOpenProps> = ({
                 key={tab.id}
                 role="tab"
                 aria-selected={active}
+                aria-label={tab.label}
                 data-tab={tab.id}
+                title={
+                  tab.shortcut
+                    ? `${tab.label} (${getShortcutDisplay(tab.shortcut)})`
+                    : tab.label
+                }
                 className={`unified-quick-open-tab flex-1 min-w-0 flex items-center justify-center gap-1.5 px-2 py-1.5 text-[13px] font-medium whitespace-nowrap border-b-2 cursor-pointer transition-colors duration-100 ${
                   active
                     ? 'text-nim border-[var(--nim-primary)] bg-nim'
@@ -572,13 +602,41 @@ export const UnifiedQuickOpen: React.FC<UnifiedQuickOpenProps> = ({
                 <span>{tab.label}</span>
                 {tab.shortcut && (
                   <kbd
-                    className={`unified-quick-open-tab-shortcut font-mono text-[10px] px-1.5 py-0.5 rounded border min-w-[26px] text-center ${
+                    className={`unified-quick-open-tab-shortcut inline-flex shrink-0 items-center justify-center rounded border text-center leading-none ${
                       active
-                        ? 'text-[var(--nim-primary)] border-[var(--nim-primary)] bg-transparent'
+                        ? 'bg-transparent'
                         : 'text-nim-faint border-nim bg-nim-secondary'
                     }`}
+                    style={{
+                      minWidth: 26,
+                      padding: '2px 4px',
+                      columnGap: 1,
+                      ...(active
+                        ? {
+                            color: 'var(--nim-primary)',
+                            borderColor: 'var(--nim-primary)',
+                          }
+                        : {}),
+                    }}
                   >
-                    {getShortcutDisplay(tab.shortcut)}
+                    {getShortcutParts(tab.shortcut).map((part, index) =>
+                      part.type === 'modifier' ? (
+                        <MaterialSymbol
+                          key={`${part.icon}-${index}`}
+                          icon={part.icon}
+                          size={11}
+                        />
+                      ) : (
+                        <span
+                          key={`${part.label}-${index}`}
+                          className="unified-quick-open-shortcut-key font-mono"
+                          data-shortcut-key
+                          style={{ fontSize: 10 }}
+                        >
+                          {part.label}
+                        </span>
+                      ),
+                    )}
                   </kbd>
                 )}
               </button>

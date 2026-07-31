@@ -17,8 +17,24 @@ import { initializeTrackerSync } from '../services/TrackerSyncManager';
 import { updateTrackerSchemaWorkspace } from '../services/TrackerSchemaService';
 import { getDialogDefaultPath, rememberDialogSelection } from '../utils/dialogPaths';
 import { windowReferencesWorkspace } from './windowState';
+import { TutorialProjectService } from '../services/tutorial/TutorialProjectService';
+import type { TutorialStartResult } from '../../shared/tutorial';
+import {
+  createWorkspaceManagerDevUrl,
+  createWorkspaceManagerRendererQuery,
+  type WorkspaceManagerWindowOptions,
+} from './workspaceManagerRendererQuery';
 
 let workspaceManagerWindow: BrowserWindow | null = null;
+
+const tutorialProjectService = new TutorialProjectService({
+  closeWorkspaceManagerWindow: () => {
+    if (workspaceManagerWindow && !workspaceManagerWindow.isDestroyed()) {
+      workspaceManagerClosingForProject = true;
+      workspaceManagerWindow.close();
+    }
+  },
+});
 
 // Track whether the WorkspaceManager is closing because a project was opened
 // (vs user manually closing it with the close button)
@@ -57,6 +73,14 @@ function findWindowReferencingWorkspace(workspacePath: string): BrowserWindow | 
   return null;
 }
 
+/**
+ * Materializes (or reopens) the tutorial project and opens it in a window.
+ * Shared by the `tutorial:start` IPC channel and the Help menu entry.
+ */
+export function startTutorialProject(): Promise<TutorialStartResult> {
+  return tutorialProjectService.startTutorial();
+}
+
 async function hasSubfolders(workspacePath: string): Promise<boolean> {
   try {
     const entries = await readdir(workspacePath, { withFileTypes: true });
@@ -66,7 +90,7 @@ async function hasSubfolders(workspacePath: string): Promise<boolean> {
   }
 }
 
-export function createWorkspaceManagerWindow() {
+export function createWorkspaceManagerWindow(options: WorkspaceManagerWindowOptions = {}) {
   // If window already exists, check if it's healthy
   if (workspaceManagerWindow && !workspaceManagerWindow.isDestroyed()) {
     // Check if the window content is corrupted
@@ -80,14 +104,14 @@ export function createWorkspaceManagerWindow() {
         console.warn('[WorkspaceManager] Window content corrupted, recreating window');
         workspaceManagerWindow?.destroy();
         workspaceManagerWindow = null;
-        createWorkspaceManagerWindow();
+        createWorkspaceManagerWindow(options);
       }
     }).catch(() => {
       // Error checking health, recreate window
       console.warn('[WorkspaceManager] Error checking window health, recreating window');
       workspaceManagerWindow?.destroy();
       workspaceManagerWindow = null;
-      createWorkspaceManagerWindow();
+      createWorkspaceManagerWindow(options);
     });
     return workspaceManagerWindow;
   }
@@ -115,10 +139,11 @@ export function createWorkspaceManagerWindow() {
   // Load the main app with a query parameter to indicate Workspace Manager mode
   const loadContent = () => {
     const currentTheme = getTheme();
+    const query = createWorkspaceManagerRendererQuery(currentTheme, options);
     if (process.env.NODE_ENV === 'development') {
       // Use VITE_PORT if set (for isolated dev mode), otherwise default to 5273
       const devPort = process.env.VITE_PORT || '5273';
-      return workspaceManagerWindow!.loadURL(`http://localhost:${devPort}/?mode=workspace-manager&theme=${currentTheme}`);
+      return workspaceManagerWindow!.loadURL(createWorkspaceManagerDevUrl(devPort, query));
     } else {
       // Note: Due to code splitting, __dirname is out/main/chunks/, not out/main/
       // Use app.getAppPath() to reliably find the renderer
@@ -132,7 +157,7 @@ export function createWorkspaceManagerWindow() {
         htmlPath = join(appPath, 'out/renderer/index.html');
       }
       return workspaceManagerWindow!.loadFile(htmlPath, {
-        query: { mode: 'workspace-manager', theme: currentTheme }
+        query
       });
     }
   };
@@ -207,6 +232,15 @@ export function setupWorkspaceManagerHandlers() {
     return;
   }
   handlersRegistered = true;
+
+  safeHandle('tutorial:get-status', async () => {
+    return tutorialProjectService.getStatus();
+  });
+
+  safeHandle('tutorial:start', async () => {
+    return startTutorialProject();
+  });
+
   // Get recent workspaces with additional info
   safeHandle('workspace-manager:get-recent-workspaces', async () => {
     const recentWorkspaces = await getRecentItems('workspaces');

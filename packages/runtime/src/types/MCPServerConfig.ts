@@ -148,3 +148,136 @@ export interface MCPConfig {
 export interface MCPServerWithName extends MCPServerConfig {
   name: string;
 }
+
+// ---------------------------------------------------------------------------
+// Per-session MCP status (NIM-2272 / GH #1089)
+//
+// What a *running* agent session currently knows about its MCP servers, as
+// opposed to the static config above. Shared by the runtime provider, the
+// Electron main handler, and the renderer chip.
+// ---------------------------------------------------------------------------
+
+/**
+ * Row status on the session surface.
+ *
+ * The first five mirror the SDK's `McpServerStatus.status`. `absent` is ours:
+ * the server is in the config snapshot this session was spawned with but the
+ * CLI never reported it at all — the connector-stripping case (GH #1088,
+ * #1051), which is invisible without something to diff against.
+ */
+export type McpSessionServerState =
+  | 'connected'
+  | 'failed'
+  | 'needs-auth'
+  | 'pending'
+  | 'disabled'
+  | 'absent';
+
+/**
+ * One server row. Deliberately narrow: the SDK's status object also carries a
+ * `config` with URLs, headers, and env, and the config snapshot holds
+ * credentials. Neither may cross the IPC boundary, so this type has no field
+ * that could hold one.
+ */
+export interface McpSessionServerRow {
+  name: string;
+  state: McpSessionServerState;
+  /** project | user | local | claudeai | managed — undefined when the SDK omits it. */
+  scope?: string;
+  /** Error text from the SDK, when it supplied one. */
+  error?: string;
+  /** Number of tools the session registered for this server. */
+  toolCount?: number;
+  /** Server-reported version, for diagnosing a stale binary. */
+  version?: string;
+}
+
+/** Everything the chip needs for one session. */
+export interface McpSessionStatusSnapshot {
+  sessionId: string;
+  /** False when this session's provider has no MCP status support (e.g. Codex). */
+  supported: boolean;
+  /** False when no live provider exists yet — distinct from "no servers". */
+  active: boolean;
+  servers: McpSessionServerRow[];
+  /** Epoch ms of the last successful poll. Null means never polled. */
+  lastCheckedAt: number | null;
+}
+
+/** Structural shape of the SDK status object, so this module stays import-free. */
+export interface McpSessionStatusInput {
+  name: string;
+  status: string;
+  error?: string;
+  scope?: string;
+  serverInfo?: { name?: string; version?: string };
+  tools?: unknown[];
+}
+
+const KNOWN_STATES: ReadonlySet<string> = new Set([
+  'connected',
+  'failed',
+  'needs-auth',
+  'pending',
+  'disabled',
+]);
+
+/**
+ * Build the IPC payload from what the provider knows.
+ *
+ * Two rules worth stating out loud:
+ *
+ * 1. Only whitelisted scalar fields are copied. Anything the SDK adds later —
+ *    including a `config` with headers or env — is dropped by construction
+ *    rather than by a blocklist that would go stale.
+ * 2. Absent rows are only emitted once a poll has actually happened. Before the
+ *    first poll every configured server is missing from the status list, and
+ *    reporting that as "configured but never reached this session" would be a
+ *    lie during the session's first seconds.
+ */
+export function buildMcpSessionStatusSnapshot(params: {
+  sessionId: string;
+  supported: boolean;
+  active: boolean;
+  statuses: McpSessionStatusInput[];
+  /** Server names from the frozen config snapshot; null when it hasn't settled. */
+  configuredNames: string[] | null;
+  lastCheckedAt: number | null;
+}): McpSessionStatusSnapshot {
+  const { sessionId, supported, active, statuses, configuredNames, lastCheckedAt } = params;
+
+  const reported = new Set<string>();
+  const servers: McpSessionServerRow[] = [];
+
+  for (const status of statuses) {
+    if (!status?.name) continue;
+    reported.add(status.name);
+    const row: McpSessionServerRow = {
+      name: status.name,
+      state: KNOWN_STATES.has(status.status)
+        ? (status.status as McpSessionServerState)
+        : 'pending',
+    };
+    if (status.scope) row.scope = status.scope;
+    if (status.error) row.error = status.error;
+    if (Array.isArray(status.tools)) row.toolCount = status.tools.length;
+    if (status.serverInfo?.version) row.version = status.serverInfo.version;
+    servers.push(row);
+  }
+
+  // See rule 2 above: no poll yet means we can't tell absent from not-yet-known.
+  if (lastCheckedAt !== null && configuredNames) {
+    for (const name of configuredNames) {
+      if (!reported.has(name)) {
+        servers.push({ name, state: 'absent' });
+      }
+    }
+  }
+
+  return { sessionId, supported, active, servers, lastCheckedAt };
+}
+
+/** True when a row is something the user may need to act on. */
+export function isMcpSessionServerProblem(row: McpSessionServerRow): boolean {
+  return row.state !== 'connected';
+}

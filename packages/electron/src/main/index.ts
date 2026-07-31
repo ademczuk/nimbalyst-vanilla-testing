@@ -14,13 +14,23 @@ import * as path from 'path';
 import { join } from 'path';
 import * as fs from 'fs';
 import { appendFileSync, existsSync, renameSync, unlinkSync, writeFileSync } from 'fs';
-import { createWindow, findWindowByFilePath, findWindowByWorkspace, getMostRecentlyFocusedWorkspaceWindow } from './window/WindowManager';
+import {
+    createWindow,
+    documentServices,
+    findWindowByFilePath,
+    findWindowByWorkspace,
+    getMostRecentlyFocusedWorkspaceWindow,
+} from './window/WindowManager';
 import { loadFileIntoWindow } from './file/FileOperations';
 import { createApplicationMenu } from './menu/ApplicationMenu';
 import { updateNativeTheme, updateWindowTitleBars } from './theme/ThemeManager';
 import { restoreSessionState, saveSessionState } from './session/SessionState';
 import { getRestartSignalPath } from './utils/appPaths';
 import { planProtocolRegistration } from './utils/protocolRegistration';
+import {
+    dispatchAppActionLink,
+    type AppAction,
+} from './utils/appActionLinks';
 import { createWorkspaceManagerWindow, setupWorkspaceManagerHandlers, wasWorkspaceManagerManuallyClosed } from './window/WorkspaceManagerWindow.ts';
 import { setupTeamManagementHandlers } from './window/TeamManagementWindow';
 import { showSplashScreen, closeSplashScreen } from './window/SplashScreen';
@@ -81,6 +91,8 @@ import {
     addToRecentItems,
     getTheme,
     hasCheckedClaudeCodeInstallation,
+    getLaunchCount,
+    getOnboardingState,
     incrementLaunchCount,
     wasCommunityPopupShownThisLaunch,
     markClaudeCodeInstallationChecked,
@@ -94,8 +106,10 @@ import {
     isTrackersAgentToolsEnabled,
     store
 } from './utils/store';
+import { shouldShowFirstLaunchOnboarding } from './utils/firstLaunchOnboarding';
 import { getAIProviderOverridesWithWorktreeFallback } from './utils/aiSettingsMerge';
 import { registerMCPConfigHandlers } from './ipc/MCPConfigHandlers';
+import { registerMcpSessionStatusHandlers } from './ipc/McpSessionStatusHandlers';
 import { getOpenCodeConfigService, registerOpenCodeConfigHandlers } from './ipc/OpenCodeConfigHandlers';
 import { registerClaudeCodePluginHandlers } from './ipc/ClaudeCodePluginHandlers';
 import { registerExportHandlers } from './ipc/ExportHandlers';
@@ -848,6 +862,35 @@ app.on('open-url', (event, url) => {
     }
 });
 
+function handleAppActionLink(
+    url: string,
+    sourceWindow?: BrowserWindow | null,
+): AppAction | null {
+    const action = dispatchAppActionLink(url, {
+        openProjectManager: () => {
+            createWorkspaceManagerWindow();
+        },
+        openKeyboardShortcuts: () => {
+            const targetWindow =
+                sourceWindow && !sourceWindow.isDestroyed()
+                    ? sourceWindow
+                    : getMostRecentlyFocusedWorkspaceWindow();
+            if (!targetWindow || targetWindow.isDestroyed()) {
+                logger.main.warn('[AppAction] No workspace window available for keyboard shortcuts');
+                return;
+            }
+            targetWindow.webContents.send('open-keyboard-shortcuts');
+        },
+        recognizedNoop: (recognizedAction) => {
+            logger.main.info('[AppAction] Recognized action is not implemented yet:', recognizedAction);
+        },
+        unknownAction: (unknownUrl) => {
+            logger.main.warn('[AppAction] Unknown action link ignored:', summarizeDeepLink(unknownUrl));
+        },
+    });
+    return action;
+}
+
 // Handle deep link URL
 async function handleDeepLink(url: string): Promise<void> {
     try {
@@ -971,6 +1014,8 @@ async function handleDeepLink(url: string): Promise<void> {
             }
 
             await openSharedFolderFromDeepLink(folderId, orgId);
+        } else if (parsed.host === 'action') {
+            handleAppActionLink(url);
         } else if (parsed.host === 'tracker' || parsed.pathname?.startsWith('/tracker/')) {
             // Handle tracker link:
             // nimbalyst://tracker/{trackerId}?orgId={orgId}&view=document
@@ -1635,7 +1680,20 @@ app.whenReady().then(async () => {
     await registerSessionStateHandlers();
     await registerThemeHandlers();
     setupWorkspaceManagerHandlers();
-    setupTeamManagementHandlers();
+    safeOn('app-action:dispatch', (event, url: unknown) => {
+        if (typeof url !== 'string') {
+            logger.main.warn('[AppAction] Ignoring non-string renderer action link');
+            return;
+        }
+        handleAppActionLink(url, BrowserWindow.fromWebContents(event.sender));
+    });
+    setupTeamManagementHandlers({
+        listTrackerItemsForOrg: async (orgId) => {
+            const workspacePath = await findWorkspaceForOrgId(orgId);
+            if (!workspacePath) return [];
+            return documentServices.get(workspacePath)?.listTrackerItems() ?? [];
+        },
+    });
     setupSessionFileHandlers();
     registerSlashCommandHandlers();
     registerActionPromptHandlers();
@@ -1667,6 +1725,7 @@ app.whenReady().then(async () => {
     registerProjectMigrationHandlers();
     registerSuperLoopHandlers();
     registerMCPConfigHandlers();
+    registerMcpSessionStatusHandlers();
     registerOpenCodeConfigHandlers();
     registerClaudeCodePluginHandlers();
     const activeSqlite = database.getActiveSQLiteDatabase();
@@ -2666,7 +2725,15 @@ app.whenReady().then(async () => {
         });
     } else if (!sessionRestored && !pendingFilePath) {
         // No session to restore and no file to open - show Workspace Manager
-        createWorkspaceManagerWindow();
+        const onboardingState = getOnboardingState();
+        if (shouldShowFirstLaunchOnboarding({
+            unifiedOnboardingCompleted: onboardingState.unifiedOnboardingCompleted,
+            launchCount: getLaunchCount(),
+        })) {
+            createWorkspaceManagerWindow({ showOnboarding: true });
+        } else {
+            createWorkspaceManagerWindow();
+        }
     } else if (pendingFilePath) {
         // Handle pending file with workspace detection
         const fileToOpen = pendingFilePath;

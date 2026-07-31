@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
-import { useAtom, useAtomValue } from 'jotai';
+import type { TrackerItem } from '@nimbalyst/runtime/core/DocumentService';
+import { trackerItemToRecord } from '@nimbalyst/runtime/core/TrackerRecord';
+import { replaceAllTrackerItemsAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
+import { useAtom, useAtomValue, useStore } from 'jotai';
 
 import { OrganizationBillingPanel } from '../Settings/panels/OrganizationBillingPanel';
 import { OrganizationDangerZone } from '../Settings/panels/OrganizationDangerZone';
@@ -311,6 +314,7 @@ function OrgWindowBody({
   onOrganizationRenamed: (name: string) => void;
 }) {
   const orgId = team.orgId;
+  const trackerStore = useStore();
   // The route lives here rather than in `TeamMode` above: the window's identity
   // arms do not navigate, and holding it at the root re-rendered every one of
   // them on each hop. Everything below that only needs to know whether it is
@@ -505,6 +509,25 @@ function OrgWindowBody({
         : {}),
     });
   }, [activeConversationId, orgId, route.view]);
+
+  useEffect(() => {
+    let cancelled = false;
+    trackerStore.set(replaceAllTrackerItemsAtom, []);
+    void window.electronAPI.invoke(
+      'team-window:tracker-items-list',
+      { orgId },
+    ).then((items: TrackerItem[]) => {
+      if (cancelled) return;
+      trackerStore.set(
+        replaceAllTrackerItemsAtom,
+        (items ?? []).map(trackerItemToRecord),
+      );
+    }).catch((error) => {
+      if (cancelled) return;
+      console.error('[TeamMode] Failed to load tracker metadata:', error);
+    });
+    return () => { cancelled = true; };
+  }, [orgId, trackerStore]);
 
   // Keyed on the id, not the entry object: every directory refresh produces a
   // fresh descriptor object for the same room, which would otherwise refetch

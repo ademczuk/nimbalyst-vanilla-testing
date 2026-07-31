@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationDirectoryEntry } from '../../../../shared/conversationDirectory';
 import { RoomView } from '../RoomView';
 import { settingAtom } from '../../../store/atoms/settingAtomFamily';
+import type { ResourceOpenHandler } from '../../Comments/commentTypes';
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
@@ -58,9 +59,12 @@ const entry: ConversationDirectoryEntry = {
 
 describe('RoomView', () => {
   const setSubscription = vi.fn();
+  const invoke = vi.fn();
 
   beforeEach(() => {
     setSubscription.mockReset();
+    invoke.mockReset();
+    invoke.mockResolvedValue(true);
     setSubscription.mockImplementation(async (request) => ({
       conversationId: request.conversationId,
       userId: 'member-a',
@@ -71,6 +75,7 @@ describe('RoomView', () => {
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
       value: {
+        invoke,
         conversation: { setSubscription },
       },
     });
@@ -138,6 +143,34 @@ describe('RoomView', () => {
 
     expect(threadProps.current?.emptyLabel)
       .toBe('This is the beginning of #Design. Send the first message to get it started.');
+  });
+
+  it('routes a tracker message chip through the project-window deep-link handoff', async () => {
+    render(
+      <Provider store={createStore()}>
+        <RoomView orgId="org-a" entry={entry} viewerUserId="member-a" members={[]} />
+      </Provider>,
+    );
+
+    const onOpenResource =
+      threadProps.current?.onOpenResource as ResourceOpenHandler | undefined;
+    expect(onOpenResource).toBeTypeOf('function');
+    onOpenResource?.(
+      {
+        urn: 'nimbalyst://tracker/plan%2F42',
+        kind: 'tracker',
+        availability: 'loading',
+        icon: 'confirmation_number',
+        label: 'Loading',
+        actionable: false,
+      },
+      { trackerView: 'document' },
+    );
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      'deep-link:open-inbox-source',
+      'nimbalyst://tracker/plan%2F42?orgId=org-a&view=document',
+    ));
   });
 
   it('disables the actions menu when there is nothing to manage', () => {

@@ -9,6 +9,7 @@ import {
   setAIDebugSettingsAtom,
 } from '../../store/atoms/appSettings';
 import { autoCommitEnabledAtom, setAutoCommitEnabledAtom } from '../../store/atoms/autoCommitAtoms';
+import { settingAtom } from '../../store/atoms/settingAtomFamily';
 import { ALPHA_FEATURES, type AlphaFeatureTag } from '../../../shared/alphaFeatures';
 import { AlphaBadge, SETTINGS_ALPHA_TOOLTIP } from '../common/AlphaBadge';
 import { SettingsToggle } from '../GlobalSettings/SettingsToggle';
@@ -39,6 +40,10 @@ export function AgentFeaturesPanel() {
 
   const autoCommitEnabled = useAtomValue(autoCommitEnabledAtom);
   const setAutoCommitEnabled = useSetAtom(setAutoCommitEnabledAtom);
+
+  const [showMcpSessionStatus, setShowMcpSessionStatus] = useAtom(
+    settingAtom('ai.showMcpSessionStatus'),
+  ) as [boolean, (value: boolean) => void];
 
   const [aiDebugSettings] = useAtom(aiDebugSettingsAtom);
   const [, updateAIDebugSettings] = useAtom(setAIDebugSettingsAtom);
@@ -183,6 +188,14 @@ export function AgentFeaturesPanel() {
           }}
           name="Auto-approve Commits"
           description="Automatically approve when Claude proposes git commits."
+        />
+
+        <SettingsToggle
+          checked={showMcpSessionStatus}
+          onChange={(checked) => setShowMcpSessionStatus(checked)}
+          name="Show MCP Server Status"
+          description="Show a chip in the session header listing this session's MCP servers, which are connected, and which never reached it."
+          testId="show-mcp-session-status-toggle"
         />
 
         <div className="agent-preferred-language flex items-start justify-between gap-4 py-3">

@@ -22,6 +22,8 @@ export interface McpServerStatusInfo {
   name: string;
   status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled';
   error?: string;
+  /** project | user | local | claudeai | managed */
+  scope?: string;
   serverInfo?: { name: string; version: string };
   tools?: { name: string; description?: string }[];
 }
@@ -296,6 +298,10 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
   // MCP server status tracking: last known statuses for change detection
   private mcpServerStatuses: Map<string, McpServerStatusInfo> = new Map();
+  // Epoch ms of the last poll that actually returned. Null means never polled,
+  // which the UI must distinguish from "polled and found nothing" — before the
+  // first poll every configured server looks absent.
+  private mcpStatusesLastCheckedAt: number | null = null;
   // Interval handle for periodic MCP health checks during active sessions
   private mcpHealthCheckInterval: ReturnType<typeof setInterval> | null = null;
   // Session ID for the current streaming session (needed for health check emissions)
@@ -323,6 +329,17 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   // fresh object from the frozen bytes also prevents SDK mutation from changing
   // later turns. See NIM-1988 and ClaudeCodeProvider.mcpSnapshot.test.ts.
   private mcpServersSnapshotJsonPromise: Promise<string> | undefined;
+
+  // Server NAMES from the snapshot above, recorded as a side effect when that
+  // promise settles on its own. This is the comparison set that lets the UI say
+  // "configured but never reached this session" — mcpServerStatus() reports
+  // what the CLI has, never what the user expected.
+  //
+  // Names only, and never awaited from the accessor: reading this must not
+  // force the snapshot to resolve early or trigger a live config read, or
+  // NIM-1988 regresses. The snapshot itself holds credentials in server env and
+  // headers and must not cross the IPC boundary at all.
+  private mcpSnapshotServerNames: string[] | null = null;
 
   // ---- Static dependency forwarding ----
   // All static fields and setters live in ClaudeCodeDeps.
@@ -386,7 +403,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     if (!this.mcpServersSnapshotJsonPromise) {
       this.mcpServersSnapshotJsonPromise = this.mcpConfigService
         .getMcpServersConfig(options)
-        .then((mcpServers) => JSON.stringify(mcpServers));
+        .then((mcpServers) => {
+          // Record names for the absent-server diff. Piggybacking on the
+          // existing resolution keeps the accessor free of any await.
+          this.mcpSnapshotServerNames = Object.keys(mcpServers ?? {});
+          return JSON.stringify(mcpServers);
+        });
     }
 
     const snapshotJson = await this.mcpServersSnapshotJsonPromise;
@@ -2821,6 +2843,10 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
    */
   private startMcpHealthChecks(): void {
     this.stopMcpHealthChecks();
+    // Poll once immediately so the in-session status surface has something to
+    // show during the first 30 seconds. Without this the UI cannot tell an
+    // unpolled session from one whose servers all vanished.
+    this.checkMcpServerStatuses().catch(() => {});
     // Poll every 30 seconds
     this.mcpHealthCheckInterval = setInterval(() => {
       this.checkMcpServerStatuses().catch(() => {});
@@ -2860,14 +2886,31 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             console.warn(`[CLAUDE-CODE] MCP server "${server.name}" disconnected: ${server.error || 'unknown reason'}`);
           }
         }
-        this.mcpServerStatuses.set(server.name, server);
       }
 
-      if (changes.length > 0) {
+      // A server that drops out of the list entirely is a change too. Keeping
+      // the stale entry would leave the UI claiming it is still connected.
+      const reported = new Set(statuses.map((s) => s.name));
+      let removed = false;
+      for (const name of Array.from(this.mcpServerStatuses.keys())) {
+        if (!reported.has(name)) {
+          this.mcpServerStatuses.delete(name);
+          removed = true;
+        }
+      }
+
+      for (const server of statuses) {
+        this.mcpServerStatuses.set(server.name, server);
+      }
+      this.mcpStatusesLastCheckedAt = Date.now();
+
+      if (changes.length > 0 || removed) {
         this.emit('mcpServerStatus:changed', {
           sessionId: this.currentSessionId,
           servers: Array.from(this.mcpServerStatuses.values()),
           changes,
+          lastCheckedAt: this.mcpStatusesLastCheckedAt,
+          configuredNames: this.mcpSnapshotServerNames,
         });
       }
     } catch {
@@ -2896,6 +2939,40 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
    */
   getMcpServerStatuses(): McpServerStatusInfo[] {
     return Array.from(this.mcpServerStatuses.values());
+  }
+
+  /**
+   * Server names from the frozen per-session MCP config snapshot, or null if
+   * that snapshot has not settled yet.
+   *
+   * Synchronous by design. Awaiting `mcpServersSnapshotJsonPromise` here would
+   * force the config read this session deliberately defers/freezes, so an
+   * unsettled snapshot reports nothing rather than triggering one. Names only —
+   * the snapshot values hold credentials. See NIM-1988.
+   */
+  getMcpConfiguredServerNames(): string[] | null {
+    return this.mcpSnapshotServerNames ? [...this.mcpSnapshotServerNames] : null;
+  }
+
+  /** Epoch ms of the last poll that returned, or null if never polled. */
+  getMcpStatusLastCheckedAt(): number | null {
+    return this.mcpStatusesLastCheckedAt;
+  }
+
+  /**
+   * Everything the in-session MCP status surface needs, in one call.
+   * Read-only: no SDK round trip, no config read, no prompt bytes.
+   */
+  getMcpSessionStatus(): {
+    servers: McpServerStatusInfo[];
+    configuredNames: string[] | null;
+    lastCheckedAt: number | null;
+  } {
+    return {
+      servers: this.getMcpServerStatuses(),
+      configuredNames: this.getMcpConfiguredServerNames(),
+      lastCheckedAt: this.mcpStatusesLastCheckedAt,
+    };
   }
 
   getCapabilities(): ProviderCapabilities {

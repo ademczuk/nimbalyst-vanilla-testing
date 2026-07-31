@@ -56,6 +56,10 @@ interface TeamWindowRouteState {
   conversationId?: string;
 }
 
+export interface TeamManagementHandlerDependencies {
+  listTrackerItemsForOrg?: (orgId: string) => Promise<unknown[]>;
+}
+
 const DEFAULT_SIZE = {
   width: 1100,
   height: 750,
@@ -274,10 +278,31 @@ export function isTeamManagementWindowFocusedOn(
  * Register the renderer-facing IPC opener. Called once during main-process
  * handler setup (index.ts), matching setupWorkspaceManagerHandlers().
  */
-export function setupTeamManagementHandlers(): void {
+export function setupTeamManagementHandlers(
+  dependencies: TeamManagementHandlerDependencies = {},
+): void {
   safeHandle('team-window:open', async (_event, target?: TeamWindowTarget) => {
     createTeamManagementWindow(target);
     return { success: true };
+  });
+  safeHandle('team-window:tracker-items-list', async (event, payload?: { orgId?: string }) => {
+    const orgId = payload?.orgId;
+    if (
+      !teamManagementWindow
+      || teamManagementWindow.isDestroyed()
+      || event.sender !== teamManagementWindow.webContents
+      || typeof orgId !== 'string'
+      || teamManagementRouteState?.orgId !== orgId
+      || !dependencies.listTrackerItemsForOrg
+    ) {
+      return [];
+    }
+    try {
+      return await dependencies.listTrackerItemsForOrg(orgId);
+    } catch (error) {
+      console.error('[TeamManagementWindow] Failed to list tracker items:', error);
+      return [];
+    }
   });
   safeHandle('app:open-account-settings', async () => {
     const workspaceWindow = getMostRecentlyFocusedWorkspaceWindow();
