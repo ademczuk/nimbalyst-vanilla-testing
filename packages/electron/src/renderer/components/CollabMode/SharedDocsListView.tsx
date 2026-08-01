@@ -32,6 +32,7 @@ import {
   useRole,
   useInteractions,
 } from '@floating-ui/react';
+import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { UserAvatar } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/UserAvatar';
 import {
@@ -745,7 +746,7 @@ const FacetDropdown: React.FC<{
     open,
     onOpenChange: setOpen,
     placement: 'bottom-end',
-    middleware: [offset(6), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(6), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
     whileElementsMounted: autoUpdate,
   });
   const click = useClick(context);

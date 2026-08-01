@@ -14,6 +14,11 @@ export type ClaudeCodeSettingsLoader = () => Promise<{ projectCommandsEnabled: b
 export type ClaudeSettingsEnvLoader = () => Promise<Record<string, string>>;
 export type ShellEnvironmentLoader = () => Record<string, string> | null;
 export type AdditionalDirectoriesLoader = (workspacePath: string) => string[];
+export type AttachmentStagingLoader = (workspacePath: string) => {
+  root: string;
+  mode: 'temp' | 'workspace' | 'custom';
+};
+export type AttachmentDenyRulesLoader = (workspacePath: string) => Promise<string[]>;
 export type PatternSaver = (workspacePath: string, pattern: string) => Promise<void>;
 export type PatternChecker = (workspacePath: string, pattern: string) => Promise<boolean>;
 export type ImageCompressor = (
@@ -75,6 +80,11 @@ export const ClaudeCodeDeps = {
   // Returns additional directories Claude should have access to based on workspace context
   // (e.g., SDK docs when working on an extension project)
   additionalDirectoriesLoader: null as AdditionalDirectoriesLoader | null,
+
+  // Resolves the host-owned attachment staging directory and effective Claude
+  // deny rules without making the runtime package depend on Electron storage.
+  attachmentStagingLoader: null as AttachmentStagingLoader | null,
+  attachmentDenyRulesLoader: null as AttachmentDenyRulesLoader | null,
 
   // ---- Security / Permissions ----
 
@@ -139,6 +149,14 @@ export const ClaudeCodeDeps = {
 
   setAdditionalDirectoriesLoader(loader: AdditionalDirectoriesLoader | null): void {
     this.additionalDirectoriesLoader = loader;
+  },
+
+  setAttachmentStagingLoader(loader: AttachmentStagingLoader | null): void {
+    this.attachmentStagingLoader = loader;
+  },
+
+  setAttachmentDenyRulesLoader(loader: AttachmentDenyRulesLoader | null): void {
+    this.attachmentDenyRulesLoader = loader;
   },
 
   setClaudeSettingsPatternSaver(saver: PatternSaver | null): void {

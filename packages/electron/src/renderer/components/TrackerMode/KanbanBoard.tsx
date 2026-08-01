@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useCallback, useRef, useState } from 'react';
 import { useFloating, offset, flip, shift, FloatingPortal } from '@floating-ui/react';
+import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
 import { MaterialSymbol, TrackerUnreadDot } from '@nimbalyst/runtime';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { TrackerFavoriteStar, type TrackerItemType } from '@nimbalyst/runtime/plugins/TrackerPlugin';
@@ -252,7 +253,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   // Floating context menu
   const { refs: contextRefs, floatingStyles: contextFloatingStyles } = useFloating({
     placement: 'right-start',
-    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
   });
   useEffect(() => {
     if (contextAnchor) {
@@ -848,7 +849,7 @@ const KanbanContextSubmenu: React.FC<{
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { refs, floatingStyles } = useFloating({
     placement: 'right-start',
-    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
   });
 
   return (

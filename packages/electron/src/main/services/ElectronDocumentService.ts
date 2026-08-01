@@ -42,7 +42,7 @@ import {
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/documentHeader/frontmatterUtils';
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
 import { database } from '../database/PGLiteDatabaseWorker';
-import { shouldExcludeDir } from '../utils/fileFilters';
+import { shouldExcludeDir, shouldExcludePath } from '../utils/fileFilters';
 import { isRendererUnsupportedImage, resolveImageExtension, sniffImageExtension } from '../utils/imageFormat';
 import { compressImage } from './ImageCompressor';
 import { getRegisteredExtensions } from '../extensions/RegisteredFileTypes';
@@ -747,7 +747,7 @@ export class ElectronDocumentService implements DocumentService {
 
           if (stats.isDirectory()) {
             // Use centralized directory exclusion logic (worktrees, node_modules, .git, etc.)
-            if (shouldExcludeDir(item)) {
+            if (shouldExcludeDir(item) || shouldExcludePath(fullPath)) {
               continue;
             }
             // Add directory as a mentionable document for @ mentions

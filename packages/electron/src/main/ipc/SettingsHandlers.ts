@@ -36,6 +36,8 @@ import {
     isFeatureWalkthroughCompleted, setFeatureWalkthroughCompleted,
     isWorktreeOnboardingShown, setWorktreeOnboardingShown,
     getClaudeCodeSettings,
+    getAttachmentStagingConfig,
+    setAttachmentStagingConfig,
     setClaudeCodeProjectCommandsEnabled, setClaudeCodeUserCommandsEnabled,
     setClaudeCodeApiUpstreamUrl,
     getAgentWorkflowSourceSettings, getAgentWorkflowExportSettings,
@@ -740,6 +742,18 @@ export function registerSettingsHandlers() {
     // Claude Code settings
     safeHandle('claudeCode:get-settings', async () => {
         return getClaudeCodeSettings();
+    });
+
+    safeHandle('attachment-staging:get-settings', async () => {
+        return getAttachmentStagingConfig();
+    });
+
+    safeHandle('attachment-staging:set-settings', async (_event, config: {
+        mode: 'temp' | 'workspace' | 'custom';
+        customPath?: string;
+    }) => {
+        setAttachmentStagingConfig(config);
+        return getAttachmentStagingConfig();
     });
 
     safeHandle('agentWorkflows:get-settings', async () => {

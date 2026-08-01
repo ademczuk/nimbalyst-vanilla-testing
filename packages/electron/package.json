@@ -1,6 +1,6 @@
 {
   "name": "@nimbalyst/electron",
-  "version": "0.71.3",
+  "version": "0.72.0",
   "private": true,
   "license": "MIT",
   "author": "Nimbalyst Team",
@@ -96,6 +96,7 @@
     "ignore": "^7.0.5",
     "jimp": "^1.6.0",
     "jotai": "^2.16.1",
+    "jotai-family": "^1.1.0",
     "js-yaml": "^4.1.0",
     "json-schema-to-ts": "^3.1.1",
     "marked": "^16.4.0",

@@ -92,6 +92,7 @@ import {
   type PendingAskUserQuestionEntry,
 } from './claudeCode/askUserQuestion';
 import { ClaudeCodeTranscriptAdapter } from './claudeCode/ClaudeCodeTranscriptAdapter';
+import { findAttachmentDenyRule } from '../attachments/attachmentDenyMatcher';
 
 import {
   resolveImmediateToolDecision as resolveImmediateToolDecisionHelper,
@@ -510,6 +511,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   public static setShellEnvironmentLoader(loader: (() => Record<string, string> | null) | null): void { ClaudeCodeDeps.setShellEnvironmentLoader(loader); }
   public static setEnhancedPathLoader(loader: (() => string) | null): void { ClaudeCodeDeps.setEnhancedPathLoader(loader); }
   public static setAdditionalDirectoriesLoader(loader: ((workspacePath: string) => string[]) | null): void { ClaudeCodeDeps.setAdditionalDirectoriesLoader(loader); }
+  public static setAttachmentStagingLoader(loader: ((workspacePath: string) => { root: string; mode: 'temp' | 'workspace' | 'custom' }) | null): void { ClaudeCodeDeps.setAttachmentStagingLoader(loader); }
+  public static setAttachmentDenyRulesLoader(loader: ((workspacePath: string) => Promise<string[]>) | null): void { ClaudeCodeDeps.setAttachmentDenyRulesLoader(loader); }
   public static setSecurityLogger(logger: ((message: string, data?: any) => void) | null): void { BaseAgentProvider.setSecurityLogger(logger); }
   public static setImageCompressor(compressor: ((buffer: Buffer, mimeType: string, options?: { targetSizeBytes?: number }) => Promise<{ buffer: Buffer; mimeType: string; wasCompressed: boolean }>) | null): void { ClaudeCodeDeps.setImageCompressor(compressor); }
   public static setClaudeSettingsPatternSaver(saver: ((workspacePath: string, pattern: string) => Promise<void>) | null): void { ClaudeCodeDeps.setClaudeSettingsPatternSaver(saver); }
@@ -591,6 +594,22 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     // This reduces initial token usage for very large attachments
     const LARGE_ATTACHMENT_CHAR_THRESHOLD = 10000;
 
+    const staging = workspacePath && ClaudeCodeDeps.attachmentStagingLoader
+      ? ClaudeCodeDeps.attachmentStagingLoader(workspacePath)
+      : { root: os.tmpdir(), mode: 'temp' as const };
+    let preflightAttachmentDenyRule: string | null = null;
+    if (attachments?.length && workspacePath && ClaudeCodeDeps.attachmentDenyRulesLoader) {
+      try {
+        const denyRules = await ClaudeCodeDeps.attachmentDenyRulesLoader(workspacePath);
+        preflightAttachmentDenyRule = findAttachmentDenyRule(
+          path.join(staging.root, 'nimbalyst-attachment-preflight'),
+          denyRules,
+        );
+      } catch (error) {
+        console.warn('[CLAUDE-CODE] Attachment deny pre-flight failed:', error);
+      }
+    }
+
     const {
       imageContentBlocks,
       documentContentBlocks,
@@ -599,6 +618,9 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       attachments,
       largeAttachmentCharThreshold: LARGE_ATTACHMENT_CHAR_THRESHOLD,
       imageCompressor: ClaudeCodeDeps.imageCompressor || undefined,
+      stagingRoot: staging.root,
+      stagingMode: staging.mode,
+      sessionId,
     });
 
     // Abort any existing request before starting a new one
@@ -770,7 +792,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
       // Log the raw input to the SDK (include attachments and mode in metadata for UI restoration)
       if (sessionId) {
-        const metadataToLog: Record<string, any> = {};
+        const metadataToLog: Record<string, any> = this.withPromptProvenanceMetadata(documentContext);
         if (attachments && attachments.length > 0) {
           metadataToLog.attachments = attachments;
         }
@@ -781,9 +803,6 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         if (teammateMatch) {
           metadataToLog.messageType = 'teammate_message_injected';
           metadataToLog.teammateName = teammateMatch[1];
-        }
-        if (documentContext?.promptOrigin) {
-          metadataToLog.promptOrigin = documentContext.promptOrigin;
         }
         await this.logAgentMessage(sessionId, 'claude-code', 'input', JSON.stringify({
           prompt: message,
@@ -800,6 +819,25 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             thinking: options.thinking
           }
         }), metadataToLog, hideMessages, undefined, true /* searchable */);
+
+        if (preflightAttachmentDenyRule && !hideMessages) {
+          const firstAttachment = attachments?.[0];
+          await this.logAgentMessage(sessionId, 'claude-code', 'output', JSON.stringify({
+            type: 'system',
+            subtype: 'permission_denied',
+            tool_name: 'Read',
+            tool_input: { file_path: firstAttachment?.filepath ?? staging.root },
+            decision_reason: `Attachment staging matches ${preflightAttachmentDenyRule}`,
+            decision_reason_type: 'rule',
+            message: `Claude Code may be unable to read ${firstAttachment?.filename ?? 'this attachment'} because ${preflightAttachmentDenyRule} denies its staging directory.`,
+            is_attachment_staging_denied: true,
+            attachment_path: firstAttachment?.filepath ?? staging.root,
+            attachment_filename: firstAttachment?.filename ?? 'attachment',
+            attachment_staging_mode: staging.mode,
+            attachment_deny_rule: preflightAttachmentDenyRule,
+            attachment_detection: 'preflight',
+          }), undefined, false, undefined, true);
+        }
       }
 
       // Create transcript adapter as chunk parser (returns ParsedItems for the streaming loop).

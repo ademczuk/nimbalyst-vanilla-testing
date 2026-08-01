@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { useFloating, autoUpdate, flip, offset, shift, type ReferenceElement } from '@floating-ui/react';
+import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
 
 import { FloatingPortal, useFloatingMenu } from '../../hooks/useFloatingMenu';
 import { EMOJI_CATALOG, QUICK_REACTIONS, emojiGlyphOrShortcode, searchEmoji } from './emojiCatalog';
@@ -176,7 +177,7 @@ export function EmojiAutocomplete({
     // Fixed matches the rest of the app's floating surfaces and survives a
     // scrolling ancestor; autoUpdate keeps it pinned while the timeline moves.
     strategy: 'fixed',
-    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
     whileElementsMounted: autoUpdate,
   });
 

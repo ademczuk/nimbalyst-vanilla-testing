@@ -317,6 +317,7 @@ export const UnifiedQuickOpen: React.FC<UnifiedQuickOpenProps> = ({
   // Memory search merges indexed docs, trackers, and sessions behind one tab.
   // The standalone Trackers tab remains available only when Memory is off.
   const [memoryScope, setMemoryScope] = useState<SemanticSearchScope>('all');
+  const [promptActorScope, setPromptActorScope] = useState<PromptActorScope>('all');
   // Per-tab filter chip values, hoisted so they survive tab switches.
   const [fileExtFilter, setFileExtFilter] = usePersistedFilterValue(SELECTED_FILE_EXT_KEY);
   const [trackerTypeFilter, setTrackerTypeFilter] = usePersistedFilterValue(SELECTED_TRACKER_TYPE_KEY);
@@ -364,6 +365,7 @@ export const UnifiedQuickOpen: React.FC<UnifiedQuickOpenProps> = ({
     if (isOpen) {
       setActiveTab(initialTab);
       setMemoryScope(initialTab === 'trackers' ? 'trackers' : 'all');
+      setPromptActorScope('all');
       setQuery('');
       setSessionFileFilter(null);
       // Focus shortly after mount so React has time to render the input.
@@ -560,7 +562,7 @@ export const UnifiedQuickOpen: React.FC<UnifiedQuickOpenProps> = ({
           : activeTab === 'sessions'
             ? 'Search sessions... (@ to filter by file edited)'
             : activeTab === 'prompts'
-              ? 'Search your prompts...'
+              ? 'Search prompts...'
               : 'Search files...';
 
   return (
@@ -838,6 +840,8 @@ export const UnifiedQuickOpen: React.FC<UnifiedQuickOpenProps> = ({
               isOpen={isOpen}
               isActive={activeTab === 'prompts'}
               query={activeTab === 'prompts' ? query : ''}
+              actorScope={promptActorScope}
+              onActorScopeChange={setPromptActorScope}
               workspacePath={workspacePath}
               onPromptSelect={onPromptSelect}
               onClose={onClose}
@@ -2110,7 +2114,53 @@ interface PromptItem {
   sessionTitle: string;
   provider: string;
   parentSessionId?: string | null;
+  promptActor?: 'human' | 'agent';
 }
+
+type PromptActorScope = 'all' | 'human' | 'agent';
+
+const PROMPT_ACTOR_SCOPES: Array<{ id: PromptActorScope; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'human', label: 'Me' },
+  { id: 'agent', label: 'Agents' },
+];
+
+interface PromptActorBubblesProps {
+  scope: PromptActorScope;
+  onChange: (scope: PromptActorScope) => void;
+}
+
+const PromptActorBubbles: React.FC<PromptActorBubblesProps> = memo(({
+  scope,
+  onChange,
+}) => (
+  <div
+    className="prompt-actor-scopes shrink-0 flex items-center gap-1.5 px-3 py-2 border-b border-nim bg-nim-secondary"
+    role="group"
+    aria-label="Prompts from"
+  >
+    <span className="mr-1 text-xs text-nim-faint">Prompts from</span>
+    {PROMPT_ACTOR_SCOPES.map((candidate) => {
+      const active = candidate.id === scope;
+      return (
+        <button
+          key={candidate.id}
+          type="button"
+          aria-pressed={active}
+          className={`prompt-actor-scope px-2.5 py-1 text-xs font-medium rounded-full border cursor-pointer transition-colors duration-100 ${
+            active
+              ? 'bg-nim-primary border-[var(--nim-primary)] text-white'
+              : 'bg-nim border-nim text-nim-muted hover:bg-nim-hover hover:text-nim'
+          }`}
+          onClick={() => onChange(active ? 'all' : candidate.id)}
+          tabIndex={-1}
+        >
+          {candidate.label}
+        </button>
+      );
+    })}
+  </div>
+));
 
 const extractPromptText = (content: string): string => {
   try {
@@ -2131,6 +2181,8 @@ interface PromptsPaneProps {
   isOpen: boolean;
   isActive: boolean;
   query: string;
+  actorScope: PromptActorScope;
+  onActorScopeChange: (scope: PromptActorScope) => void;
   workspacePath: string;
   onPromptSelect: (sessionId: string, messageTimestamp?: number) => void;
   onClose: () => void;
@@ -2140,6 +2192,8 @@ const PromptsPane: React.FC<PromptsPaneProps> = memo(({
   isOpen,
   isActive,
   query,
+  actorScope,
+  onActorScopeChange,
   workspacePath,
   onPromptSelect,
   onClose,
@@ -2155,7 +2209,7 @@ const PromptsPane: React.FC<PromptsPaneProps> = memo(({
 
   useEffect(() => {
     setSelectedIndex(0);
-  }, [visibleQuery]);
+  }, [visibleQuery, actorScope]);
 
   // Reset list synchronously before paint so the empty state doesn't flash
   // "No recent prompts" while the IPC call is in flight.
@@ -2180,10 +2234,12 @@ const PromptsPane: React.FC<PromptsPaneProps> = memo(({
   }, [isOpen, workspacePath]);
 
   const displayPrompts = useMemo(() => {
-    if (!visibleQuery.trim()) return allPrompts;
-    const q = visibleQuery.toLowerCase();
-    return allPrompts.filter((p) => extractPromptText(p.content).toLowerCase().includes(q));
-  }, [visibleQuery, allPrompts]);
+    const q = visibleQuery.trim().toLowerCase();
+    return allPrompts.filter((prompt) => {
+      if (actorScope !== 'all' && prompt.promptActor !== actorScope) return false;
+      return !q || extractPromptText(prompt.content).toLowerCase().includes(q);
+    });
+  }, [visibleQuery, actorScope, allPrompts]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -2263,25 +2319,31 @@ const PromptsPane: React.FC<PromptsPaneProps> = memo(({
   }, [isOpen, isActive, displayPrompts, selectedIndex, handleSelect, handleCopy, onClose]);
 
   return (
-    <div className="prompts-pane flex-1 overflow-y-auto relative">
-      {copiedPromptId && (
-        <div
-          className="absolute top-2 left-1/2 -translate-x-1/2 z-10 py-1 px-3 rounded-full text-[11px] font-medium bg-[var(--nim-success)] text-white shadow"
-          data-testid="prompt-quick-open-copied-toast"
-        >
-          Copied to clipboard
-        </div>
-      )}
-      {displayPrompts.length === 0 ? (
-        <div className="p-10 text-center text-nim-faint">
-          {isLoading ? 'Loading...' : query ? 'No prompts found' : 'No recent prompts'}
-        </div>
-      ) : (
-        <ul
-          ref={listRef}
-          className={`list-none m-0 p-0 ${mouseHasMoved ? '' : 'pointer-events-none'}`}
-        >
-          {displayPrompts.map((prompt, index) => (
+    <div className="prompts-pane flex-1 min-h-0 flex flex-col">
+      <PromptActorBubbles scope={actorScope} onChange={onActorScopeChange} />
+      <div className="relative flex-1 overflow-y-auto">
+        {copiedPromptId && (
+          <div
+            className="absolute top-2 left-1/2 -translate-x-1/2 z-10 py-1 px-3 rounded-full text-[11px] font-medium bg-[var(--nim-success)] text-white shadow"
+            data-testid="prompt-quick-open-copied-toast"
+          >
+            Copied to clipboard
+          </div>
+        )}
+        {displayPrompts.length === 0 ? (
+          <div className="p-10 text-center text-nim-faint">
+            {isLoading
+              ? 'Loading...'
+              : query || actorScope !== 'all'
+                ? 'No prompts found'
+                : 'No recent prompts'}
+          </div>
+        ) : (
+          <ul
+            ref={listRef}
+            className={`list-none m-0 p-0 ${mouseHasMoved ? '' : 'pointer-events-none'}`}
+          >
+            {displayPrompts.map((prompt, index) => (
             <li
               key={prompt.id}
               className={`unified-quick-open-item py-3 px-4 cursor-pointer border-l-[3px] flex items-start gap-3 transition-all duration-100 ${
@@ -2314,9 +2376,10 @@ const PromptsPane: React.FC<PromptsPaneProps> = memo(({
                 </div>
               </div>
             </li>
-          ))}
-        </ul>
-      )}
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 });

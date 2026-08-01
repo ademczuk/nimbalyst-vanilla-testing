@@ -6,6 +6,21 @@ import * as os from 'os';
 import { GitWorktreeService, WorkspaceHasNoCommitsError } from '../GitWorktreeService';
 import { assertGitSandbox, gitSandboxEnv } from '../testSupport/gitTestSandbox';
 
+describe('gitSandboxEnv', () => {
+  it('strips IDE-provided SSH_ASKPASS before simple-git runs a fixture command', async () => {
+    const previousAskPass = process.env.SSH_ASKPASS;
+    process.env.SSH_ASKPASS = '/mock/ide/askpass';
+    try {
+      const sandboxEnv = gitSandboxEnv(undefined, { pinConfigPaths: false });
+      expect(sandboxEnv.SSH_ASKPASS).toBeUndefined();
+      await expect(simpleGit(os.tmpdir()).env(sandboxEnv).raw(['--version'])).resolves.toMatch(/^git version /);
+    } finally {
+      if (previousAskPass === undefined) delete process.env.SSH_ASKPASS;
+      else process.env.SSH_ASKPASS = previousAskPass;
+    }
+  });
+});
+
 /**
  * Regression coverage for the empty-repo silent-failure case: when a Blitz
  * is run against a `git init`-ed-but-never-committed workspace, the worktree

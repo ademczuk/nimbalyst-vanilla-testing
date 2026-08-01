@@ -22,6 +22,11 @@ export type ReleaseChannel = 'stable' | 'alpha';
 export type PreferredTerminalShell = 'auto' | 'pwsh' | 'powershell' | 'git-bash' | 'wsl' | 'cmd';
 export type WorkspaceFileTreeFilter = 'all' | 'markdown' | 'known' | 'git-uncommitted' | 'git-worktree' | 'ai-read' | 'ai-written';
 export type TrackerSyncModeSetting = 'local' | 'shared' | 'hybrid';
+export type AttachmentStagingMode = 'temp' | 'workspace' | 'custom';
+export interface AttachmentStagingConfig {
+  mode: AttachmentStagingMode;
+  customPath?: string;
+}
 export interface TrackerSyncPolicySetting {
   mode: TrackerSyncModeSetting;
   scope?: 'project' | 'workspace';
@@ -140,6 +145,7 @@ interface AppStoreSchema {
     // content, so only loopback hosts are accepted (see setClaudeCodeApiUpstreamUrl).
     apiUpstreamUrl?: string;
   };
+  attachmentStaging?: AttachmentStagingConfig;
   // OpenAI Codex settings
   openaiCodex?: {
     // Which codex transport to use for new sessions. 'app-server' (default)
@@ -1804,6 +1810,33 @@ export function getClaudeCodeSettings(): {
     userCommandsEnabled: settings.userCommandsEnabled ?? true,
     apiUpstreamUrl: settings.apiUpstreamUrl,
   };
+}
+
+export function getAttachmentStagingConfig(): AttachmentStagingConfig {
+  const stored = getAppStore().get('attachmentStaging');
+  const mode = stored?.mode === 'workspace' || stored?.mode === 'custom'
+    ? stored.mode
+    : 'temp';
+  return {
+    mode,
+    ...(mode === 'custom' && typeof stored?.customPath === 'string'
+      ? { customPath: stored.customPath }
+      : {}),
+  };
+}
+
+export function setAttachmentStagingConfig(config: AttachmentStagingConfig): void {
+  const mode: AttachmentStagingMode =
+    config.mode === 'workspace' || config.mode === 'custom' ? config.mode : 'temp';
+  if (mode === 'custom' && (!config.customPath?.trim() || !path.isAbsolute(config.customPath.trim()))) {
+    throw new Error('Custom attachment staging path must be absolute');
+  }
+  getAppStore().set('attachmentStaging', {
+    mode,
+    ...(mode === 'custom' && config.customPath?.trim()
+      ? { customPath: config.customPath.trim() }
+      : {}),
+  });
 }
 
 /**

@@ -276,7 +276,7 @@ const WorkstreamHeaderTagsRow: React.FC<{ workstreamId: string }> = ({ workstrea
   }, [tagInput, allTags, tags]);
 
   // Content key so the layout effect only re-runs when tag contents change.
-  const tagsKey = tags.join(' ');
+  const tagsKey = tags.join('\u0000');
 
   useLayoutEffect(() => {
     const container = containerRef.current;

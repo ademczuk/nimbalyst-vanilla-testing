@@ -10,11 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.72.0] - 2026-08-01
+
+
+### Added
+<!-- New features go here -->
 - The new-worktree dialog can now search branches, narrowing the local and remote lists as you type.
 - The organization window gains rooms and direct messages, a rich message composer with attachments and mentions, live chips for pasted plan and tracker links, unread badges, and desktop notifications for new messages.
 - Tracker items can now open as full documents with collaborative editing, inline comments, consistent editable field chips (including collection creation), keyboard-driven search and filters, shared-document navigation, a side-by-side AI chat panel, and a visible action to copy shareable reopen links.
 - A new install now starts on the onboarding screen and can open a ready-made tutorial project — documents, data, designs, plans, and finished AI sessions to explore — reachable any time from the project manager or Help > Launch Tutorial.
 - Agent sessions can show an MCP status chip in the header listing which servers the session has, which are connected, and which never reached it at all — off by default, enable it under Settings > Agent Features.
+- Quick Open prompt search now distinguishes prompts you wrote from ones an agent sent, with filter controls to narrow to either.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -25,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Source files containing NUL separators now render as text in GitHub reviews instead of appearing as binary changes.
+- Queued prompts now run on their own: a prompt sent from your phone opens the project and runs it, prompts left over from a quit resume once the project is open again, and a prompt that arrives mid-turn runs when the turn ends — no more pressing Escape or restarting to release the queue. (#962)
 - Web search and web fetch no longer fail in Claude Code CLI sessions running at max effort.
 - Sharing a plan or decision now produces a link your teammates can actually open, and the sharer edits the same collaborative content everyone else sees instead of quietly staying on their local file. Items shared earlier can be unshared and shared again to pick this up, keeping the content that has been edited since.
 - An AI session that reports its previous conversation has expired now genuinely starts fresh on the next message, instead of repeating the same expiration error forever. (#1098)
@@ -33,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HTTP MCP servers that authenticate with a static key now connect directly on Claude Code sessions instead of being routed through an extra helper process.
 - Unified Quick Open tabs now show compact platform keyboard glyphs without shortcut labels overflowing into neighboring tabs.
 - Desktop AI notifications now lead with the originating session name and open that exact session and project, including child sessions, instead of following whichever project is currently visible.
+- Dropdown menus no longer open underneath the macOS window controls — the project rail's "+" menu now opens beside the button instead of jumping to the top corner. (#1096)
 - File reveal menus now name Finder on macOS, Explorer on Windows, and the containing folder on Linux.
 - Main windows now restore their maximized state after restart instead of reopening at stale pre-maximize bounds. (#1077)
 - AI sessions that preview a web page no longer strand a blank, unclosable window on a second monitor.
@@ -45,6 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Committing with the AI commit widget no longer leaves the just-committed files showing as deleted or reverted, and no longer discards changes you staged elsewhere at the same time.
 - Projects with many new, uncommitted folders no longer stall while the file tree and changed-files list refresh, and ignored files inside those folders no longer show up as changed.
 - Adding a second account no longer changes which account personal sync runs as.
+- Answering or cancelling a question from an agent now closes it for good, instead of leaving it on screen and bringing it back when you switch sessions and return. (#1116, #773)
+- Attaching a file the agent is not permitted to read now says so and offers an inline retry, and staged attachments are kept out of workspace scans and cleaned up afterwards. (#1086)
+- The sidebar extension panel reopens where you left it after a reload instead of coming back blank. (#1114)
+- Comments whose anchor text was deleted now scroll into view instead of being unreachable, and new comments are composed in the comments panel.
+- The Tracker columns menu now stays inside the window instead of running off the edge.
+- Window icons no longer flash their text labels while the window starts up.
+- Mockups containing XML-incompatible comments can be captured as screenshots again.
+- The organization inbox reconnects on its own after the connection drops.
+- Session titles inside an expanded workstream update as they change instead of showing the old name. (#973)
+- Windows builds sign the app payload before packaging, so the installer no longer reports an unsigned application. (#853)
 
 ### Removed
 <!-- Removed features go here -->

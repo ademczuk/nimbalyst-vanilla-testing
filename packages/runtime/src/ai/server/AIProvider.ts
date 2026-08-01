@@ -359,6 +359,22 @@ export abstract class BaseAIProvider extends EventEmitter implements AIProvider 
     });
   }
 
+  protected withPromptProvenanceMetadata(
+    documentContext?: DocumentContext,
+    metadata: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    if (!documentContext?.promptProvenance && !documentContext?.promptOrigin) {
+      return metadata;
+    }
+    return {
+      ...metadata,
+      ...(documentContext.promptOrigin ? { promptOrigin: documentContext.promptOrigin } : {}),
+      ...(documentContext.promptProvenance
+        ? { promptProvenance: { ...documentContext.promptProvenance } }
+        : {}),
+    };
+  }
+
   /**
    * Log an agent message to the audit table.
    *

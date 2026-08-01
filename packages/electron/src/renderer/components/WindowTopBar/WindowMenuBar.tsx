@@ -38,6 +38,7 @@ import {
   useMergeRefs,
   useRole,
 } from '@floating-ui/react';
+import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import type { SerializedMenuItem } from '../../../shared/menuBar';
 import { windowMenuBarAtom } from '../../store/atoms/windowMenu';
@@ -70,10 +71,12 @@ function menuMiddleware(placement: 'bottom-start' | 'right-start') {
     offset(placement === 'bottom-start' ? 2 : { mainAxis: 0, alignmentAxis: -4 }),
     flip({ padding: 8 }),
     shift({ padding: 8 }),
+    windowControlsClearance(),
     size({
       padding: 8,
-      apply({ availableHeight, elements }) {
-        elements.floating.style.maxHeight = `${Math.max(160, availableHeight)}px`;
+      apply({ availableHeight, elements, middlewareData }) {
+        const pushed = middlewareData.windowControlsClearance?.pushed ?? 0;
+        elements.floating.style.maxHeight = `${Math.max(160, availableHeight - pushed)}px`;
       },
     }),
   ];

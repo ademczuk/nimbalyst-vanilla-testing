@@ -43,6 +43,7 @@ import {
   type McpSessionStatusInput,
 } from '@nimbalyst/runtime/types/MCPServerConfig';
 import { toolRegistry } from './tools';
+import type { DriveReason } from './QueueDriveService';
 import { resolveExtensionAgentRef } from './providerResolution';
 import { getAgentProviderRegistry } from '../../extensions/AgentProviderRegistry';
 
@@ -174,6 +175,7 @@ interface AIServiceInternal {
     targetWindow: Electron.BrowserWindow | null,
     source: string,
   ): Promise<boolean>;
+  requestQueueDrive(sessionId: string, workspacePath: string, reason: DriveReason): void;
   runAutoContextCommand(
     session: SessionData,
     workspacePath: string,
@@ -1369,6 +1371,15 @@ export class MessageStreamingHandler {
         // The transcript parser uses this to render wakeup resumes as a system marker
         // instead of a user-lane message.
         promptOrigin: documentContext?.promptOrigin,
+
+        // Queued orchestration paths provide their own provenance. A direct
+        // ai:sendMessage call is a human composer submission. Older queued
+        // rows intentionally remain unclassified rather than being guessed.
+        promptProvenance: documentContext?.promptProvenance ?? (
+          queuedPromptId
+            ? undefined
+            : { actor: 'human', origin: 'composer' }
+        ),
       };
 
       // Update MCP document state for Claude Code provider so it knows which tools to show
@@ -2624,6 +2635,14 @@ export class MessageStreamingHandler {
                 BrowserWindow.fromWebContents(event.sender),
                 'completion-handler queue',
               );
+              if (!queuedContinuationScheduled) {
+                // The direct dispatch declined (sender window gone, row claimed
+                // elsewhere, ...). Hand the session to the queue driver so any
+                // remaining rows retry instead of stranding until the user
+                // presses Escape or restarts (#962). It defers on session-busy
+                // and wakes on the endSession below.
+                this.svc.requestQueueDrive(session.id, workspacePath, 'fifo-continuation');
+              }
             }
             if (hasTeammates || willResume || queuedChainAlreadyActive || queuedContinuationScheduled) {
               const reason = hasTeammates

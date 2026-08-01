@@ -9,6 +9,7 @@ import {
 } from '../utils/store';
 import { getBackgroundColor } from '../theme/ThemeManager';
 import { windows, windowStates } from './windowState';
+import { windowControlsOverlayOptions } from './windowChrome';
 import {
   ORG_WINDOW_COMMAND_CHANNEL,
   type OrgWindowCommand,
@@ -161,6 +162,7 @@ export function createTeamManagementWindow(target?: TeamWindowTarget): BrowserWi
     // Centred in the renderer's 38px `.org-window-titlebar` strip, matching the
     // main window's title bar. Keep the two in step if either height changes.
     trafficLightPosition: { x: 10, y: 12 },
+    ...windowControlsOverlayOptions(),
     vibrancy: 'sidebar',
     backgroundColor: getBackgroundColor(),
   });

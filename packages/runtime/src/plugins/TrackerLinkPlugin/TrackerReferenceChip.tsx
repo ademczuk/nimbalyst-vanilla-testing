@@ -23,6 +23,7 @@ import {
   useRole,
   useInteractions,
 } from '@floating-ui/react';
+import { windowControlsClearance } from '../../ui/floating/windowControlsClearance';
 
 import {
   useResolvedTrackerReference,
@@ -257,7 +258,7 @@ export function TrackerReferenceChip({
     open,
     onOpenChange: handleOpenChange,
     placement: 'bottom-start',
-    middleware: [offset(6), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(6), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
     whileElementsMounted: autoUpdate,
   });
 

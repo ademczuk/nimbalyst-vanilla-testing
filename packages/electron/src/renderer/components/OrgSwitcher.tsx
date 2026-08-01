@@ -19,6 +19,7 @@ import {
   useFloating, offset, flip, shift, autoUpdate,
   FloatingPortal, useClick, useDismiss, useRole, useInteractions,
 } from '@floating-ui/react';
+import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { activeWorkspacePathAtom } from '../store/atoms/openProjects';
 import { organizationCreationEnabled } from '../store/atoms/settingsDomains';
@@ -119,7 +120,7 @@ export function OrgSwitcher() {
     open,
     onOpenChange: setOpen,
     placement: 'right-start',
-    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
     whileElementsMounted: autoUpdate,
   });
   const click = useClick(context);

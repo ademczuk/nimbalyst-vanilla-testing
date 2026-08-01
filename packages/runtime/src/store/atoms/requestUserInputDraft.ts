@@ -13,7 +13,7 @@
  */
 
 import { atom } from 'jotai';
-import { atomFamily } from 'jotai/utils';
+import { atomFamily } from 'jotai-family';
 
 export interface RequestUserInputMultiSelectDraft {
   /** Currently checked item ids. */

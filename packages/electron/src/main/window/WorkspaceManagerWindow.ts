@@ -4,7 +4,7 @@ import { getPreloadPath } from '../utils/appPaths';
 import { existsSync, mkdirSync, statSync } from 'fs';
 import { readdir } from 'fs/promises';
 import { resolveEntryType } from '../utils/FileTree';
-import { shouldExcludeDir } from '../utils/fileFilters';
+import { shouldExcludeDir, shouldExcludePath } from '../utils/fileFilters';
 import { getRecentItems, addToRecentItems, store, getWorkspaceWindowState, getTheme } from '../utils/store';
 import { createWindow, findWindowByWorkspace, windows, windowStates } from './WindowManager';
 import { safeHandle } from '../utils/ipcRegistry';
@@ -19,6 +19,7 @@ import { getDialogDefaultPath, rememberDialogSelection } from '../utils/dialogPa
 import { windowReferencesWorkspace } from './windowState';
 import { TutorialProjectService } from '../services/tutorial/TutorialProjectService';
 import type { TutorialStartResult } from '../../shared/tutorial';
+import { windowControlsOverlayOptions } from './windowChrome';
 import {
   createWorkspaceManagerDevUrl,
   createWorkspaceManagerRendererQuery,
@@ -132,6 +133,7 @@ export function createWorkspaceManagerWindow(options: WorkspaceManagerWindowOpti
     show: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 10, y: 10 },
+    ...windowControlsOverlayOptions(),
     vibrancy: 'sidebar',
     backgroundColor: getBackgroundColor()
   });
@@ -558,7 +560,7 @@ async function getWorkspaceFiles(
       const { isDir, isFile } = resolved;
 
       if (isDir) {
-        if (shouldExcludeDir(item.name)) continue;
+        if (shouldExcludeDir(item.name) || shouldExcludePath(join(workspacePath, itemPath))) continue;
         const result = await getWorkspaceFiles(workspacePath, itemPath, maxFiles - files.length, maxDepth, currentDepth + 1);
         files.push(...result.files);
         if (result.limited) {

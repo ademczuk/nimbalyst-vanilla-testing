@@ -102,6 +102,7 @@ import {
     runMigrations,
     getAppSetting,
     getClaudeCodeSettings,
+    getAttachmentStagingConfig,
     isSettingsAgentToolsDisabled,
     isTrackersAgentToolsEnabled,
     store
@@ -125,6 +126,10 @@ import { registerMigrationHandlers } from './ipc/MigrationHandlers';
 import { registerTerminalHandlers, shutdownTerminalHandlers } from './ipc/TerminalHandlers';
 import { AIService } from './services/ai/AIService';
 import { detectFileWorkspace, suggestWorkspaceForFile, getAdditionalDirectoriesForWorkspace } from './utils/workspaceDetection';
+import {
+  getExternalAttachmentStagingDirectory,
+  resolveWorkspaceAttachmentStagingDirectory,
+} from './services/attachments/attachmentStagingRoot';
 import { cliManager, initEnhancedPath, getEnhancedPath, getShellEnvironment } from './services/CLIManager';
 import { registerWorkspaceWindow, registerExtensionTools, shutdownHttpServer, startMcpHttpServer, updateDocumentState, getActiveExtensionShortNames } from './mcp/httpServer';
 import { writeMcpEndpointDescriptor, removeMcpEndpointDescriptor, type EndpointWorkspace } from './mcp/mcpEndpointDescriptor';
@@ -2057,9 +2062,27 @@ app.whenReady().then(async () => {
     // copies of every project skill in the system prompt (~7K tokens wasted per
     // session). Claude has no Codex-style sandbox; cross-worktree file access
     // still works through the normal permission flow.
+    const withAttachmentStagingDirectory = (workspacePath: string, directories: string[]) => {
+      const attachmentDirectory = getExternalAttachmentStagingDirectory(workspacePath);
+      return attachmentDirectory
+        ? [...new Set([...directories, attachmentDirectory])]
+        : directories;
+    };
     ClaudeCodeProvider.setAdditionalDirectoriesLoader((workspacePath: string) =>
-      getAdditionalDirectoriesForWorkspace(workspacePath, { includeSiblingWorktrees: false }));
-    OpenAICodexProvider.setAdditionalDirectoriesLoader(getAdditionalDirectoriesForWorkspace);
+      withAttachmentStagingDirectory(
+        workspacePath,
+        getAdditionalDirectoriesForWorkspace(workspacePath, { includeSiblingWorktrees: false }),
+      ));
+    OpenAICodexProvider.setAdditionalDirectoriesLoader((workspacePath: string) =>
+      withAttachmentStagingDirectory(workspacePath, getAdditionalDirectoriesForWorkspace(workspacePath)));
+    ClaudeCodeProvider.setAttachmentStagingLoader((workspacePath: string) => ({
+      root: resolveWorkspaceAttachmentStagingDirectory(workspacePath),
+      mode: getAttachmentStagingConfig().mode,
+    }));
+    ClaudeCodeProvider.setAttachmentDenyRulesLoader(async (workspacePath: string) => {
+      const effective = await ClaudeSettingsManager.getInstance().getEffectiveSettings(workspacePath);
+      return effective.permissions.deny;
+    });
 
     // Wire the Codex PreToolUse hook (LEGACY -- only consulted by the SDK
     // transport, which is no longer the default). The hook script ships
@@ -2298,18 +2321,42 @@ app.whenReady().then(async () => {
     // re-sent on next launch (NIM-615).
     try {
       const { getQueuedPromptsStore } = await import('./services/RepositoryManager');
-      const { completed, failed, rolledBack } = await getQueuedPromptsStore().sweepExecutingOnBoot();
+      const queuedPromptsStore = getQueuedPromptsStore();
+      const { completed, failed, rolledBack } = await queuedPromptsStore.sweepExecutingOnBoot();
       if (completed > 0 || failed > 0 || rolledBack > 0) {
         logger.main.info(
           `[Main] Boot sweep: ${completed} answered prompt(s) marked completed, ${failed} delivered-but-unanswered prompt(s) marked failed, ${rolledBack} undelivered prompt(s) rolled back to pending`
         );
       }
+
     } catch (sweepErr) {
       logger.main.error('[Main] Boot sweep failed:', sweepErr);
     }
 
     // Check for pending restart continuations and queue continuation prompts
     await checkForRestartContinuation(aiService);
+
+    // The boot sweep normalizes rows to 'pending' but claims none of them, and
+    // restart continuation only queues — before this, both sat there until the
+    // user happened to open the session's transcript (#962). Hand every session
+    // with pending rows to the queue driver, which defers until a window for
+    // that workspace exists. Exactly-once is still the store's atomic claim.
+    try {
+      const { getQueuedPromptsStore } = await import('./services/RepositoryManager');
+      const { driveStrandedQueuesOnBoot } = await import('./services/ai/bootQueueRecovery');
+      const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
+      const bootAiService = aiService;
+      await driveStrandedQueuesOnBoot({
+        listSessionIdsWithPending: () => getQueuedPromptsStore().listSessionIdsWithPending(),
+        getWorkspacePath: async (sessionId) => (await AISessionsRepository.get(sessionId))?.workspacePath,
+        requestDrive: (sessionId, workspacePath) =>
+          bootAiService.requestQueueDrive(sessionId, workspacePath, 'boot-recovery'),
+        logInfo: (message) => logger.main.info(message),
+        logWarn: (message) => logger.main.warn(message),
+      });
+    } catch (recoveryErr) {
+      logger.main.error('[Main] Boot queue recovery failed:', recoveryErr);
+    }
 
     // Recover any super loops that were running when the app last shut down
     await getSuperLoopService().recoverStaleLoopState();
@@ -2470,12 +2517,19 @@ app.whenReady().then(async () => {
                 if (!aiSvcRef) {
                     return { triggered: false };
                 }
-                await aiSvcRef.queuePromptForSession(sessionId, prompt, undefined, { promptOrigin: 'wakeup_resume' });
-                const triggered = await aiSvcRef.triggerQueuedPromptProcessingForSession(
-                    sessionId,
-                    workspacePath,
-                );
-                return { triggered };
+                await aiSvcRef.queuePromptForSession(sessionId, prompt, undefined, {
+                  promptOrigin: 'wakeup_resume',
+                  promptProvenance: {
+                    actor: 'system',
+                    origin: 'automation',
+                  },
+                });
+                const outcome = await aiSvcRef.driveQueuedPrompts(sessionId, workspacePath, 'wakeup');
+                // A deferred outcome still counts as triggered: the queue driver
+                // owns the retry from here. Reporting false would send the row
+                // back to waiting-for-workspace, and re-firing this executor
+                // would queue a second copy of the same prompt (#962).
+                return { triggered: outcome.kind !== 'failed' };
             },
             broadcastChanged: (row) => {
                 for (const window of BrowserWindow.getAllWindows()) {

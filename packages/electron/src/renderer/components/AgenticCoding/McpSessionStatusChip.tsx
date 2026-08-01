@@ -24,6 +24,7 @@ import {
   useInteractions,
   useRole,
 } from '@floating-ui/react';
+import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
 import type {
   McpSessionServerRow,
   McpSessionStatusSnapshot,
@@ -135,7 +136,7 @@ export function McpSessionStatusChip({ sessionId, provider }: McpSessionStatusCh
     onOpenChange: setOpen,
     placement: 'bottom-end',
     whileElementsMounted: autoUpdate,
-    middleware: [offset(6), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(6), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
   });
   const click = useClick(floating.context);
   const dismiss = useDismiss(floating.context);

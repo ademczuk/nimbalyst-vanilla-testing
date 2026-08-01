@@ -10,6 +10,7 @@
 import type { JSX } from 'react';
 import React, { useEffect, useRef, useState } from 'react';
 import { useFloating, offset, flip, shift, FloatingPortal } from '@floating-ui/react';
+import { windowControlsClearance } from '../../../ui/floating/windowControlsClearance';
 import type { TrackerItemType } from '../../../core/DocumentService';
 import type { TrackerRecord } from '../../../core/TrackerRecord';
 import { getRecordTitle } from '../trackerRecordAccessors';
@@ -213,7 +214,7 @@ export const ContextSubmenu: React.FC<{
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { refs, floatingStyles } = useFloating({
     placement: 'right-start',
-    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
   });
 
   useEffect(() => () => {

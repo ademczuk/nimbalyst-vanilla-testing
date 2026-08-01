@@ -11,6 +11,7 @@ import {
   useInteractions,
   useRole,
 } from '@floating-ui/react';
+import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
 
 import type { PersonalAccountSummary } from '../../store/atoms/settingsDomains';
 
@@ -54,7 +55,7 @@ export function AccountInspectorPopover({
     open: true,
     onOpenChange: (open) => { if (!open) onClose(); },
     placement: 'right-end',
-    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
     whileElementsMounted: autoUpdate,
   });
   const dismiss = useDismiss(context);

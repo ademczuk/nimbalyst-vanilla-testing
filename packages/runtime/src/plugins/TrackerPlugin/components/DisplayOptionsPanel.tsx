@@ -14,6 +14,7 @@ import {
   size,
   useFloating,
 } from '@floating-ui/react';
+import { windowControlsClearance } from '../../../ui/floating/windowControlsClearance';
 import type { TrackerColumnDef, TypeColumnConfig } from './trackerColumns';
 
 interface DisplayOptionsPanelProps {
@@ -49,10 +50,12 @@ export const DisplayOptionsPanel: React.FC<DisplayOptionsPanelProps> = ({
       offset(4),
       flip({ padding: 8 }),
       shift({ padding: 8 }),
+      windowControlsClearance(),
       size({
         padding: 8,
-        apply({ availableHeight, elements }) {
-          elements.floating.style.maxHeight = `${Math.max(0, availableHeight)}px`;
+        apply({ availableHeight, elements, middlewareData }) {
+          const pushed = middlewareData.windowControlsClearance?.pushed ?? 0;
+          elements.floating.style.maxHeight = `${Math.max(0, availableHeight - pushed)}px`;
         },
       }),
     ],

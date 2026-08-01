@@ -21,7 +21,7 @@ import type {
 } from '@nimbalyst/runtime';
 import { logger } from '../utils/logger';
 import { SafePathValidator } from '../security/SafePathValidator';
-import { shouldExcludeFile, shouldExcludeDir, GLOB_EXCLUDE_PATTERNS } from '../utils/fileFilters';
+import { shouldExcludeFile, shouldExcludeDir, shouldExcludePath, GLOB_EXCLUDE_PATTERNS } from '../utils/fileFilters';
 
 const execFileAsync = promisify(execFile);
 
@@ -191,7 +191,9 @@ export class ElectronFileSystemService implements FileSystemService {
               if (!options?.includeHidden && item.name.startsWith('.')) {
                 return false;
               }
-              if (item.isDirectory() && shouldExcludeDir(item.name)) {
+              if (item.isDirectory() && (
+                shouldExcludeDir(item.name) || shouldExcludePath(join(basePath, item.name))
+              )) {
                 return false;
               }
               return true;

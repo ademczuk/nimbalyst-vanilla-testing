@@ -21,8 +21,10 @@ import {
   offset,
   flip,
   shift,
+  size,
   type VirtualElement,
 } from '@floating-ui/react';
+import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { OrgSwitcher } from './OrgSwitcher';
 import {
@@ -81,7 +83,7 @@ function ProjectRailIcon({
     open: tooltipOpen,
     onOpenChange: setTooltipOpen,
     placement: 'right',
-    middleware: [offset(12), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(12), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
   });
   const tooltipHover = useHover(tooltipContext, { delay: { open: 200, close: 0 }, move: false });
   const { getReferenceProps: getTooltipRefProps, getFloatingProps: getTooltipFloatingProps } =
@@ -311,8 +313,26 @@ export function ProjectRail() {
   } = useFloating({
     open: addMenuOpen,
     onOpenChange: setAddMenuOpen,
-    placement: 'right-end',
-    middleware: [offset(8), flip(), shift({ padding: 8 })],
+    // `right-start` grows the menu downward from the top of the `+` button.
+    // The old `right-end` grew it upward, so with two or more recents it was
+    // taller than the space above the button and `shift()` clamped it to the
+    // top of the window — beside the traffic lights and ~140px away from the
+    // button that opened it, which read as "the + did nothing" (GitHub #1096).
+    placement: 'right-start',
+    middleware: [
+      offset(8),
+      flip({ padding: 8 }),
+      shift({ padding: 8 }),
+      windowControlsClearance(),
+      size({
+        padding: 8,
+        apply({ availableHeight, elements, middlewareData }) {
+          const pushed = middlewareData.windowControlsClearance?.pushed ?? 0;
+          elements.floating.style.maxHeight = `${Math.max(0, availableHeight - pushed)}px`;
+          elements.floating.style.overflowY = 'auto';
+        },
+      }),
+    ],
   });
   const addDismiss = useDismiss(addContext);
   const addRole = useRole(addContext, { role: 'menu' });
@@ -330,7 +350,7 @@ export function ProjectRail() {
     open: addTooltipOpen,
     onOpenChange: setAddTooltipOpen,
     placement: 'right',
-    middleware: [offset(12), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(12), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
   });
   const addTooltipHover = useHover(addTooltipContext, { delay: { open: 200, close: 0 }, move: false });
   const { getReferenceProps: getAddTooltipRefProps, getFloatingProps: getAddTooltipFloatingProps } =
@@ -355,7 +375,7 @@ export function ProjectRail() {
       if (!open) closeMenu();
     },
     placement: 'right-start',
-    middleware: [offset(4), flip(), shift({ padding: 8 })],
+    middleware: [offset(4), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
   });
 
   // Use a virtual reference at the cursor position. setPositionReference

@@ -10,6 +10,7 @@ import {
   FloatingPortal,
   type VirtualElement,
 } from '@floating-ui/react';
+import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
 
 // Apply the active theme as a base dark/light class on the WorkspaceManager
 // (project picker) window. The picker does not load the extension theme
@@ -94,7 +95,7 @@ export const WorkspaceManager: React.FC = () => {
       if (!open) setContextMenu(prev => ({ ...prev, visible: false }));
     },
     placement: 'bottom-start',
-    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 })],
+    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
   });
   const contextMenuDismiss = useDismiss(contextMenuContext);
   const contextMenuRole = useRole(contextMenuContext, { role: 'menu' });

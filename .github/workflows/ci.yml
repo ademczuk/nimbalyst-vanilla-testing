@@ -59,6 +59,9 @@ jobs:
       - name: Check override/dep sync
         run: npm run check:override-sync
 
+      - name: Check tracked text files for raw NUL bytes
+        run: npm run check:text-nuls -- --ref HEAD
+
       - name: Run unit tests
         run: npm run test:unit -- --run
 
