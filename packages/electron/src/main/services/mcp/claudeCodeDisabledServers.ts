@@ -20,11 +20,36 @@
  * the user disabled by hand for a server we don't know about stays disabled.
  */
 
+import {
+  isMCPServerEnabledForProvider,
+  MCP_PROVIDER_IDS,
+  type MCPServerConfig,
+} from '@nimbalyst/runtime/types/MCPServerConfig';
+
 export interface ClaudeDisabledServersInput {
   /** Every server name Nimbalyst manages for this workspace (user + workspace scope). */
   knownNames: string[];
   /** The subset that is OFF for Claude Code. */
   disabledNames: string[];
+}
+
+/**
+ * Derive the projection input from a workspace's merged server map.
+ *
+ * Single-sourced because two paths write these files — session start and the
+ * Settings toggle — and a disagreement about what "off" means would show up as
+ * a server the panel says is off that `claude` still loads.
+ */
+export function claudeDisabledServersInput(
+  allServers: Record<string, MCPServerConfig>,
+): ClaudeDisabledServersInput {
+  const knownNames = Object.keys(allServers);
+  return {
+    knownNames,
+    disabledNames: knownNames.filter(
+      (name) => !isMCPServerEnabledForProvider(allServers[name], MCP_PROVIDER_IDS.CLAUDE_AGENT),
+    ),
+  };
 }
 
 export interface ClaudeConfigShape {

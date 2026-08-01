@@ -357,6 +357,41 @@ describe('ClaudeCliSessionLauncher', () => {
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
+  it('forwards the observation env so the proxy is declared first-party', async () => {
+    // The proxy owns the "are we a faithful passthrough to Anthropic?" answer
+    // (it knows the configured upstream); the launcher only merges what it
+    // returns alongside ANTHROPIC_BASE_URL.
+    const startObservation = vi.fn(async () => ({
+      baseUrl: 'http://127.0.0.1:51234',
+      env: { _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: '1' },
+      stop: vi.fn(),
+    }));
+    const { launcher, createClaudeCliTerminal } = makeHarness({ startObservation });
+
+    await launcher.launch(baseInput);
+
+    const opts = createClaudeCliTerminal.mock.calls[0][1];
+    expect(opts.spawnConfig.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:51234');
+    expect(opts.spawnConfig.env._CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL).toBe('1');
+  });
+
+  it('omits the first-party declaration when the proxy does not supply one', async () => {
+    // Custom upstream configured → the observation layer returns no env, and the
+    // CLI must keep treating the base URL as a gateway.
+    const startObservation = vi.fn(async () => ({
+      baseUrl: 'http://127.0.0.1:51234',
+      env: {},
+      stop: vi.fn(),
+    }));
+    const { launcher, createClaudeCliTerminal } = makeHarness({ startObservation });
+
+    await launcher.launch(baseInput);
+
+    const opts = createClaudeCliTerminal.mock.calls[0][1];
+    expect(opts.spawnConfig.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:51234');
+    expect(opts.spawnConfig.env._CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL).toBeUndefined();
+  });
+
   it('composes proxy teardown with the caller onExit callback', async () => {
     const stop = vi.fn();
     const onExit = vi.fn();

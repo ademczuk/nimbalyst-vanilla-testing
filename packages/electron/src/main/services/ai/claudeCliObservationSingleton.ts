@@ -41,6 +41,7 @@ import { classifyClaudeCliUpstreamError } from './claudeCliErrorClassifier';
 import { createClaudeCliErrorSurfacePolicy } from './claudeCliErrorSurfacePolicy';
 import { logClaudeCliUpstreamError } from './claudeCliErrorLog';
 import { extractToolResults } from './claudeCliObservation/claudeApiRequestParser';
+import { buildProxyPassthroughEnv } from './claudeCliObservation/proxyPassthroughEnv';
 import {
   isSubAgentTurnInFlight,
   noteAssistantTaskCalls,
@@ -185,7 +186,7 @@ async function persistAssistantTurn(
 export async function startClaudeCliProxyObservation(opts: {
   sessionId: string;
   workspacePath: string;
-}): Promise<{ baseUrl: string; stop: () => void } | null> {
+}): Promise<{ baseUrl: string; env: Record<string, string>; stop: () => void } | null> {
   const { sessionId, workspacePath } = opts;
 
   // tool_result blocks re-appear in every subsequent request body — dedup so each
@@ -305,9 +306,15 @@ export async function startClaudeCliProxyObservation(opts: {
   });
 
   const { baseUrl } = await observation.start();
+  // Sitting on ANTHROPIC_BASE_URL makes the CLI read us as an inference gateway
+  // and withhold first-party-only behavior, which breaks WebSearch/WebFetch at
+  // effort `max`. Declare the proxy first-party, but only when it really
+  // does forward to Anthropic. See proxyPassthroughEnv.ts.
+  const env = buildProxyPassthroughEnv(apiUpstreamUrl);
   console.log(`[ClaudeCliObservation] proxy started for ${sessionId} at ${baseUrl}`);
   return {
     baseUrl,
+    env,
     stop: () => {
       observation.stop();
       // Drop the per-session seen-set so a later relaunch re-seeds from the DB.

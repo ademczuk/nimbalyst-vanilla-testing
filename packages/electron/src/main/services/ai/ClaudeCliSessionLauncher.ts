@@ -57,14 +57,16 @@ export interface ClaudeCliSessionLauncherDeps {
   baseEnv?: Record<string, string | undefined>;
   /**
    * Start the proxy observation backend for this session (NIM-806, Phase 3).
-   * Returns the `ANTHROPIC_BASE_URL` the CLI is pointed at and a `stop` to tear
-   * the proxy down on PTY exit. Returns null (or is omitted) when observation is
-   * disabled — the CLI then talks to the real API directly (terminal-only).
+   * Returns the `ANTHROPIC_BASE_URL` the CLI is pointed at, any extra env the
+   * proxy needs the CLI spawned with (see `proxyPassthroughEnv.ts`), and a
+   * `stop` to tear the proxy down on PTY exit. Returns null (or is omitted) when
+   * observation is disabled. The CLI then talks to the real API directly
+   * (terminal-only).
    */
   startObservation?: (opts: {
     sessionId: string;
     workspacePath: string;
-  }) => Promise<{ baseUrl: string; stop: () => void } | null>;
+  }) => Promise<{ baseUrl: string; env?: Record<string, string>; stop: () => void } | null>;
   /** Directory for temp MCP config files. Defaults to `os.tmpdir()/nimbalyst-claude-cli`. */
   tempDir?: string;
   /** fs overrides (tests). */
@@ -254,7 +256,9 @@ export class ClaudeCliSessionLauncher {
 
     // 2.5. Start the proxy observation backend (Phase 3) BEFORE spawn, so we can
     // point the CLI's ANTHROPIC_BASE_URL at it. Tear down on PTY exit.
-    let observation: { baseUrl: string; stop: () => void } | null = null;
+    let observation: Awaited<
+      ReturnType<NonNullable<ClaudeCliSessionLauncherDeps['startObservation']>>
+    > = null;
     if (this.deps.startObservation) {
       try {
         observation = await this.deps.startObservation({ sessionId, workspacePath });
@@ -267,7 +271,9 @@ export class ClaudeCliSessionLauncher {
     const extraEnv: Record<string, string> | undefined =
       observation || Object.keys(permissionHookEnv).length > 0
         ? {
-            ...(observation ? { ANTHROPIC_BASE_URL: observation.baseUrl } : {}),
+            ...(observation
+              ? { ANTHROPIC_BASE_URL: observation.baseUrl, ...observation.env }
+              : {}),
             ...permissionHookEnv,
           }
         : undefined;

@@ -26,6 +26,7 @@ import { useOnboarding } from './hooks/useOnboarding';
 import { handleWorkspaceFileSelect as handleWorkspaceFileSelectUtil } from './utils/workspaceFileOperations';
 import { createInitialFileContent } from './utils/fileUtils';
 import { resolveHistoryDocumentPath } from './utils/historyDocumentResolver';
+import { loadActiveExtensionPanel, persistActiveExtensionPanel } from './utils/activeExtensionPanelPersistence';
 import { aiToolService } from './services/AIToolService';
 import { editorRegistry } from '@nimbalyst/runtime/ai/EditorRegistry';
 import { WorkspaceWelcome } from './components/WorkspaceWelcome.tsx';
@@ -570,6 +571,9 @@ export default function App() {
 
   // Active extension panel (for sidebar or fullscreen panels from extensions)
   const [activeExtensionPanel, setActiveExtensionPanel] = useState<string | null>(null);
+  // Guards the write-back effect below from firing with the initial `null`
+  // before the hydration effect has had a chance to restore a stored value.
+  const activeExtensionPanelHydratedRef = useRef(false);
 
   // Active extension bottom panel (for bottom-placement panels from extensions)
   const [activeExtensionBottomPanel, setActiveExtensionBottomPanel] = useState<string | null>(null);
@@ -838,6 +842,36 @@ export default function App() {
         console.error('[App] Failed to load workspace state:', error);
       });
   }, [workspacePath, setDiffTreeGroupByDirectory, setAgentFileScopeMode, hydrateFileGutterCollapsed]);
+
+  // Restore the active sidebar extension panel. Gated on `extensionsReady`,
+  // not just `workspacePath`: eager extensions load asynchronously in
+  // parallel at startup, so checking getPanelById before they've registered
+  // would always miss a panel that hadn't loaded yet (e.g. Session Tree) --
+  // restore would silently never fire even though the id was persisted fine.
+  useEffect(() => {
+    activeExtensionPanelHydratedRef.current = false;
+    if (!workspacePath || !window.electronAPI || !extensionsReady) return;
+    let cancelled = false;
+    void loadActiveExtensionPanel(workspacePath, (panelId) => getPanelById(panelId)?.placement === 'sidebar')
+      .then((restored) => {
+        if (!cancelled && restored) {
+          setActiveExtensionPanel(restored);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) activeExtensionPanelHydratedRef.current = true;
+      });
+    return () => { cancelled = true; };
+  }, [workspacePath, extensionsReady]);
+
+  // Write the active sidebar panel back to workspace state so it survives a
+  // reload. Gated on the hydration effect above finishing first -- otherwise
+  // this fires with the initial `null` and overwrites the stored value before
+  // it's ever read.
+  useEffect(() => {
+    if (!workspacePath || !window.electronAPI || !activeExtensionPanelHydratedRef.current) return;
+    void persistActiveExtensionPanel(workspacePath, activeExtensionPanel);
+  }, [activeExtensionPanel, workspacePath]);
 
   // Initialize tracker panel state from workspace state
   useEffect(() => {

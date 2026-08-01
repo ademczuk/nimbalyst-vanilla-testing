@@ -13,9 +13,25 @@ import { describe, expect, it } from 'vitest';
 import {
   applyDisabledMcpjsonServersToSettings,
   applyDisabledServersToClaudeConfig,
+  claudeDisabledServersInput,
 } from '../mcp/claudeCodeDisabledServers';
 
 const WS = '/work/proj';
+
+describe('claudeDisabledServersInput', () => {
+  it('reads both the legacy `disabled` flag and per-provider opt-outs, and ignores other providers', () => {
+    const input = claudeDisabledServersInput({
+      on: {},
+      legacyOff: { disabled: true },
+      codexOnly: { enabledForProviders: ['codex'] },
+      claudeOnly: { enabledForProviders: ['claude-agent'], disabled: true },
+    });
+
+    expect(input.knownNames).toEqual(['on', 'legacyOff', 'codexOnly', 'claudeOnly']);
+    // `claudeOnly` stays on: enabledForProviders wins over the legacy flag.
+    expect(input.disabledNames).toEqual(['legacyOff', 'codexOnly']);
+  });
+});
 
 describe('applyDisabledServersToClaudeConfig', () => {
   it('writes disabled names into the project entry and leaves enabled ones out', () => {
