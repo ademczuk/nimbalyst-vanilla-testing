@@ -103,7 +103,7 @@ describe('TrackerItemDetail metadata region', () => {
     expect(chips).toContain('startDate');
     // Tags are edited far more often than they're read, so they stay open.
     expect(chips).not.toContain('tags');
-    expect(screen.getByTestId('tracker-detail-tags')).toBeTruthy();
+    screen.getByTestId('tracker-detail-tags');
     // An array of objects has no one-line form: it reads below the chips.
     expect(chips).not.toContain('agentSessions');
     const overflow = document.querySelector('.tracker-detail-overflow-fields');

@@ -7,7 +7,8 @@ import {
   shift,
   useFloating,
 } from '@floating-ui/react';
-import { MaterialSymbol, getProviderIcon } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
+import { getProviderIcon } from '@nimbalyst/runtime/ui/icons/ProviderIcons';
 import { AlphaBadge, SETTINGS_ALPHA_TOOLTIP } from '../common/AlphaBadge';
 import { TEAM_ALPHA_TOOLTIP } from '../common/TeamAlphaNotice';
 import { developerModeAtom } from '../../store/atoms/appSettings';

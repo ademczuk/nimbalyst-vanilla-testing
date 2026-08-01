@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { usePostHog } from 'posthog-js/react';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import type { ContentMode } from '../../types/WindowModeTypes';
 import type { SettingsCategory } from '../Settings/SettingsSidebar';
 import type { SettingsScope } from '../Settings/SettingsView';

@@ -27,7 +27,7 @@ import { TeamMode } from '../TeamMode';
 const counts = { symbol: 0 };
 const icons: string[] = [];
 
-vi.mock('@nimbalyst/runtime', () => ({
+vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => {
     counts.symbol += 1;
     icons.push(icon);
@@ -117,15 +117,15 @@ describe('org window navigation repaint cost', () => {
     const store = seedStore();
     render(<Provider store={store}><TeamMode /></Provider>);
 
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
-    await waitFor(() => expect(screen.getByTestId('inbox-stub')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
+    await waitFor(() => screen.getByTestId('inbox-stub'));
     // Let the mount-time effects (roster, directory retry, route-state IPC)
     // settle so what follows is the navigation's cost alone.
     await act(async () => { await Promise.resolve(); });
 
     const before = counts.symbol;
     await act(async () => { screen.getByTestId('org-room-item-general').click(); });
-    await waitFor(() => expect(screen.getByTestId('room-view-stub')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('room-view-stub'));
     const navigationCost = counts.symbol - before;
 
     // Measured: 15 icon renders before Slice 5 — the whole chrome — against 2
@@ -139,7 +139,7 @@ describe('org window navigation repaint cost', () => {
     const store = seedStore();
     render(<Provider store={store}><TeamMode /></Provider>);
 
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
     await act(async () => { await Promise.resolve(); });
 
     const before = counts.symbol;
@@ -167,9 +167,9 @@ describe('org window navigation repaint cost', () => {
     const store = seedStore();
     render(<Provider store={store}><TeamMode /></Provider>);
 
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
     await act(async () => { screen.getByTestId('org-room-item-general').click(); });
-    await waitFor(() => expect(screen.getByTestId('room-view-stub')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('room-view-stub'));
     await act(async () => { await Promise.resolve(); });
 
     const before = counts.symbol;
@@ -188,14 +188,14 @@ describe('org window navigation repaint cost', () => {
     const store = seedStore();
     render(<Provider store={store}><TeamMode /></Provider>);
 
-    await waitFor(() => expect(screen.getByTestId('inbox-stub')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('inbox-stub'));
     expect(screen.getByTestId('team-mode-inbox-slot').className)
       .not.toContain('hidden');
 
     await act(async () => { screen.getByTestId('org-room-item-general').click(); });
-    await waitFor(() => expect(screen.getByTestId('room-view-stub')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('room-view-stub'));
 
-    expect(screen.getByTestId('inbox-stub')).toBeTruthy();
+    screen.getByTestId('inbox-stub');
     expect(screen.getByTestId('team-mode-inbox-slot').className).toContain('hidden');
   });
 });

@@ -16,7 +16,7 @@ import { useArchiveWorktreeDialog } from '../../hooks/useArchiveWorktreeDialog';
 import { getTimeGroupKey, TimeGroupKey } from '../../utils/dateFormatting';
 import { getFileName } from '../../utils/pathUtils';
 import { KeyboardShortcuts, getShortcutDisplay } from '../../../shared/KeyboardShortcuts';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import {
   sessionListRootAtom,
   sessionListLoadingAtom,

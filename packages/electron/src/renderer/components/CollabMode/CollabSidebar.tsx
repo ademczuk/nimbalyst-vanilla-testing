@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useAtom, useAtomValue } from 'jotai';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { InputModal } from '../InputModal';
 import { WorkspaceSummaryHeader } from '../WorkspaceSummaryHeader';
 import { CollabCreateItemDialog } from './CollabCreateItemDialog';

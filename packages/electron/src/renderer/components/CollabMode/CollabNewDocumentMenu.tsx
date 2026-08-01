@@ -1,5 +1,5 @@
 import React from 'react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import type { CollaborativeDocumentTypeDescriptor } from '../../services/CollaborativeDocumentTypeCatalog';
 
 export interface SharedNewDocumentMenuItem {

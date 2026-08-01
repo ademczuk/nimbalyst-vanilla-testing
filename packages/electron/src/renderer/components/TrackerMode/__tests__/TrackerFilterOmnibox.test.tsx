@@ -100,7 +100,7 @@ describe('TrackerFilterOmnibox', () => {
     render(<Harness onFiltersChange={onFiltersChange} />);
 
     type('stat');
-    expect(screen.getByTestId('tracker-filter-omnibox-option-field:status')).toBeTruthy();
+    screen.getByTestId('tracker-filter-omnibox-option-field:status');
     // Nothing is highlighted, so Enter is still an ordinary search keystroke.
     expect(document.querySelector('[data-selected="true"]')).toBeNull();
 
@@ -119,7 +119,7 @@ describe('TrackerFilterOmnibox', () => {
 
     expect(input().value).toBe('auth status:');
     expect(onSearchQueryChange).toHaveBeenLastCalledWith('auth ');
-    expect(screen.getByTestId('tracker-filter-omnibox-option-value:open')).toBeTruthy();
+    screen.getByTestId('tracker-filter-omnibox-option-value:open');
   });
 
   it('commits a value from the typeahead into the shared filter set', () => {
@@ -254,8 +254,8 @@ describe('TrackerFilterOmnibox', () => {
     render(<Harness withTags onTagFilterChange={onTagFilterChange} onSearchQueryChange={onSearchQueryChange} />);
 
     type('auth #u');
-    expect(screen.getByTestId('tracker-filter-omnibox-option-tag:ui')).toBeTruthy();
-    expect(screen.getByTestId('tracker-filter-omnibox-option-tag:urgent')).toBeTruthy();
+    screen.getByTestId('tracker-filter-omnibox-option-tag:ui');
+    screen.getByTestId('tracker-filter-omnibox-option-tag:urgent');
 
     fireEvent.keyDown(input(), { key: 'ArrowDown' });
     fireEvent.keyDown(input(), { key: 'Enter' });
@@ -264,7 +264,7 @@ describe('TrackerFilterOmnibox', () => {
     // The tag token leaves the input; the search text it followed stays.
     expect(input().value).toBe('auth ');
     expect(onSearchQueryChange).toHaveBeenLastCalledWith('auth ');
-    expect(screen.getByTestId('tracker-filter-omnibox-tag-chip-urgent')).toBeTruthy();
+    screen.getByTestId('tracker-filter-omnibox-tag-chip-urgent');
   });
 
   it('commits the first tag on Enter without arrowing', () => {
@@ -292,7 +292,7 @@ describe('TrackerFilterOmnibox', () => {
 
     type('#u');
     expect(screen.queryByTestId('tracker-filter-omnibox-option-tag:ui')).toBeNull();
-    expect(screen.getByTestId('tracker-filter-omnibox-option-tag:urgent')).toBeTruthy();
+    screen.getByTestId('tracker-filter-omnibox-option-tag:urgent');
   });
 
   it('pops the last tag before the last clause on Backspace', () => {

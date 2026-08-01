@@ -114,13 +114,13 @@ describe('AgentSessionsPopover', () => {
     fireEvent.click(bubble);
 
     expect(onOpenAgentMode).not.toHaveBeenCalled();
-    expect(screen.getByTestId('agent-sessions-popover')).toBeTruthy();
-    expect(screen.getByText('Awaiting input')).toBeTruthy();
-    expect(screen.getByText('Running')).toBeTruthy();
-    expect(screen.getByText('Unread')).toBeTruthy();
-    expect(screen.getByTestId('agent-sessions-row-awaiting')).toBeTruthy();
-    expect(screen.getByTestId('agent-sessions-row-running')).toBeTruthy();
-    expect(screen.getByTestId('agent-sessions-row-unread')).toBeTruthy();
+    screen.getByTestId('agent-sessions-popover');
+    screen.getByText('Awaiting input');
+    screen.getByText('Running');
+    screen.getByText('Unread');
+    screen.getByTestId('agent-sessions-row-awaiting');
+    screen.getByTestId('agent-sessions-row-running');
+    screen.getByTestId('agent-sessions-row-unread');
 
     const awaitingPeek = screen.getByTestId('agent-sessions-peek-awaiting');
     fireEvent.click(awaitingPeek);

@@ -57,9 +57,9 @@ describe('WorktreeBaseBranchPicker branch search', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('worktree-base-branch-item-main')).toBeNull();
     });
-    expect(screen.getByTestId('worktree-base-branch-item-feature/login')).toBeTruthy();
-    expect(screen.getByTestId('worktree-base-branch-item-feature/logout')).toBeTruthy();
-    expect(screen.getByTestId('worktree-base-branch-item-origin/feature/login')).toBeTruthy();
+    screen.getByTestId('worktree-base-branch-item-feature/login');
+    screen.getByTestId('worktree-base-branch-item-feature/logout');
+    screen.getByTestId('worktree-base-branch-item-origin/feature/login');
     expect(screen.queryByTestId('worktree-base-branch-item-hotfix/crash')).toBeNull();
     expect(screen.queryByTestId('worktree-base-branch-item-origin/release')).toBeNull();
   });
@@ -71,9 +71,9 @@ describe('WorktreeBaseBranchPicker branch search', () => {
     typeQuery('FEATURE');
 
     await waitFor(() => {
-      expect(screen.getByTestId('worktree-base-branch-item-feature/login')).toBeTruthy();
+      screen.getByTestId('worktree-base-branch-item-feature/login');
     });
-    expect(screen.getByTestId('worktree-base-branch-item-origin/feature/login')).toBeTruthy();
+    screen.getByTestId('worktree-base-branch-item-origin/feature/login');
   });
 
   it('shows an empty state naming the query when nothing matches', async () => {
@@ -98,9 +98,9 @@ describe('WorktreeBaseBranchPicker branch search', () => {
     fireEvent.click(screen.getByTestId('worktree-base-branch-search-clear'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('worktree-base-branch-item-main')).toBeTruthy();
+      screen.getByTestId('worktree-base-branch-item-main');
     });
-    expect(screen.getByTestId('worktree-base-branch-item-origin/release')).toBeTruthy();
+    screen.getByTestId('worktree-base-branch-item-origin/release');
   });
 
   it('keeps the selected base branch visible in the preview while it is filtered out', async () => {

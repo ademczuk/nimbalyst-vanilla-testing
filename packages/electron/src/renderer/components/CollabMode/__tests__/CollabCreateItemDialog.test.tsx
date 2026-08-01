@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { CollabCreateItemDialog } from '../CollabCreateItemDialog';
 import type { SharedFolder } from '../../../store/atoms/collabDocuments';
 
-vi.mock('@nimbalyst/runtime', () => ({
+vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span data-icon={icon} />,
 }));
 
@@ -53,7 +53,7 @@ describe('CollabCreateItemDialog', () => {
 
     render(<Harness />);
     const embeddedPicker = screen.getByTestId('collab-create-location-picker');
-    expect(screen.getByText('Pick where this folder should live in your team space.')).toBeTruthy();
+    screen.getByText('Pick where this folder should live in your team space.');
     expect(embeddedPicker.textContent).toContain('Team root');
     expect(embeddedPicker.textContent).toContain('Specs');
     expect(embeddedPicker.textContent).toContain('API');
@@ -67,7 +67,7 @@ describe('CollabCreateItemDialog', () => {
     fireEvent.change(screen.getByTestId('collab-create-name-input'), {
       target: { value: 'Architecture' },
     });
-    expect(screen.getByText('Will be created as')).toBeTruthy();
+    screen.getByText('Will be created as');
     fireEvent.click(screen.getByRole('button', { name: 'Create Folder' }));
     expect(onConfirm).toHaveBeenCalledWith('Architecture');
   });
@@ -104,8 +104,8 @@ describe('CollabCreateItemDialog', () => {
       />,
     );
 
-    expect(screen.getByText('New Shared Mockup')).toBeTruthy();
-    expect(screen.getByText('.mockup.html')).toBeTruthy();
+    screen.getByText('New Shared Mockup');
+    screen.getByText('.mockup.html');
     expect(document.querySelector('[data-icon="palette"]')).toBeTruthy();
     fireEvent.change(screen.getByTestId('collab-create-name-input'), {
       target: { value: 'Checkout.mockup.html' },

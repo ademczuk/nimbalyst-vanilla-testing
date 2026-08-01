@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { useFloating, autoUpdate, flip, offset, shift, type ReferenceElement } from '@floating-ui/react';
 
 import { FloatingPortal, useFloatingMenu } from '../../hooks/useFloatingMenu';

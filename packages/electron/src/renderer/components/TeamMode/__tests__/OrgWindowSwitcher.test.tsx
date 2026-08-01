@@ -60,7 +60,7 @@ describe('OrgWindowSwitcher', () => {
     expect(button.textContent).toContain('Acme');
     // Initials avatar and the alpha chip that used to live in the header band.
     expect(button.querySelector('.org-window-switcher-avatar')?.textContent).toBe('AC');
-    expect(screen.getByTestId('alpha-badge')).toBeTruthy();
+    screen.getByTestId('alpha-badge');
 
     fireEvent.click(button);
     expect(screen.queryAllByTestId('org-window-switcher-item')).toHaveLength(0);

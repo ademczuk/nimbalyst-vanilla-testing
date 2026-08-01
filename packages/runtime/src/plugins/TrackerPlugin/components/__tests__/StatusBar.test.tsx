@@ -51,7 +51,7 @@ describe('StatusBar', () => {
   it('renders the tracker fields as a chip row and writes one field per change', () => {
     const { onChange } = renderStatusBar({ status: 'draft', progress: 40 });
 
-    expect(screen.getByTestId('tracker-status-bar-field-pills')).toBeTruthy();
+    screen.getByTestId('tracker-status-bar-field-pills');
     expect(screen.getByTestId('tracker-status-bar-field-pill-status').textContent).toContain('Draft');
     expect(screen.getByTestId('tracker-status-bar-field-pill-progress').textContent).toContain('40');
 
@@ -81,10 +81,10 @@ describe('StatusBar', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Collapse status bar' }));
     expect(screen.queryByTestId('tracker-status-bar-field-pills')).toBeNull();
-    expect(screen.getByText('Plan')).toBeTruthy();
+    screen.getByText('Plan');
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand status bar' }));
-    expect(screen.getByTestId('tracker-status-bar-field-pills')).toBeTruthy();
+    screen.getByTestId('tracker-status-bar-field-pills');
   });
 
   it('keeps the issue-key chip clickable without collapsing the header', () => {
@@ -102,7 +102,7 @@ describe('StatusBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open tracker item NIM-42' }));
 
     expect(onOpen).toHaveBeenCalledOnce();
-    expect(screen.getByTestId('tracker-status-bar-field-pills')).toBeTruthy();
+    screen.getByTestId('tracker-status-bar-field-pills');
   });
 
   it('forwards people, relationship, navigation, and creation capabilities to the chips', () => {
@@ -125,7 +125,7 @@ describe('StatusBar', () => {
     );
 
     fireEvent.click(screen.getByTestId('tracker-status-bar-field-pill-owner'));
-    expect(screen.getByText('Ada')).toBeTruthy();
+    screen.getByText('Ada');
 
     fireEvent.click(screen.getByTestId('tracker-status-bar-field-pill-collection'));
     fireEvent.click(screen.getAllByRole('button', { name: 'Alpha' })[0]);
@@ -133,6 +133,6 @@ describe('StatusBar', () => {
     fireEvent.change(screen.getByTestId('tracker-status-bar-field-collection-picker-search'), {
       target: { value: 'New milestone' },
     });
-    expect(screen.getByTestId('tracker-status-bar-field-collection-picker-create')).toBeTruthy();
+    screen.getByTestId('tracker-status-bar-field-collection-picker-create');
   });
 });

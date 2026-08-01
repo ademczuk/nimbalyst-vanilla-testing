@@ -147,8 +147,8 @@ describe('expanded workstream title reconciliation (NIM-420)', () => {
   it('renders two external title events from normalized state without changing membership or refetching children', () => {
     const view = renderExpandedChild();
 
-    expect(screen.getByText('Loaded child title')).toBeTruthy();
-    expect(screen.getByText(parentTitle)).toBeTruthy();
+    screen.getByText('Loaded child title');
+    screen.getByText(parentTitle);
     expect(document.querySelectorAll('.workstream-session-item')).toHaveLength(1);
 
     act(() => {
@@ -157,14 +157,14 @@ describe('expanded workstream title reconciliation (NIM-420)', () => {
         title: 'First external rename',
       });
     });
-    expect(screen.getByText('First external rename')).toBeTruthy();
+    screen.getByText('First external rename');
 
     act(() => {
       handlers.get('sessions:session-updated')?.(childId, {
         title: 'Second external rename',
       });
     });
-    expect(screen.getByText('Second external rename')).toBeTruthy();
+    screen.getByText('Second external rename');
     expect(screen.queryByText('First external rename')).toBeNull();
 
     act(() => {
@@ -177,8 +177,8 @@ describe('expanded workstream title reconciliation (NIM-420)', () => {
       store.set(sessionProcessingAtom(childId), false);
     });
 
-    expect(screen.getByText('Second external rename')).toBeTruthy();
-    expect(screen.getByText(parentTitle)).toBeTruthy();
+    screen.getByText('Second external rename');
+    screen.getByText(parentTitle);
     expect(document.querySelectorAll('.workstream-session-item')).toHaveLength(1);
     expectNoChildRefetch();
 
@@ -216,8 +216,8 @@ describe('expanded workstream title reconciliation (NIM-420)', () => {
         />
       </Provider>
     );
-    expect(screen.getByText('Second external rename')).toBeTruthy();
-    expect(screen.getByText(parentTitle)).toBeTruthy();
+    screen.getByText('Second external rename');
+    screen.getByText(parentTitle);
 
     // A full session-view refresh reconstructs the structural cache from the
     // latest database metadata. This was the observed pre-fix recovery path.
@@ -237,7 +237,7 @@ describe('expanded workstream title reconciliation (NIM-420)', () => {
         />
       </Provider>
     );
-    expect(screen.getByText('Second external rename')).toBeTruthy();
+    screen.getByText('Second external rename');
     expectNoChildRefetch();
   });
 });

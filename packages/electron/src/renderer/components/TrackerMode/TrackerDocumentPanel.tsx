@@ -15,7 +15,7 @@
 
 import React from 'react';
 import { useAtomValue } from 'jotai';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { trackerItemByIdAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import type { TrackerDocumentPanelMode } from '../../store/atoms/trackers';
 import { TRACKER_DOCUMENT_PANEL_MODES } from './trackerDocumentPanelModes';

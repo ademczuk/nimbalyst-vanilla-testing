@@ -11,7 +11,8 @@ import {
   useRole,
 } from '@floating-ui/react';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { MaterialSymbol, getProviderIcon } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
+import { getProviderIcon } from '@nimbalyst/runtime/ui/icons/ProviderIcons';
 import { isAgentProvider, shouldBlockStartedSessionProviderSwitch } from '@nimbalyst/runtime/ai/server/types';
 import { getClaudeCodeModelLabel } from '../../utils/modelUtils';
 import { advancedSettingsAtom, aiProviderSettingsAtom } from '../../store/atoms/appSettings';

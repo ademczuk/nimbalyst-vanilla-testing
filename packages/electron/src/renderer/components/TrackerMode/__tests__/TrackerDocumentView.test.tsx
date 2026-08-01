@@ -144,9 +144,9 @@ describe('TrackerDocumentView', () => {
     expect(listPane.contains(listHeader)).toBe(true);
     expect(detailRegion.contains(documentHeader)).toBe(true);
     expect(listPane.contains(documentHeader)).toBe(false);
-    expect(screen.getByTestId('stub-list')).toBeTruthy();
-    expect(screen.getByTestId('stub-document')).toBeTruthy();
-    expect(screen.getByTestId('tracker-document-list-pane-resize')).toBeTruthy();
+    screen.getByTestId('stub-list');
+    screen.getByTestId('stub-document');
+    screen.getByTestId('tracker-document-list-pane-resize');
     // The ordinary presentation's toolbar stands down for the focused header.
     expect(screen.queryByTestId('stub-toolbar')).toBeNull();
   });
@@ -154,10 +154,10 @@ describe('TrackerDocumentView', () => {
   it('renders the toolbar and no focused header in the item presentation', () => {
     renderView({ presentation: 'item', documentItemId: null });
 
-    expect(screen.getByTestId('stub-toolbar')).toBeTruthy();
+    screen.getByTestId('stub-toolbar');
     expect(screen.queryByTestId('tracker-document-view-header')).toBeNull();
     expect(screen.queryByTestId('stub-right-panel')).toBeNull();
-    expect(screen.getByTestId('stub-document')).toBeTruthy();
+    screen.getByTestId('stub-document');
   });
 
   it('collapses and restores the list pane from the window top bar', () => {
@@ -168,10 +168,10 @@ describe('TrackerDocumentView', () => {
     expect(screen.queryByTestId('tracker-document-list-pane')).toBeNull();
     expect(screen.queryByTestId('tracker-document-list-pane-resize')).toBeNull();
     // The document stays put -- collapsing the list must not disturb it.
-    expect(screen.getByTestId('stub-document')).toBeTruthy();
+    screen.getByTestId('stub-document');
 
     fireEvent.click(screen.getByTestId('window-top-bar-left-pane'));
-    expect(screen.getByTestId('tracker-document-list-pane')).toBeTruthy();
+    screen.getByTestId('tracker-document-list-pane');
   });
 
   it('reports the collapse-to-tracker action to its host', () => {
@@ -258,7 +258,7 @@ describe('TrackerDocumentView', () => {
     const document_ = screen.getByTestId('tracker-detail-region');
     expect(document_.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy();
-    expect(screen.getByTestId('tracker-document-right-panel-resize')).toBeTruthy();
+    screen.getByTestId('tracker-document-right-panel-resize');
 
     fireEvent.click(screen.getByTestId('window-top-bar-right-pane'));
     expect(screen.queryByTestId('tracker-document-right-panel')).toBeNull();
@@ -282,13 +282,13 @@ describe('TrackerDocumentView', () => {
     renderView();
 
     fireEvent.click(screen.getByTestId('window-top-bar-right-pane-menu-button'));
-    expect(screen.getByText('Chat about this item')).toBeTruthy();
+    screen.getByText('Chat about this item');
   });
 
   it('shows pane controls only for Tracker document view', () => {
     const { unmount } = renderView();
-    expect(screen.getByTestId('window-top-bar-left-pane')).toBeTruthy();
-    expect(screen.getByTestId('window-top-bar-right-pane')).toBeTruthy();
+    screen.getByTestId('window-top-bar-left-pane');
+    screen.getByTestId('window-top-bar-right-pane');
     unmount();
 
     renderView({ presentation: 'item', documentItemId: null });
@@ -350,7 +350,7 @@ describe('TrackerDocumentView', () => {
       </Provider>,
     );
 
-    expect(screen.getByTestId('tracker-document-view-header')).toBeTruthy();
+    screen.getByTestId('tracker-document-view-header');
     expect(mounts.count).toBe(1);
     expect(nodes).toHaveLength(1);
     expect(screen.getByTestId('probe-detail')).toBe(nodes[0]);

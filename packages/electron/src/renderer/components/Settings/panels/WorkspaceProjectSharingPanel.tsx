@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { dialogRef, useDialogState } from '../../../contexts/DialogContext';
 import { DIALOG_IDS } from '../../../dialogs/registry';
 import type { OrgCreationWizardData } from '../../../dialogs/teamDialogs';

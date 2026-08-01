@@ -150,6 +150,6 @@ describe('UnifiedEditorHeaderBar shared document link', () => {
     fireEvent.click(screen.getByTitle('More actions'));
 
     expect(screen.queryByRole('button', { name: 'Copy link' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Copy as Markdown' })).toBeTruthy();
+    screen.getByRole('button', { name: 'Copy as Markdown' });
   });
 });

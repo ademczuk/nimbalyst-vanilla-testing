@@ -49,7 +49,7 @@ const alias = [
 
 const setupFiles = ['./test-utils/setup.ts', './packages/electron/vitest.setup.ts'];
 
-// Authoritative timeouts. The pre-push suite runs all ~630 files at full
+// Authoritative timeouts. The pre-push suite runs all ~1070 files at full
 // parallelism, often on a dev machine that is also running the dev server and
 // other AI sessions -- so a worker can be starved for several seconds and a
 // heavy test (module-graph dynamic imports, better-sqlite3 migrations, large

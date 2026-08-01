@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 
 import { InboxContextPane } from './InboxContextPane';
 import { InboxEmptyState, InboxOfflineWithoutCache } from './InboxEmptyState';

@@ -107,9 +107,8 @@ describe('TrackerViewHeaderControls', () => {
     renderControls();
 
     expect(screen.getByTestId('tracker-view-item-count').textContent).toBe('42 items');
-    expect(screen.getByTestId('tracker-view-filter-button')).toBeTruthy();
+    screen.getByTestId('tracker-view-filter-button');
     const displayOptions = screen.getByTestId('tracker-view-display-options');
-    expect(displayOptions).toBeTruthy();
     // The button is text-labeled ("Columns"), not a bare icon.
     expect(displayOptions.textContent).toContain('Columns');
   });
@@ -164,17 +163,17 @@ describe('TrackerViewHeaderControls', () => {
     const { onFiltersChange } = renderControls();
     fireEvent.click(screen.getByTestId('tracker-view-filter-button'));
 
-    expect(screen.getByPlaceholderText('Add filter…')).toBeTruthy();
-    expect(screen.getByTestId('tracker-filter-advanced')).toBeTruthy();
+    screen.getByPlaceholderText('Add filter…');
+    screen.getByTestId('tracker-filter-advanced');
     fireEvent.change(screen.getByTestId('tracker-filter-command-search'), {
       target: { value: 'status' },
     });
-    expect(screen.getByTestId('tracker-filter-field-status')).toBeTruthy();
+    screen.getByTestId('tracker-filter-field-status');
     expect(screen.queryByTestId('tracker-filter-field-priority')).toBeNull();
 
     fireEvent.click(screen.getByTestId('tracker-filter-field-status'));
-    expect(screen.getByTestId('tracker-filter-value-submenu')).toBeTruthy();
-    expect(screen.getByTestId('tracker-filter-field-status')).toBeTruthy();
+    screen.getByTestId('tracker-filter-value-submenu');
+    screen.getByTestId('tracker-filter-field-status');
     fireEvent.click(screen.getByTestId('tracker-filter-option-done'));
 
     expect(onFiltersChange).toHaveBeenCalledWith({
@@ -199,7 +198,7 @@ describe('TrackerViewHeaderControls', () => {
     expect(onFiltersChange).not.toHaveBeenCalled();
     expect(ui.getAttribute('aria-checked')).toBe('true');
     expect(backend.getAttribute('aria-checked')).toBe('true');
-    expect(screen.getByTestId('tracker-filter-value-submenu')).toBeTruthy();
+    screen.getByTestId('tracker-filter-value-submenu');
 
     fireEvent.click(screen.getByTestId('tracker-filter-apply-multiple'));
 
@@ -226,7 +225,7 @@ describe('TrackerViewHeaderControls', () => {
     );
     fireEvent.click(screen.getByTestId('tracker-view-filter-button'));
     fireEvent.click(screen.getByTestId('tracker-filter-field-tags'));
-    expect(screen.getByTestId('tracker-filter-value-submenu')).toBeTruthy();
+    screen.getByTestId('tracker-filter-value-submenu');
 
     rerender(
       <TrackerViewHeaderControls
@@ -238,8 +237,8 @@ describe('TrackerViewHeaderControls', () => {
       />,
     );
 
-    expect(screen.getByTestId('tracker-filter-value-submenu')).toBeTruthy();
-    expect(screen.getByTestId('tracker-filter-apply-multiple')).toBeTruthy();
+    screen.getByTestId('tracker-filter-value-submenu');
+    screen.getByTestId('tracker-filter-apply-multiple');
   });
 
   it('reopens a collection filter with its values selected and replaces it', () => {
@@ -274,11 +273,11 @@ describe('TrackerViewHeaderControls', () => {
     });
     fireEvent.click(screen.getByTestId('tracker-view-filter-button'));
 
-    expect(screen.getByTestId('tracker-filter-active-list')).toBeTruthy();
+    screen.getByTestId('tracker-filter-active-list');
     fireEvent.keyDown(screen.getByTestId('tracker-filter-command-search'), { key: 'ArrowDown' });
     fireEvent.keyDown(screen.getByTestId('tracker-filter-command-search'), { key: 'Enter' });
-    expect(screen.getByTestId('tracker-filter-value-submenu')).toBeTruthy();
-    expect(screen.getByTestId('tracker-filter-builder')).toBeTruthy();
+    screen.getByTestId('tracker-filter-value-submenu');
+    screen.getByTestId('tracker-filter-builder');
 
     fireEvent.click(screen.getByLabelText('Remove Status filter'));
     expect(onFiltersChange).toHaveBeenCalledWith({ combinator: 'and', clauses: [] });
@@ -325,21 +324,21 @@ describe('TrackerViewHeaderControls', () => {
     fireEvent.click(screen.getByTestId('tracker-view-filter-button'));
     fireEvent.mouseEnter(screen.getByTestId('tracker-filter-field-status'));
 
-    expect(screen.getByTestId('tracker-filter-builder')).toBeTruthy();
-    expect(screen.getByTestId('tracker-filter-value-submenu')).toBeTruthy();
-    expect(screen.getByText('2 issues')).toBeTruthy();
-    expect(screen.getByText('1 option not matching any issues')).toBeTruthy();
+    screen.getByTestId('tracker-filter-builder');
+    screen.getByTestId('tracker-filter-value-submenu');
+    screen.getByText('2 issues');
+    screen.getByText('1 option not matching any issues');
 
     fireEvent.change(screen.getByTestId('tracker-filter-option-search'), {
       target: { value: 'don' },
     });
-    expect(screen.getByTestId('tracker-filter-option-done')).toBeTruthy();
+    screen.getByTestId('tracker-filter-option-done');
   });
 
   it('uses the same display-options panel for column visibility', () => {
     const { onColumnConfigChange } = renderControls();
     fireEvent.click(screen.getByTestId('tracker-view-display-options'));
-    expect(screen.getByText('Display Options')).toBeTruthy();
+    screen.getByText('Display Options');
 
     fireEvent.click(screen.getAllByText('Priority').find(element => element.tagName === 'SPAN')!);
     expect(onColumnConfigChange).toHaveBeenCalledWith({
@@ -418,14 +417,14 @@ describe('TrackerViewHeaderControls', () => {
     renderControls({ showColumnControls: false });
 
     expect(screen.queryByTestId('tracker-view-display-options')).toBeNull();
-    expect(screen.getByTestId('tracker-view-filter-button')).toBeTruthy();
-    expect(screen.getByTestId('tracker-view-item-count')).toBeTruthy();
+    screen.getByTestId('tracker-view-filter-button');
+    screen.getByTestId('tracker-view-item-count');
   });
 
   it('opens filter management when an active filter pill requests it', () => {
     renderControls({ openFiltersToken: 1 });
 
-    expect(screen.getByTestId('tracker-filter-builder')).toBeTruthy();
+    screen.getByTestId('tracker-filter-builder');
   });
 
 });

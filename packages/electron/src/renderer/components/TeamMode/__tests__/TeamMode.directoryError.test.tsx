@@ -93,7 +93,7 @@ describe('TeamMode directory load failure', () => {
 
     render(<Provider store={store}><TeamMode /></Provider>);
 
-    await waitFor(() => expect(screen.getByTestId('org-rooms-error')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-rooms-error'));
     expect(screen.queryByTestId('org-rooms-empty')).toBeNull();
 
     invoke.mockClear();

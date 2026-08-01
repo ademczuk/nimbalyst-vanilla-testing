@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { useAtomValue } from 'jotai';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { docUnreadAtom } from '../../store/atoms/docUnread';
 
 interface DocUnreadDotProps {

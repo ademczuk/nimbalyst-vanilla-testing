@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { afterEach, describe, expect, it } from 'vitest';
 import { store } from '@nimbalyst/runtime/store';
 import { activeWorkspacePathAtom } from '../openProjects';

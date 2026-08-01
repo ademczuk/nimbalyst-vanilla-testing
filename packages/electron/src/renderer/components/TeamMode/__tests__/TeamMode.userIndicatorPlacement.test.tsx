@@ -65,7 +65,7 @@ function renderWindow() {
 }
 
 async function indicator() {
-  await waitFor(() => expect(screen.getByTestId('org-user-indicator')).toBeTruthy());
+  await waitFor(() => screen.getByTestId('org-user-indicator'));
   return screen.getByTestId('org-user-indicator');
 }
 
@@ -77,7 +77,7 @@ describe('org user indicator placement', () => {
     renderWindow();
 
     // The rail is the layout that used to swallow the indicator.
-    await waitFor(() => expect(screen.getByTestId('org-rail')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-rail'));
 
     const el = await indicator();
     expect(el.closest('[data-testid="org-sidebar"]')).toBeTruthy();

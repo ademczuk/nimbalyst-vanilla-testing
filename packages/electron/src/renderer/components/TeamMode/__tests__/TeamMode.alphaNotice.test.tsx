@@ -58,7 +58,7 @@ describe('TeamMode alpha disclosure', () => {
     store.set(selectedOrgIdAtom, null);
     render(<Provider store={store}><TeamMode /></Provider>);
 
-    await waitFor(() => expect(screen.getByText(/Create an organization to collaborate/)).toBeTruthy());
+    await waitFor(() => screen.getByText(/Create an organization to collaborate/));
     expect(screen.getByTestId('team-alpha-notice').textContent).toMatch(/alpha/i);
     expect(screen.getByTestId('team-alpha-notice').textContent).toMatch(/subscription after launch/i);
     expect(screen.getAllByTestId('alpha-badge').length).toBeGreaterThan(0);
@@ -84,7 +84,7 @@ describe('TeamMode alpha disclosure', () => {
     render(<Provider store={store}><TeamMode /></Provider>);
 
     // The window lands on Inbox.
-    await waitFor(() => expect(screen.getByTestId('org-window-status-bar')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-window-status-bar'));
     expect(screen.queryByTestId('team-alpha-notice')).toBeNull();
   });
 });

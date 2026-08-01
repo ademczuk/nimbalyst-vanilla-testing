@@ -6,6 +6,13 @@ import { MCPConfig, MCPServerConfig, MCPServerEnv } from '@nimbalyst/runtime/typ
 import { logger } from '../utils/logger';
 import { getEnhancedPath } from './CLIManager';
 import {
+  applyDisabledMcpjsonServersToSettings,
+  applyDisabledServersToClaudeConfig,
+  type ClaudeConfigShape,
+  type ClaudeDisabledServersInput,
+  type ClaudeSettingsShape,
+} from './mcp/claudeCodeDisabledServers';
+import {
   buildMcpRemoteArgs,
   checkMcpRemoteAuthStatus,
   discoverMcpRemoteOAuthRequirement,
@@ -419,6 +426,79 @@ export class MCPConfigService {
     } catch (error) {
       logger.mcp.error('Failed to write workspace MCP config:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Project Nimbalyst's on/off state into Claude Code's own disable fields
+   * (NIM-2372) so the CLI honors the toggle without Nimbalyst having to override
+   * its whole config with `--strict-mcp-config`. See claudeCodeDisabledServers.ts
+   * for the field mapping and the read-modify-write contract.
+   *
+   * Both files are co-owned with the CLI and the user, so this only ever touches
+   * names Nimbalyst manages, and skips the write entirely when nothing changed.
+   * Never throws: a session start must not fail over a config projection.
+   *
+   * Scope note: the CLI keys `disabledMcpServers` off the session's cwd. Worktree
+   * sessions run from the worktree path, not `workspacePath`, so their toggles are
+   * not projected — they fall back to whatever the ecosystem already says.
+   */
+  async syncClaudeCodeDisabledServers(
+    workspacePath: string,
+    input: ClaudeDisabledServersInput
+  ): Promise<void> {
+    if (!workspacePath) return;
+
+    try {
+      const claudeConfigRaw = await this.readJsonFile<ClaudeConfigShape>(this.userConfigPath);
+      const { config, changed } = applyDisabledServersToClaudeConfig(
+        claudeConfigRaw ?? {},
+        workspacePath,
+        input
+      );
+      if (changed) {
+        this.markRecentWrite(this.userConfigPath);
+        await fs.writeFile(this.userConfigPath, JSON.stringify(config, null, 2), 'utf8');
+        logger.mcp.info(
+          `[MCP] Synced disabledMcpServers for ${workspacePath}: ` +
+            `${config.projects?.[workspacePath]?.disabledMcpServers?.join(', ') || '(none)'}`
+        );
+      }
+    } catch (error) {
+      logger.mcp.warn('Failed to sync disabledMcpServers into ~/.claude.json:', error);
+    }
+
+    try {
+      const mcpJson = await this.readJsonFile<MCPConfig>(path.join(workspacePath, '.mcp.json'));
+      const mcpJsonNames = Object.keys(mcpJson?.mcpServers ?? {});
+      if (mcpJsonNames.length === 0) return;
+
+      const settingsPath = path.join(workspacePath, '.claude', 'settings.local.json');
+      const existing = await this.readJsonFile<ClaudeSettingsShape>(settingsPath);
+      const { settings, changed } = applyDisabledMcpjsonServersToSettings(
+        existing ?? {},
+        input,
+        mcpJsonNames
+      );
+      if (changed) {
+        await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+        this.markRecentWrite(settingsPath);
+        await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+      }
+    } catch (error) {
+      logger.mcp.warn('Failed to sync disabledMcpjsonServers into .claude/settings.local.json:', error);
+    }
+  }
+
+  /** Read + parse a JSON file, or null when it is missing/unreadable/malformed. */
+  private async readJsonFile<T>(filePath: string): Promise<T | null> {
+    try {
+      return JSON.parse(await fs.readFile(filePath, 'utf8')) as T;
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') {
+        logger.mcp.warn(`Failed to read ${filePath}:`, error);
+      }
+      return null;
     }
   }
 

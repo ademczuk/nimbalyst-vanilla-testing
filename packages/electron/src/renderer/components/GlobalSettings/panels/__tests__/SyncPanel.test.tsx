@@ -133,8 +133,8 @@ describe('SyncPanel', () => {
     it('drops the account-comparison chrome and states who is signed in', () => {
       renderAccounts([account()]);
 
-      expect(screen.getByText('solo@example.com')).toBeTruthy();
-      expect(screen.getByText(/Signed in as/)).toBeTruthy();
+      screen.getByText('solo@example.com');
+      screen.getByText(/Signed in as/);
       // "Used for sync" and the sync-account highlight only mean something
       // relative to another account.
       expect(screen.queryByText('Used for sync')).toBeNull();
@@ -162,7 +162,7 @@ describe('SyncPanel', () => {
     it('still offers reconnect when the sole account expires', () => {
       renderAccounts([account({ sessionStatus: 'expired', isSyncAccount: true })]);
 
-      expect(screen.getByText('Session expired')).toBeTruthy();
+      screen.getByText('Session expired');
       fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
       expect(mocks.dialogRef.current?.open).toHaveBeenCalledWith(
         expect.anything(),
@@ -181,7 +181,7 @@ describe('SyncPanel', () => {
       renderAccounts(twoAccounts());
 
       expect(screen.getAllByTestId('sync-account-row')).toHaveLength(2);
-      expect(screen.getByText('Used for sync')).toBeTruthy();
+      screen.getByText('Used for sync');
       expect(screen.queryByText(/Signed in as/)).toBeNull();
       expect(renderedOrgGroups()).toEqual([
         { personalOrgId: 'personal-1', indented: true },

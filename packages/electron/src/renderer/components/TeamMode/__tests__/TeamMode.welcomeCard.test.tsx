@@ -111,14 +111,14 @@ describe('TeamMode welcome card placement', () => {
 
   it('mounts the card inside #general and nowhere else', async () => {
     const store = renderWindow();
-    await waitFor(() => expect(screen.getByTestId('inbox')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('inbox'));
     // Not on the Inbox landing surface.
     expect(screen.queryByTestId('org-welcome-card')).toBeNull();
 
     act(() => {
       store.set(orgWindowRouteAtom, { view: 'conversation', conversationId: 'general' });
     });
-    await waitFor(() => expect(screen.getByTestId('org-welcome-card')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-welcome-card'));
     expect(screen.getByTestId('org-welcome-card').getAttribute('data-org-id')).toBe('org-1');
     // Inside the room view, not above the window chrome.
     expect(screen.getByTestId('org-room-view').contains(screen.getByTestId('org-welcome-card'))).toBe(true);

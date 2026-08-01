@@ -83,7 +83,7 @@ describe('TipProvider', () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText('Keep your computer awake for mobile prompts')).toBeTruthy();
+    screen.getByText('Keep your computer awake for mobile prompts');
     expect((window as any).electronAPI.invoke).toHaveBeenCalledWith(
       'walkthroughs:record-shown',
       'tip-mobile-keep-awake',

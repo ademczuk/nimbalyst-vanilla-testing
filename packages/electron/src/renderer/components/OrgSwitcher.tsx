@@ -19,7 +19,7 @@ import {
   useFloating, offset, flip, shift, autoUpdate,
   FloatingPortal, useClick, useDismiss, useRole, useInteractions,
 } from '@floating-ui/react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { activeWorkspacePathAtom } from '../store/atoms/openProjects';
 import { organizationCreationEnabled } from '../store/atoms/settingsDomains';
 import { dialogRef } from '../contexts/DialogContext';

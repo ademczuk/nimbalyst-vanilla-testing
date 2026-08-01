@@ -25,7 +25,7 @@ import {
   useInteractions,
   useRole,
 } from '@floating-ui/react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 
 import { AlphaBadge } from '../common/AlphaBadge';
 import { TEAM_ALPHA_TOOLTIP } from '../common/TeamAlphaNotice';

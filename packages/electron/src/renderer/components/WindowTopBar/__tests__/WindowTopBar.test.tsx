@@ -8,8 +8,7 @@ import { NO_DRAG_REGION } from '../dragRegion';
 // Only the icon needs stubbing (jsdom has no font ligatures). The rest of the
 // barrel is kept real: the bar's imports reach other runtime exports
 // transitively, and listing each one by hand goes stale on every new import.
-vi.mock('@nimbalyst/runtime', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
+vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   MaterialSymbol: ({ icon, className }: { icon: string; className?: string }) => (
     <span data-icon={icon} className={className} aria-hidden="true">{icon}</span>
   ),
@@ -286,8 +285,8 @@ describe('WindowTopBar', () => {
     renderAgentPanelControl({ onChat, onToggle });
 
     fireEvent.click(screen.getByTestId('window-top-bar-right-pane-menu-button'));
-    expect(screen.getByRole('menuitem', { name: 'Edited Files' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Review' })).toBeTruthy();
+    screen.getByRole('menuitem', { name: 'Edited Files' });
+    screen.getByRole('menuitem', { name: 'Review' });
     fireEvent.click(screen.getByRole('menuitem', { name: 'Chat with Session' }));
     expect(onChat).toHaveBeenCalledTimes(1);
     // Opening or choosing from the menu must never toggle visibility.

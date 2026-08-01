@@ -210,7 +210,7 @@ describe('RoomView', () => {
     expect(actions.disabled).toBe(false);
     fireEvent.click(actions);
 
-    expect(screen.getByRole('menuitem', { name: /Room settings/ })).toBeTruthy();
+    screen.getByRole('menuitem', { name: /Room settings/ });
     expect(screen.queryByRole('menuitem', { name: /Invite members/ })).toBeNull();
   });
 
@@ -229,7 +229,7 @@ describe('RoomView', () => {
       </Provider>,
     );
 
-    expect(screen.getByTestId('welcome-stand-in')).toBeTruthy();
+    screen.getByTestId('welcome-stand-in');
     const order = Array.from(
       container.querySelectorAll('.org-room-header, .org-room-notice, .org-room-thread'),
     ).map((element) => element.className.split(' ')[0]);

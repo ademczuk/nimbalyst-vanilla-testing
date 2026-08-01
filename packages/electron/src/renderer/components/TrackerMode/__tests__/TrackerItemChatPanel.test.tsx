@@ -64,7 +64,7 @@ describe('TrackerItemChatPanel', () => {
   it('is the ordinary chat panel -- it never seeds a chat about the item', () => {
     renderPanel();
 
-    expect(screen.getByTestId('standard-chat-sidebar')).toBeTruthy();
+    screen.getByTestId('standard-chat-sidebar');
     const props = chatSidebarProps.mock.lastCall?.[0];
     expect(props.sessionId).toBeNull();
     // No item-titled session, no pre-filled prompt: opening the panel must not

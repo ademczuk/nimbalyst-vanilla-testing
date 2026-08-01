@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { dbRowToRecord, type TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import type { TrackerIdentity } from '@nimbalyst/runtime';

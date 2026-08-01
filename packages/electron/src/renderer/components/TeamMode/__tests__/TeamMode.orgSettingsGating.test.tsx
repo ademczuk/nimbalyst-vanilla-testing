@@ -108,7 +108,7 @@ describe('TeamMode organization settings gating', () => {
     installApi('admin');
     renderWindow();
 
-    await waitFor(() => expect(screen.getByTestId('org-sidebar')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-sidebar'));
     expect(screen.queryByTestId('org-settings-panel')).toBeNull();
     for (const tab of ['members', 'projects', 'settings', 'billing', 'danger']) {
       expect(screen.queryByTestId(`team-tab-${tab}`)).toBeNull();
@@ -119,19 +119,19 @@ describe('TeamMode organization settings gating', () => {
     installApi();
     renderWindow({ roomsEnabled: false });
 
-    await waitFor(() => expect(screen.getByTestId('org-dm-item-dm-1')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-dm-item-dm-1'));
     expect(screen.queryByTestId('org-room-item-general')).toBeNull();
     expect(screen.queryByTestId('org-browse-rooms')).toBeNull();
     expect(screen.queryByTestId('org-rooms-section-add')).toBeNull();
     // Never gated.
-    expect(screen.getByTestId('team-tab-inbox')).toBeTruthy();
+    screen.getByTestId('team-tab-inbox');
   });
 
   it('hides direct messages when DMs are off, leaving rooms alone', async () => {
     installApi();
     renderWindow({ dmsEnabled: false });
 
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
     expect(screen.queryByTestId('org-dm-item-dm-1')).toBeNull();
     expect(screen.queryByTestId('org-dms-section-add')).toBeNull();
   });
@@ -140,11 +140,11 @@ describe('TeamMode organization settings gating', () => {
     installApi('member');
     renderWindow({ roomCreation: 'admins' });
 
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
     // The rooms [+] now opens a menu, so the restriction lands on the create
     // item inside it — browsing the directory stays available to a member.
     screen.getByTestId('org-rooms-section-add').click();
-    await waitFor(() => expect(screen.getByTestId('org-create-room')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-create-room'));
     expect((screen.getByTestId('org-create-room') as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByTestId('org-browse-rooms') as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByTestId('org-dms-section-add') as HTMLButtonElement).disabled).toBe(false);
@@ -159,7 +159,7 @@ describe('TeamMode organization settings gating', () => {
       installApi(callerRole);
       const store = renderWindow();
 
-      await waitFor(() => expect(screen.getByTestId('org-sidebar')).toBeTruthy());
+      await waitFor(() => screen.getByTestId('org-sidebar'));
       // A deep link or a hand-off left over from before NIM-2322.
       store.set(orgWindowRouteAtom, { view: 'admin', adminTab: 'danger' });
       await waitFor(() => expect(store.get(orgWindowRouteAtom)).toEqual({ view: 'inbox' }));
@@ -170,7 +170,7 @@ describe('TeamMode organization settings gating', () => {
     installApi();
     const store = renderWindow();
 
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
     store.set(orgWindowRouteAtom, { view: 'conversation', conversationId: 'general' });
 
     store.set(orgSettingsAtomFamily('org-1'), {

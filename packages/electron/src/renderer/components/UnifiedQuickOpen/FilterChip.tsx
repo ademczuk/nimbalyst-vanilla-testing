@@ -26,7 +26,7 @@ import {
   flip,
   shift,
 } from '@floating-ui/react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 
 export interface FilterChipOption {
   /** Stored / submitted value, e.g. ".ts" or "bug". */

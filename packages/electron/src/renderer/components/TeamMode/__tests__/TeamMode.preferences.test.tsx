@@ -66,13 +66,13 @@ describe('org window preferences', () => {
     installApi();
     renderWindow();
 
-    await waitFor(() => expect(screen.getByTestId('org-window-preferences')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-window-preferences'));
     expect(screen.queryByTestId('org-preferences-dialog')).toBeNull();
 
     fireEvent.click(screen.getByTestId('org-window-preferences'));
 
-    await waitFor(() => expect(screen.getByTestId('org-preferences-dialog')).toBeTruthy());
-    expect(screen.getByTestId('org-preferences-message-display')).toBeTruthy();
+    await waitFor(() => screen.getByTestId('org-preferences-dialog'));
+    screen.getByTestId('org-preferences-message-display');
   });
 
   it('keeps the gear out of the window drag region', async () => {
@@ -81,7 +81,7 @@ describe('org window preferences', () => {
 
     // The title bar is `-webkit-app-region: drag`; a control inside it that
     // does not opt out is a button the OS swallows.
-    await waitFor(() => expect(screen.getByTestId('org-window-preferences')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-window-preferences'));
     expect(screen.getByTestId('org-window-preferences').classList).toContain('org-window-no-drag');
   });
 
@@ -89,13 +89,13 @@ describe('org window preferences', () => {
     installApi();
     renderWindow();
 
-    await waitFor(() => expect(screen.getByTestId('org-user-indicator-button')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-user-indicator-button'));
     fireEvent.click(screen.getByTestId('org-user-indicator-button'));
 
-    await waitFor(() => expect(screen.getByTestId('org-user-popover-preferences')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-user-popover-preferences'));
     fireEvent.click(screen.getByTestId('org-user-popover-preferences'));
 
-    await waitFor(() => expect(screen.getByTestId('org-preferences-dialog')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-preferences-dialog'));
     // The popover closes behind the dialog rather than stacking with it.
     expect(screen.queryByTestId('org-user-popover')).toBeNull();
   });
@@ -104,9 +104,9 @@ describe('org window preferences', () => {
     const { settingsSet } = installApi();
     renderWindow();
 
-    await waitFor(() => expect(screen.getByTestId('org-window-preferences')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-window-preferences'));
     fireEvent.click(screen.getByTestId('org-window-preferences'));
-    await waitFor(() => expect(screen.getByTestId('org-preferences-dialog')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-preferences-dialog'));
 
     // Comfortable is the default and is shown as the current choice.
     expect(screen.getByTestId('org-preferences-density-comfortable').getAttribute('data-selected')).toBe('true');
@@ -121,9 +121,9 @@ describe('org window preferences', () => {
     installApi();
     renderWindow();
 
-    await waitFor(() => expect(screen.getByTestId('org-window-preferences')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-window-preferences'));
     fireEvent.click(screen.getByTestId('org-window-preferences'));
-    await waitFor(() => expect(screen.getByTestId('org-preferences-dialog')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-preferences-dialog'));
 
     fireEvent.click(screen.getByTestId('org-preferences-done'));
 

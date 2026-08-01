@@ -185,7 +185,7 @@ describe('OrgCreationWizard', () => {
     fireEvent.click(screen.getByTestId('org-wizard-primary'));
 
     expect((await screen.findByTestId('org-wizard-error')).textContent).toContain('invite-only');
-    expect(screen.getByTestId('org-wizard-identity-step')).toBeTruthy();
+    screen.getByTestId('org-wizard-identity-step');
   });
 
   it('moves from account to identity when auth arrives without another click', async () => {

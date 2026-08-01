@@ -25,7 +25,7 @@ import type {
   TimelineEntry,
 } from '../commentTypes';
 
-vi.mock('@nimbalyst/runtime', () => ({
+vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span data-icon={icon} />,
 }));
 
@@ -75,25 +75,25 @@ describe('CommentThread', () => {
   it('renders the conversation with agent attribution and a composer', async () => {
     renderThread();
 
-    await waitFor(() => expect(screen.getByTestId('comment-row-msg-001')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-row-msg-001'));
     expect(screen.getByTestId('comment-row-msg-003').getAttribute('data-actor-kind')).toBe('agent');
-    expect(screen.getByTestId('comment-composer-input')).toBeTruthy();
+    screen.getByTestId('comment-composer-input');
   });
 
   it('renders no reactions affordance at all when the adapter omits react', async () => {
     renderThread({ supportsReactions: false });
 
-    await waitFor(() => expect(screen.getByTestId('comment-row-msg-001')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-row-msg-001'));
     expect(screen.queryByTestId('reaction-bar')).toBeNull();
     expect(screen.queryByTestId('reaction-chip-eyes')).toBeNull();
     expect(screen.queryByTestId('reaction-add-trigger')).toBeNull();
     // Explained once for the whole surface rather than as a dead control per row.
-    expect(screen.getByTestId('comment-thread-no-reactions')).toBeTruthy();
+    screen.getByTestId('comment-thread-no-reactions');
   });
 
   it('toggles a reaction through the adapter and holds it to one per user per emoji', async () => {
     renderThread();
-    await waitFor(() => expect(screen.getByTestId('comment-row-msg-001')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-row-msg-001'));
 
     const row = screen.getByTestId('comment-row-msg-001');
     const plusOne = within(row).getByTestId('reaction-chip-+1');
@@ -122,7 +122,7 @@ describe('CommentThread', () => {
   it('copies the message URN from the action menu', async () => {
     const onCopyLink = vi.fn();
     renderThread({ onCopyLink });
-    await waitFor(() => expect(screen.getByTestId('comment-row-msg-001')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-row-msg-001'));
 
     const row = screen.getByTestId('comment-row-msg-001');
     fireEvent.click(within(row).getByTestId('comment-action-trigger'));
@@ -133,7 +133,7 @@ describe('CommentThread', () => {
 
   it('leaks nothing anywhere in the mounted tree for an unavailable reference', async () => {
     const { container } = renderThread();
-    await waitFor(() => expect(screen.getByTestId('comment-row-msg-004')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-row-msg-004'));
 
     const row = screen.getByTestId('comment-row-msg-004');
     await waitFor(() => {
@@ -163,12 +163,12 @@ describe('CommentThread', () => {
 
   it('posts a new message through the adapter and renders it', async () => {
     const { fixtureAdapter } = renderThread();
-    await waitFor(() => expect(screen.getByTestId('comment-row-msg-001')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-row-msg-001'));
 
     typeIntoComposer('ack');
     fireEvent.click(screen.getByTestId('comment-composer-send'));
 
-    await waitFor(() => expect(screen.getByTestId('comment-row-msg-local-1')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-row-msg-local-1'));
     expect(fixtureAdapter.snapshot().some((comment) => comment.body.text === 'ack')).toBe(true);
   });
 
@@ -182,7 +182,7 @@ describe('CommentThread', () => {
       subscribe: () => () => undefined,
     };
     renderThread({ adapter });
-    await waitFor(() => expect(screen.getByTestId('comment-thread-empty')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-thread-empty'));
 
     typeIntoComposer('accepted optimistically');
     fireEvent.click(screen.getByTestId('comment-composer-send'));
@@ -225,7 +225,7 @@ describe('CommentThread', () => {
       invoke,
     });
     renderThread({ adapter });
-    await waitFor(() => expect(screen.getByTestId('comment-thread-empty')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-thread-empty'));
 
     typeIntoComposer('retry this message');
     fireEvent.click(screen.getByTestId('comment-composer-send'));
@@ -250,7 +250,7 @@ describe('CommentThread', () => {
 
   it('turns a comment into a tombstone after delete', async () => {
     renderThread();
-    await waitFor(() => expect(screen.getByTestId('comment-row-msg-002')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-row-msg-002'));
 
     const row = screen.getByTestId('comment-row-msg-002');
     fireEvent.click(within(row).getByTestId('comment-action-trigger'));
@@ -264,7 +264,7 @@ describe('CommentThread', () => {
 
   it('hides the composer input and states the restriction on a read-only surface', async () => {
     renderThread({ capabilities: READ_ONLY_CAPABILITIES });
-    await waitFor(() => expect(screen.getByTestId('comment-row-msg-001')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-row-msg-001'));
 
     expect(screen.queryByTestId('comment-composer-input')).toBeNull();
     expect(screen.getByTestId('comment-composer-restriction-title').textContent).toContain('read-only');
@@ -301,9 +301,9 @@ describe('activity composition', () => {
       ],
     });
 
-    await waitFor(() => expect(screen.getByTestId('comment-row-msg-001')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('comment-row-msg-001'));
     expect(screen.queryByTestId('activity-row-audit-commented')).toBeNull();
-    expect(screen.getByTestId('activity-row-audit-status')).toBeTruthy();
+    screen.getByTestId('activity-row-audit-status');
   });
 
   it('suppresses an audit activity row correlated to a rendered comment', () => {

@@ -325,9 +325,9 @@ describe('TrackerGridView column layout', () => {
       });
     });
 
-    expect(screen.getByTestId('tracker-column-filter-value-submenu')).toBeTruthy();
-    expect(screen.getByText('1 issue')).toBeTruthy();
-    expect(screen.getByText('1 option not matching any issues')).toBeTruthy();
+    screen.getByTestId('tracker-column-filter-value-submenu');
+    screen.getByText('1 issue');
+    screen.getByText('1 option not matching any issues');
     fireEvent.click(screen.getByTestId('tracker-column-filter-option-to-do'));
 
     expect(onColumnFiltersChange).toHaveBeenCalledWith({

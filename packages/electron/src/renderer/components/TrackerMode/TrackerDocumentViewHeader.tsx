@@ -15,7 +15,7 @@
  */
 
 import React from 'react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import './TrackerDocumentView.css';
 
 /** Where the document's content is stored, as shown in the breadcrumb line. */

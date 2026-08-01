@@ -128,7 +128,7 @@ describe('OrgSidebar', () => {
     );
 
     expect(container.querySelectorAll('.org-room-item')).toHaveLength(2);
-    expect(screen.getByTestId('org-rooms-error')).toBeTruthy();
+    screen.getByTestId('org-rooms-error');
     // No retry affordance offered when the host supplies no refresh.
     expect(screen.queryByTestId('org-rooms-error-retry')).toBeNull();
   });
@@ -162,8 +162,8 @@ describe('OrgSidebar', () => {
     expect(screen.queryByTestId('org-rooms-section-add')).toBeNull();
     expect(screen.queryByTestId('org-browse-rooms')).toBeNull();
     // The inbox is never gated.
-    expect(screen.getByTestId('team-tab-inbox')).toBeTruthy();
-    expect(screen.getByTestId('org-dms-section')).toBeTruthy();
+    screen.getByTestId('team-tab-inbox');
+    screen.getByTestId('org-dms-section');
   });
 
   it('hides the direct-messages section when DMs are turned off', () => {
@@ -177,7 +177,7 @@ describe('OrgSidebar', () => {
     );
 
     expect(screen.queryByTestId('org-dms-section')).toBeNull();
-    expect(screen.getByTestId('org-rooms-section')).toBeTruthy();
+    screen.getByTestId('org-rooms-section');
   });
 
   it('points an empty rooms section at the way out of it', () => {
@@ -246,7 +246,7 @@ describe('OrgSidebar', () => {
     expect((screen.getByTestId('org-browse-rooms') as HTMLButtonElement).disabled).toBe(false);
     fireEvent.keyDown(document, { key: 'Escape' });
     // Rooms stay readable: only creation is restricted.
-    expect(screen.getByTestId('org-room-item-design')).toBeTruthy();
+    screen.getByTestId('org-room-item-design');
     expect((screen.getByTestId('org-dms-section-add') as HTMLButtonElement).disabled).toBe(false);
   });
 });

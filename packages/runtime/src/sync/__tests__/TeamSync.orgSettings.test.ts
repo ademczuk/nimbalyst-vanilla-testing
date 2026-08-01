@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 import { TeamSyncProvider } from '../TeamSync';
 import type { OrgSettings } from '@nimbalyst/collab-protocol';

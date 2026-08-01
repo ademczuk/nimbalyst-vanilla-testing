@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAtom } from 'jotai';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 
 import { settingAtom } from '../../store/atoms/settingAtomFamily';
 import { OrgDialog, OrgDialogSecondaryButton } from './OrgDialog';

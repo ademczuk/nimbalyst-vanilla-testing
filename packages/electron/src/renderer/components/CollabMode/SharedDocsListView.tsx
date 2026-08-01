@@ -32,7 +32,7 @@ import {
   useRole,
   useInteractions,
 } from '@floating-ui/react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { UserAvatar } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/UserAvatar';
 import {
   sharedDocumentsAtom,

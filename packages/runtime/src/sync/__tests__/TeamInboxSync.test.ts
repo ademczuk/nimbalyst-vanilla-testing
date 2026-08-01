@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type { InboxDelivery } from '@nimbalyst/collab-protocol';
 import { asTeamJwt, asTeamMemberId } from '../../auth/jwtScopes';
 import { describe, expect, it, vi } from 'vitest';

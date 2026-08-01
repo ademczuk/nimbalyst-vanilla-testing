@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { MAIN_WINDOW_TITLE_BAR_HEIGHT } from '../../../shared/windowChrome';
 import { FloatingPortal, useFloatingMenu } from '../../hooks/useFloatingMenu';
 import {

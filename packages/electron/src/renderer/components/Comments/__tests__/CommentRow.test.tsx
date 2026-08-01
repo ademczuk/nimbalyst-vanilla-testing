@@ -108,7 +108,7 @@ describe('CommentRow capability-driven affordances', () => {
 
     expect(within(menu).queryByTestId('comment-action-edit')).toBeNull();
     expect(within(menu).queryByTestId('comment-action-delete')).toBeNull();
-    expect(within(menu).getByTestId('comment-action-copy-link')).toBeTruthy();
+    within(menu).getByTestId('comment-action-copy-link');
   });
 
   it('offers edit and delete on the viewer own comment when both capabilities are held', () => {
@@ -118,9 +118,9 @@ describe('CommentRow capability-driven affordances', () => {
     fireEvent.click(screen.getByTestId('comment-action-trigger'));
     const menu = screen.getByTestId('comment-action-menu');
 
-    expect(within(menu).getByTestId('comment-action-edit')).toBeTruthy();
-    expect(within(menu).getByTestId('comment-action-delete')).toBeTruthy();
-    expect(within(menu).getByTestId('comment-action-reply')).toBeTruthy();
+    within(menu).getByTestId('comment-action-edit');
+    within(menu).getByTestId('comment-action-delete');
+    within(menu).getByTestId('comment-action-reply');
   });
 
   it('grants a moderator delete on someone else comment but never edit', () => {
@@ -133,7 +133,7 @@ describe('CommentRow capability-driven affordances', () => {
     fireEvent.click(screen.getByTestId('comment-action-trigger'));
     const menu = screen.getByTestId('comment-action-menu');
 
-    expect(within(menu).getByTestId('comment-action-delete')).toBeTruthy();
+    within(menu).getByTestId('comment-action-delete');
     expect(within(menu).queryByTestId('comment-action-edit')).toBeNull();
   });
 
@@ -160,7 +160,7 @@ describe('CommentRow capability-driven affordances', () => {
     const [withReactions] = commentsOf();
     renderRow(withReactions, { capabilities: { ...FULL_CAPABILITIES, react: false } });
 
-    expect(screen.getByTestId('reaction-chip-eyes')).toBeTruthy();
+    screen.getByTestId('reaction-chip-eyes');
     expect(screen.getByTestId('reaction-chip-eyes').hasAttribute('disabled')).toBe(true);
     expect(screen.queryByTestId('reaction-add-trigger')).toBeNull();
   });
@@ -187,7 +187,7 @@ describe('CommentRow capability-driven affordances', () => {
 
     // Revealed with the action menu, keyed off the row's `group`.
     const actions = screen.getByTestId('comment-row-actions');
-    expect(within(actions).getByTestId('reaction-add-trigger')).toBeTruthy();
+    within(actions).getByTestId('reaction-add-trigger');
     expect(actions.className).toContain('opacity-0');
     expect(actions.className).toContain('group-hover:opacity-100');
     expect(actions.className).toContain('focus-within:opacity-100');
@@ -201,7 +201,7 @@ describe('CommentRow capability-driven affordances', () => {
 
     // The picker autofocuses into a portal, so focus-within cannot hold the
     // container open -- a popover anchored to an invisible element reads as a bug.
-    expect(screen.getByTestId('reaction-emoji-picker')).toBeTruthy();
+    screen.getByTestId('reaction-emoji-picker');
     const actions = screen.getByTestId('comment-row-actions');
     expect(actions.className).not.toContain('opacity-0');
     expect(actions.className).toContain('opacity-100');
@@ -244,8 +244,8 @@ describe('CommentRow agent attribution', () => {
       />,
     );
 
-    expect(screen.getByTestId('comment-row-agent-glyph')).toBeTruthy();
-    expect(screen.getByTestId('comment-row-agent-badge')).toBeTruthy();
+    screen.getByTestId('comment-row-agent-glyph');
+    screen.getByTestId('comment-row-agent-badge');
     expect(screen.getByTestId('comment-row-agent-owner').textContent).toBe('for Rowan Petrie');
 
     const chip = screen.getByTestId('comment-row-session-chip');
@@ -269,7 +269,7 @@ describe('CommentRow agent attribution', () => {
     renderRow(agentMention);
     const agent = screen.getByTestId('comment-mention-agent');
     expect(agent.getAttribute('data-session-id')).toBe('session-sync-repro');
-    expect(within(agent).getByTestId('comment-mention-agent-glyph')).toBeTruthy();
+    within(agent).getByTestId('comment-mention-agent-glyph');
     expect(agent.textContent).toContain('Sync repro');
     expect(screen.queryByTestId('comment-mention-person')).toBeNull();
   });
@@ -390,9 +390,9 @@ describe('CommentRow compact density', () => {
     renderRow(agentComment, { density: 'compact', timestampMs: POSTED_AT });
 
     const line = screen.getByRole('article').querySelector('.comment-row-compact-line')!;
-    expect(within(line as HTMLElement).getByTestId('comment-row-agent-badge')).toBeTruthy();
-    expect(within(line as HTMLElement).getByTestId('comment-row-agent-owner')).toBeTruthy();
-    expect(within(line as HTMLElement).getByTestId('comment-row-session-chip')).toBeTruthy();
+    within(line as HTMLElement).getByTestId('comment-row-agent-badge');
+    within(line as HTMLElement).getByTestId('comment-row-agent-owner');
+    within(line as HTMLElement).getByTestId('comment-row-session-chip');
   });
 
   it('keeps the hover actions and reaction bar working in compact', () => {
@@ -402,7 +402,7 @@ describe('CommentRow compact density', () => {
       timestampMs: POSTED_AT,
     });
 
-    expect(screen.getByTestId('comment-row-actions')).toBeTruthy();
+    screen.getByTestId('comment-row-actions');
     const bar = screen.getByTestId('reaction-bar');
     fireEvent.click(bar.querySelector<HTMLButtonElement>('.reaction-chip')!);
     expect(onToggleReaction).toHaveBeenCalled();
@@ -414,7 +414,7 @@ describe('CommentRow compact density', () => {
 
     const row = screen.getByRole('article');
     expect(row.getAttribute('data-density')).toBe('comfortable');
-    expect(screen.getByTestId('comment-row-avatar')).toBeTruthy();
+    screen.getByTestId('comment-row-avatar');
     expect(screen.queryByTestId('comment-row-clock')).toBeNull();
     expect(row.querySelector('.comment-row-compact-line')).toBeNull();
     expect(row.querySelector('.comment-row-timestamp')).toBeTruthy();

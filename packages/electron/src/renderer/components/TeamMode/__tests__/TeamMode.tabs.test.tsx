@@ -64,7 +64,7 @@ describe('TeamMode org window navigation', () => {
     const { container } = render(<Provider store={store}><TeamMode /></Provider>);
 
     expect(DEFAULT_ORG_WINDOW_ROUTE.view).toBe('inbox');
-    await waitFor(() => expect(screen.getByTestId('inbox')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('inbox'));
     const mains = container.querySelectorAll('.team-mode-content');
     expect(mains).toHaveLength(1);
     expect(mains[0].classList.contains('team-mode-content-full')).toBe(true);
@@ -78,7 +78,7 @@ describe('TeamMode org window navigation', () => {
     store.set(selectedOrgIdAtom, 'org-1');
     render(<Provider store={store}><TeamMode /></Provider>);
 
-    await waitFor(() => expect(screen.getByTestId('org-sidebar')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-sidebar'));
     expect(screen.queryByTestId('org-admin-toggle')).toBeNull();
     for (const tab of ['members', 'projects', 'settings', 'billing', 'danger']) {
       expect(screen.queryByTestId(`team-tab-${tab}`)).toBeNull();
@@ -96,7 +96,7 @@ describe('TeamMode org window navigation', () => {
 
     await waitFor(() => expect(store.get(orgWindowRouteAtom))
       .toEqual(DEFAULT_ORG_WINDOW_ROUTE));
-    await waitFor(() => expect(screen.getByTestId('inbox')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('inbox'));
     expect(screen.queryByTestId('members')).toBeNull();
   });
 
@@ -108,11 +108,11 @@ describe('TeamMode org window navigation', () => {
 
     // The directory has no row of its own any more — it is an item in the
     // rooms section's + menu.
-    await waitFor(() => expect(screen.getByTestId('org-rooms-section-add')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-rooms-section-add'));
     screen.getByTestId('org-rooms-section-add').click();
-    await waitFor(() => expect(screen.getByTestId('org-browse-rooms')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-browse-rooms'));
     screen.getByTestId('org-browse-rooms').click();
 
-    await waitFor(() => expect(screen.getByTestId('org-rooms-directory')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-rooms-directory'));
   });
 });

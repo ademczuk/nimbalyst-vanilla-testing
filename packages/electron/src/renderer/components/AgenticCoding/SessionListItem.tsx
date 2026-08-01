@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { MaterialSymbol, ProviderIcon } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
+import { ProviderIcon } from '@nimbalyst/runtime/ui/icons/ProviderIcons';
 import { getRelativeTimeString } from '../../utils/dateFormatting';
 import { sessionOrChildProcessingAtom, sessionUnreadAtom, sessionPendingPromptAtom, sessionHasPendingInteractivePromptAtom, reparentSessionAtom, refreshSessionListAtom, sessionShareAtom, sessionWakeupAtom, sessionLastActivityAtom } from '../../store';
 import { convertToWorkstreamAtom } from '../../store/atoms/sessions';

@@ -35,6 +35,7 @@ import { recordClaudeActivity } from '../../store/listeners/claudeUsageListeners
 import { recordCodexActivity } from '../../store/listeners/codexUsageListeners';
 import { PendingReviewBanner } from '../AIChat/PendingReviewBanner';
 import { WakeupBanner } from '../AIChat/WakeupBanner';
+import { McpLockdownBanner } from '../AIChat/McpLockdownBanner';
 import type { AIMode } from './ModeTag';
 // Note: ExitPlanMode, AskUserQuestion, and ToolPermission use inline widgets via InteractiveWidgetHost (in runtime package)
 import { SlashCommandSuggestions } from './SlashCommandSuggestions';
@@ -2544,6 +2545,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       {/* Wakeup + pending review banners - only in chat mode, hidden when collapsed */}
       {mode === 'chat' && !collapseTranscript && (
         <>
+          <McpLockdownBanner provider={typeof provider === 'string' ? provider : undefined} />
           <WakeupBanner sessionId={sessionId} />
           <PendingReviewBanner workspacePath={workspacePath} sessionId={sessionId} />
         </>

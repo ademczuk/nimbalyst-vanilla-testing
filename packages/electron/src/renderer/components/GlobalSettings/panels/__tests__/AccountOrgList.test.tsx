@@ -53,7 +53,7 @@ describe('AccountOrgList', () => {
       />,
     );
 
-    expect(screen.getByText('3 projects')).toBeTruthy();
+    screen.getByText('3 projects');
     screen.getByTestId('account-org-manage').click();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith(
       'app-settings:get',
@@ -149,7 +149,7 @@ describe('AccountOrgList', () => {
       />,
     );
 
-    expect(screen.getByTestId('account-org-pending-badge')).toBeTruthy();
+    screen.getByTestId('account-org-pending-badge');
     // The org window resolves its target against active memberships only, so a
     // Manage button on a pending row would land on the generic unbound surface.
     expect(screen.queryByTestId('account-org-manage')).toBeNull();
@@ -189,6 +189,6 @@ describe('AccountOrgList', () => {
     );
 
     expect(screen.getAllByTestId('account-org-row')).toHaveLength(1);
-    expect(screen.getByText(/also signed in as b@example.com/)).toBeTruthy();
+    screen.getByText(/also signed in as b@example.com/);
   });
 });

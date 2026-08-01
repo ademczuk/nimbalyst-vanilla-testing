@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from '@nimbalyst/collab-protocol';
 
 import { FloatingPortal, useFloatingMenu } from '../../hooks/useFloatingMenu';

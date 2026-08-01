@@ -146,7 +146,7 @@ describe('TeamMode marks a room read while it is open', () => {
         </InboxProviderContext.Provider>
       </Provider>,
     );
-    await waitFor(() => expect(screen.getByTestId('inbox')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('inbox'));
     expect(markRead).not.toHaveBeenCalled();
 
     act(() => {

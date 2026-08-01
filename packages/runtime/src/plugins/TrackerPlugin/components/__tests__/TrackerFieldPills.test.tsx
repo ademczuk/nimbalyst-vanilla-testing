@@ -58,7 +58,7 @@ describe('TrackerFieldPills', () => {
 
     fireEvent.click(chip);
     expect(screen.getByTestId('tracker-field-popover-header-owner').textContent).toBe('Owner');
-    expect(screen.getByTestId('tracker-field-choices-owner')).toBeTruthy();
+    screen.getByTestId('tracker-field-choices-owner');
 
     fireEvent.click(screen.getByText('Ada'));
     expect(onSave).toHaveBeenCalledWith('owner', 'ada@example.com');
@@ -103,6 +103,6 @@ describe('TrackerFieldPills', () => {
     const row = screen.getByTestId('tracker-document-field-pills');
     expect(row.className).toContain('tracker-field-pills');
     expect(row.className).toContain('tracker-document-field-pills');
-    expect(screen.getByTestId('tracker-document-field-pill-state')).toBeTruthy();
+    screen.getByTestId('tracker-document-field-pill-state');
   });
 });

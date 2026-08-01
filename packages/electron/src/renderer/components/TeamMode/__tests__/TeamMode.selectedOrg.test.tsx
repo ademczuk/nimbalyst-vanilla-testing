@@ -81,7 +81,7 @@ describe('TeamMode organization targeting', () => {
     store.set(selectedOrgIdAtom, 'org-i-left');
     render(<Provider store={store}><TeamMode /></Provider>);
 
-    await waitFor(() => expect(screen.getByTestId('team-mode-organization-recovery')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('team-mode-organization-recovery'));
     expect(store.get(selectedOrgIdAtom)).toBe('org-i-left');
     expect(screen.getAllByTestId('team-mode-organization-choice')).toHaveLength(2);
   });
@@ -96,7 +96,7 @@ describe('TeamMode organization targeting', () => {
     store.set(selectedOrgIdAtom, 'org-other');
     render(<Provider store={store}><TeamMode /></Provider>);
 
-    await waitFor(() => expect(screen.getByTestId('team-mode-organization-recovery')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('team-mode-organization-recovery'));
     expect(store.get(selectedOrgIdAtom)).toBe('org-other');
 
     store.set(organizationDirectoryAtom, [otherTeam]);
@@ -111,7 +111,7 @@ describe('TeamMode organization targeting', () => {
     // No workspace and no selection: the unbound surface, but the user is in orgs.
     render(<Provider store={store}><TeamMode /></Provider>);
 
-    await waitFor(() => expect(screen.getByTestId('team-mode-organization-choices')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('team-mode-organization-choices'));
     expect(screen.getAllByTestId('team-mode-organization-choice')).toHaveLength(2);
   });
 
@@ -141,7 +141,7 @@ describe('TeamMode organization targeting', () => {
     ).toHaveBeenCalledWith('org-other'));
     // Messaging only since NIM-2322 — administration is the ORG_MANAGEMENT
     // dialog, so the window offers Inbox and conversations and nothing else.
-    expect(screen.getByTestId('team-tab-inbox')).toBeTruthy();
+    screen.getByTestId('team-tab-inbox');
     for (const tab of ['members', 'projects', 'settings', 'billing', 'danger']) {
       expect(screen.queryByTestId(`team-tab-${tab}`)).toBeNull();
     }

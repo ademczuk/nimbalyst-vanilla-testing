@@ -33,16 +33,16 @@ describe('InboxSection', () => {
   it('renders the grouped list with unread markers and agent attribution', async () => {
     renderInbox();
 
-    await waitFor(() => expect(screen.getByTestId('inbox-list')).toBeTruthy());
-    expect(screen.getByTestId('inbox-group-today')).toBeTruthy();
+    await waitFor(() => screen.getByTestId('inbox-list'));
+    screen.getByTestId('inbox-group-today');
 
     const agentRow = screen.getByTestId('inbox-row-delivery-agent-reply');
-    expect(within(agentRow).getByTestId('inbox-row-agent-glyph')).toBeTruthy();
+    within(agentRow).getByTestId('inbox-row-agent-glyph');
     expect(agentRow.textContent).toContain('packaging-audit');
     expect(agentRow.textContent).toContain('for Marcus Lee');
 
     // An agent mention dispatched but not yet picked up shows as pending.
-    expect(within(screen.getByTestId('inbox-row-delivery-agent-mention')).getByTestId('inbox-row-agent-pending')).toBeTruthy();
+    within(screen.getByTestId('inbox-row-delivery-agent-mention')).getByTestId('inbox-row-agent-pending');
 
     expect(screen.getByTestId('inbox-row-delivery-mention-room').getAttribute('data-unread')).toBe('true');
     expect(screen.getByTestId('inbox-row-delivery-dm').getAttribute('data-unread')).toBe('false');
@@ -57,7 +57,7 @@ describe('InboxSection', () => {
       expect(row.textContent).not.toContain(leak);
     }
     // It stays dismissible — dismissal is the only exit from a dead row.
-    expect(within(row).getByTestId('inbox-row-dismiss-delivery-access-removed')).toBeTruthy();
+    within(row).getByTestId('inbox-row-dismiss-delivery-access-removed');
   });
 
   it('filters, and composes the search query with the active filter', async () => {
@@ -65,7 +65,7 @@ describe('InboxSection', () => {
     await screen.findByTestId('inbox-list');
 
     fireEvent.click(screen.getByTestId('inbox-filter-assigned'));
-    expect(screen.getByTestId('inbox-row-delivery-assignment')).toBeTruthy();
+    screen.getByTestId('inbox-row-delivery-assignment');
     expect(screen.queryByTestId('inbox-row-delivery-mention-room')).toBeNull();
 
     fireEvent.click(screen.getByTestId('inbox-filter-mentions'));
@@ -73,7 +73,7 @@ describe('InboxSection', () => {
 
     // Priya authored both a mention and the assignment; the mentions filter
     // still holds, so only the mention survives.
-    expect(screen.getByTestId('inbox-row-delivery-mention-room')).toBeTruthy();
+    screen.getByTestId('inbox-row-delivery-mention-room');
     expect(screen.queryByTestId('inbox-row-delivery-assignment')).toBeNull();
   });
 
@@ -82,17 +82,17 @@ describe('InboxSection', () => {
     await screen.findByTestId('inbox-list');
 
     fireEvent.change(screen.getByTestId('inbox-search-input'), { target: { value: 'priya' } });
-    expect(screen.getByTestId('inbox-search-all')).toBeTruthy();
+    screen.getByTestId('inbox-search-all');
 
     fireEvent.change(screen.getByTestId('inbox-search-input'), { target: { value: 'nothing-matches-this' } });
     const empty = screen.getByTestId('inbox-empty-state');
-    expect(within(empty).getByTestId('inbox-search-all')).toBeTruthy();
-    expect(within(empty).getByTestId('inbox-empty-clear-filters')).toBeTruthy();
+    within(empty).getByTestId('inbox-search-all');
+    within(empty).getByTestId('inbox-empty-clear-filters');
   });
 
   it('explains each empty filter on its own terms', async () => {
     const { rerender } = renderInbox({ deliveries: [] });
-    await waitFor(() => expect(screen.getByTestId('inbox-empty-state')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('inbox-empty-state'));
     expect(screen.getByTestId('inbox-empty-state').textContent).toContain('Your inbox is clear');
 
     rerender(<InboxSection provider={createFixtureInboxProvider({ now: NOW, deliveries: [] })} />);
@@ -104,7 +104,7 @@ describe('InboxSection', () => {
   it('renders the loading skeleton with the controls disabled', () => {
     renderInbox({ status: 'loading' });
 
-    expect(screen.getByTestId('inbox-skeleton')).toBeTruthy();
+    screen.getByTestId('inbox-skeleton');
     expect(screen.queryByTestId('inbox-list')).toBeNull();
     expect((screen.getByTestId('inbox-filter-mentions') as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByTestId('inbox-search-input') as HTMLInputElement).disabled).toBe(true);
@@ -144,7 +144,7 @@ describe('InboxSection', () => {
 
     fireEvent.click(screen.getByTestId('inbox-row-delivery-mention-room'));
 
-    await waitFor(() => expect(screen.getByTestId('inbox-activation-notice')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('inbox-activation-notice'));
     expect(screen.getByTestId('inbox-row-delivery-mention-room').getAttribute('data-unread')).toBe('true');
   });
 
@@ -154,7 +154,7 @@ describe('InboxSection', () => {
 
     fireEvent.click(screen.getByTestId('inbox-row-delivery-read-only'));
 
-    await waitFor(() => expect(screen.getByTestId('inbox-composer-read-only')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('inbox-composer-read-only'));
     expect(screen.getByTestId('inbox-composer-read-only').textContent).toContain('viewer access');
   });
 
@@ -165,7 +165,7 @@ describe('InboxSection', () => {
     fireEvent.click(screen.getByTestId('inbox-row-delivery-access-removed'));
 
     const pane = await screen.findByTestId('inbox-context-pane');
-    expect(within(pane).getByTestId('inbox-context-unavailable')).toBeTruthy();
+    within(pane).getByTestId('inbox-context-unavailable');
     for (const leak of ['Corp dev', 'term sheet', 'Alex Fenn']) {
       expect(pane.textContent).not.toContain(leak);
     }
@@ -201,7 +201,7 @@ describe('InboxSection', () => {
     fireEvent.click(within(menu).getByText('Acme'));
 
     await waitFor(() => expect(screen.queryByTestId('inbox-row-delivery-mention-room')).toBeNull());
-    expect(screen.getByTestId('inbox-row-delivery-read-only')).toBeTruthy();
+    screen.getByTestId('inbox-row-delivery-read-only');
   });
 
   it('persists the filter and scope through app settings, never localStorage', async () => {
@@ -238,7 +238,7 @@ describe('InboxSection', () => {
   it('offers the fixture state picker only while the fixtures are the source', async () => {
     renderInbox();
     await screen.findByTestId('inbox-list');
-    expect(screen.getByTestId('inbox-state-picker')).toBeTruthy();
+    screen.getByTestId('inbox-state-picker');
 
     cleanup();
 
@@ -265,7 +265,7 @@ describe('InboxSection', () => {
     expect(unavailable.textContent).toContain(
       'Messaging is not available for Legacy Co',
     );
-    expect(screen.getByTestId('inbox-list')).toBeTruthy();
+    screen.getByTestId('inbox-list');
 
     fireEvent.click(within(unavailable).getByRole('button', {
       name: 'Migrate organization',
@@ -278,7 +278,7 @@ describe('InboxSection', () => {
     // surface must reach its empty state there, never the review fixtures.
     render(<InboxSection />);
 
-    await waitFor(() => expect(screen.getByTestId('inbox-empty-state')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('inbox-empty-state'));
     expect(screen.queryByTestId('inbox-list')).toBeNull();
     expect(screen.queryByTestId('inbox-state-picker')).toBeNull();
     expect(document.body.textContent).not.toContain('Priya Raman');

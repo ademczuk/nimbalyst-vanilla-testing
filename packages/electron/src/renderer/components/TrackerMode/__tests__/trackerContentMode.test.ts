@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * The sharer of a plan must end up in the SAME editor as their teammates.
  *

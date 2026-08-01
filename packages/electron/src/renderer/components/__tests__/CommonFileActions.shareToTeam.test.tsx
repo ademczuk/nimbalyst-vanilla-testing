@@ -117,7 +117,7 @@ describe('CommonFileActions Share to Team catalog eligibility', () => {
     mocks.resolveShareability.mockReturnValue({ state: 'unsupported', reason: 'Unsupported' });
     renderActions('index.ts');
 
-    expect(screen.getByRole('button', { name: 'Show in Explorer' })).toBeTruthy();
+    screen.getByRole('button', { name: 'Show in Explorer' });
     expect(screen.queryByRole('button', { name: 'Show in Finder' })).toBeNull();
   });
 
@@ -306,7 +306,7 @@ describe('CommonFileActions Share to Team catalog eligibility', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Copy Path' })).toBeTruthy();
+    screen.getByRole('button', { name: 'Copy Path' });
   });
 
   it('reads text descriptors as UTF-8 strings and opaque descriptors as bytes', async () => {

@@ -7,7 +7,7 @@ import {
   type SerializedLexicalNode,
   type Spread,
 } from 'lexical';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 
 import { labeledToken } from './composerDraft';
 import { initialsFor } from './commentBodyParser';

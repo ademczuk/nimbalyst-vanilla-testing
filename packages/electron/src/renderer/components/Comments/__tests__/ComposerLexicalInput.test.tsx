@@ -99,7 +99,7 @@ describe('composer rich input: mentions are atomic', () => {
       expect(composerText()).toBe('[@Dana Okafor](nimbalyst://user/user-dana) '),
     );
     const input = screen.getByTestId('comment-composer-input');
-    expect(within(input).getByTestId('composer-pill-person')).toBeTruthy();
+    within(input).getByTestId('composer-pill-person');
     expect(within(input).getByTestId('composer-pill-avatar').textContent).toBe('DO');
   });
 
@@ -126,7 +126,7 @@ describe('composer rich input: mentions are atomic', () => {
       expect(composerText()).toBe('[@Sync repro](nimbalyst://session/session-sync-repro) '),
     );
     const input = screen.getByTestId('comment-composer-input');
-    expect(within(input).getByTestId('composer-pill-agent')).toBeTruthy();
+    within(input).getByTestId('composer-pill-agent');
     expect(within(input).queryByTestId('composer-pill-person')).toBeNull();
   });
 
@@ -204,7 +204,7 @@ describe('composer rich input: edit mode', () => {
 
     await waitFor(() => expect(composerText()).toBe(initialText));
     const input = screen.getByTestId('comment-composer-input');
-    expect(within(input).getByTestId('composer-pill-person')).toBeTruthy();
+    within(input).getByTestId('composer-pill-person');
 
     fireEvent.click(screen.getByTestId('comment-composer-send'));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));

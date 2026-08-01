@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, memo, useMemo, useCallback } from 'react';
 import { useAtomValue } from 'jotai';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { groupSessionStatusAtom, sessionProcessingAtom, sessionUnreadAtom, sessionPendingPromptAtom } from '../../store';
 import { SessionContextMenu } from './SessionContextMenu';
 import { SessionRelativeTime } from './SessionRelativeTime';

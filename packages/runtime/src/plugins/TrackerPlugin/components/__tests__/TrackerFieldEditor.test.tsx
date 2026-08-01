@@ -22,7 +22,7 @@ describe('TrackerFieldEditor array values', () => {
       />,
     );
 
-    expect(screen.getByText(JSON.stringify(requirement))).toBeTruthy();
+    screen.getByText(JSON.stringify(requirement));
     expect(screen.queryByPlaceholderText('Add tag...')).toBeNull();
   });
 });

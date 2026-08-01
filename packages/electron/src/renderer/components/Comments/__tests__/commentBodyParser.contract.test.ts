@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
 import { COMMENT_BODY_CONTRACT_CORPUS } from '../../../../../../collab-protocol/src/__tests__/commentBodyContractCorpus';

@@ -42,7 +42,7 @@ describe('DocumentHeaderContainer provider exclusion', () => {
     );
 
     expect(screen.queryByText('tracker header')).toBeNull();
-    expect(screen.getByText('generic header')).toBeTruthy();
+    screen.getByText('generic header');
     expect(screen.getByTestId('generic-header').getAttribute('data-can-create')).toBe('true');
   });
 });

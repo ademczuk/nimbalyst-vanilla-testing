@@ -99,7 +99,7 @@ describe('WorkspaceProjectSharingPanel server-managed team surface (NIM-1779/C2)
     renderServerManagedTeamSurface();
 
     // The people-with-access surface is present (the reachable team UI).
-    expect(screen.getByTestId('project-access-editor')).toBeTruthy();
+    screen.getByTestId('project-access-editor');
 
     // No legacy E2E trust / re-share UI.
     expect(screen.queryByText(/re-share/i)).toBeNull();
@@ -113,7 +113,7 @@ describe('WorkspaceProjectSharingPanel server-managed team surface (NIM-1779/C2)
 
   it('labels an organization viewer as Viewer', () => {
     renderServerManagedTeamSurface('viewer');
-    expect(screen.getByText('Server Managed Team · Viewer')).toBeTruthy();
+    screen.getByText('Server Managed Team · Viewer');
   });
 
   /**

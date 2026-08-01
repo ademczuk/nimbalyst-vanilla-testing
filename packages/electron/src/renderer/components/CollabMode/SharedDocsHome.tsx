@@ -9,7 +9,7 @@
 
 import React, { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 import { useAtomValue } from 'jotai';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import type { SharedDocument } from '../../store/atoms/collabDocuments';
 import {
   emptySharedDocumentTrash,

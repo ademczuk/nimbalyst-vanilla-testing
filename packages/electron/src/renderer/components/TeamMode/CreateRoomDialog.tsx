@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 
 import type { ConversationDirectoryEntry } from '../../../shared/conversationDirectory';
 import { createDirectoryConversation } from '../../services/conversationDirectoryClient';

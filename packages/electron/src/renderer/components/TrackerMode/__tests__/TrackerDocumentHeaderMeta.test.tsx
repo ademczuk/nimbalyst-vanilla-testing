@@ -83,7 +83,7 @@ describe('TrackerDocumentHeaderMeta', () => {
       },
     });
 
-    expect(screen.getByTestId('tracker-document-breadcrumb-dirty')).toBeTruthy();
+    screen.getByTestId('tracker-document-breadcrumb-dirty');
   });
 
   it('falls back to collection and type for a DB-only item', () => {

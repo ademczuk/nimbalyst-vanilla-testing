@@ -101,7 +101,7 @@ describe('Collection chip', () => {
     fireEvent.click(screen.getByTestId('tracker-field-pill-collection'));
 
     expect(screen.getByTestId('tracker-field-popover-header-collection').textContent).toBe('Collection');
-    expect(screen.getByTestId('tracker-field-collection-picker')).toBeTruthy();
+    screen.getByTestId('tracker-field-collection-picker');
   });
 
   it('saves the multi-value array shape the write path expects', () => {
@@ -134,6 +134,6 @@ describe('Collection chip', () => {
     fireEvent.click(screen.getByTestId('tracker-field-pill-blockedBy'));
 
     expect(screen.queryByTestId('tracker-field-collection-picker')).toBeNull();
-    expect(screen.getByTestId('relationship-field-blockedBy')).toBeTruthy();
+    screen.getByTestId('relationship-field-blockedBy');
   });
 });

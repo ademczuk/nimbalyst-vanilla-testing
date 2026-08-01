@@ -158,10 +158,10 @@ describe('project window unread rendering', () => {
 
     renderWithStore(<OrgSwitcher />, snapshot([]));
 
-    await waitFor(() => expect(screen.getByTestId('org-switcher')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-switcher'));
     fireEvent.click(screen.getByTestId('org-switcher'));
 
-    await waitFor(() => expect(screen.getByTestId('org-switcher-manage-organization')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-switcher-manage-organization'));
     fireEvent.click(screen.getByTestId('org-switcher-manage-organization'));
     expect(openDialog).toHaveBeenCalledWith(DIALOG_IDS.ORG_MANAGEMENT, {
       orgId: 'org-a',

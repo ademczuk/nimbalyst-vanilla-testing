@@ -97,8 +97,8 @@ describe('TrackerGridView row context menu', () => {
     selectedRange.current = { y: 0, y1: 0 };
     rightClickRow(1);
 
-    await waitFor(() => expect(screen.getByTestId('tracker-row-context-menu')).toBeTruthy());
-    expect(screen.getByText('1 item selected')).toBeTruthy();
+    await waitFor(() => screen.getByTestId('tracker-row-context-menu'));
+    screen.getByText('1 item selected');
 
     fireEvent.click(screen.getByTestId('tracker-row-context-archive'));
     expect(onArchiveItems).toHaveBeenCalledWith(['bug-2'], true);
@@ -112,7 +112,7 @@ describe('TrackerGridView row context menu', () => {
     selectedRange.current = { y: 0, y1: 1 };
     rightClickRow(1);
 
-    await waitFor(() => expect(screen.getByText('2 items selected')).toBeTruthy());
+    await waitFor(() => screen.getByText('2 items selected'));
 
     fireEvent.click(screen.getByTestId('tracker-row-context-delete'));
     expect(onDeleteItems).toHaveBeenCalledWith(['bug-1', 'bug-2']);
@@ -125,12 +125,12 @@ describe('TrackerGridView row context menu', () => {
 
     selectedRange.current = { y: 0, y1: 1 };
     rightClickRow(0);
-    await waitFor(() => expect(screen.getByText('2 items selected')).toBeTruthy());
+    await waitFor(() => screen.getByText('2 items selected'));
     expect(screen.queryByTestId('tracker-row-context-copy-link')).toBeNull();
 
     selectedRange.current = null;
     rightClickRow(0);
-    await waitFor(() => expect(screen.getByText('1 item selected')).toBeTruthy());
+    await waitFor(() => screen.getByText('1 item selected'));
     fireEvent.click(screen.getByTestId('tracker-row-context-copy-link'));
     expect(onCopyDeepLink).toHaveBeenCalledWith('bug-1');
   });

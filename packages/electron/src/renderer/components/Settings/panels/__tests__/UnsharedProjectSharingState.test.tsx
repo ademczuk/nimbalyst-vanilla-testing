@@ -61,7 +61,7 @@ describe('UnsharedProjectSharingState', () => {
   it('asks one question first and only acts after the confirm step', () => {
     const { onAddToOrg } = renderFlow();
 
-    expect(screen.getByTestId('project-sharing-choices')).toBeTruthy();
+    screen.getByTestId('project-sharing-choices');
     expect(screen.queryByTestId('project-sharing-confirm')).toBeNull();
 
     fireEvent.change(screen.getByTestId('project-sharing-org-picker'), { target: { value: 'org-1' } });
@@ -88,8 +88,8 @@ describe('UnsharedProjectSharingState', () => {
     renderFlow({ gitRemote: '' });
 
     expect(screen.getByTestId('project-sharing-no-remote').textContent).toContain('no git remote');
-    expect(screen.getByTestId('project-sharing-choose-existing')).toBeTruthy();
-    expect(screen.getByTestId('project-sharing-choose-new')).toBeTruthy();
+    screen.getByTestId('project-sharing-choose-existing');
+    screen.getByTestId('project-sharing-choose-new');
   });
 
   // Adding without a remote POSTs a nameless, remote-less project that no
@@ -128,7 +128,7 @@ describe('UnsharedProjectSharingState', () => {
     fireEvent.click(screen.getByTestId('project-sharing-choose-new'));
     fireEvent.click(screen.getByTestId('project-sharing-back'));
 
-    expect(screen.getByTestId('project-sharing-choices')).toBeTruthy();
+    screen.getByTestId('project-sharing-choices');
   });
 });
 

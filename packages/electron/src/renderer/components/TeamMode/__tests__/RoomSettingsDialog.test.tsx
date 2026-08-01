@@ -133,7 +133,7 @@ describe('RoomSettingsDialog', () => {
   it('learns the room roles from the membership mutation that returns them', async () => {
     renderDialog({ initialSection: 'members' });
 
-    expect(screen.getByTestId('room-settings-members-unknown')).toBeTruthy();
+    screen.getByTestId('room-settings-members-unknown');
     expect(
       screen.getByTestId('room-settings-member-member-b').getAttribute('data-room-role'),
     ).toBe('none');
@@ -211,7 +211,7 @@ describe('RoomSettingsDialog', () => {
     renderDialog({ entry: { ...entry, id: 'general', title: 'General', visibility: 'public' } });
 
     expect(screen.queryByTestId('room-settings-archive')).toBeNull();
-    expect(screen.getByTestId('room-settings-archive-blocked')).toBeTruthy();
+    screen.getByTestId('room-settings-archive-blocked');
   });
 
   it('toggles agent posting from the descriptor state', async () => {

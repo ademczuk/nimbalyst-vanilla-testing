@@ -184,7 +184,7 @@ describe('OrgManagementDialog', () => {
   it('lands on the requested tab and hands it the organization', async () => {
     renderDialog({ initialTab: 'danger' });
 
-    await waitFor(() => expect(screen.getByTestId('danger-panel')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('danger-panel'));
     expect(screen.getByTestId('danger-panel').getAttribute('data-org-id')).toBe('org-a');
     expect(screen.queryByTestId('members-panel')).toBeNull();
   });
@@ -200,11 +200,11 @@ describe('OrgManagementDialog', () => {
     // panel nor a fallback: guessing would either leak Billing or bounce an
     // admin off it.
     expect(screen.queryByTestId('billing-panel')).toBeNull();
-    expect(screen.getByTestId('org-management-dialog-resolving')).toBeTruthy();
+    screen.getByTestId('org-management-dialog-resolving');
 
     release?.(roster('member'));
 
-    await waitFor(() => expect(screen.getByTestId('members-panel')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('members-panel'));
     expect(screen.queryByTestId('billing-panel')).toBeNull();
   });
 
@@ -222,7 +222,7 @@ describe('OrgManagementDialog', () => {
 
   it('drills into a project\'s sharing panel and back out to the project list', async () => {
     renderDialog({ initialTab: 'projects' });
-    await waitFor(() => expect(screen.getByTestId('projects-panel')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('projects-panel'));
 
     screen.getByTestId('manage-access-project-7').click();
 
@@ -233,24 +233,24 @@ describe('OrgManagementDialog', () => {
 
     screen.getByTestId('org-management-project-access-back').click();
 
-    await waitFor(() => expect(screen.getByTestId('projects-panel')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('projects-panel'));
     expect(screen.queryByTestId('project-sharing-panel')).toBeNull();
   });
 
   it('leaves the drill-down behind when another tab is opened', async () => {
     renderDialog({ initialTab: 'projects' });
-    await waitFor(() => expect(screen.getByTestId('projects-panel')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('projects-panel'));
     screen.getByTestId('manage-access-project-7').click();
     await screen.findByTestId('project-sharing-panel');
 
     screen.getByTestId('org-management-tab-members').click();
-    await waitFor(() => expect(screen.getByTestId('members-panel')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('members-panel'));
     expect(screen.getByTestId('members-panel').getAttribute('data-allow-create'))
       .toBe('false');
 
     screen.getByTestId('org-management-tab-projects').click();
 
-    await waitFor(() => expect(screen.getByTestId('projects-panel')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('projects-panel'));
     expect(screen.queryByTestId('project-sharing-panel')).toBeNull();
   });
 });

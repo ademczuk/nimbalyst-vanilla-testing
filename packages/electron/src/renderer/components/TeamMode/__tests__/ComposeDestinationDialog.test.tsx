@@ -118,7 +118,7 @@ describe('ComposeDestinationDialog', () => {
     });
 
     expect(screen.queryByTestId('compose-destination-room-general')).toBeNull();
-    expect(screen.getByTestId('compose-destination-member-member-b')).toBeTruthy();
+    screen.getByTestId('compose-destination-member-member-b');
   });
 
   it('highlights the first destination and opens it on Enter', () => {
@@ -170,7 +170,7 @@ describe('ComposeDestinationDialog', () => {
     fireEvent.change(search, { target: { value: 'nobody-by-that-name' } });
     fireEvent.keyDown(search, { key: 'Enter' });
 
-    expect(screen.getByTestId('compose-destination-empty')).toBeTruthy();
+    screen.getByTestId('compose-destination-empty');
     expect(onOpenConversation).not.toHaveBeenCalled();
   });
 });

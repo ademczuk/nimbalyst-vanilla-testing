@@ -103,10 +103,10 @@ describe('CommentComposer mention picker', () => {
     type('@');
 
     const picker = await screen.findByTestId('mention-picker');
-    expect(within(picker).getByTestId('mention-group-people')).toBeTruthy();
-    expect(within(picker).getByTestId('mention-group-agents')).toBeTruthy();
-    expect(within(picker).getByTestId('mention-option-person-user-dana')).toBeTruthy();
-    expect(within(picker).getByTestId('mention-option-agent-session-sync-repro')).toBeTruthy();
+    within(picker).getByTestId('mention-group-people');
+    within(picker).getByTestId('mention-group-agents');
+    within(picker).getByTestId('mention-option-person-user-dana');
+    within(picker).getByTestId('mention-option-agent-session-sync-repro');
     expect(within(picker).getAllByTestId('mention-option-agent-glyph').length).toBe(2);
   });
 
@@ -115,7 +115,7 @@ describe('CommentComposer mention picker', () => {
     type('@');
 
     const picker = await screen.findByTestId('mention-picker');
-    expect(within(picker).getByTestId('mention-group-people')).toBeTruthy();
+    within(picker).getByTestId('mention-group-people');
     expect(within(picker).queryByTestId('mention-group-agents')).toBeNull();
     expect(within(picker).queryByTestId('mention-option-agent-session-sync-repro')).toBeNull();
     expect(within(picker).queryAllByTestId('mention-option-agent-glyph')).toHaveLength(0);
@@ -177,7 +177,7 @@ describe('CommentComposer resource attachment', () => {
     fireEvent.click(await screen.findByTestId('composer-attach-tracker-itm-2212'));
 
     const tray = await screen.findByTestId('comment-composer-attachments');
-    expect(within(tray).getByTestId('comment-composer-attachment-tracker')).toBeTruthy();
+    within(tray).getByTestId('comment-composer-attachment-tracker');
 
     fireEvent.click(within(tray).getByLabelText(/^Remove /));
     await waitFor(() => expect(screen.queryByTestId('comment-composer-attachments')).toBeNull());
@@ -234,7 +234,7 @@ describe('CommentComposer resource attachment', () => {
         `[${label}](nimbalyst://tracker/itm-2212) `,
       );
     });
-    expect(screen.getByTestId('composer-pill-resource')).toBeTruthy();
+    screen.getByTestId('composer-pill-resource');
 
     fireEvent.click(screen.getByTestId('comment-composer-send'));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -525,7 +525,7 @@ describe('CommentComposer attachments', () => {
     const upload = vi.fn(async () => attachmentOf());
     renderWithHost(upload);
 
-    expect(screen.getByTestId('comment-composer-attach-file')).toBeTruthy();
+    screen.getByTestId('comment-composer-attach-file');
     const input = screen.getByTestId('comment-composer-file-input') as HTMLInputElement;
     const file = imageFile();
     Object.defineProperty(input, 'files', { value: [file], configurable: true });

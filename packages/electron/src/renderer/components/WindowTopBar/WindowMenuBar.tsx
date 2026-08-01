@@ -38,7 +38,7 @@ import {
   useMergeRefs,
   useRole,
 } from '@floating-ui/react';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import type { SerializedMenuItem } from '../../../shared/menuBar';
 import { windowMenuBarAtom } from '../../store/atoms/windowMenu';
 import { NO_DRAG_REGION } from './dragRegion';

@@ -21,12 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Agent mode right-panel control in the title bar is now a split button: one click hides or restores the panel, and the caret picks which panel to show.
 - Organizations are now managed in a dialog in whichever window you are already in — members, projects, settings, billing and the danger zone — leaving the organization window for messages, with a bottom-left profile menu that matches the project window's.
 - Signing in now hands back to the copy of Nimbalyst that started it rather than through a system-wide link handler.
+- Turning an MCP server off for Claude now also turns it off for Claude Code outside Nimbalyst in that project, because Nimbalyst records it the same way Claude Code does.
 
 ### Fixed
 <!-- Bug fixes go here -->
 - Sharing a plan or decision now produces a link your teammates can actually open, and the sharer edits the same collaborative content everyone else sees instead of quietly staying on their local file. Items shared earlier can be unshared and shared again to pick this up, keeping the content that has been edited since.
 - An AI session that reports its previous conversation has expired now genuinely starts fresh on the next message, instead of repeating the same expiration error forever. (#1098)
 - Tracker items with structured array fields no longer crash when opened, even when older schemas describe those fields as text lists. (#1104)
+- Claude Code sessions now use your existing MCP setup instead of overriding it, so account connectors load again and sessions no longer fail to start on machines with an organization-managed MCP policy. (#1051)
 - Unified Quick Open tabs now show compact platform keyboard glyphs without shortcut labels overflowing into neighboring tabs.
 - Desktop AI notifications now lead with the originating session name and open that exact session and project, including child sessions, instead of following whichever project is currently visible.
 - File reveal menus now name Finder on macOS, Explorer on Windows, and the containing folder on Linux.

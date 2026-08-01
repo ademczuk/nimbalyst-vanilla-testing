@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Snapshot builder for the in-session MCP status surface (NIM-2272 / GH #1089).
  *

@@ -78,7 +78,7 @@ describe('OrganizationSettingsPanel', () => {
 
     expect((screen.getByTestId('organization-settings-name') as HTMLInputElement).value)
       .toBe('Acme');
-    expect(screen.getByTestId('security-encryption-section')).toBeTruthy();
+    screen.getByTestId('security-encryption-section');
     await waitFor(() => expect(invoke)
       .toHaveBeenCalledWith('org:settings:get', { orgId: 'org-load' }));
     // A partial payload still renders every control, at its default.
@@ -141,7 +141,7 @@ describe('OrganizationSettingsPanel', () => {
   it('is read-only for a member, with an explanation', () => {
     renderPanel('member', 'org-member');
 
-    expect(screen.getByTestId('organization-settings-readonly')).toBeTruthy();
+    screen.getByTestId('organization-settings-readonly');
     expect(toggleInput('organization-settings-rooms-toggle').disabled).toBe(true);
     expect(toggleInput('organization-settings-dms-toggle').disabled).toBe(true);
     expect((screen.getByTestId('organization-settings-room-creation') as HTMLSelectElement).disabled)

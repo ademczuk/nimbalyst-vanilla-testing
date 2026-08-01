@@ -11,6 +11,7 @@ import {
   triggerMcpRemoteOAuth,
 } from '../services/MCPRemoteOAuth';
 import { getToolBudgetSnapshot } from '../mcp/toolBudgetService';
+import { hasEnterpriseManagedMcpConfig } from '@nimbalyst/runtime/ai/server/providers/claudeCode/enterpriseMcpConfig';
 
 const mcpConfigService = new MCPConfigService();
 
@@ -92,6 +93,13 @@ export function registerMCPConfigHandlers() {
   });
 
   safeHandle('mcp-config:get-user-path', () => mcpConfigService.getUserConfigPath());
+
+  // NIM-2372: an enterprise `managed-mcp.json` makes the `claude` binary reject
+  // every MCP server a host application passes, so Claude sessions run without
+  // Nimbalyst's tools. The renderer shows a banner saying so.
+  safeHandle('mcp-config:enterprise-lockdown', () => ({
+    active: hasEnterpriseManagedMcpConfig(),
+  }));
 
   safeHandle('mcp-config:get-workspace-path', (_event, workspacePath: string) => {
     if (!workspacePath) {

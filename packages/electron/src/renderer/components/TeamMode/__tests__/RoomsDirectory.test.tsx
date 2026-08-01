@@ -38,7 +38,7 @@ describe('RoomsDirectory', () => {
       <RoomsDirectory orgId="org-a" viewerUserId="member-a" onOpenConversation={vi.fn()} />,
     );
 
-    await waitFor(() => expect(screen.getByTestId('org-rooms-directory-row-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-rooms-directory-row-general'));
     expect(screen.queryByTestId('org-rooms-directory-empty')).toBeNull();
   });
 
@@ -54,7 +54,7 @@ describe('RoomsDirectory', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByTestId('org-rooms-directory-empty')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-rooms-directory-empty'));
     fireEvent.click(screen.getByTestId('org-rooms-directory-empty-create'));
     expect(onCreateRoom).toHaveBeenCalledTimes(1);
   });
@@ -65,7 +65,7 @@ describe('RoomsDirectory', () => {
       <RoomsDirectory orgId="org-a" viewerUserId="member-a" onOpenConversation={vi.fn()} />,
     );
 
-    await waitFor(() => expect(screen.getByTestId('org-rooms-directory-empty')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-rooms-directory-empty'));
     expect(screen.queryByTestId('org-rooms-directory-empty-create')).toBeNull();
     expect((screen.getByTestId('org-rooms-create') as HTMLButtonElement).title)
       .toBe('Only organization admins can create rooms');
@@ -77,7 +77,7 @@ describe('RoomsDirectory', () => {
       <RoomsDirectory orgId="org-a" viewerUserId="member-a" onOpenConversation={vi.fn()} />,
     );
 
-    await waitFor(() => expect(screen.getByTestId('org-rooms-directory-empty')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-rooms-directory-empty'));
     fireEvent.click(screen.getByTestId('org-rooms-archived-filter'));
 
     await waitFor(() => expect(screen.getByTestId('org-rooms-directory-empty').textContent)

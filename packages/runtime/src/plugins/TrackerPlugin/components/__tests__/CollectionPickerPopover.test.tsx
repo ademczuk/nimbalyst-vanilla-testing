@@ -67,7 +67,7 @@ describe('CollectionPickerPopover', () => {
       target: { value: 'NIM-12' },
     });
 
-    expect(screen.getByTestId('collection-picker-option-rel_1')).toBeTruthy();
+    screen.getByTestId('collection-picker-option-rel_1');
     expect(screen.queryByTestId('collection-picker-option-mst_1')).toBeNull();
   });
 
@@ -164,7 +164,7 @@ describe('CollectionPickerPopover', () => {
     fireEvent.click(screen.getByTestId('collection-picker-create'));
 
     // The type toggle offers exactly the field's collection target types.
-    expect(screen.getByTestId('collection-picker-type-milestone')).toBeTruthy();
+    screen.getByTestId('collection-picker-type-milestone');
     fireEvent.click(screen.getByTestId('collection-picker-type-release'));
 
     await waitFor(() => expect(onCreateCollection).toHaveBeenCalledWith('Gamma', 'release'));
@@ -181,7 +181,7 @@ describe('CollectionPickerPopover', () => {
     // No candidate matches "Gamma", so the create row is the only row.
     fireEvent.keyDown(search, { key: 'Enter' });
 
-    expect(screen.getByTestId('collection-picker-create-panel')).toBeTruthy();
+    screen.getByTestId('collection-picker-create-panel');
   });
 
   it('surfaces a creation failure instead of silently assigning nothing', async () => {

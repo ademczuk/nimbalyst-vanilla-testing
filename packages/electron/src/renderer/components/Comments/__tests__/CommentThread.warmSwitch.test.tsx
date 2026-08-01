@@ -76,9 +76,9 @@ describe('CommentThread on a room switched back to', () => {
 
     // First visit: nothing cached, so the thread waits for the fetch.
     const first = renderThread(createConversationCommentAdapter(config));
-    expect(screen.getByTestId('comment-thread-loading')).toBeTruthy();
+    screen.getByTestId('comment-thread-loading');
     await waitFor(() =>
-      expect(screen.getByTestId('comment-row-message-warm')).toBeTruthy());
+      screen.getByTestId('comment-row-message-warm'));
     first.unmount();
 
     // Coming back. The fetch is left pending on purpose: everything asserted
@@ -107,7 +107,7 @@ describe('CommentThread on a room switched back to', () => {
     );
     releaseList?.();
     await waitFor(() =>
-      expect(screen.getByTestId('comment-row-message-warm')).toBeTruthy());
+      screen.getByTestId('comment-row-message-warm'));
   });
 
   it('still shows the skeleton for a conversation with no cached history', async () => {
@@ -122,8 +122,8 @@ describe('CommentThread on a room switched back to', () => {
     });
 
     renderThread(adapter);
-    expect(screen.getByTestId('comment-thread-loading')).toBeTruthy();
+    screen.getByTestId('comment-thread-loading');
     await waitFor(() =>
-      expect(screen.getByTestId('comment-thread-empty')).toBeTruthy());
+      screen.getByTestId('comment-thread-empty'));
   });
 });

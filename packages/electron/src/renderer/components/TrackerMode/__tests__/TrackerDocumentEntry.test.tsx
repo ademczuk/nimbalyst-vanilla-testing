@@ -110,12 +110,12 @@ describe('document-view entry gestures', () => {
     // A multi-row selection has no single document to open.
     selectedRange.current = { y: 0, y1: 1 };
     fireEvent.contextMenu(screen.getByTestId('mock-row-0'), { clientX: 40, clientY: 60 });
-    await waitFor(() => expect(screen.getByText('2 items selected')).toBeTruthy());
+    await waitFor(() => screen.getByText('2 items selected'));
     expect(screen.queryByTestId('tracker-row-context-open-document')).toBeNull();
 
     selectedRange.current = null;
     fireEvent.contextMenu(screen.getByTestId('mock-row-1'), { clientX: 40, clientY: 60 });
-    await waitFor(() => expect(screen.getByText('1 item selected')).toBeTruthy());
+    await waitFor(() => screen.getByText('1 item selected'));
 
     fireEvent.click(screen.getByTestId('tracker-row-context-open-document'));
     expect(onOpenDocument).toHaveBeenCalledWith('bug-2');
@@ -126,7 +126,7 @@ describe('document-view entry gestures', () => {
 
     selectedRange.current = null;
     fireEvent.contextMenu(screen.getByTestId('mock-row-0'), { clientX: 40, clientY: 60 });
-    await waitFor(() => expect(screen.getByText('1 item selected')).toBeTruthy());
+    await waitFor(() => screen.getByText('1 item selected'));
     expect(screen.queryByTestId('tracker-row-context-open-document')).toBeNull();
   });
 });

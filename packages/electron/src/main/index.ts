@@ -1767,6 +1767,23 @@ app.whenReady().then(async () => {
         });
     });
 
+    // NIM-2372: Claude Code discovers its own MCP config again (no more
+    // `--strict-mcp-config`), so Nimbalyst's off-toggle has to be expressed in the
+    // CLI's own vocabulary. Both Claude loaders project it before handing back the
+    // enabled set. Servers skipped for a pending OAuth are deliberately NOT
+    // included — they're unauthorized, not user-disabled.
+    const syncClaudeDisabledServers = async (
+        workspacePath: string | undefined,
+        allServers: Record<string, unknown>
+    ): Promise<void> => {
+        if (!workspacePath || !mcpConfigService) return;
+        const knownNames = Object.keys(allServers);
+        const disabledNames = knownNames.filter(
+            (name) => !isMCPServerEnabledForProvider(allServers[name] as MCPServerConfig, MCP_PROVIDER_IDS.CLAUDE_AGENT)
+        );
+        await mcpConfigService.syncClaudeCodeDisabledServers(workspacePath, { knownNames, disabledNames });
+    };
+
     ClaudeCodeProvider.setMCPConfigLoader(async (workspacePath?: string) => {
         if (!mcpConfigService) {
             throw new Error('MCP config service not initialized');
@@ -1787,6 +1804,7 @@ app.whenReady().then(async () => {
                 enabledServers[name] = mcpConfigService.processServerConfigForRuntime(config as any);
             }
         }
+        await syncClaudeDisabledServers(workspacePath, allServers);
         return enabledServers;
     });
     OpenAICodexProvider.setMCPConfigLoader(async (workspacePath?: string) => {
@@ -1879,6 +1897,7 @@ app.whenReady().then(async () => {
                 enabledServers[name] = mcpConfigService.processServerConfigForRuntime(config as any);
             }
         }
+        await syncClaudeDisabledServers(workspacePath, allServers);
         return enabledServers;
     });
 

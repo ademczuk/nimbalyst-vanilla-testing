@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { createStore } from 'jotai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { trackerPersonalStateService } from '../../../services/RendererTrackerPersonalStateService';

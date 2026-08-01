@@ -81,7 +81,7 @@ describe('CreateRoomDialog', () => {
       target: { value: 'General' },
     });
     expect((screen.getByTestId('create-room-submit') as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/already exists/)).toBeTruthy();
+    screen.getByText(/already exists/);
     expect(createDirectoryConversation).not.toHaveBeenCalled();
   });
 

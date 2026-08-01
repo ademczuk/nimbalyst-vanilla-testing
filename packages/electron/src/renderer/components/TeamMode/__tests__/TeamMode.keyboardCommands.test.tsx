@@ -162,28 +162,28 @@ describe('org window keyboard messaging commands', () => {
   it('opens the compose destination picker on Cmd+K', async () => {
     installApi();
     renderWindow();
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
     expect(screen.queryByTestId('compose-destination-dialog')).toBeNull();
 
     pressKey({ key: 'k', metaKey: true });
 
-    await waitFor(() => expect(screen.getByTestId('compose-destination-dialog')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('compose-destination-dialog'));
   });
 
   it('opens the picker from the Messages menu over IPC', async () => {
     installApi();
     renderWindow();
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
 
     act(() => { ipcListeners.get(ORG_WINDOW_COMMAND_CHANNEL)?.('newMessage'); });
 
-    await waitFor(() => expect(screen.getByTestId('compose-destination-dialog')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('compose-destination-dialog'));
   });
 
   it('ignores an unknown command from the main process', async () => {
     installApi();
     renderWindow();
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
 
     act(() => { ipcListeners.get(ORG_WINDOW_COMMAND_CHANNEL)?.('drop-database'); });
 
@@ -193,7 +193,7 @@ describe('org window keyboard messaging commands', () => {
   it('walks the sidebar order with next / previous conversation, wrapping', async () => {
     installApi();
     const store = renderWindow();
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
 
     // Sorted: Design, then General pinned to the top — so the order is
     // general, design.
@@ -213,7 +213,7 @@ describe('org window keyboard messaging commands', () => {
   it('returns to the inbox on Cmd+I', async () => {
     installApi();
     const store = renderWindow();
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
     act(() => { store.set(orgWindowRouteAtom, { view: 'conversation', conversationId: 'general' }); });
 
     pressKey({ key: 'i', metaKey: true });
@@ -224,7 +224,7 @@ describe('org window keyboard messaging commands', () => {
   it('routes to the inbox and latches a search-focus request on Cmd+F', async () => {
     installApi();
     const store = renderWindow();
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
     act(() => { store.set(orgWindowRouteAtom, { view: 'conversation', conversationId: 'general' }); });
 
     pressKey({ key: 'f', metaKey: true });
@@ -244,7 +244,7 @@ describe('org window keyboard messaging commands', () => {
       { id: 'd3', orgId: 'org-1', readAt: 5, source: { orgId: 'org-1', sourceKind: 'roomMessage', sourceId: 'general', commentId: 'm3' } },
       { id: 'd4', orgId: 'org-2', source: { orgId: 'org-2', sourceKind: 'roomMessage', sourceId: 'general', commentId: 'm4' } },
     ]);
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
 
     pressKey({ key: 'U', metaKey: true, shiftKey: true });
 
@@ -254,7 +254,7 @@ describe('org window keyboard messaging commands', () => {
   it('does not call markRead when the organization has nothing unread', async () => {
     installApi();
     renderWindow();
-    await waitFor(() => expect(screen.getByTestId('org-room-item-general')).toBeTruthy());
+    await waitFor(() => screen.getByTestId('org-room-item-general'));
 
     pressKey({ key: 'U', metaKey: true, shiftKey: true });
 

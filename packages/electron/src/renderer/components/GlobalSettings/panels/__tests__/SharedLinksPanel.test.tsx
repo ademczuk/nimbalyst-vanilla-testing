@@ -64,7 +64,7 @@ describe('SharedLinksPanel account attribution', () => {
 
     expect(screen.queryByTestId('shared-link-owner')).toBeNull();
     // The link itself is untouched — only the attribution is dropped.
-    expect(screen.getByText(/share\.nimbalyst\.com\/share\/share-ab/)).toBeTruthy();
+    screen.getByText(/share\.nimbalyst\.com\/share\/share-ab/);
   });
 
   it('names the owning account once a second account exists', async () => {

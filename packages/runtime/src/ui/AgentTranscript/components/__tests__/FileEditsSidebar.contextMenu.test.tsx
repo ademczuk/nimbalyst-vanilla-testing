@@ -73,6 +73,6 @@ describe('FileEditsSidebar file browser label', () => {
 
     fireEvent.contextMenu(screen.getByText('app.ts'), { clientX: 120, clientY: 200 });
 
-    expect(screen.getByText(expectedLabel)).toBeTruthy();
+    screen.getByText(expectedLabel);
   });
 });

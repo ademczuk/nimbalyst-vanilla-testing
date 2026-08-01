@@ -72,7 +72,7 @@ function renderIndicator(snapshot = snapshotWithPresence('online')) {
 
 async function openMenu() {
   fireEvent.click(screen.getByTestId('org-user-indicator-button'));
-  await waitFor(() => expect(screen.getByTestId('org-user-popover')).toBeTruthy());
+  await waitFor(() => screen.getByTestId('org-user-popover'));
 }
 
 describe('OrgUserIndicator profile menu', () => {

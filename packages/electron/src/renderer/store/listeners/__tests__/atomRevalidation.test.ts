@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { atom, createStore } from 'jotai';
 import { describe, expect, it } from 'vitest';
 

@@ -20,7 +20,8 @@ import React, {
 } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { usePostHog } from 'posthog-js/react';
-import { MaterialSymbol, ProviderIcon } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
+import { ProviderIcon } from '@nimbalyst/runtime/ui/icons/ProviderIcons';
 import { getFileName, getRelativeDir } from '../utils/pathUtils';
 import { getRelativeTimeString } from '../utils/dateFormatting';
 import { revealFolderAtom } from '../store';

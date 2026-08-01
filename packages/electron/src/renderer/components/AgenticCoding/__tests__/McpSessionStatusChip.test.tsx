@@ -140,7 +140,7 @@ describe('McpSessionStatusChip', () => {
     renderChip(null);
 
     await waitFor(() =>
-      expect(screen.getByTestId('mcp-session-status-chip')).toBeTruthy(),
+      screen.getByTestId('mcp-session-status-chip'),
     );
     expect((window as any).electronAPI.aiGetMcpSessionStatus).toHaveBeenCalledWith(
       SESSION_ID,
@@ -258,7 +258,7 @@ describe('ActiveSessionMcpStatusChip setting gate', () => {
     renderGated({ visible: true });
 
     await waitFor(() =>
-      expect(screen.getByTestId('mcp-session-status-chip')).toBeTruthy(),
+      screen.getByTestId('mcp-session-status-chip'),
     );
   });
 

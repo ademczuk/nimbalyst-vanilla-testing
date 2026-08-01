@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { usePostHog } from 'posthog-js/react';
 import { useAtom, useAtomValue } from 'jotai';
-import { MaterialSymbol } from '@nimbalyst/runtime';
+import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { QRPairingModal } from './QRPairingModal';
 import {
   syncConfigAtom,
