@@ -19,7 +19,7 @@ import {
   setFileSystemServiceFor,
 } from '@nimbalyst/runtime';
 import { navigationHistoryService } from '../services/NavigationHistoryService';
-import { runWhenAppIsActive } from './AppActivationGuard';
+import { revealReadyWindow } from './revealReadyWindow';
 import { signalFirstWindowLoaded } from '../services/startupMaintenanceGate';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { FeatureTrackingService } from '../services/analytics/FeatureTrackingService';
@@ -169,7 +169,7 @@ export function createWindow(
     isOpeningFile: boolean = false,
     isWorkspaceMode: boolean = false,
     workspacePath: string | null = null,
-    savedBounds?: { x: number; y: number; width: number; height: number },
+    savedBounds?: { x: number; y: number; width: number; height: number; isMaximized?: boolean },
     options?: CreateWindowOptions
 ): BrowserWindow {
     const startTime = Date.now();
@@ -588,16 +588,7 @@ export function createWindow(
         // Show window when ready
         window.once('ready-to-show', () => {
             // console.log('[MAIN] Window ready to show at', new Date().toISOString(), 'elapsed:', Date.now() - startTime, 'ms');
-            const showWindow = options?.showInactive
-                ? () => window.showInactive()
-                : () => window.show();
-
-            if (options?.deferShowUntilAppActive) {
-                runWhenAppIsActive(window, showWindow);
-                return;
-            }
-
-            showWindow();
+            revealReadyWindow(window, options, savedBounds);
         });
 
         // Handle renderer process crashes.
