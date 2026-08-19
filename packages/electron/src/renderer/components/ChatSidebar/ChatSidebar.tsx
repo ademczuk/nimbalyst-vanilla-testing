@@ -12,6 +12,7 @@ import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { ModelIdentifier } from '@nimbalyst/runtime/ai/server/types';
 import { SessionTranscript, SessionTranscriptRef } from '../UnifiedAI/SessionTranscript';
 import { SessionDropdown } from '../AIChat/SessionDropdown';
+import type { EditorRevealPosition } from '../TabEditor/editorRevealCommand';
 import {
   sessionListChatAtom,
   refreshSessionListAtom,
@@ -47,7 +48,8 @@ export interface ChatSidebarProps {
   documentContext?: SerializableDocumentContext;
   /** Getter function for document context - async, reads from disk */
   getDocumentContext?: () => Promise<SerializableDocumentContext>;
-  onFileOpen?: (filePath: string) => Promise<void> | void;
+  /** `location` scrolls the opened file to a line. */
+  onFileOpen?: (filePath: string, location?: EditorRevealPosition) => Promise<void> | void;
   /** Whether the sidebar is collapsed */
   isCollapsed?: boolean;
   /** Callback when collapse state should toggle */
@@ -302,9 +304,9 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(({
     workspacePath,
   ]);
 
-  const handleFileClick = useCallback(async (filePath: string) => {
+  const handleFileClick = useCallback(async (filePath: string, location?: EditorRevealPosition) => {
     if (onFileOpen) {
-      await onFileOpen(filePath);
+      await onFileOpen(filePath, location);
     }
   }, [onFileOpen]);
 

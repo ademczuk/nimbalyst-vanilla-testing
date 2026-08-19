@@ -388,13 +388,14 @@ export function TrackerGridView({
         sortingEnabled,
         favorites,
         rowActions: true,
+        resolveRelationshipLabel: relationshipLabel,
       }),
       buildGridActionsColumn(),
     ],
     [
       visibleColumnDefs, schemaType, effectiveColumnConfig.columnWidths,
       isRowEditable, relationshipCandidates, filteredColumnIds, onColumnFiltersChange,
-      sortingEnabled, favorites,
+      sortingEnabled, favorites, relationshipLabel,
     ],
   );
   const gridSorting = useMemo<SortingConfig | undefined>(() => {

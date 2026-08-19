@@ -21,6 +21,7 @@ import type { SessionData, ChatAttachment, TranscriptViewMessage } from '@nimbal
 import { agentCapabilitiesForProviderType } from '@nimbalyst/runtime/ai/server/agentCapabilities';
 import type { ToolCallDiffLoadResult } from '@nimbalyst/runtime/ai/server/transcript';
 import { AgentTranscriptPanel } from '@nimbalyst/runtime/ui/AgentTranscript/components/AgentTranscriptPanel';
+import type { TranscriptFileLocation } from '@nimbalyst/runtime/ui/AgentTranscript/components/MarkdownRenderer';
 import { ClaudeCliTerminalStrip } from './ClaudeCliTerminalStrip';
 import { ClaudeCliNotInstalledNotice } from './ClaudeCliNotInstalledNotice';
 import type { InteractiveWidgetHost, PermissionScope } from '@nimbalyst/runtime/ui/AgentTranscript/components/CustomToolWidgets/InteractiveWidgetHost';
@@ -219,7 +220,8 @@ export interface SessionTranscriptProps {
   collapseTranscript?: boolean;
 
   // Click handlers
-  onFileClick?: (filePath: string) => void;
+  /** `location` is set when the clicked link carried a `:line[:col]` suffix. */
+  onFileClick?: (filePath: string, location?: TranscriptFileLocation) => void;
   onTodoClick?: (todo: TodoItem) => void;
 
   // Archive callbacks
@@ -1407,9 +1409,9 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
     }
   }, [provider, sessionId, setIsProcessing, recordClaudeActivity]);
 
-  const handleFileClick = useCallback((filePath: string) => {
+  const handleFileClick = useCallback((filePath: string, location?: TranscriptFileLocation) => {
     const baseDir = sessionWorktreePath ?? workspacePath;
-    onFileClick?.(resolveTranscriptClickPath(filePath, baseDir));
+    onFileClick?.(resolveTranscriptClickPath(filePath, baseDir), location);
   }, [onFileClick, sessionWorktreePath, workspacePath]);
 
   const setRequestOpenSession = useSetAtom(requestOpenSessionAtom);

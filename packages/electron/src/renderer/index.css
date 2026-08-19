@@ -227,6 +227,23 @@ body[data-dev-mode="true"] .nav-quick-access::before {
   }
 }
 
+/* Marks the block a `file.md:653` link scrolled to. Block granularity is
+   approximate, so the flash is how the reader tells the target from its
+   neighbours. Duration is mirrored in revealMarkdownLine.ts. */
+@keyframes nim-revealed-block-fade {
+  from {
+    background-color: color-mix(in srgb, var(--nim-primary) 22%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.nim-revealed-block {
+  animation: nim-revealed-block-fade 1.6s ease-out forwards;
+  border-radius: 3px;
+}
+
 @keyframes walkthrough-pulse {
   0%, 100% {
     opacity: 1;

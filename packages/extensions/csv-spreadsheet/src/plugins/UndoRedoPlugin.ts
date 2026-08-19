@@ -13,7 +13,20 @@ import type {
   BeforeSaveDataDetails,
   AfterEditEvent,
   BeforeRangeSaveDataDetails,
+  RangeArea,
 } from '@revolist/revogrid';
+
+/** Old cell values captured at a `before*` event, keyed row index -> prop. */
+type RangeValues = Record<number, Record<string, unknown>>;
+
+/**
+ * `AfterEditEvent` is a union. A single-cell save carries prop/rowIndex; a range
+ * apply (multi-cell delete, autofill, paste) carries data/models over a rect.
+ * Only the range half has the range keys.
+ */
+function isRangeSaveDetails(detail: AfterEditEvent): detail is BeforeRangeSaveDataDetails {
+  return 'newRange' in detail || 'oldRange' in detail;
+}
 
 interface CellChange {
   rowIndex: number;
@@ -81,6 +94,19 @@ export class UndoRedoPlugin extends BasePlugin {
   // Track selection state before changes
   private selectionBeforeChange: SelectionState | null = null;
 
+  // Values captured on `beforecut`. RevoGrid's own clearregion listener is bound
+  // at target on revogr-clipboard and runs before this plugin's bubbled one, so
+  // by the time `clearregion` arrives the cells are already blank -- `beforecut`
+  // is the last point where the originals can still be read.
+  private pendingCut: { changes: CellChange[]; selection: SelectionState | null } | null = null;
+
+  // Values captured on `beforerangeedit`, for the same reason: revo-grid's
+  // onRangeEdit calls setRangeData() before emitting `afteredit`, and
+  // `detail.models` holds live row references, so both are already mutated by
+  // the time the after-event lands.
+  private pendingRange: { range: RangeArea; rowType: DimensionRows; values: RangeValues } | null =
+    null;
+
   // Flag to prevent recording changes caused by undo/redo itself
   private isUndoRedoOperation = false;
 
@@ -112,11 +138,46 @@ export class UndoRedoPlugin extends BasePlugin {
     this.addEventListener('beforeedit', this.handleBeforeEdit.bind(this));
     this.addEventListener('afteredit', this.handleAfterEdit.bind(this));
 
-    // Listen for range edits (paste operations)
+    // Listen for range edits (paste, autofill, multi-cell delete)
     this.addEventListener('beforerangeedit', this.handleBeforeRangeEdit.bind(this));
 
-    // Listen for clear operations
+    // Listen for cut/clear operations. `beforecut` captures the values;
+    // `clearregion` is only the signal that the cut actually went through.
+    this.addEventListener('beforecut', this.handleBeforeCut.bind(this));
     this.addEventListener('clearregion', this.handleClearRegion.bind(this));
+  }
+
+  /**
+   * Resolve a column index to its prop via the column provider rather than an
+   * index-to-letter guess -- `String.fromCharCode(65 + i)` stops being correct
+   * at column Z.
+   */
+  private columnProp(colIndex: number, colType: DimensionCols = 'rgCol'): string | null {
+    const prop = this.providers?.column?.getColumn(colIndex, colType)?.prop;
+    return prop === undefined || prop === null ? null : String(prop);
+  }
+
+  private forEachCellInRange(
+    range: RangeArea,
+    visit: (rowIndex: number, colIndex: number, prop: string) => void
+  ): void {
+    for (let rowIndex = range.y; rowIndex <= range.y1; rowIndex++) {
+      for (let colIndex = range.x; colIndex <= range.x1; colIndex++) {
+        const prop = this.columnProp(colIndex);
+        if (prop !== null) visit(rowIndex, colIndex, prop);
+      }
+    }
+  }
+
+  /** Read the current value of every cell in a range straight from the store. */
+  private readRangeValues(range: RangeArea, rowType: DimensionRows): RangeValues {
+    const values: RangeValues = {};
+    this.forEachCellInRange(range, (rowIndex, _colIndex, prop) => {
+      const model = this.providers?.data?.getModel(rowIndex, rowType);
+      if (!model) return;
+      (values[rowIndex] ??= {})[prop] = model[prop];
+    });
+    return values;
   }
 
   /**
@@ -181,7 +242,15 @@ export class UndoRedoPlugin extends BasePlugin {
   private handleAfterEdit(e: CustomEvent<AfterEditEvent>): void {
     if (this.isUndoRedoOperation || !e.detail) return;
 
-    // AfterEditEvent can be BeforeSaveDataDetails or BeforeRangeSaveDataDetails
+    // A range apply carries no rowIndex/colIndex/prop. Casting it to the
+    // single-cell shape collapsed every range edit to (0, 0, '') and recorded
+    // one bogus change against A1, so undoing a range delete wrote into the
+    // wrong cell.
+    if (isRangeSaveDetails(e.detail)) {
+      this.recordRangeEdit(e.detail);
+      return;
+    }
+
     const detail = e.detail as BeforeSaveDataDetails;
     const rowIndex = detail.rowIndex ?? 0;
     const colIndex = detail.colIndex ?? 0;
@@ -218,74 +287,105 @@ export class UndoRedoPlugin extends BasePlugin {
   }
 
   /**
-   * Handle range edits (paste operations)
-   * RevoGrid fires this before applying pasted data
+   * Snapshot the pre-edit values of a range (paste, autofill, multi-cell
+   * delete). This has to happen here: revo-grid's `onRangeEdit` applies the
+   * data before emitting `afteredit`, so the originals are gone by then.
    */
   private handleBeforeRangeEdit(e: CustomEvent<BeforeRangeSaveDataDetails>): void {
+    this.pendingRange = null;
     if (this.isUndoRedoOperation || !e.detail) return;
 
-    // Range edits contain multiple cell changes
-    // We'll capture these in the afteredit events that follow
-    // For now, just ensure we commit any pending batch before the range edit
     this.commitBatch();
+
+    const range = e.detail.newRange ?? e.detail.oldRange;
+    if (!range) return;
+
+    const rowType: DimensionRows = (e.detail.type as DimensionRows) || 'rgRow';
+    this.pendingRange = { range, rowType, values: this.readRangeValues(range, rowType) };
+  }
+
+  /** Pair the `beforerangeedit` snapshot against the applied values. */
+  private recordRangeEdit(detail: BeforeRangeSaveDataDetails): void {
+    const pending = this.pendingRange;
+    this.pendingRange = null;
+    if (!pending) return;
+
+    this.forEachCellInRange(pending.range, (rowIndex, colIndex, prop) => {
+      const oldValue = pending.values[rowIndex]?.[prop];
+      const newValue = detail.data?.[rowIndex]?.[prop];
+      if (oldValue === newValue) return;
+
+      this.recordChange({
+        rowIndex,
+        colIndex,
+        prop,
+        oldValue,
+        newValue,
+        rowType: pending.rowType,
+        colType: 'rgCol',
+      });
+    });
   }
 
   /**
-   * Handle clear region events (delete key, cut operations)
+   * Snapshot the selected range before a cut clears it.
+   *
+   * `clearregion` is typed `EventEmitter<DataTransfer>` and carries the raw
+   * clipboard object -- no range and no cell data -- so the values have to come
+   * from the grid, and they have to be read now, while the cells still hold
+   * them.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private handleClearRegion(e: CustomEvent<any>): void {
-    if (this.isUndoRedoOperation || !e.detail) return;
+  private handleBeforeCut(): void {
+    this.pendingCut = null;
+    if (this.isUndoRedoOperation) return;
 
-    // The data contains the old values before clearing
-    // We need to record these for undo
-    const { data, range, type, colType = 'rgCol' } = e.detail;
-    const rowType: DimensionRows = (type as DimensionRows) || 'rgRow';
+    const range = this.providers?.selection?.selectedRange;
+    if (!range) return;
 
-    // Capture selection before the clear
-    const selectionBefore = this.captureSelectionState();
-
-    // Commit any pending changes first
-    this.commitBatch();
-
+    const rowType: DimensionRows = 'rgRow';
+    const values = this.readRangeValues(range, rowType);
     const changes: CellChange[] = [];
 
-    // Record each cell in the cleared range
-    for (let rowOffset = 0; rowOffset <= range.y1 - range.y; rowOffset++) {
-      const rowData = data[rowOffset];
-      if (!rowData) continue;
-
-      for (let colOffset = 0; colOffset <= range.x1 - range.x; colOffset++) {
-        // Column props are A, B, C, etc.
-        const colIndex = range.x + colOffset;
-        const prop = String.fromCharCode(65 + colIndex); // A = 65
-
-        const oldValue = rowData[prop];
-        if (oldValue !== '' && oldValue !== undefined) {
-          changes.push({
-            rowIndex: range.y + rowOffset,
-            colIndex,
-            prop,
-            oldValue,
-            newValue: '',
-            rowType,
-            colType,
-          });
-        }
-      }
-    }
+    this.forEachCellInRange(range, (rowIndex, colIndex, prop) => {
+      const oldValue = values[rowIndex]?.[prop];
+      if (oldValue === '' || oldValue === undefined) return;
+      changes.push({
+        rowIndex,
+        colIndex,
+        prop,
+        oldValue,
+        newValue: '',
+        rowType,
+        colType: 'rgCol',
+      });
+    });
 
     if (changes.length > 0) {
-      this.undoStack.push({
-        changes,
-        timestamp: Date.now(),
-        selectionBefore,
-        selectionAfter: selectionBefore, // Selection stays the same after clear
-      });
-      this.redoStack = [];
-      this.trimUndoStack();
-      this.notifyStateChange();
+      this.pendingCut = { changes, selection: this.captureSelectionState() };
     }
+  }
+
+  /**
+   * A cut went through. RevoGrid aborts before emitting this when the grid is
+   * readonly or `beforecut` was default-prevented, so the snapshot is consumed
+   * exactly once and a stale one is never replayed.
+   */
+  private handleClearRegion(): void {
+    const pending = this.pendingCut;
+    this.pendingCut = null;
+    if (this.isUndoRedoOperation || !pending) return;
+
+    this.commitBatch();
+
+    this.undoStack.push({
+      changes: pending.changes,
+      timestamp: Date.now(),
+      selectionBefore: pending.selection,
+      selectionAfter: pending.selection, // Selection stays the same after clear
+    });
+    this.redoStack = [];
+    this.trimUndoStack();
+    this.notifyStateChange();
   }
 
   /**
@@ -502,6 +602,8 @@ export class UndoRedoPlugin extends BasePlugin {
     this.redoStack = [];
     this.pendingChanges = [];
     this.pendingOldValue = null;
+    this.pendingCut = null;
+    this.pendingRange = null;
     if (this.batchTimeoutId !== null) {
       clearTimeout(this.batchTimeoutId);
       this.batchTimeoutId = null;

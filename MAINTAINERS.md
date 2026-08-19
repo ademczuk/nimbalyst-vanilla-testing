@@ -34,7 +34,7 @@ Those paths require the release manager's review. Everything else — editor, ru
 
 This follows from how the build works, not from a judgment about any maintainer. It applies to the project lead's own pull requests on the same paths.
 
-The practical cost is that dependency upgrades and new patches need a second, specific reviewer. We would rather not have that friction, and it goes away once release builds no longer install unpinned dependency code — separating dependency installation from the credential-holding job is tracked work, not a permanent position.
+The practical cost is that dependency upgrades and new patches need a second, specific reviewer. We would rather not have that friction, and it goes away once release builds no longer install unpinned dependency code — that is [issue #1334](https://github.com/nimbalyst/nimbalyst/issues/1334), tracked work rather than a permanent position.
 
 The exact paths are listed in [`.github/CODEOWNERS`](./.github/CODEOWNERS), and you can check the claim yourself against the root `package.json` `postinstall` script and `.github/workflows/electron-build.yml`.
 

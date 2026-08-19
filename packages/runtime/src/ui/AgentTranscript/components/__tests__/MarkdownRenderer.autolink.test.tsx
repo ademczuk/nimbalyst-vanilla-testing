@@ -19,17 +19,17 @@ describe('MarkdownRenderer file-path autolinking', () => {
     expect(link.tagName).toBe('A');
 
     fireEvent.click(link);
-    expect(onOpenFile).toHaveBeenCalledWith('packages/electron/src/foo.ts');
+    expect(onOpenFile).toHaveBeenCalledWith('packages/electron/src/foo.ts', undefined);
   });
 
-  it('strips the :line:col suffix before opening', () => {
+  it('strips the :line:col suffix from the path and reports it as a location', () => {
     const onOpenFile = vi.fn();
     render(
       <MarkdownRenderer content="open src/a/foo.ts:42:7 here" onOpenFile={onOpenFile} />,
     );
 
     fireEvent.click(screen.getByText('src/a/foo.ts:42:7'));
-    expect(onOpenFile).toHaveBeenCalledWith('src/a/foo.ts');
+    expect(onOpenFile).toHaveBeenCalledWith('src/a/foo.ts', { line: 42, column: 7 });
   });
 
   it('does not autolink when no onOpenFile handler is provided', () => {
@@ -49,7 +49,7 @@ describe('MarkdownRenderer file-path autolinking', () => {
     // Still rendered within inline code styling.
     expect(link.closest('code')).not.toBeNull();
     fireEvent.click(link);
-    expect(onOpenFile).toHaveBeenCalledWith('packages/a/foo.ts');
+    expect(onOpenFile).toHaveBeenCalledWith('packages/a/foo.ts', undefined);
   });
 
   it('does NOT autolink paths inside fenced code blocks', () => {

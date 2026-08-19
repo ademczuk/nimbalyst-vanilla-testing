@@ -60,6 +60,118 @@ export interface EnhancedExportOptions {
 }
 
 /**
+ * The line span a top-level block occupies in the exported markdown. Used to
+ * turn a file line number (from a `file.md:653` link) back into a node that can
+ * be scrolled to. 1-based and inclusive on both ends.
+ */
+export interface MarkdownBlockLineRange {
+  nodeKey: string;
+  startLine: number;
+  endLine: number;
+}
+
+/** One exported top-level block, as emitted by the export loop. */
+interface ExportedBlock {
+  nodeKey: string;
+  /** The serialized text, including any separator newline the loop prepended. */
+  piece: string;
+}
+
+/**
+ * Resolve the frontmatter this document exports: the stored frontmatter merged
+ * with any plan/decision status node's config. Shared so the line map computes
+ * the same frontmatter -- and therefore the same line offset -- as the export.
+ */
+function $resolveExportFrontmatter(): FrontmatterData {
+  let frontmatter = $getFrontmatter() || {};
+
+  const children = $getRoot().getChildren();
+  for (const child of children) {
+    // Check if this is a PlanStatusNode (by type check, since we can't import it here)
+    if (child.getType() === 'plan-status') {
+      // Use exportJSON to get the node's config
+      const exported = (child as any).exportJSON();
+      if (exported && exported.config) {
+        frontmatter = { ...frontmatter, planStatus: exported.config };
+      }
+      break; // Only process first PlanStatusNode
+    }
+    // Check if this is a DecisionStatusNode
+    if (child.getType() === 'decision-status') {
+      const exported = (child as any).exportJSON();
+      if (exported && exported.config) {
+        frontmatter = { ...frontmatter, decisionStatus: exported.config };
+      }
+      break; // Only process first DecisionStatusNode
+    }
+  }
+
+  return frontmatter;
+}
+
+function countLines(value: string): number {
+  return value.split('\n').length;
+}
+
+/**
+ * Map each top-level block to the lines it occupies in the exported markdown.
+ *
+ * Built from the same export loop that produces the file's text, so the
+ * separator rules stay in one place: getting the inter-block newline or the
+ * frontmatter offset wrong here shifts every block below it, and a reveal that
+ * lands a few blocks early still looks plausible.
+ */
+export function $buildMarkdownLineMap(
+  transformers: Array<Transformer>,
+  options: EnhancedExportOptions = {}
+): MarkdownBlockLineRange[] {
+  const {
+    shouldPreserveNewLines = true,
+    includeFrontmatter = true,
+    rejectMode = false
+  } = options;
+
+  const blocks: ExportedBlock[] = [];
+  const exportMarkdown = createEnhancedMarkdownExport(
+    transformers,
+    shouldPreserveNewLines,
+    null,
+    rejectMode,
+    blocks,
+  );
+  const body = exportMarkdown($getRoot());
+
+  // Frontmatter is prepended after the loop runs, so measure its height by
+  // difference rather than re-deriving how it is formatted.
+  let offset = 0;
+  if (includeFrontmatter) {
+    const frontmatter = $resolveExportFrontmatter();
+    offset = countLines(serializeWithFrontmatter(body, frontmatter)) - countLines(body);
+  }
+
+  // Joining N pieces with a separator of K newlines puts each piece K-1 lines
+  // further down than its own height alone would imply.
+  const extraSeparatorLines = (shouldPreserveNewLines ? 1 : 2) - 1;
+
+  const ranges: MarkdownBlockLineRange[] = [];
+  let line = 1 + offset;
+  for (const { nodeKey, piece } of blocks) {
+    const height = countLines(piece);
+    // The loop prepends a bare '\n' between consecutive non-empty blocks; that
+    // blank line belongs to the gap, not to the block's content.
+    const leadingBlank = piece.startsWith('\n') ? 1 : 0;
+    ranges.push({
+      nodeKey,
+      startLine: line + leadingBlank,
+      endLine: line + height - 1,
+    });
+    line += height + extraSeparatorLines;
+  }
+
+  return ranges;
+}
+
+/**
  * Convert the entire editor to markdown string with optional frontmatter.
  * This is the primary export for full document conversion.
  */
@@ -88,39 +200,7 @@ export function $convertToEnhancedMarkdownString(
 
   // Add frontmatter if requested and available
   if (includeFrontmatter) {
-    let frontmatter = $getFrontmatter() || {};
-
-    // Check if there's a PlanStatusNode or DecisionStatusNode and merge its config into frontmatter
-    const root = $getRoot();
-    const children = root.getChildren();
-    for (const child of children) {
-      // Check if this is a PlanStatusNode (by type check, since we can't import it here)
-      if (child.getType() === 'plan-status') {
-        // Use exportJSON to get the node's config
-        const exported = (child as any).exportJSON();
-        if (exported && exported.config) {
-          frontmatter = {
-            ...frontmatter,
-            planStatus: exported.config
-          };
-        }
-        break; // Only process first PlanStatusNode
-      }
-      // Check if this is a DecisionStatusNode
-      if (child.getType() === 'decision-status') {
-        // Use exportJSON to get the node's config
-        const exported = (child as any).exportJSON();
-        if (exported && exported.config) {
-          frontmatter = {
-            ...frontmatter,
-            decisionStatus: exported.config
-          };
-        }
-        break; // Only process first DecisionStatusNode
-      }
-    }
-
-    return serializeWithFrontmatter(markdownContent, frontmatter);
+    return serializeWithFrontmatter(markdownContent, $resolveExportFrontmatter());
   }
 
   return markdownContent;
@@ -202,6 +282,8 @@ function createEnhancedMarkdownExport(
   shouldPreserveNewLines: boolean = true,
   selection: any = null,
   rejectMode: boolean = false,
+  /** When provided, receives one entry per exported top-level block, in order. */
+  blocksOut?: ExportedBlock[],
 ): (node?: ElementNode | null) => string {
   const byType = transformersByType(transformers);
   const isNewlineDelimited = !byType.multilineElement.length;
@@ -255,15 +337,16 @@ function createEnhancedMarkdownExport(
         );
 
         if (result !== null) {
-          output.push(
+          const piece =
             // separate consecutive group of texts with a line break
             isNewlineDelimited &&
               i > 0 &&
               !isEmptyParagraph(child) &&
               !isEmptyParagraph(children[i - 1])
               ? '\n'.concat(result)
-              : result,
-          );
+              : result;
+          output.push(piece);
+          blocksOut?.push({ nodeKey: child.getKey(), piece });
         }
       }
     }

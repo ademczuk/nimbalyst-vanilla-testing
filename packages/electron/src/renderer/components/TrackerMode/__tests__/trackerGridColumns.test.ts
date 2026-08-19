@@ -29,6 +29,7 @@ function registerType(): void {
       { name: 'state', type: 'select', options: [{ value: 'open', label: 'Open' }] },
       { name: 'points', type: 'number' },
       { name: 'computed', type: 'string', readOnly: true },
+      { name: 'collection', type: 'relationship', targetTrackerTypes: ['milestone'], multiValue: true },
     ],
     roles: { title: 'title', workflowStatus: 'state' },
   };
@@ -206,6 +207,32 @@ describe('buildGridColumns', () => {
       width: 0,
       height: 0,
     }));
+  });
+
+  it('names collection cells from the live record, not the link snapshot', () => {
+    registerType();
+    const [collection] = buildGridColumns(columnsFor(['collection']), {
+      trackerType: gridType,
+      isRowEditable: () => true,
+      resolveRelationshipLabel: id => (id === 'mst_1' ? 'Onboarding' : undefined),
+    });
+    const h = (tag: string, props: Record<string, unknown>, children: unknown) => ({
+      tag,
+      props,
+      children,
+    });
+    const cellText = (value: unknown): string[] => {
+      const cell = (collection.cellTemplate as any)(h, { model: { collection: value } });
+      return (cell.children as any[]).map(chip => chip.children);
+    };
+
+    // A link written from the milestone's side carries no title at all, and a
+    // renamed target leaves a stale one -- both must read as the live name.
+    expect(cellText(['mst_1'])).toEqual(['Onboarding']);
+    expect(cellText([{ itemId: 'mst_1', title: 'Old name', issueKey: 'NIM-9' }]))
+      .toEqual(['Onboarding']);
+    // Unresolvable targets still fall back to the snapshot rather than the id.
+    expect(cellText([{ itemId: 'rel_2', title: 'Release 1.4' }])).toEqual(['Release 1.4']);
   });
 
   it('opens the existing row context menu from the dedicated action column', () => {

@@ -35,6 +35,10 @@ import { DialogProvider, dialogRef } from './contexts/DialogContext';
 import { initializeDialogs, DIALOG_IDS } from './dialogs';
 import type { ProjectSelectionData, ErrorDialogData, ExtensionProjectIntroData } from './dialogs';
 import { NavigationDialogKeyboardHandler } from './components/NavigationDialogKeyboardHandler';
+import {
+  revealEditorPosition,
+  type EditorRevealPosition,
+} from './components/TabEditor/editorRevealCommand';
 import { ConfirmDialog } from './components/ConfirmDialog/ConfirmDialog';
 import { GlobalHistoryDialog } from './components/HistoryDialog';
 // NOTE: DiscordInvitation, KeyboardShortcutsDialog, ApiKeyDialog now managed by DialogProvider
@@ -1452,7 +1456,7 @@ export default function App() {
   // Wrapper for workspace file selection - delegates to EditorMode
   // CRITICAL: Use activeModeStateRef.current to avoid stale closure bugs
   // This function is passed to AgenticPanel and stored in callbacks that may have stale references
-  const handleWorkspaceFileSelect = useCallback(async (filePath: string) => {
+  const handleWorkspaceFileSelect = useCallback(async (filePath: string, location?: EditorRevealPosition) => {
     const currentMode = activeModeStateRef.current;
 
     // CRITICAL: If workspacePath is null, something is very wrong
@@ -1471,6 +1475,13 @@ export default function App() {
       await editorModeRef.current.selectFile(filePath);
     } else {
       console.error('[App.handleWorkspaceFileSelect] editorModeRef.current is null! This should never happen if workspacePath is set.');
+      return;
+    }
+
+    // Queued rather than applied: the tab may still be mounting. The registry
+    // replays it once the editor for this path registers.
+    if (location) {
+      revealEditorPosition(filePath, location);
     }
   }, [workspacePath]); // Only workspacePath - activeMode is read from ref
 

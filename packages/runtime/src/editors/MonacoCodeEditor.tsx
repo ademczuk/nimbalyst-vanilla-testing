@@ -335,6 +335,15 @@ export const MonacoCodeEditor: React.FC<MonacoCodeEditorProps> = ({
             console.error('[MonacoCodeEditor] Failed to open find widget:', error);
           });
         },
+        revealPosition: (line: number, column = 1) => {
+          // Clamp rather than trust: a link's line number can outlive the edit
+          // that shortened the file.
+          const lineCount = editor.getModel()?.getLineCount() ?? 1;
+          const lineNumber = Math.min(Math.max(1, Math.floor(line)), lineCount);
+          editor.revealLineInCenter(lineNumber);
+          editor.setPosition({ lineNumber, column: Math.max(1, Math.floor(column)) });
+          editor.focus();
+        },
         showDiff,
         exitDiffMode,
         acceptDiff,

@@ -3,6 +3,7 @@ import type { SessionData } from '../../../ai/server/types';
 import type { ToolCallDiffLoadResult } from '../../../ai/server/transcript';
 import type { TranscriptSettings, PromptMarker, FileEditSummary } from '../types';
 import { RichTranscriptView } from './RichTranscriptView';
+import type { TranscriptFileLocation } from './MarkdownRenderer';
 import { TranscriptSidebar } from './TranscriptSidebar';
 import { FileEditsSidebar } from './FileEditsSidebar';
 import { FloatingTranscriptActions } from './FloatingTranscriptActions';
@@ -45,7 +46,8 @@ interface AgentTranscriptPanelProps {
   onSettingsChange?: (settings: TranscriptSettings) => void;
   showSettings?: boolean;
   initialSettings?: TranscriptSettings;
-  onFileClick?: (filePath: string) => void;
+  /** `location` is set when the clicked link carried a `:line[:col]` suffix. */
+  onFileClick?: (filePath: string, location?: TranscriptFileLocation) => void;
   /** Optional: Navigate to a session by ID (for @@session reference links) */
   onOpenSession?: (sessionId: string) => void;
   hideSidebar?: boolean;  // Hide the prompts/files sidebar

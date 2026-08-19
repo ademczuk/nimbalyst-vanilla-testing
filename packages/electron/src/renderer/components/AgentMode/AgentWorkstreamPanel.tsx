@@ -36,6 +36,7 @@ import {
   SearchReplaceStateManager,
 } from '@nimbalyst/runtime';
 import { ModelIdentifier } from '@nimbalyst/runtime/ai/server/types';
+import type { TranscriptFileLocation } from '@nimbalyst/runtime/ui/AgentTranscript/components/MarkdownRenderer';
 import { WorkstreamEditorTabs, type WorkstreamEditorTabsRef } from './WorkstreamEditorTabs';
 import { WorkstreamSessionTabs } from './WorkstreamSessionTabs';
 import { FilesEditedSidebar } from './FilesEditedSidebar';
@@ -1184,19 +1185,20 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
     }
   }, [updateSessionStore, sessionWorktreeId, sessions.length]);
 
-  // Track pending file open when switching to split mode
-  const pendingFileOpenRef = useRef<string | null>(null);
+  // Track pending file open when switching to split mode. Carries the line
+  // location too, so a `file.md:653` link survives the layout flip.
+  const pendingFileOpenRef = useRef<{ filePath: string; location?: TranscriptFileLocation } | null>(null);
 
   // File clicks open in the workstream editor tabs
-  const handleFileClick = useCallback((filePath: string) => {
+  const handleFileClick = useCallback((filePath: string, location?: TranscriptFileLocation) => {
     if (editorTabsRef.current) {
       // Editor is mounted, open the file directly
-      editorTabsRef.current.openFile(filePath);
+      editorTabsRef.current.openFile(filePath, location);
     } else {
       // Editor not mounted (transcript mode), switch to split and queue file open
       // Set flag to prevent auto-collapse during this transition
       justOpenedFileRef.current = true;
-      pendingFileOpenRef.current = filePath;
+      pendingFileOpenRef.current = { filePath, location };
       setLayoutMode({ workstreamId, mode: 'split' });
     }
   }, [workstreamId, setLayoutMode]);
@@ -1351,8 +1353,9 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
 
   // Open pending file once editor mounts after layout mode change
   useEffect(() => {
-    if (pendingFileOpenRef.current && showEditorTabs && editorTabsRef.current) {
-      editorTabsRef.current.openFile(pendingFileOpenRef.current);
+    const pending = pendingFileOpenRef.current;
+    if (pending && showEditorTabs && editorTabsRef.current) {
+      editorTabsRef.current.openFile(pending.filePath, pending.location);
       pendingFileOpenRef.current = null;
     }
   }, [showEditorTabs]); // Re-run when editor becomes visible

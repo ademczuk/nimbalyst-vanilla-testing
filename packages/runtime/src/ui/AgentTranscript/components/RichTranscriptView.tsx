@@ -5,7 +5,7 @@ import type { TranscriptViewMessage, SessionData } from '../../../ai/server/type
 import type { ToolCallDiffLoadResult } from '../../../ai/server/transcript';
 import type { TranscriptSettings } from '../types';
 import { MessageSegment } from './MessageSegment';
-import { MarkdownRenderer } from './MarkdownRenderer';
+import { MarkdownRenderer, type TranscriptFileLocation } from './MarkdownRenderer';
 import { ProviderIcon } from '../../icons/ProviderIcons';
 import { MaterialSymbol } from '../../icons/MaterialSymbol';
 import { formatMessageTime, formatDuration, formatTurnFinishedAt } from '../../../utils/dateUtils';
@@ -487,8 +487,8 @@ interface RichTranscriptViewProps {
   hideEmptyHelp?: boolean;
   /** Optional: Read a file from the filesystem (for custom widgets that need to load persisted files) */
   readFile?: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>;
-  /** Optional: Open a file in the editor */
-  onOpenFile?: (filePath: string) => void;
+  /** Optional: Open a file in the editor, optionally scrolled to a line */
+  onOpenFile?: (filePath: string, location?: TranscriptFileLocation) => void;
   /** Optional: Navigate to a session by ID (for @@session reference links) */
   onOpenSession?: (sessionId: string) => void;
   /** Optional: Callback to trigger /compact command */

@@ -17,6 +17,11 @@ import {
   getFieldForColumn,
   formatTrackerDateCell,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin';
+import {
+  normalizeRelationshipValue,
+  resolveRelationshipLabel,
+  type TrackerRelationshipLabelResolver,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import { resolveColumnFieldName } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerColumns';
 import { compareCellValues } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerRowData';
 import { resolveCellEditor } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerCellEditors';
@@ -66,7 +71,12 @@ function badgeNode(createElement: HyperFunc<VNode>, text: string, color: string)
 }
 
 /** Human-readable text for a stored value, by column render type. */
-function formatValue(col: TrackerColumnDef, value: unknown, trackerType: string): string {
+function formatValue(
+  col: TrackerColumnDef,
+  value: unknown,
+  trackerType: string,
+  resolveLabel?: TrackerRelationshipLabelResolver,
+): string {
   if (value === undefined || value === null || value === '') return '';
 
   switch (col.render) {
@@ -85,9 +95,11 @@ function formatValue(col: TrackerColumnDef, value: unknown, trackerType: string)
       return String(value);
     }
     case 'relationship': {
-      const list = Array.isArray(value) ? value : [value];
-      return list
-        .map((v: any) => (typeof v === 'string' ? v : v?.issueKey ?? v?.title ?? v?.itemId ?? ''))
+      // The live record's title, not the snapshot on the link: a collection
+      // linked from the other side carries no title at all, so the chip would
+      // otherwise read as a raw item id.
+      return normalizeRelationshipValue(value)
+        .map(link => resolveRelationshipLabel(link, resolveLabel))
         .filter(Boolean)
         .join(', ');
     }
@@ -203,11 +215,12 @@ function buildCellTemplate(
   trackerType: string,
   favorites?: FavoritesOptions,
   rowActions = false,
+  resolveLabel?: TrackerRelationshipLabelResolver,
 ) {
   return (createElement: HyperFunc<VNode>, props: CellTemplateProp): VNode => {
     const value = props.model?.[col.id];
     const rowType = trackerType || String(props.model?.[ROW_ITEM_TYPE] ?? '');
-    const text = formatValue(col, value, rowType);
+    const text = formatValue(col, value, rowType, resolveLabel);
 
     // The title column carries its inline affordances, so it renders even when
     // the title itself is empty.
@@ -281,6 +294,8 @@ export interface BuildGridColumnsOptions {
   favorites?: FavoritesOptions;
   /** Also renders the overflow trigger inside the title cell. */
   rowActions?: boolean;
+  /** Names a relationship target from the live record rather than the link snapshot. */
+  resolveRelationshipLabel?: TrackerRelationshipLabelResolver;
 }
 
 /** Always-present trailing action column, separate from editable tracker fields. */
@@ -359,6 +374,7 @@ export function buildGridColumns(
     sortingEnabled = false,
     favorites,
     rowActions = false,
+    resolveRelationshipLabel: resolveLabel,
   }: BuildGridColumnsOptions,
 ): ColumnRegular[] {
   return columns.map((col): ColumnRegular => {
@@ -396,7 +412,7 @@ export function buildGridColumns(
         }
         return typeof itemId === 'string' ? !isRowEditable(itemId) : true;
       },
-      cellTemplate: buildCellTemplate(col, trackerType, favorites, rowActions),
+      cellTemplate: buildCellTemplate(col, trackerType, favorites, rowActions, resolveLabel),
       ...(onOpenFilter
         ? {
           columnTemplate: buildColumnTemplate(

@@ -605,12 +605,15 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       // Generate CSV from RevoGrid's current data
       const content = await gridOps.toCSV();
 
+      // Save to disk first. Recording the echo baseline and clearing the dirty
+      // flag before the write meant a rejected save left the editor believing
+      // this content was already persisted -- so it stayed clean, nothing
+      // retried, and the user got no signal that disk had diverged.
+      await host.saveContent(content);
+
       // Update disk content tracking for echo detection
       spreadsheetMetaRef.current.updateDiskContent(content);
       spreadsheetMetaRef.current.markClean();
-
-      // Save to disk
-      await host.saveContent(content);
       // console.log('[CSV] Saved');
     },
     onDiffRequested: (config: DiffConfig) => {

@@ -22,7 +22,14 @@ import {
   buildFullDocumentTrackerId,
 } from '../documentHeader/frontmatterUtils';
 import { getRecordTitle, getRecordStatus, getRecordPriority, getFieldByRole, resolveRoleFieldName, getItemPublicationState } from '../trackerRecordAccessors';
-import { globalRegistry, parseDate, normalizeRelationshipValue, type TrackerGroupBy } from '../models';
+import {
+  globalRegistry,
+  parseDate,
+  normalizeRelationshipValue,
+  resolveRelationshipLabel,
+  type TrackerGroupBy,
+  type TrackerRelationshipLabelResolver,
+} from '../models';
 import { resolveDisplayIssueKey } from '../models/localIssueKey';
 import {usePostHog} from "posthog-js/react";
 import {
@@ -485,6 +492,7 @@ export function renderCell(
   setEditingTitle: (title: string) => void,
   titleInputRef: React.RefObject<HTMLInputElement | null>,
   handleFieldUpdate: (item: TrackerRecord, field: string, value: string) => void,
+  resolveLabel?: TrackerRelationshipLabelResolver,
 ): React.ReactNode {
   // Resolve field values via schema roles (generic for any schema)
   const title = getRecordTitle(item);
@@ -686,15 +694,21 @@ export function renderCell(
           if (links.length === 0) return null;
           return (
             <div className="flex flex-wrap gap-0.5">
-              {links.map((l) => (
-                <span
-                  key={l.itemId}
-                  className="relationship-pill inline-block px-1.5 py-0.5 text-[10px] rounded-full bg-[var(--nim-bg-tertiary)] text-[var(--nim-text-muted)]"
-                  title={l.title || l.itemId}
-                >
-                  {l.issueKey || l.title || l.itemId}
-                </span>
-              ))}
+              {links.map((l) => {
+                // The live record's title, not the snapshot on the link: a
+                // collection linked from the other side carries no title at
+                // all, so the pill would otherwise read as a raw item id.
+                const label = resolveRelationshipLabel(l, resolveLabel);
+                return (
+                  <span
+                    key={l.itemId}
+                    className="relationship-pill inline-block px-1.5 py-0.5 text-[10px] rounded-full bg-[var(--nim-bg-tertiary)] text-[var(--nim-text-muted)]"
+                    title={label}
+                  >
+                    {label}
+                  </span>
+                );
+              })}
             </div>
           );
         }
@@ -1396,7 +1410,7 @@ export function TrackerTable({
                         className={getTrackerTableCellClassName(col.id)}
                         data-column-id={col.id}
                       >
-                        {renderCell(col, item, value, editingCell, isItemEditable, setEditingCell, editingTitle, setEditingTitle, titleInputRef, handleFieldUpdate)}
+                        {renderCell(col, item, value, editingCell, isItemEditable, setEditingCell, editingTitle, setEditingTitle, titleInputRef, handleFieldUpdate, relationshipLabel)}
                       </div>
                     );
                   })}

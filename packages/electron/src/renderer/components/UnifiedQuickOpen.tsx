@@ -57,6 +57,7 @@ import {
   type FilterChipOption,
 } from './UnifiedQuickOpen/FilterChip';
 import { useRecentHistory } from './UnifiedQuickOpen/useRecentHistory';
+import { revealEditorPosition } from './TabEditor/editorRevealCommand';
 import { parseFileMask, matchesFileMask } from '@nimbalyst/extension-sdk/file-mask';
 import type { TrackerItem } from '@nimbalyst/runtime/core/DocumentService';
 
@@ -1547,6 +1548,13 @@ const InFilesPane: React.FC<InFilesPaneProps> = memo(({
 
   const handleSelect = useCallback(
     (file: FileItem) => {
+      // Land on the match the user picked this result for, not the top of the
+      // file. Armed before the open so the registry replays it once the tab's
+      // editor mounts.
+      const matchLine = file.matches?.[0]?.line;
+      if (matchLine !== undefined) {
+        revealEditorPosition(file.path, { line: matchLine });
+      }
       onFileSelect(file.path);
       onClose();
     },

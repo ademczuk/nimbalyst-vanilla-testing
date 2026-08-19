@@ -35,9 +35,14 @@ import {
   isFeedbackRequestTab,
 } from '../FeedbackRequest/feedbackRequestTab';
 import { shouldSkipResourceMirror } from './workstreamTabsMirror';
+import {
+  revealEditorPosition,
+  type EditorRevealPosition,
+} from '../TabEditor/editorRevealCommand';
 
 export interface WorkstreamEditorTabsRef {
-  openFile: (filePath: string) => void;
+  /** `location` scrolls the editor to a line once it mounts. */
+  openFile: (filePath: string, location?: EditorRevealPosition) => void;
   /** Open (or focus) a tracker item as a workstream resource tab. */
   openTracker: (trackerItemId: string) => void;
   hasTabs: () => boolean;
@@ -278,17 +283,22 @@ const WorkstreamEditorTabsInner = forwardRef<WorkstreamEditorTabsRef, Workstream
     useImperativeHandle(
       ref,
       () => ({
-        openFile: (filePath: string) => {
+        openFile: (filePath: string, location?: EditorRevealPosition) => {
           // Check if tab already exists
           const existing = tabsActions.findTabByPath(filePath);
           if (existing) {
             tabsActions.switchTab(existing.id);
-            return;
+          } else {
+            // Add new tab
+            tabsActions.addTab(filePath);
+            // Workstream state will be synced via the tabs useEffect
           }
 
-          // Add new tab
-          tabsActions.addTab(filePath);
-          // Workstream state will be synced via the tabs useEffect
+          // Queued either way: the registry replays it when the editor for this
+          // path registers, so an already-open tab and a fresh one behave alike.
+          if (location) {
+            revealEditorPosition(filePath, location);
+          }
         },
         openTracker: (trackerItemId: string) => {
           // Tracker tabs use `tracker://<id>` as their tab key so path-based

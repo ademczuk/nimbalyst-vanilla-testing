@@ -57,6 +57,8 @@ import type { DiffState } from '../../services/document-model/types';
 import { diffTrace } from '@nimbalyst/runtime/utils/debugFlags';
 import { SearchReplaceStateManager, isLexicalSearchEditor } from '@nimbalyst/runtime/plugins/SearchReplace';
 import { hasEditorFind, registerEditorFindHandler } from './editorFindCommand';
+import { hasEditorReveal, registerEditorRevealHandler } from './editorRevealCommand';
+import { revealMarkdownLine } from '@nimbalyst/runtime/editor/markdown/revealMarkdownLine';
 import { useSuppressedDocumentHeaderProviderIds } from './DocumentHeaderSuppressionContext';
 import { createCollectionItem } from '../TrackerMode/createCollectionItem';
 import { loadTrackerTeamMembers } from '../TrackerMode/useTrackerTeamMembers';
@@ -450,6 +452,34 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
   useEffect(() => { sourceModeRef.current = sourceMode; }, [sourceMode]);
   useEffect(() => { supportsSourceModeRef.current = isMarkdown || customEditorSupportsSourceMode; }, [isMarkdown, customEditorSupportsSourceMode]);
+
+  // Gated on isEditorReady for the same reason the DocumentModel callbacks are
+  // (see the note further down): registering earlier drains a pending reveal
+  // against a null editorRef, which does nothing and consumes the request.
+  useEffect(() => {
+    if (!isEditorReady) return;
+
+    return registerEditorRevealHandler(filePath, ({ line, column }) => {
+      const editor = editorRef.current;
+      if (!editor) return;
+
+      // Monaco (code files, and markdown in source mode) reveals the exact line.
+      if (hasEditorReveal(editor)) {
+        editor.revealPosition(line, column);
+        return;
+      }
+
+      // The rich markdown view has no lines; map the line onto a block.
+      if (isMarkdown && !sourceModeRef.current) {
+        revealMarkdownLine({
+          editor,
+          transformers: getEditorTransformers(),
+          line,
+          sourceText: contentRef.current,
+        });
+      }
+    });
+  }, [filePath, isEditorReady, isMarkdown]);
 
   useEffect(() => {
     return registerEditorFindHandler(filePath, () => {
