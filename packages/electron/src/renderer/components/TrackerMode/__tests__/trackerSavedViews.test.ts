@@ -1,6 +1,8 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { dbRowToRecord, type TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
+import { loadBuiltinTrackers } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/ModelLoader';
+import { STATUS_CATEGORY_FILTER_FIELD } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
 import type { TrackerIdentity } from '@nimbalyst/runtime';
 import {
   countFilteredTrackerItemsByTypes,
@@ -732,5 +734,87 @@ describe('shared saved views', () => {
   it('clears a stale shared flag on a view that is no longer shared', () => {
     const stale: SavedView = { ...localView('v9', 'Was shared'), shared: true };
     expect(mergeSavedViews([stale], [])[0].shared).toBe(false);
+  });
+});
+
+describe('the statusCategory filter field', () => {
+  beforeAll(() => {
+    loadBuiltinTrackers();
+  });
+
+  const mixed = [
+    makeItem('t1', { status: 'in-progress' }, 'task'),
+    makeItem('t2', { status: 'done' }, 'task'),
+    makeItem('t3', { status: 'wont-do' }, 'task'),
+    makeItem('p1', { status: 'completed' }, 'plan'),
+    makeItem('p2', { status: 'in-development' }, 'plan'),
+    makeItem('i1', { status: 'rejected' }, 'idea'),
+    makeItem('d1', { status: 'implemented' }, 'decision'),
+  ];
+
+  it('resolves each item against its own type rather than a shared value list', () => {
+    expect(getTrackerFilterValue(mixed[1], STATUS_CATEGORY_FILTER_FIELD)).toBe('done');
+    expect(getTrackerFilterValue(mixed[2], STATUS_CATEGORY_FILTER_FIELD)).toBe('cancelled');
+    expect(getTrackerFilterValue(mixed[3], STATUS_CATEGORY_FILTER_FIELD)).toBe('done');
+    expect(getTrackerFilterValue(mixed[5], STATUS_CATEGORY_FILTER_FIELD)).toBe('cancelled');
+    expect(getTrackerFilterValue(mixed[6], STATUS_CATEGORY_FILTER_FIELD)).toBe('done');
+  });
+
+  it('hides closed work across every type with a single clause', () => {
+    // The point of the synthetic field: `done`, `wont-do`, `completed`,
+    // `rejected` and `implemented` are five different values, and no clause over
+    // the status VALUE could have excluded all of them at once.
+    const open = filterTrackerItems(mixed, {
+      activeFilters: [],
+      tagFilter: [],
+      statusScope: 'all',
+      columnFilters: {
+        clauses: [{ field: STATUS_CATEGORY_FILTER_FIELD, op: 'not-in', value: ['done', 'cancelled'] }],
+      },
+    });
+    expect(open.map((item) => item.id)).toEqual(['t1', 'p2']);
+  });
+
+  it('selects only closed work when the clause is inverted', () => {
+    const closed = filterTrackerItems(mixed, {
+      activeFilters: [],
+      tagFilter: [],
+      statusScope: 'all',
+      columnFilters: {
+        clauses: [{ field: STATUS_CATEGORY_FILTER_FIELD, op: 'in', value: ['done', 'cancelled'] }],
+      },
+    });
+    expect(closed.map((item) => item.id)).toEqual(['t2', 't3', 'p1', 'i1', 'd1']);
+  });
+});
+
+describe('the lifecycle scope', () => {
+  beforeAll(() => {
+    loadBuiltinTrackers();
+  });
+
+  const mixed = [
+    makeItem('open-1', { status: 'in-progress' }, 'task'),
+    makeItem('done-1', { status: 'done' }, 'task'),
+    makeItem('cancelled-1', { status: 'rejected' }, 'idea'),
+  ];
+
+  it('does nothing when no scope is given, so callers without a scope control are unaffected', () => {
+    const out = filterTrackerItems(mixed, { activeFilters: [], tagFilter: [] });
+    expect(out).toHaveLength(3);
+  });
+
+  it('keeps only open work on the open scope, and only closed work on the closed scope', () => {
+    const open = filterTrackerItems(mixed, { activeFilters: [], tagFilter: [], statusScope: 'open' });
+    expect(open.map((item) => item.id)).toEqual(['open-1']);
+
+    const closed = filterTrackerItems(mixed, { activeFilters: [], tagFilter: [], statusScope: 'closed' });
+    expect(closed.map((item) => item.id)).toEqual(['done-1', 'cancelled-1']);
+  });
+
+  it('counts the sidebar the same way it filters the rows', () => {
+    const scoped = { activeFilters: [], tagFilter: [], statusScope: 'open' as const };
+    expect(countFilteredTrackerItemsByTypes(mixed, ['task', 'idea'], scoped)).toBe(1);
+    expect(countFilteredTrackerItemsByTypes(mixed, ['task', 'idea'], { ...scoped, statusScope: 'all' })).toBe(3);
   });
 });

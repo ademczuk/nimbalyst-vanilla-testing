@@ -26,15 +26,19 @@ fields:
       - value: new
         label: New
         icon: fiber_new
+        category: backlog
       - value: considering
         label: Considering
         icon: psychology
+        category: started
       - value: accepted
         label: Accepted
         icon: thumb_up
+        category: started
       - value: rejected
         label: Rejected
         icon: thumb_down
+        category: cancelled
 
   # Collection membership. Written directly, or by inverse propagation when an
   # item is added to a milestone/release from the collection side.

@@ -286,6 +286,8 @@ interface ElectronAPI {
   onOpenFeedback: (callback: () => void) => () => void;
   onThemeChange: (callback: (theme: string) => void) => () => void;
   setTitleBarOverlayColors: (colors: { color: string; symbolColor: string }) => void;
+  getWindowFullScreen: () => Promise<boolean>;
+  exitWindowFullScreen: () => void;
   getWindowMenuBar: () => Promise<import('../shared/menuBar').SerializedMenuBar>;
   invokeWindowMenuItem: (
     id: string,

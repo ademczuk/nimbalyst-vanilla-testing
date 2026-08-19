@@ -12,13 +12,13 @@ import {
   removeMembersValue,
   computeCollectionRollup,
   computeCollectionRollups,
-  isTerminalStatus,
   isCollectionRelationshipField,
   collectionTypesForField,
   collectionTypeDisplay,
   COLLECTION_MEMBER_KEY,
   COLLECTION_INVERSE_KEY,
 } from '../trackerCollections';
+import { isTerminalStatus } from '../trackerStatusCategory';
 import type { FieldDefinition } from '../TrackerDataModel';
 
 beforeAll(() => {
@@ -151,11 +151,65 @@ describe('rollups', () => {
     expect(rollup).toMatchObject({ total: 0, resolved: 0, done: 0, percentComplete: 0 });
   });
 
-  it('treats released and cancelled as terminal alongside done', () => {
-    expect(isTerminalStatus('done')).toBe(true);
-    expect(isTerminalStatus('released')).toBe(true);
-    expect(isTerminalStatus('cancelled')).toBe(true);
-    expect(isTerminalStatus('in-progress')).toBe(false);
+  it('counts a member finished at its own type\'s closing status', () => {
+    // Every type closes on a different value -- `plan` on `completed`, `decision`
+    // on `implemented`. A name list can only ever know one of them, so a
+    // milestone of finished plans used to report 0%.
+    const members = [
+      record('p1', 'plan', { status: 'completed' }),
+      record('d1', 'decision', { status: 'implemented' }),
+      record('b1', 'bug', { status: 'done' }),
+    ];
+    const milestone = record('m1', 'milestone', {
+      items: members.map(m => ({ itemId: m.id })),
+    });
+
+    const rollup = computeCollectionRollup(milestone, index(members), getRecordStatus);
+    expect(rollup.done).toBe(3);
+    expect(rollup.percentComplete).toBe(100);
+  });
+
+  it('drops cancelled members from the denominator instead of pinning progress below 100', () => {
+    const members = [
+      record('b1', 'bug', { status: 'done' }),
+      record('b2', 'bug', { status: 'wont-do' }),
+    ];
+    const milestone = record('m1', 'milestone', {
+      items: members.map(m => ({ itemId: m.id })),
+    });
+
+    const rollup = computeCollectionRollup(milestone, index(members), getRecordStatus);
+    expect(rollup.resolved).toBe(2);
+    expect(rollup.cancelled).toBe(1);
+    expect(rollup.done).toBe(1);
+    // Abandoned work is not outstanding work: nothing here is still to do.
+    expect(rollup.percentComplete).toBe(100);
+  });
+
+  it('counts a member in the review lane as in flight, not finished', () => {
+    const members = [
+      record('b1', 'bug', { status: 'approved' }),
+      record('b2', 'bug', { status: 'done' }),
+    ];
+    const milestone = record('m1', 'milestone', {
+      items: members.map(m => ({ itemId: m.id })),
+    });
+
+    const rollup = computeCollectionRollup(milestone, index(members), getRecordStatus);
+    expect(rollup.done).toBe(1);
+    expect(rollup.percentComplete).toBe(50);
+  });
+
+  it('resolves terminality per type rather than by status name', () => {
+    expect(isTerminalStatus('bug', 'done')).toBe(true);
+    expect(isTerminalStatus('release', 'released')).toBe(true);
+    expect(isTerminalStatus('milestone', 'cancelled')).toBe(true);
+    expect(isTerminalStatus('plan', 'completed')).toBe(true);
+    expect(isTerminalStatus('plan', 'rejected')).toBe(true);
+    expect(isTerminalStatus('bug', 'in-progress')).toBe(false);
+    // The review lane is not an end state, whichever type declares it.
+    expect(isTerminalStatus('bug', 'approved')).toBe(false);
+    expect(isTerminalStatus('plan', 'approved')).toBe(false);
   });
 
   it('indexes items once when rolling up many collections', () => {

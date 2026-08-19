@@ -217,6 +217,7 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
     columnFilters: modeLayout.typeColumnFilters[modeLayout.selectedType]
       ?? { combinator: 'and', clauses: [] },
     inboxScope: modeLayout.inboxScope,
+    statusScope: modeLayout.statusScope,
   }), [modeLayout, tagFilter]);
 
   const activeSavedView = useMemo(
@@ -274,6 +275,7 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
       sortBy: def.sortBy,
       sortDirection: def.sortDirection,
       recentlyViewedDays: def.recentlyViewedDays,
+      statusScope: def.statusScope,
       ...(def.inboxScope ? { inboxScope: def.inboxScope } : {}),
       selectedItemId: null,
       // Only overwrite the column layout/filters when the view actually
@@ -331,6 +333,7 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
       personalStateHydrated={personalStateHydrated}
       recentlyViewedDays={modeLayout.recentlyViewedDays}
       columnFilters={modeLayout.typeColumnFilters[modeLayout.selectedType] ?? null}
+      statusScope={modeLayout.statusScope}
       viewMode={viewMode}
       onSelectType={handleSelectType}
       onViewModeChange={handleViewModeChange}

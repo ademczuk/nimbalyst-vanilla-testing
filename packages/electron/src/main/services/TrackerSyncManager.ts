@@ -48,7 +48,7 @@ import WebSocket from 'ws';
 import { safeHandle } from '../utils/ipcRegistry';
 import { logger } from '../utils/logger';
 import { isAuthenticated } from './StytchAuthService';
-import { findTeamForWorkspace, getOrgScopedIdentity, getOrgScopedJwt } from './TeamService';
+import { getOrgScopedIdentity, getOrgScopedJwt, resolveTeamForWorkspace } from './TeamService';
 import { getCollabSyncWsUrl } from '../utils/collabSyncUrl';
 import { getDatabase } from '../database/initialize';
 import { TrackerPGLiteStore } from './tracker/TrackerPGLiteStore';
@@ -275,8 +275,9 @@ export async function initializeTrackerSync(workspacePath: string): Promise<void
 }
 
 async function doInitializeTrackerSync(workspacePath: string): Promise<void> {
-  // TEMP DIAGNOSTIC: bump all bails to info so we can see why the engine
-  // never starts after the autoMatchTeamForWorkspace race fix.
+  // Bails log at info deliberately: every "the engine never started" report so
+  // far has been diagnosed from exactly these lines, and they are one line per
+  // workspace per launch.
   logger.main.info('[TrackerSyncManager] doInitializeTrackerSync entered for', workspacePath);
 
   if (engines.has(workspacePath)) {
@@ -289,9 +290,17 @@ async function doInitializeTrackerSync(workspacePath: string): Promise<void> {
     return;
   }
 
-  const team = await findTeamForWorkspace(workspacePath);
+  // An inconclusive lookup is not "no team". Recovery is autoMatchTeamForWorkspace's
+  // retry, which calls ensureTrackerSyncForWorkspace once the directory answers --
+  // keeping the backoff in one place rather than racing two of them.
+  const { team, complete } = await resolveTeamForWorkspace(workspacePath);
   if (!team) {
-    logger.main.info('[TrackerSyncManager] no team for workspace, skipping init:', workspacePath);
+    logger.main.info(
+      complete
+        ? '[TrackerSyncManager] no team for workspace, skipping init:'
+        : '[TrackerSyncManager] team lookup incomplete, deferring init for:',
+      workspacePath,
+    );
     return;
   }
 

@@ -822,6 +822,42 @@ export async function listUnsyncedTrackerSchemaDefs(
 }
 
 /**
+ * The types this workspace stores as explicitly team-owned. The navigation push
+ * gate joins against this allowlist: tracker ownership defaults to personal, so
+ * a type with no stored def (including an untouched builtin) must stay local.
+ * Otherwise its deterministic `type:<name>` placement leaks even though no team
+ * schema exists for it.
+ */
+export async function listTeamTrackerTypes(
+  workspace: string,
+  dbOverride?: TypeDefDb,
+): Promise<Set<string>> {
+  const db = dbOverride ?? getDatabase();
+  if (!db) return new Set();
+  const result = (await db.query(
+    `SELECT type, model FROM tracker_type_defs WHERE workspace = $1`,
+    [workspace],
+  )) as { rows?: Array<{ type: string; model: string }> } | undefined;
+  const team = new Set<string>();
+  for (const r of result?.rows ?? []) {
+    if (schemaSharingIsTeam(r.model)) team.add(r.type);
+  }
+  return team;
+}
+
+function schemaSharingIsTeam(rawModel: unknown): boolean {
+  try {
+    const parsed = typeof rawModel === 'string' ? JSON.parse(rawModel) : rawModel;
+    const model = parsed as { sharing?: string; sync?: { mode?: string } } | null;
+    return model?.sharing === 'team'
+      || model?.sync?.mode === 'shared'
+      || model?.sync?.mode === 'hybrid';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * True when a stored model JSON declares `sharing: 'personal'`. The `model` column
  * is JSON TEXT (a string on both backends), but parse defensively per DATABASE.md.
  * Only an EXPLICIT local mode is treated as local — undefined/other modes are not

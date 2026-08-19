@@ -1,5 +1,17 @@
 export const MAIN_WINDOW_TITLE_BAR_HEIGHT = 38;
 
+/**
+ * Fullscreen state channels for the custom title bar.
+ *
+ * The OS window controls are gone in fullscreen, so the bar has to draw its own
+ * way out; it needs to know when the window entered fullscreen to do that.
+ */
+export const WINDOW_FULL_SCREEN_CHANNELS = {
+  get: 'window-chrome:get-full-screen',
+  changed: 'window-chrome:full-screen-changed',
+  exit: 'window-chrome:exit-full-screen',
+} as const;
+
 export interface TitleBarOverlayColors {
   color: string;
   symbolColor: string;

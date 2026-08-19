@@ -23,6 +23,7 @@ import {
   trackerModeGroupByAtom,
   trackerModeOrderingAtom,
   trackerModeViewModeAtom,
+  type TrackerStatusScope,
 } from '../../store/atoms/trackers';
 import { TrackerAdvancedFilterBuilder } from './TrackerAdvancedFilterBuilder';
 import { TrackerFilterValueMenu } from './TrackerFilterValueMenu';
@@ -58,6 +59,60 @@ interface TrackerViewHeaderControlsProps {
   filters: TrackerFilterSet | null;
   onFiltersChange: (filters: TrackerFilterSet) => void;
   openFiltersToken?: number;
+  statusScope: TrackerStatusScope;
+  onStatusScopeChange: (scope: TrackerStatusScope) => void;
+}
+
+const STATUS_SCOPE_OPTIONS: ReadonlyArray<{
+  scope: TrackerStatusScope;
+  label: string;
+  title: string;
+}> = [
+  { scope: 'open', label: 'Open', title: 'Work that is still outstanding' },
+  { scope: 'all', label: 'All', title: 'Every item, open and closed' },
+  { scope: 'closed', label: 'Closed', title: 'Work that was finished or abandoned' },
+];
+
+/**
+ * The lifecycle scope, as a segment rather than a menu.
+ *
+ * It is the one control here that is ON by default, so what it is set to has to
+ * be legible without opening anything -- otherwise "where did my item go?" has
+ * no answer on screen.
+ */
+function TrackerStatusScopeControl({
+  scope,
+  onScopeChange,
+}: {
+  scope: TrackerStatusScope;
+  onScopeChange: (scope: TrackerStatusScope) => void;
+}): JSX.Element {
+  return (
+    <div
+      className="tracker-status-scope inline-flex h-7 overflow-hidden rounded border border-nim"
+      role="group"
+      aria-label="Status scope"
+      data-testid="tracker-status-scope"
+    >
+      {STATUS_SCOPE_OPTIONS.map(option => (
+        <button
+          key={option.scope}
+          type="button"
+          className={`h-full border-r border-nim px-2.5 text-[11px] font-medium transition-colors last:border-r-0 ${
+            option.scope === scope
+              ? 'bg-nim-tertiary text-nim'
+              : 'bg-nim-secondary text-nim-muted hover:bg-nim-tertiary hover:text-nim'
+          }`}
+          aria-pressed={option.scope === scope}
+          title={option.title}
+          onClick={() => onScopeChange(option.scope)}
+          data-testid={`tracker-status-scope-${option.scope}`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function iconForField(field: TrackerFilterField): string {
@@ -104,6 +159,8 @@ export function TrackerViewHeaderControls({
   filters,
   onFiltersChange,
   openFiltersToken = 0,
+  statusScope,
+  onStatusScopeChange,
 }: TrackerViewHeaderControlsProps): JSX.Element {
   const [showFilters, setShowFilters] = useState(false);
   const [showDisplayOptions, setShowDisplayOptions] = useState(false);
@@ -247,6 +304,8 @@ export function TrackerViewHeaderControls({
       >
         {itemCount} item{itemCount === 1 ? '' : 's'}
       </span>
+
+      <TrackerStatusScopeControl scope={statusScope} onScopeChange={onStatusScopeChange} />
 
       <div className="relative" ref={filterRootRef}>
         <button

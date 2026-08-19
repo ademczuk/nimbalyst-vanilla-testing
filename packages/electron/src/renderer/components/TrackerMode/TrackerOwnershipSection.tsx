@@ -13,8 +13,10 @@ export const TrackerOwnershipSection: React.FC<{
   members: OwnershipMember[];
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  /** Header controls scoped to this group -- a folder is born owned by it. */
+  actions?: React.ReactNode;
   children: React.ReactNode;
-}> = ({ ownership, teamName, members, collapsed, onToggleCollapsed, children }) => (
+}> = ({ ownership, teamName, members, collapsed, onToggleCollapsed, actions, children }) => (
   <div
     className="tracker-ownership-section mt-2 first:mt-1"
     data-testid="tracker-ownership-section"
@@ -27,6 +29,7 @@ export const TrackerOwnershipSection: React.FC<{
       members={members}
       collapsed={collapsed}
       onToggleCollapsed={onToggleCollapsed}
+      actions={actions}
     />
     {!collapsed && <div className="mt-1">{children}</div>}
   </div>

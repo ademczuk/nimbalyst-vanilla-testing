@@ -19,6 +19,7 @@ import {
   normalizeRelationshipValue,
   isRelationshipField,
 } from './trackerRelationships';
+import { resolveStatusCategory, type StatusCategory } from './trackerStatusCategory';
 
 /** Relationship key a collection uses to point at its members. */
 export const COLLECTION_MEMBER_KEY = 'has-item';
@@ -149,17 +150,17 @@ export interface CollectionRollup {
   resolved: number;
   /** Member count per workflow status. */
   byStatus: Record<string, number>;
-  /** Members in a terminal status. */
+  /** Member count per lifecycle category. */
+  byCategory: Record<StatusCategory, number>;
+  /** Members finished successfully. */
   done: number;
-  /** `done / resolved` as a 0-100 integer; 0 when nothing is resolved. */
+  /** Members abandoned. Excluded from the progress denominator. */
+  cancelled: number;
+  /**
+   * `done / (resolved - cancelled)` as a 0-100 integer; 0 when nothing is
+   * resolved, 100 when everything resolvable was abandoned.
+   */
   percentComplete: number;
-}
-
-/** Statuses that count as finished for progress purposes. */
-const TERMINAL_STATUSES = new Set(['done', 'released', 'cancelled', 'resolved', 'closed', 'approved']);
-
-export function isTerminalStatus(status: string): boolean {
-  return TERMINAL_STATUSES.has(status);
 }
 
 /**
@@ -176,8 +177,12 @@ export function computeCollectionRollup(
 ): CollectionRollup {
   const memberIds = getMemberIds(collection);
   const byStatus: Record<string, number> = {};
+  const byCategory: Record<StatusCategory, number> = {
+    backlog: 0, unstarted: 0, started: 0, done: 0, cancelled: 0,
+  };
   let resolved = 0;
   let done = 0;
+  let cancelled = 0;
 
   for (const id of memberIds) {
     const member = itemsById.get(id);
@@ -188,15 +193,28 @@ export function computeCollectionRollup(
     resolved++;
     const status = getStatus(member) || 'to-do';
     byStatus[status] = (byStatus[status] ?? 0) + 1;
-    if (isTerminalStatus(status)) done++;
+    // Resolved per member type, not by status name: members of one collection
+    // routinely span types that close on different values.
+    const category = resolveStatusCategory(member.primaryType, status);
+    byCategory[category]++;
+    if (category === 'done') done++;
+    else if (category === 'cancelled') cancelled++;
   }
+
+  // Abandoned work is not outstanding work, so it leaves the denominator
+  // entirely rather than pinning the collection below 100% forever.
+  const outstanding = resolved - cancelled;
 
   return {
     total: memberIds.length,
     resolved,
     byStatus,
+    byCategory,
     done,
-    percentComplete: resolved === 0 ? 0 : Math.round((done / resolved) * 100),
+    cancelled,
+    percentComplete: resolved === 0
+      ? 0
+      : outstanding === 0 ? 100 : Math.round((done / outstanding) * 100),
   };
 }
 

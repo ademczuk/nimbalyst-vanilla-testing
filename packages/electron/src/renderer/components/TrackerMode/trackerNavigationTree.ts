@@ -37,10 +37,14 @@ export function trackerOwnershipOf(tracker: TrackerDataModel): TrackerOwnership 
  * no ownership language at all, just the flat tree they already had. The
  * grammar appears when they join a team.
  *
- * Folders stay the grouping. A folder holding both personal and team trackers
- * appears under each section carrying only that section's trackers, so a
- * workspace with 22 of them keeps its folders instead of collapsing into two
- * long lists. A section with nothing in it is dropped rather than shown empty.
+ * Folders stay the grouping, and a folder belongs to exactly one section — the
+ * one matching its own ownership. An empty folder still renders: you have to be
+ * able to see the folder you just made before you can drag anything into it.
+ * A tracker sitting in a folder of the other ownership (someone just shared it)
+ * falls to the root of its own section rather than conjuring a ghost folder.
+ * Both sections remain visible even when empty because their headers own the
+ * create-folder actions. Dropping an empty section would also drop the only way
+ * to create its first folder.
  */
 export function partitionTrackerNavigationByOwnership(
   tree: TrackerNavigationTree,
@@ -51,14 +55,25 @@ export function partitionTrackerNavigationByOwnership(
   const sections: TrackerOwnershipSection[] = [];
   for (const ownership of ['team', 'personal'] as const) {
     const mine = (row: { tracker: TrackerDataModel }) => trackerOwnershipOf(row.tracker) === ownership;
-    const folders = tree.folders
-      .map((node) => ({ folder: node.folder, trackerTypes: node.trackerTypes.filter(mine) }))
-      .filter((node) => node.trackerTypes.length > 0);
-    const rootTypes = tree.rootTypes.filter(mine);
-    if (folders.length === 0 && rootTypes.length === 0) continue;
+    const folders: TrackerNavigationFolderNode[] = [];
+    const displaced: TrackerNavigationFolderNode['trackerTypes'] = [];
+    for (const node of tree.folders) {
+      if (folderOwnershipOf(node.folder) === ownership) {
+        folders.push({ folder: node.folder, trackerTypes: node.trackerTypes.filter(mine) });
+      } else {
+        displaced.push(...node.trackerTypes.filter(mine));
+      }
+    }
+    const rootTypes = [...tree.rootTypes.filter(mine), ...displaced]
+      .sort((a, b) => compareTrackerNavigationEntries(a.placement, b.placement));
     sections.push({ ownership, tree: { folders, rootTypes } });
   }
   return sections;
+}
+
+/** A folder written before ownership existed reads as personal until the store says otherwise. */
+export function folderOwnershipOf(folder: TrackerNavigationFolder): TrackerOwnership {
+  return folder.ownership === 'team' ? 'team' : 'personal';
 }
 
 export function buildTrackerNavigationTree(

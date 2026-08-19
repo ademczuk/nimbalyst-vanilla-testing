@@ -49,26 +49,13 @@ Result:
 - The pre-release flag is cleared
 - Stable users now see it as the latest release
 
-## Transition Bridge for Existing Alpha Installs
+## Transition Bridge for Existing Alpha Installs (removed)
 
-Older alpha builds still point at:
-- `https://pub-4357a3345db7463580090984c0e4e2ba.r2.dev/`
+Alpha builds older than the GitHub cutover pointed at a Cloudflare R2 feed at `https://pub-4357a3345db7463580090984c0e4e2ba.r2.dev/`. The workflow published one transition build to that feed so those installs could update onto a version whose updater already pointed at GitHub.
 
-Those installs need exactly one transition build from R2 so they can install a version whose updater already points at GitHub.
+That bridge has served its purpose and is gone. The `LEGACY_ALPHA_TRANSITION_R2_UPLOAD` switch and the R2 upload step were removed from `electron-build.yml`, and `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `CLOUDFLARE_ACCOUNT_ID` were revoked at Cloudflare and deleted from repository secrets rather than migrated into a release environment.
 
-The workflow-level switch:
-- `LEGACY_ALPHA_TRANSITION_R2_UPLOAD`
-
-controls that bridge. Keep it set to `'true'` for the transition release only. After that release is published and confirmed, set it to `'false'` or remove the R2 upload step entirely.
-
-## R2 Secrets
-
-R2 secrets are only needed while the transition bridge remains enabled:
-- `R2_ACCESS_KEY_ID`
-- `R2_SECRET_ACCESS_KEY`
-- `CLOUDFLARE_ACCOUNT_ID`
-
-If the bridge is disabled permanently, these secrets are no longer required for alpha distribution.
+An alpha install old enough that it never took the transition build has to be reinstalled from GitHub Releases by hand.
 
 ## Verification Checklist
 
@@ -100,13 +87,6 @@ For a newly tagged release, check:
 3. On a stable-channel install, run Help → Check for Updates.
 4. Confirm the app finds the promoted stable release.
 
-### Verify the transition bridge
-
-Only while `LEGACY_ALPHA_TRANSITION_R2_UPLOAD='true'`:
-1. Check the workflow log for `Uploaded transition assets to the legacy R2 alpha channel`.
-2. Verify the R2 bucket still contains `latest*.yml` plus release binaries.
-3. Use an older alpha install and confirm it can update once from R2 onto the transition build.
-
 ## Troubleshooting
 
 ### Alpha install says no update is available
@@ -125,7 +105,4 @@ Check:
 
 ### Legacy alpha install never migrates
 
-Check:
-- The transition build was uploaded to R2 while `LEGACY_ALPHA_TRANSITION_R2_UPLOAD='true'`
-- The R2 bucket still serves `latest-mac.yml`, `latest.yml`, and `latest-linux.yml`
-- The legacy install actually launched and checked for updates after the transition release was published
+An install that never took the R2 transition build cannot migrate on its own now that the bridge is removed. Reinstall it from the latest prerelease on GitHub Releases.

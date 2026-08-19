@@ -29,18 +29,22 @@ fields:
         label: Planned
         icon: schedule
         color: "#6b7280"
+        category: unstarted
       - value: in-progress
         label: In Progress
         icon: play_circle
         color: "#eab308"
+        category: started
       - value: released
         label: Released
         icon: rocket_launch
         color: "#22c55e"
+        category: done
       - value: cancelled
         label: Cancelled
         icon: cancel
         color: "#ef4444"
+        category: cancelled
 
   - name: version
     type: string

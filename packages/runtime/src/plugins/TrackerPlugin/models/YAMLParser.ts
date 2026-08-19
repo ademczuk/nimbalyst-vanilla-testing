@@ -4,6 +4,7 @@
 
 import yaml from 'js-yaml';
 import type { TrackerDataModel, FieldDefinition, FieldOption, TrackerSharing, TrackerSchemaRole } from './TrackerDataModel';
+import { isStatusCategory } from './trackerStatusCategory';
 
 type LegacyTrackerSharing = 'local' | 'shared' | 'hybrid';
 
@@ -96,12 +97,15 @@ export function parseTrackerYAML(yamlString: string): TrackerDataModel {
             label: opt,
           } as FieldOption;
         } else if (typeof opt === 'object') {
-          // Object with value, label, icon, color
+          // This picks keys explicitly rather than spreading, so a new
+          // FieldOption key must be added here or it is silently dropped at
+          // load and every schema declaring it reads as if it never did.
           return {
             value: opt.value,
             label: opt.label,
             icon: opt.icon,
             color: opt.color,
+            ...(isStatusCategory(opt.category) ? { category: opt.category } : {}),
           } as FieldOption;
         }
         throw new Error(`Invalid option format in field '${field.name}'`);

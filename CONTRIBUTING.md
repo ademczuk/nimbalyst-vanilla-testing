@@ -18,6 +18,16 @@ over the wire protocol defined in
 4. Submit a pull request with a clear description of the change and any user or
    developer impact.
 
+If you want to work on an accepted issue, say so on the issue — we'll assign it to you and can point you at the relevant code before you start.
+
+## Review and merge
+
+Every change to `main` arrives through a pull request, and merges need an approving review alongside green required checks and resolved review conversations. [MAINTAINERS.md](./MAINTAINERS.md) describes the roles and who currently holds them.
+
+A small set of release and security-sensitive paths carries an additional ownership requirement, listed in [`.github/CODEOWNERS`](./.github/CODEOWNERS).
+
+Pull requests that change `package-lock.json` or anything in `patches/` need review from the release manager as well as a maintainer, because the signed release build installs dependencies and applies those patches while holding code-signing credentials. See [MAINTAINERS.md](./MAINTAINERS.md). These land a little slower; that is expected and not a reflection on the change.
+
 ## Commit authorship
 
 Every commit in a pull request must be authored by the person who wrote it. Before you commit, confirm your identity is your own and not something the checkout, container, or agent worktree inherited:

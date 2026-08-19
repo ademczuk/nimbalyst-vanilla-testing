@@ -37,7 +37,16 @@ import {
   isSameIdentity,
   resolveRoleFieldName,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
-import type { TrackerFilterChip } from '../../store/atoms/trackers';
+import {
+  STATUS_CATEGORY_FILTER_FIELD,
+  isTerminalStatus,
+  statusCategoryOfItem,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+import {
+  normalizeTrackerStatusScope,
+  type TrackerFilterChip,
+  type TrackerStatusScope,
+} from '../../store/atoms/trackers';
 import type { TrackerViewMode } from './trackerViewModes';
 import { getTrackerItemTags, filterTrackerItemsByTags } from './trackerTagFilterUtils';
 
@@ -82,6 +91,12 @@ export interface SavedViewDefinition {
   columnFilters: TrackerFilterSet | null;
   /** Scope for the triage inbox view: all types, or the selected type only. */
   inboxScope: 'global' | 'type' | null;
+  /**
+   * Which slice of the lifecycle the view shows. Saved with the view so a
+   * "Recently shipped" view can pin itself to closed work while the default
+   * views stay on open.
+   */
+  statusScope: TrackerStatusScope;
 }
 
 export interface SavedView {
@@ -109,6 +124,7 @@ export function createDefaultViewDefinition(): SavedViewDefinition {
     columnConfig: null,
     columnFilters: null,
     inboxScope: null,
+    statusScope: 'open',
   };
 }
 
@@ -126,7 +142,8 @@ export function hasSavableViewState(definition: SavedViewDefinition): boolean {
     || definition.recentlyViewedDays !== defaults.recentlyViewedDays
     || definition.columnConfig !== null
     || (definition.columnFilters?.clauses.length ?? 0) > 0
-    || definition.inboxScope === 'type';
+    || definition.inboxScope === 'type'
+    || definition.statusScope !== defaults.statusScope;
 }
 
 /**
@@ -177,6 +194,7 @@ export function normalizeViewDefinition(raw: Partial<SavedViewDefinition> | unde
     columnConfig: normalizeColumnConfig(raw.columnConfig),
     columnFilters: normalizeColumnFilters(raw.columnFilters),
     inboxScope: raw.inboxScope === 'global' || raw.inboxScope === 'type' ? raw.inboxScope : base.inboxScope,
+    statusScope: normalizeTrackerStatusScope(raw.statusScope),
   };
 }
 
@@ -283,6 +301,8 @@ export type TrackerItemFilterDefinition = Pick<SavedViewDefinition, 'activeFilte
   recentlyViewedDays?: SavedViewDefinition['recentlyViewedDays'];
   /** Inspectable field clauses used by the right-side filter builder. */
   columnFilters?: TrackerFilterSet | null;
+  /** Lifecycle slice; absent reads as `open`, matching the default view. */
+  statusScope?: TrackerStatusScope;
 };
 
 /** Provenance key for a record: the importer provider id, or `native`. */
@@ -309,6 +329,8 @@ export function getTrackerFilterValue(
       return getStatusTransitionValues(record, 'to');
     case STATUS_CHANGED_FROM_FILTER_FIELD:
       return getStatusTransitionValues(record, 'from');
+    case STATUS_CATEGORY_FILTER_FIELD:
+      return statusCategoryOfItem(record.primaryType, field => record.fields[field]);
     default:
       return getCellValue(record, field);
   }
@@ -371,6 +393,22 @@ export function filterTrackerItems(
   ctx: FilterContext = {},
 ): TrackerRecord[] {
   let out = items;
+
+  // The lifecycle scope runs first and inside this function, not at a callsite,
+  // so the rows the grid draws and the number the sidebar shows can never
+  // disagree about what is being counted.
+  //
+  // Absent means "don't filter", NOT "open". The open-by-default decision lives
+  // in the layout (`DEFAULT_MODE_LAYOUT.statusScope`) where a user can see and
+  // change it; baking it in here would silently narrow every other caller of
+  // this predicate -- including ones that have no scope control at all.
+  const scope = def.statusScope ?? 'all';
+  if (scope !== 'all') {
+    const wantTerminal = scope === 'closed';
+    out = out.filter((record) => (
+      isTerminalStatus(record.primaryType, getRecordStatus(record)) === wantTerminal
+    ));
+  }
 
   if (def.activeFilters.includes('mine') && ctx.identity) {
     const id = ctx.identity;

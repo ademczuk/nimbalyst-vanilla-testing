@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ask a teammate for structured feedback: your agent drafts the question, you approve it, and it arrives in their inbox to answer, with results and outstanding replies in their own tab. A request can carry the mockups, documents, or tracker items it is about, so "which of these do you prefer" shows the real thing to look at and open instead of a list of names. Every request you sent or were asked stays findable afterwards in Shared Docs, filtered by what still needs your response, and a document or tracker item shows the feedback that was gathered about it. Copy a link to send anyone who does not have Nimbalyst installed, and they can answer and discuss the request in a browser.
 - Tracker items that have not been shared yet now show a number of their own, like NIM.12, so you can refer to one before it is published.
 - Desktop notifications now carry their own icon, so you can tell a finished agent, a question, an approval request, and a teammate's message apart at a glance.
+- Trackers now show the work that is still outstanding by default, with an Open / All / Closed switch on every view, counts and boards that follow it, and Won't Do and Duplicate for closing something you are not going to do.
 - Spreadsheet columns can now hold dates with times, times, checkboxes, links, and tracker items, alongside accounting and scientific number styles, custom date patterns, red or parenthesized negatives, and your own alignment. A tracker cell shows the item's live title and status and opens it when clicked, columns can detect their own type, and sorting and filtering now follow the column's type instead of its text. You can also style any range of cells — bold, italic, underline, strikethrough, text and fill color, alignment — and date formulas now do arithmetic, so `=A1+7` and `=B1-A1` work.
 
 ### Changed
@@ -39,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opening a shared document whose editor you do not have now names the extension you need and offers to install it, instead of showing only the document type.
 - Shared mockup files now have a source pane, so their content can be edited collaboratively.
 - The results column in a shared calc sheet no longer goes blank until you type again.
+- A milestone or release now reports the progress it really has: plans, decisions, and ideas count as finished at their own closing status, abandoned items no longer hold it below 100%, and work still waiting on review no longer counts as done.
+- Closing an item from a commit message now sets a status that item's type actually offers, instead of one missing from its list.
 - Picking a grouping or ordering in the tracker's Display Settings now works instead of closing the panel without changing anything.
 - Grouping by milestone or goal names each lane, row, and card chip after the milestone itself, instead of showing a raw id or an out-of-date name.
 - Tracker date, link, and people chips now carry their field name, so an item with two dates or several links no longer needs a hover to tell them apart.
@@ -54,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The effort level you select now applies to Claude Code CLI sessions instead of being ignored. (#996, contributed by @Derazien)
 - MCP servers configured for a specific project in Claude Code now load on Windows instead of being silently ignored. (#1317, contributed by @Derazien)
 - Long agent sessions that edit many files no longer slow the rest of the app down as they run.
+- A full-screen window now has a visible way out again: an exit button in the title bar, and on macOS the window buttons reappear when you move to the top of the screen.
 
 ### Removed
 <!-- Removed features go here -->

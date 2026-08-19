@@ -2,6 +2,11 @@
  * Core types and interfaces for the unified tracker system
  */
 
+// Type-only, so the mutual reference with trackerStatusCategory.ts (which reads
+// the registry defined here) is erased at compile time rather than becoming a
+// runtime import cycle.
+import type { StatusCategory } from './trackerStatusCategory';
+
 export type FieldType =
   | 'string'
   | 'text'
@@ -34,6 +39,13 @@ export interface FieldOption {
   label: string;
   icon?: string;
   color?: string;
+  /**
+   * Lifecycle position, on the field carrying the `workflowStatus` role.
+   * Declared rather than inferred from the value's name — see
+   * `trackerStatusCategory.ts` for why, and for what an absent category
+   * resolves to. Ignored on every other select field.
+   */
+  category?: StatusCategory;
 }
 
 export interface FieldDefinition {

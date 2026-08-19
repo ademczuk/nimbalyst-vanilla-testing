@@ -5,6 +5,7 @@ import {
   isTrackerNavigationEntry,
   type TrackerNavigationEntry,
   type TrackerNavigationFolder,
+  type TrackerNavigationOwnership,
   type TrackerTypePlacement,
 } from '@nimbalyst/runtime/sync';
 import { safeHandle } from '../utils/ipcRegistry';
@@ -42,6 +43,23 @@ function normalizeEntry(entry: TrackerNavigationEntry): TrackerNavigationEntry {
   return entry;
 }
 
+/**
+ * A folder arriving without an owner keeps the one it already had — a rename
+ * from an older renderer must not quietly demote a team folder to personal.
+ * A folder that doesn't exist yet is this machine's until someone says else.
+ */
+async function resolveFolderOwnership(
+  workspacePath: string,
+  folder: TrackerNavigationFolder,
+): Promise<TrackerNavigationOwnership> {
+  if (folder.ownership === 'personal' || folder.ownership === 'team') return folder.ownership;
+  const entries = await listTrackerNavigationEntries(workspacePath);
+  const existing = entries.find(
+    (entry): entry is TrackerNavigationFolder => entry.kind === 'folder' && entry.folderId === folder.folderId,
+  );
+  return existing?.ownership ?? 'personal';
+}
+
 async function assertLocalFolderExists(workspacePath: string, folderId: string | null): Promise<void> {
   if (folderId === null) return;
   const entries = await listTrackerNavigationEntries(workspacePath);
@@ -73,8 +91,11 @@ export async function saveWorkspaceTrackerNavigationEntry(
   input: TrackerNavigationEntry,
 ): Promise<TrackerNavigationEntry[]> {
   if (!workspacePath) throw new Error('workspacePath is required');
-  const entry = normalizeEntry(input);
-  if (!isTrackerNavigationEntry(entry)) throw new Error('Invalid tracker navigation entry');
+  const normalized = normalizeEntry(input);
+  if (!isTrackerNavigationEntry(normalized)) throw new Error('Invalid tracker navigation entry');
+  const entry: TrackerNavigationEntry = normalized.kind === 'folder'
+    ? { ...normalized, ownership: await resolveFolderOwnership(workspacePath, normalized) }
+    : normalized;
   if (entry.kind === 'type-placement') await assertLocalFolderExists(workspacePath, entry.folderId);
   await upsertTrackerNavigationEntry(workspacePath, entry);
   await normalizeLongSortKeys(workspacePath, entry);
@@ -146,6 +167,50 @@ export async function ensureWorkspaceTrackerTypePlacements(
   return changed ? listTrackerNavigationEntries(workspacePath) : entries;
 }
 
+/**
+ * Keep a tracker's placement on the right side of the sidebar after its
+ * `sharing` changes. A tracker that moves to the team and was sitting in a
+ * personal folder lands at the root of the team section — no mirror folder is
+ * minted on the other side, because a folder is an organizing choice and
+ * silently duplicating one reads as a bug. The placement is rewritten either
+ * way: its push status is derived from the tracker's sharing, so the flip is
+ * what puts the row back in (or out of) the push lane.
+ */
+export async function applyTrackerSharingChangeToNavigation(
+  workspacePath: string,
+  trackerType: string,
+  sharing: TrackerNavigationOwnership,
+): Promise<void> {
+  if (!workspacePath || !trackerType) return;
+  const entries = await listTrackerNavigationEntries(workspacePath);
+  const placement = entries.find(
+    (entry): entry is TrackerTypePlacement =>
+      entry.kind === 'type-placement' && entry.trackerType === trackerType,
+  );
+  if (!placement) return;
+
+  const folder = placement.folderId === null ? null : entries.find(
+    (entry): entry is TrackerNavigationFolder =>
+      entry.kind === 'folder' && entry.folderId === placement.folderId,
+  ) ?? null;
+
+  let next = placement;
+  if (folder && folder.ownership !== sharing) {
+    const rootPlacements = entries
+      .filter((entry): entry is TrackerTypePlacement =>
+        entry.kind === 'type-placement' && entry.folderId === null)
+      .sort(compareTrackerNavigationEntries);
+    next = {
+      ...placement,
+      folderId: null,
+      sortKey: generateKeyBetween(rootPlacements.at(-1)?.sortKey ?? null, null),
+    };
+  }
+  await upsertTrackerNavigationEntry(workspacePath, next);
+  notifyNavigationChanged(workspacePath);
+  requestNavigationFlush(workspacePath);
+}
+
 export async function applyRemoteWorkspaceTrackerNavigationEntry(
   workspacePath: string,
   def: { entryId: string; payload: string | null; syncId: number },
@@ -172,4 +237,9 @@ export function initTrackerNavigationService(): void {
   });
 }
 
-export type { TrackerNavigationEntry, TrackerNavigationFolder, TrackerTypePlacement };
+export type {
+  TrackerNavigationEntry,
+  TrackerNavigationFolder,
+  TrackerNavigationOwnership,
+  TrackerTypePlacement,
+};

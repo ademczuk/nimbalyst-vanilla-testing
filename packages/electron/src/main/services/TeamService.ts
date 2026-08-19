@@ -1117,8 +1117,23 @@ export async function setAgentPosting(
 // (auth change, team join/leave/create/delete, manual refresh -- see
 // invalidateListTeamsCache() call sites) rather than a short expiry.
 // collab-open-latency investigation (RC4), 2026-07-14.
-let listTeamsCache: { promise: Promise<TeamDetails[]>; expiresAt: number } | null = null;
+let listTeamsCache: { promise: Promise<TeamDirectory>; expiresAt: number } | null = null;
 const LIST_TEAMS_TTL_MS = 5 * 60_000;
+
+/**
+ * The team list plus whether it can be trusted as the whole truth.
+ *
+ * `complete` is false when we could not enumerate every signed-in account --
+ * a failed request, or no usable session yet. An empty `teams` only means
+ * "this user has no teams" when `complete` is true. Reading "couldn't tell"
+ * as "no team" is what left tracker sync off for a whole app session: the
+ * personal JWT arrived a beat after `isAuthenticated()` went true, the single
+ * lookup in that gap failed, and every caller took the empty list as final.
+ */
+export interface TeamDirectory {
+  teams: TeamDetails[];
+  complete: boolean;
+}
 
 export function invalidateListTeamsCache(): void {
   listTeamsCache = null;
@@ -1126,9 +1141,13 @@ export function invalidateListTeamsCache(): void {
 }
 
 export async function listTeams(): Promise<TeamDetails[]> {
+  return (await listTeamDirectory()).teams;
+}
+
+export async function listTeamDirectory(): Promise<TeamDirectory> {
   if (!isAuthenticated()) {
     logger.main.info('[TeamService] listTeams: not authenticated, skipping');
-    return [];
+    return { teams: [], complete: false };
   }
 
   const now = Date.now();
@@ -1136,8 +1155,8 @@ export async function listTeams(): Promise<TeamDetails[]> {
     return listTeamsCache.promise;
   }
 
-  let allAccountLookupsSucceeded = true;
-  const promise = (async (): Promise<TeamDetails[]> => {
+  const promise = (async (): Promise<TeamDirectory> => {
+    let allAccountLookupsSucceeded = true;
     const allAccounts = getAccounts();
     const teamsByOrgId = new Map<string, TeamDetails>();
     const allTeams: TeamDetails[] = [];
@@ -1223,7 +1242,7 @@ export async function listTeams(): Promise<TeamDetails[]> {
       }
     }
 
-    return allTeams;
+    return { teams: allTeams, complete: allAccountLookupsSucceeded };
   })();
 
   listTeamsCache = { promise, expiresAt: now + LIST_TEAMS_TTL_MS };
@@ -1231,15 +1250,15 @@ export async function listTeams(): Promise<TeamDetails[]> {
   // did resolve to this caller, but evict the result immediately so a timeout
   // cannot pin "no teams" (or an incomplete list) for the full five minutes.
   void promise.then(
-    (teams) => {
-      if (!allAccountLookupsSucceeded && listTeamsCache?.promise === promise) {
+    (directory) => {
+      if (!directory.complete && listTeamsCache?.promise === promise) {
         listTeamsCache = null;
       }
       // Drive the Organization Messages menu item's visibility. A partial lookup
       // may under-report, so only an authoritative empty result hides the item.
-      if (teams.length > 0) {
+      if (directory.teams.length > 0) {
         setHasOrganizationsForMenu(true);
-      } else if (allAccountLookupsSucceeded) {
+      } else if (directory.complete) {
         setHasOrganizationsForMenu(false);
       }
     },
@@ -1334,22 +1353,44 @@ export async function findTeamForWorkspace(
   workspacePath: string,
   precomputedRemote?: GitRemoteIdentities,
 ): Promise<TeamDetails | null> {
+  return (await resolveTeamForWorkspace(workspacePath, precomputedRemote)).team;
+}
+
+/**
+ * A workspace's team, plus whether a `null` answer is the truth.
+ *
+ * `complete: false` means the lookup could not be carried out (no session yet,
+ * or the team directory fetch failed) -- the caller must treat it as "ask
+ * again later", never as "this workspace has no team". Callers that only act
+ * on a match can keep using `findTeamForWorkspace`.
+ */
+export interface WorkspaceTeamResolution {
+  team: TeamDetails | null;
+  complete: boolean;
+}
+
+export async function resolveTeamForWorkspace(
+  workspacePath: string,
+  precomputedRemote?: GitRemoteIdentities,
+): Promise<WorkspaceTeamResolution> {
   if (!isAuthenticated()) {
     // logger.main.info('[TeamService] findTeamForWorkspace: not authenticated');
-    return null;
+    return { team: null, complete: false };
   }
 
   const remote = precomputedRemote ?? await getGitRemoteIdentities(workspacePath);
   const binding = getLocalOrgBinding(workspacePath);
   if (!remote && !binding) {
+    // Nothing to match on is a real answer, not a failed lookup: no remote and
+    // no recorded binding means this workspace cannot belong to a team.
     // logger.main.info('[TeamService] findTeamForWorkspace: no git remote for', workspacePath);
-    return null;
+    return { team: null, complete: true };
   }
 
   const remoteHashes = remoteHashCandidates(remote);
 
   try {
-    const teams = await listTeams();
+    const { teams, complete } = await listTeamDirectory();
     // Epic H3 P0/A: resolve across ALL projects in each org (primary + secondary),
     // so a workspace whose remote matches a SECONDARY project routes to that
     // project's tracker room. The project registry rides along on listTeams
@@ -1357,7 +1398,7 @@ export async function findTeamForWorkspace(
     const match = resolveTeamForAnyRemoteHash(teams, remoteHashes);
     if (match) {
       // logger.main.info('[TeamService] findTeamForWorkspace: matched', match.orgId, match.teamProjectId);
-      return match;
+      return { team: match, complete: true };
     }
 
     // The remote is the shared identifier and always wins. Fall back to the
@@ -1368,7 +1409,7 @@ export async function findTeamForWorkspace(
         t.orgId === binding.orgId
         && (!t.membershipType || t.membershipType === 'active_member')
       ));
-      if (bound) return pinBoundProject(bound, binding.teamProjectId);
+      if (bound) return { team: pinBoundProject(bound, binding.teamProjectId), complete: true };
     }
 
     if (teams.length > 0) {
@@ -1377,10 +1418,12 @@ export async function findTeamForWorkspace(
       // burning measurable CPU on JSON.stringify alone.
       logger.main.debug('[TeamService] findTeamForWorkspace: no hash match', { remoteHashes, teamCount: teams.length });
     }
-    return null;
+    // A miss against a partial directory is not a miss -- the account whose
+    // lookup failed may be the one that carries this workspace's team.
+    return { team: null, complete };
   } catch (err) {
     logger.main.error('[TeamService] findTeamForWorkspace error:', err);
-    return null;
+    return { team: null, complete: false };
   }
 }
 
@@ -2069,59 +2112,113 @@ async function listProjectAccess(
 }
 
 /**
+ * Backoff for a team match that could not be carried out. `isAuthenticated()`
+ * going true is a weaker signal than "the personal JWT the team directory
+ * needs is usable" -- the gap between them is small but real, and the previous
+ * single attempt landed inside it, leaving tracker sync off for the session.
+ */
+const AUTO_MATCH_RETRY_DELAYS_MS = [500, 2_000, 5_000, 15_000];
+
+/** Workspaces with a match attempt (or a scheduled retry) already outstanding. */
+const autoMatchInFlight = new Set<string>();
+
+/**
  * Match a workspace to its team and start the collaboration services for it.
+ *
+ * Retries while the answer is inconclusive, and stops the moment it is not:
+ * a match, or a directory that came back whole and simply had no team for
+ * this workspace.
  */
 export async function autoMatchTeamForWorkspace(workspacePath: string): Promise<void> {
   logger.main.info('[TeamService] autoMatchTeamForWorkspace:', workspacePath);
+  if (autoMatchInFlight.has(workspacePath)) {
+    logger.main.info('[TeamService] autoMatch already outstanding for:', workspacePath);
+    return;
+  }
+  autoMatchInFlight.add(workspacePath);
+  await attemptAutoMatchTeam(workspacePath, 0);
+}
 
+async function attemptAutoMatchTeam(workspacePath: string, attempt: number): Promise<void> {
   // If auth isn't ready yet (common at startup -- session restore runs before Stytch init),
-  // defer until auth becomes available via a one-shot listener.
+  // defer until auth becomes available.
   if (!isAuthenticated()) {
     logger.main.info('[TeamService] Auth not ready, deferring autoMatch for:', workspacePath);
     const unsubscribe = onAuthStateChange((authState) => {
       if (authState.isAuthenticated) {
         unsubscribe();
         logger.main.info('[TeamService] Auth now ready, retrying autoMatch for:', workspacePath);
-        autoMatchTeamForWorkspace(workspacePath).catch(() => {});
+        // Restart the backoff: this is the first attempt that could succeed.
+        void attemptAutoMatchTeam(workspacePath, 0);
       }
     });
     return;
   }
 
+  let resolution: WorkspaceTeamResolution;
   try {
-    const team = await findTeamForWorkspace(workspacePath);
-    if (team) {
-      logger.main.info('[TeamService] Workspace matched to team:', team.name, 'orgId:', team.orgId);
+    resolution = await resolveTeamForWorkspace(workspacePath);
+  } catch (err) {
+    // Fire-and-forget -- never block workspace open
+    logger.main.error('[TeamService] autoMatchTeamForWorkspace error:', err);
+    resolution = { team: null, complete: false };
+  }
 
-      // Epic H1: refresh the local org/project/membership projection so the
-      // canAccess resolver has this team's roster + grants. Best-effort.
-      syncOrgProjectionFromServer().catch(err => {
-        logger.main.warn('[TeamService] post-match org projection sync failed:', err);
-      });
+  if (!resolution.team) {
+    if (resolution.complete) {
+      // The directory answered in full and this workspace is in no team.
+      autoMatchInFlight.delete(workspacePath);
+      return;
+    }
+    const delay = AUTO_MATCH_RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) {
+      autoMatchInFlight.delete(workspacePath);
+      logger.main.warn(
+        '[TeamService] Team lookup never completed for', workspacePath,
+        '-- tracker sync stays off until an auth change or a manual reconnect',
+      );
+      return;
+    }
+    logger.main.info(
+      '[TeamService] Team lookup incomplete for', workspacePath, `-- retrying in ${delay}ms`,
+    );
+    setTimeout(() => { void attemptAutoMatchTeam(workspacePath, attempt + 1); }, delay);
+    return;
+  }
 
-      // Notify all renderer windows about the team match
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send('team:workspace-matched', {
-          orgId: team.orgId,
-          teamName: team.name,
-          workspacePath,
-          hasKey: true,
-        });
-      }
+  autoMatchInFlight.delete(workspacePath);
+  const team = resolution.team;
+  try {
+    logger.main.info('[TeamService] Workspace matched to team:', team.name, 'orgId:', team.orgId);
 
-      // Why: callers run autoMatch and initializeTrackerSync in parallel
-      // (WorkspaceManagerWindow, index.ts CLI open, RepositoryManager
-      // auth-change reinit). The parallel init typically races ahead, finds
-      // no team yet via findTeamForWorkspace, and bails at a debug-level
-      // log line that never makes it to main.log. We use the race-safe
-      // ensureTrackerSyncForWorkspace here: if the parallel call is still
-      // inflight, we share its promise; if it already bailed silently or
-      // bails when our shared promise resolves, ensure retries once more
-      // with a fresh init so the engine actually starts.
-      ensureTrackerSyncForWorkspace(workspacePath).catch(err => {
-        logger.main.warn('[TeamService] post-match ensureTrackerSyncForWorkspace failed for', workspacePath, err);
+    // Epic H1: refresh the local org/project/membership projection so the
+    // canAccess resolver has this team's roster + grants. Best-effort.
+    syncOrgProjectionFromServer().catch(err => {
+      logger.main.warn('[TeamService] post-match org projection sync failed:', err);
+    });
+
+    // Notify all renderer windows about the team match
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('team:workspace-matched', {
+        orgId: team.orgId,
+        teamName: team.name,
+        workspacePath,
+        hasKey: true,
       });
     }
+
+    // Why: callers run autoMatch and initializeTrackerSync in parallel
+    // (WorkspaceManagerWindow, index.ts CLI open, RepositoryManager
+    // auth-change reinit). The parallel init typically races ahead, finds
+    // no team yet via findTeamForWorkspace, and bails at a debug-level
+    // log line that never makes it to main.log. We use the race-safe
+    // ensureTrackerSyncForWorkspace here: if the parallel call is still
+    // inflight, we share its promise; if it already bailed silently or
+    // bails when our shared promise resolves, ensure retries once more
+    // with a fresh init so the engine actually starts.
+    ensureTrackerSyncForWorkspace(workspacePath).catch(err => {
+      logger.main.warn('[TeamService] post-match ensureTrackerSyncForWorkspace failed for', workspacePath, err);
+    });
   } catch (err) {
     // Fire-and-forget -- never block workspace open
     logger.main.error('[TeamService] autoMatchTeamForWorkspace error:', err);

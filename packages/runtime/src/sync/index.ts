@@ -308,6 +308,7 @@ export {
 export type {
   TrackerNavigationEntry,
   TrackerNavigationFolder,
+  TrackerNavigationOwnership,
   TrackerTypePlacement,
 } from './trackerNavigation';
 

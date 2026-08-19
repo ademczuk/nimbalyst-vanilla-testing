@@ -27,18 +27,22 @@ fields:
         label: Planned
         icon: schedule
         color: "#6b7280"
+        category: unstarted
       - value: active
         label: Active
         icon: play_circle
         color: "#eab308"
+        category: started
       - value: done
         label: Done
         icon: check_circle
         color: "#22c55e"
+        category: done
       - value: cancelled
         label: Cancelled
         icon: cancel
         color: "#ef4444"
+        category: cancelled
 
   - name: owner
     type: user

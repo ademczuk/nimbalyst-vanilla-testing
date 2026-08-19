@@ -1,0 +1,210 @@
+name: Android Build Steps
+description: >
+  Builds the Android release APK and AAB, runs unit tests, and asserts the
+  bundled transcript. Shared by the unsigned validation job and the signed
+  release job so the two paths cannot drift.
+
+# Signing material arrives as explicit inputs rather than being read from
+# `secrets` here. That is what keeps the validation path genuinely secretless:
+# the caller decides whether to pass credentials, and a pull-request run passes
+# none. With no keystore input the build still runs and produces an UNSIGNED
+# release APK (build.gradle.kts sets hasReleaseKeystore = false when the
+# keystore file is absent), which keeps forks and contributor PRs green.
+inputs:
+  signed:
+    description: 'Whether to decode signing material and assert the outputs are signed'
+    required: false
+    default: 'false'
+  keystore-base64:
+    description: 'Base64-encoded release keystore. Required when signed is true.'
+    required: false
+    default: ''
+  keystore-password:
+    description: 'Release keystore password'
+    required: false
+    default: ''
+  key-alias:
+    description: 'Release key alias'
+    required: false
+    default: ''
+  key-password:
+    description: 'Release key password'
+    required: false
+    default: ''
+  google-services-base64:
+    description: 'Base64-encoded google-services.json for Firebase/FCM'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      with:
+        node-version: '24'
+        cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
+
+    # node_modules cache short-circuits `npm ci` when the lockfile is
+    # unchanged, so the common case makes ZERO registry calls and can't hit a
+    # transient network failure. Exact-key match only (no restore-keys) so we
+    # never run against a partially-stale tree -- on miss we just `npm ci`.
+    - name: Cache node_modules
+      id: cache-node-modules
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          node_modules
+          packages/*/node_modules
+          packages/extensions/*/node_modules
+        key: node-modules-android-${{ runner.os }}-node24-${{ hashFiles('**/package-lock.json') }}
+
+    - name: Install dependencies
+      if: steps.cache-node-modules.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm ci --ignore-scripts
+
+    - name: Setup Java
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+
+    - name: Install Android platform and build-tools
+      shell: bash
+      run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+    - name: Build transcript bundle
+      shell: bash
+      run: npm run android:build:transcript
+
+    - name: Verify transcript bundle exists
+      shell: bash
+      run: |
+        if [ ! -f "packages/android/dist-transcript/transcript.html" ]; then
+          echo "Error: transcript.html not found in packages/android/dist-transcript/"
+          exit 1
+        fi
+        if [ ! -d "packages/android/dist-transcript/assets" ]; then
+          echo "Error: assets folder not found in packages/android/dist-transcript/"
+          exit 1
+        fi
+        echo "Transcript bundle built successfully"
+        du -sh packages/android/dist-transcript
+        du -sh packages/android/dist-transcript/assets
+
+    # Fail loudly if this is a signed release build without a Firebase config:
+    # shipping a signed AAB with push silently disabled is a launch-blocking
+    # regression.
+    - name: Require google-services.json for signed release builds
+      if: ${{ inputs.signed == 'true' && inputs.google-services-base64 == '' }}
+      shell: bash
+      run: |
+        echo "Error: signed release build requested but no google-services.json was supplied."
+        echo "The resulting AAB would ship without working push notifications."
+        exit 1
+
+    # Without this file the app still builds, but Firebase/FCM stays inert:
+    # build.gradle.kts applies the google-services plugin only if the file
+    # exists, so secret-less validation builds stay green.
+    - name: Decode google-services.json
+      if: ${{ inputs.google-services-base64 != '' }}
+      shell: bash
+      env:
+        GOOGLE_SERVICES_BASE64: ${{ inputs.google-services-base64 }}
+      run: |
+        echo "$GOOGLE_SERVICES_BASE64" | base64 -d > packages/android/app/google-services.json
+        echo "Decoded google-services.json"
+
+    - name: Decode release keystore
+      if: ${{ inputs.signed == 'true' }}
+      shell: bash
+      env:
+        KEYSTORE_BASE64: ${{ inputs.keystore-base64 }}
+      run: |
+        if [ -z "$KEYSTORE_BASE64" ]; then
+          echo "Error: signed build requested but keystore-base64 is empty."
+          exit 1
+        fi
+        echo "$KEYSTORE_BASE64" | base64 -d > packages/android/app/ci-release.keystore
+        echo "Decoded release keystore"
+
+    # The transcript bundle (built above) MUST exist before release builds:
+    # preBuild -> syncTranscriptAssets throws if packages/android/dist-transcript
+    # is missing. This single step always runs (signed when the keystore was
+    # decoded, unsigned otherwise), so secret-less builds stay green.
+    - name: Run unit tests and build release artifacts
+      shell: bash
+      working-directory: packages/android
+      env:
+        NIMBALYST_ANDROID_KEYSTORE: ${{ github.workspace }}/packages/android/app/ci-release.keystore
+        NIMBALYST_ANDROID_KEYSTORE_PASSWORD: ${{ inputs.keystore-password }}
+        NIMBALYST_ANDROID_KEY_ALIAS: ${{ inputs.key-alias }}
+        NIMBALYST_ANDROID_KEY_PASSWORD: ${{ inputs.key-password }}
+      run: ./gradlew :app:testDebugUnitTest :app:assembleRelease :app:bundleRelease
+
+    # Prove the release APK is actually signed. Without this a future signing
+    # regression (renamed secret, wrong env var) would silently ship an
+    # unsigned APK while the job stays green.
+    - name: Verify release APK is signed
+      if: ${{ inputs.signed == 'true' }}
+      shell: bash
+      run: |
+        APK_PATH=$(find packages/android/app/build/outputs/apk/release -name "*.apk" -type f | head -n 1)
+        APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -n 1)
+        if [ -z "$APKSIGNER" ]; then
+          echo "Error: apksigner not found in build-tools"
+          exit 1
+        fi
+        "$APKSIGNER" verify --verbose "$APK_PATH"
+        echo "Release APK signature verified"
+
+    # App Bundles are the Play Store upload artifact. They are signed with the
+    # same release signingConfig.
+    - name: Verify release AAB is signed
+      if: ${{ inputs.signed == 'true' }}
+      shell: bash
+      run: |
+        AAB_PATH=$(find packages/android/app/build/outputs/bundle/release -name "*.aab" -type f | head -n 1)
+        if [ -z "$AAB_PATH" ]; then
+          echo "Error: Could not find built release AAB"
+          exit 1
+        fi
+        jarsigner -verify -certs "$AAB_PATH"
+        echo "Release AAB signature verified"
+
+    - name: Verify transcript bundle in APK
+      shell: bash
+      run: |
+        APK_PATH=$(find packages/android/app/build/outputs/apk/release -name "*.apk" -type f | head -n 1)
+        if [ -z "$APK_PATH" ]; then
+          echo "Error: Could not find built release APK"
+          exit 1
+        fi
+        echo "Inspecting APK: $APK_PATH"
+        if ! unzip -l "$APK_PATH" | grep -q "assets/transcript-dist/transcript.html"; then
+          echo "Error: assets/transcript-dist/transcript.html not found inside APK"
+          unzip -l "$APK_PATH"
+          exit 1
+        fi
+        echo "Transcript bundle successfully included in APK"
+
+    - name: Verify transcript bundle in AAB
+      shell: bash
+      run: |
+        AAB_PATH=$(find packages/android/app/build/outputs/bundle/release -name "*.aab" -type f | head -n 1)
+        if [ -z "$AAB_PATH" ]; then
+          echo "Error: Could not find built release AAB"
+          exit 1
+        fi
+        echo "Inspecting AAB: $AAB_PATH"
+        if ! unzip -l "$AAB_PATH" | grep -q "base/assets/transcript-dist/transcript.html"; then
+          echo "Error: base/assets/transcript-dist/transcript.html not found inside AAB"
+          unzip -l "$AAB_PATH"
+          exit 1
+        fi
+        echo "Transcript bundle successfully included in AAB"

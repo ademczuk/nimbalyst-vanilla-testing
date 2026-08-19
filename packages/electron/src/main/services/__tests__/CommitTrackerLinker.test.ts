@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { storeGet, getEffectiveTrackerAutomation } = vi.hoisted(() => ({
   storeGet: vi.fn(),
@@ -29,6 +29,13 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 import { CommitTrackerLinker, getIssueKeyPrefix, parseIssueKeys } from '../CommitTrackerLinker';
+import { loadBuiltinTrackers } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/ModelLoader';
+
+// The closing status is resolved from the item's own schema, so the builtins
+// have to be registered for the linker to know a plan completes on `completed`.
+beforeAll(() => {
+  loadBuiltinTrackers();
+});
 
 describe('parseIssueKeys', () => {
   // LC-### is the provisional key an item holds between creation and the
@@ -121,7 +128,7 @@ describe('CommitTrackerLinker', () => {
       const linker = linkerWithSession(query);
       query
         .mockResolvedValueOnce({ rows: [{ id: 'tracker-1', issue_key: 'nim-42' }] })
-        .mockResolvedValueOnce({ rows: [{ data: { status: 'in-review' } }] })
+        .mockResolvedValueOnce({ rows: [{ type: 'bug', data: { status: 'in-review' } }] })
         .mockResolvedValueOnce({ rows: [] });
 
       const result = await linker.linkBySession(
@@ -136,6 +143,54 @@ describe('CommitTrackerLinker', () => {
       expect(query.mock.calls[3]?.[1]).toEqual(['/workspace', 'tracker-1']);
       const closePayload = JSON.parse(query.mock.calls[5]?.[1]?.[0] as string);
       expect(closePayload.status).toBe('done');
+    });
+
+    it('closes a plan into the status a plan actually has', async () => {
+      // `done` is not in plan's option list. Writing it anyway produced a status
+      // no filter, board column, or picker could match -- it survived only
+      // because the validator downgrades unknown select values to warnings.
+      const query = vi.fn();
+      const linker = linkerWithSession(query);
+      query
+        .mockResolvedValueOnce({ rows: [{ id: 'tracker-1', issue_key: 'nim-42' }] })
+        .mockResolvedValueOnce({ rows: [{ type: 'plan', data: { status: 'in-review' } }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const result = await linker.linkBySession(
+        'abcdef0',
+        'feat: land the thing\n\nFixes NIM-42',
+        'session-1',
+        '/workspace'
+      );
+
+      expect(result.closedItemIds).toEqual(['tracker-1']);
+      const closePayload = JSON.parse(query.mock.calls[5]?.[1]?.[0] as string);
+      expect(closePayload.status).toBe('completed');
+      expect(closePayload.activity.at(-1)).toMatchObject({
+        action: 'status_changed',
+        oldValue: 'in-review',
+        newValue: 'completed',
+      });
+    });
+
+    it('does not reopen an item that was already abandoned', async () => {
+      // "Already closed" has to mean terminal, not equal to `done`. A commit
+      // referencing a won't-do bug must leave it won't-do.
+      const query = vi.fn();
+      const linker = linkerWithSession(query);
+      query
+        .mockResolvedValueOnce({ rows: [{ id: 'tracker-1', issue_key: 'nim-42' }] })
+        .mockResolvedValueOnce({ rows: [{ type: 'bug', data: { status: 'wont-do' } }] });
+
+      await linker.linkBySession(
+        'abcdef0',
+        'chore: tidy up\n\nFixes NIM-42',
+        'session-1',
+        '/workspace'
+      );
+
+      // Read only -- no UPDATE follows the status read.
+      expect(query).toHaveBeenCalledTimes(5);
     });
 
     it('leaves the item open for a bare reference with no closing keyword', async () => {

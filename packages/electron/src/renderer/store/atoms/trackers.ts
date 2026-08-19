@@ -128,6 +128,10 @@ export async function initTrackerPanelLayout(workspacePath: string): Promise<voi
           || savedModeLayout.recentlyViewedDays === 90
           ? savedModeLayout.recentlyViewedDays
           : DEFAULT_MODE_LAYOUT.recentlyViewedDays,
+        // Persisted layouts written before this key existed have no value here,
+        // and `??` is what makes them read as `open` on upgrade rather than
+        // `undefined` (which would show everything and quietly defeat the point).
+        statusScope: normalizeTrackerStatusScope(savedModeLayout.statusScope),
         inboxScope: savedModeLayout.inboxScope === 'type' ? 'type' : DEFAULT_MODE_LAYOUT.inboxScope,
         itemViews: normalizeItemViews(savedModeLayout.itemViews),
         documentListPaneVisible: typeof savedModeLayout.documentListPaneVisible === 'boolean'
@@ -181,6 +185,13 @@ export async function initTrackerPanelLayout(workspacePath: string): Promise<voi
 /** Filter chips that can be toggled independently */
 export type TrackerFilterChip = 'mine' | 'unassigned' | 'high-priority' | 'recently-updated'
   | 'favorites' | 'recently-viewed' | 'recently-edited-by-others' | 'archived';
+
+/** Which slice of the lifecycle a view shows. */
+export type TrackerStatusScope = 'open' | 'all' | 'closed';
+
+export function normalizeTrackerStatusScope(raw: unknown): TrackerStatusScope {
+  return raw === 'all' || raw === 'closed' ? raw : 'open';
+}
 
 /** Per-type column configuration (re-exported from runtime) */
 export type { TypeColumnConfig } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerColumns';
@@ -250,6 +261,13 @@ export interface TrackerModeLayout {
   sortBy: SortColumn;
   sortDirection: SortDirection;
   recentlyViewedDays: 7 | 30 | 90 | null;
+  /**
+   * Which slice of the lifecycle the view shows. Defaults to `open`, so closed
+   * work stays out of the way without anyone having to build a filter for it —
+   * the reason this is layout state rather than a filter chip is that chips are
+   * additive and always start off, and this has to start ON.
+   */
+  statusScope: TrackerStatusScope;
   /** Whether the triage inbox spans every type or only the selected one. */
   inboxScope: InboxScope;
   /**
@@ -304,6 +322,7 @@ const DEFAULT_MODE_LAYOUT: TrackerModeLayout = {
   sortBy: 'lastIndexed',
   sortDirection: 'desc',
   recentlyViewedDays: 30,
+  statusScope: 'open',
   inboxScope: 'global',
   itemViews: {},
   documentListPaneVisible: true,
@@ -482,6 +501,11 @@ export const trackerModeGroupByAtom = atom(
 /** Active manual-or-field ordering in tracker mode. */
 export const trackerModeOrderingAtom = atom(
   (get) => get(trackerModeLayoutAtom).ordering
+);
+
+/** Active lifecycle scope in tracker mode. */
+export const trackerModeStatusScopeAtom = atom(
+  (get) => get(trackerModeLayoutAtom).statusScope
 );
 
 /**

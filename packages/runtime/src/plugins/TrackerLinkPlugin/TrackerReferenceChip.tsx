@@ -24,6 +24,10 @@ import {
   useInteractions,
 } from '@floating-ui/react';
 import { windowControlsClearance } from '../../ui/floating/windowControlsClearance';
+import {
+  resolveKnownStatusCategory,
+  type StatusCategory,
+} from '../TrackerPlugin/models/trackerStatusCategory';
 
 import {
   useResolvedTrackerReference,
@@ -111,24 +115,20 @@ const STATUS_TONES: Record<
   },
 };
 
+/**
+ * Overrides for statuses whose tone the lifecycle category cannot express.
+ *
+ * `in-review` and `blocked` are both `started`, but a reviewer and a blockage
+ * are not the same news, so they keep their own colours. Everything the category
+ * DOES express -- finished, abandoned, not begun -- is deliberately absent:
+ * listing `done` here but not `completed` is precisely how a plan's closing
+ * status ended up rendering as neutral.
+ */
 const STATUS_TONE_BY_VALUE: Record<string, StatusTone> = {
-  'to-do': 'to-do',
-  draft: 'to-do',
-  'ready-for-development': 'to-do',
-  'in-progress': 'in-progress',
-  'in-development': 'in-progress',
   'in-review': 'in-review',
-  done: 'completed',
-  completed: 'completed',
-  implemented: 'completed',
-  decided: 'completed',
   blocked: 'blocked',
-  rejected: 'blocked',
   proposed: 'informational',
   'in-discussion': 'informational',
-  superseded: 'neutral',
-  "won't-fix": 'neutral',
-  'wont-fix': 'neutral',
 };
 
 // Transcript markdown can remount a link renderer during routine message
@@ -137,11 +137,31 @@ const STATUS_TONE_BY_VALUE: Record<string, StatusTone> = {
 // leaking across messages or duplicate references.
 const previewOpenKeysByHost = new WeakMap<HTMLElement, Set<string>>();
 
+/** Tone for a status the type's schema categorises. */
+const TONE_BY_CATEGORY: Record<StatusCategory, StatusTone> = {
+  backlog: 'to-do',
+  unstarted: 'to-do',
+  started: 'in-progress',
+  done: 'completed',
+  cancelled: 'neutral',
+};
+
 function getStatusPresentation(
   normalizedStatus: string | undefined,
+  type: string | undefined,
 ): StatusPresentation | null {
   if (!normalizedStatus) return null;
-  const tone = STATUS_TONE_BY_VALUE[normalizedStatus] ?? 'neutral';
+  // The per-value table still wins where it says something the category cannot:
+  // `in-review` and `blocked` are both `started`, but they deserve their own
+  // colours. Everything else derives from the schema, so a type that closes on
+  // `completed` or `implemented` reads as finished without being listed here.
+  //
+  // Deliberately the KNOWN category, not the resolved one: a status this install
+  // has never heard of stays neutral. Painting it as in-progress would state
+  // something about it that nobody has said.
+  const category = resolveKnownStatusCategory(type ?? '', normalizedStatus);
+  const tone = STATUS_TONE_BY_VALUE[normalizedStatus]
+    ?? (category ? TONE_BY_CATEGORY[category] : 'neutral');
   return {
     ...STATUS_TONES[tone],
     label: displayLabel(normalizedStatus),
@@ -288,7 +308,7 @@ export function TrackerReferenceChip({
   );
 
   const normalizedStatus = normalizeStatus(resolved?.status);
-  const statusPresentation = getStatusPresentation(normalizedStatus);
+  const statusPresentation = getStatusPresentation(normalizedStatus, resolved?.type);
   const isCompleted = statusPresentation?.tone === 'completed';
   const label = resolved?.issueKey ?? unresolvedLabel ?? referenceKey;
   const title = resolved?.title;

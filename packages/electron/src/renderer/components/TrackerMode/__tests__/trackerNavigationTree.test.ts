@@ -26,7 +26,7 @@ const model = (type: string): TrackerDataModel => ({
 describe('buildTrackerNavigationTree', () => {
   it('files built-in and custom types, preserves manual order, and leaves each type exactly once', () => {
     const tree = buildTrackerNavigationTree([model('bug'), model('custom'), model('task')], [
-      { entryId: 'folder:delivery', kind: 'folder', folderId: 'delivery', name: 'Delivery', sortKey: 'a0' },
+      { entryId: 'folder:delivery', kind: 'folder', folderId: 'delivery', name: 'Delivery', sortKey: 'a0', ownership: 'personal' },
       { entryId: 'type:task', kind: 'type-placement', trackerType: 'task', folderId: 'delivery', sortKey: 'a1' },
       { entryId: 'type:custom', kind: 'type-placement', trackerType: 'custom', folderId: 'delivery', sortKey: 'a0' },
       { entryId: 'type:bug', kind: 'type-placement', trackerType: 'bug', folderId: null, sortKey: 'a0' },
@@ -47,11 +47,14 @@ describe('buildTrackerNavigationTree', () => {
 describe('partitionTrackerNavigationByOwnership', () => {
   const teamModel = (type: string): TrackerDataModel => ({ ...model(type), sharing: 'team' });
 
-  const treeOf = (models: TrackerDataModel[], folder = false) => buildTrackerNavigationTree(
+  const treeOf = (
+    models: TrackerDataModel[],
+    folder?: 'personal' | 'team',
+  ) => buildTrackerNavigationTree(
     models,
     folder
       ? [
-        { entryId: 'folder:d', kind: 'folder', folderId: 'd', name: 'Delivery', sortKey: 'a0' },
+        { entryId: 'folder:d', kind: 'folder', folderId: 'd', name: 'Delivery', sortKey: 'a0', ownership: folder },
         ...models.map((m, i) => ({
           entryId: `type:${m.type}` as `type:${string}`,
           kind: 'type-placement' as const,
@@ -81,27 +84,43 @@ describe('partitionTrackerNavigationByOwnership', () => {
     ]);
   });
 
-  it('keeps folders in both sections carrying only that section\'s trackers', () => {
+  it('keeps a folder in its own section and drops a mismatched tracker to the other section\'s root', () => {
     const sections = partitionTrackerNavigationByOwnership(
-      treeOf([model('plan'), teamModel('bug')], true),
+      treeOf([model('plan'), teamModel('bug')], 'personal'),
       { hasTeam: true },
     );
     expect(sections?.map((s) => [
       s.ownership,
       s.tree.folders.map((f) => f.trackerTypes.map((r) => r.tracker.type)),
+      s.tree.rootTypes.map((r) => r.tracker.type),
     ])).toEqual([
-      ['team', [['bug']]],
-      ['personal', [['plan']]],
+      ['team', [], ['bug']],
+      ['personal', [['plan']], []],
     ]);
   });
 
-  it('drops a section with nothing in it rather than showing an empty header', () => {
+  it('renders a folder you just created, before anything is in it', () => {
     const sections = partitionTrackerNavigationByOwnership(
-      treeOf([teamModel('bug'), teamModel('feature')], true),
+      buildTrackerNavigationTree([teamModel('bug')], [
+        { entryId: 'folder:empty', kind: 'folder', folderId: 'empty', name: 'Later', sortKey: 'a0', ownership: 'personal' },
+        { entryId: 'type:bug', kind: 'type-placement', trackerType: 'bug', folderId: null, sortKey: 'a1' },
+      ]),
       { hasTeam: true },
     );
-    expect(sections?.map((s) => s.ownership)).toEqual(['team']);
+    expect(sections?.map((s) => [s.ownership, s.tree.folders.map((f) => f.folder.name)])).toEqual([
+      ['team', []],
+      ['personal', ['Later']],
+    ]);
+  });
+
+  it('keeps an empty ownership section so its first folder can be created there', () => {
+    const sections = partitionTrackerNavigationByOwnership(
+      treeOf([teamModel('bug'), teamModel('feature')], 'team'),
+      { hasTeam: true },
+    );
+    expect(sections?.map((s) => s.ownership)).toEqual(['team', 'personal']);
     expect(sections?.[0].tree.folders).toHaveLength(1);
+    expect(sections?.[1].tree).toEqual({ folders: [], rootTypes: [] });
   });
 });
 

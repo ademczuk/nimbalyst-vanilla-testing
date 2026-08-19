@@ -15,12 +15,10 @@
 
 import type { TrackerRecord } from '../../../core/TrackerRecord';
 import { getMemberIds } from './trackerCollections';
+import { isTerminalStatus } from './trackerStatusCategory';
 
 /** Built-in release type. */
 export const RELEASE_TYPE = 'release';
-
-/** Statuses a release can no longer be finalized from. */
-const CLOSED_RELEASE_STATUSES = new Set(['released', 'cancelled']);
 
 export interface ReleaseFinalizeInput {
   version: string;
@@ -57,9 +55,12 @@ export function findPendingReleases(
   getStatus: (record: TrackerRecord) => string,
 ): TrackerRecord[] {
   return items
+    // A release is finalizable until it reaches a terminal status -- which the
+    // schema declares, so a workspace that renamed `released` or added its own
+    // closing status still gets the right answer.
     .filter((item) => item.primaryType === RELEASE_TYPE
       && !item.archived
-      && !CLOSED_RELEASE_STATUSES.has(getStatus(item)))
+      && !isTerminalStatus(item.primaryType, getStatus(item)))
     .sort((a, b) => {
       // An explicitly started release outranks one still merely planned.
       const rank = (record: TrackerRecord) => (getStatus(record) === 'in-progress' ? 0 : 1);

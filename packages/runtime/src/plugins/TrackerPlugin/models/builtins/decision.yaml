@@ -32,15 +32,19 @@ fields:
       - value: to-do
         label: To Decide
         icon: help
+        category: unstarted
       - value: in-progress
         label: Evaluating
         icon: psychology
+        category: started
       - value: decided
         label: Decided
         icon: check_circle
+        category: done
       - value: implemented
         label: Implemented
         icon: done_all
+        category: done
 
   - name: chosen
     type: string

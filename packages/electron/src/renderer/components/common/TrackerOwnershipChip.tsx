@@ -148,27 +148,32 @@ export const TrackerOwnershipSectionHeader: React.FC<{
   members?: OwnershipMember[];
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
-}> = ({ ownership, teamName, members = [], collapsed = false, onToggleCollapsed }) => {
+  /** Controls that act on this group alone, e.g. "new folder". Kept outside the toggle button. */
+  actions?: React.ReactNode;
+}> = ({ ownership, teamName, members = [], collapsed = false, onToggleCollapsed, actions }) => {
   const isTeam = ownership === 'team';
   const memberCount = isTeam ? members.length : undefined;
   return (
     <div className="tracker-ownership-section-header pt-1" data-ownership={ownership}>
       {/* py-1.5 + leading-5 matches the 32px type rows so the click target is the same size. */}
-      <button
-        className="flex w-full items-center gap-1 rounded-md px-1 py-1.5 text-left text-[var(--nim-text-faint)] hover:bg-[var(--nim-bg-tertiary)] hover:text-[var(--nim-text-muted)]"
-        onClick={onToggleCollapsed}
-        title={trackerOwnershipDescription(ownership, memberCount)}
-        aria-expanded={!collapsed}
-        data-testid="tracker-ownership-section-toggle"
-      >
-        <MaterialSymbol icon={collapsed ? 'chevron_right' : 'expand_more'} size={15} className="shrink-0" />
-        <span className="min-w-0 flex-1 truncate text-[10px] leading-5 font-semibold uppercase tracking-wider">
-          {trackerOwnershipLabel(ownership, teamName)}
-        </span>
-        {isTeam
-          ? <TrackerOwnershipAvatars members={members} />
-          : <MaterialSymbol icon={trackerOwnershipIcon(ownership)} size={12} className="shrink-0" />}
-      </button>
+      <div className="group flex items-center gap-1">
+        <button
+          className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1 py-1.5 text-left text-[var(--nim-text-faint)] hover:bg-[var(--nim-bg-tertiary)] hover:text-[var(--nim-text-muted)]"
+          onClick={onToggleCollapsed}
+          title={trackerOwnershipDescription(ownership, memberCount)}
+          aria-expanded={!collapsed}
+          data-testid="tracker-ownership-section-toggle"
+        >
+          <MaterialSymbol icon={collapsed ? 'chevron_right' : 'expand_more'} size={15} className="shrink-0" />
+          <span className="min-w-0 flex-1 truncate text-[10px] leading-5 font-semibold uppercase tracking-wider">
+            {trackerOwnershipLabel(ownership, teamName)}
+          </span>
+          {isTeam
+            ? <TrackerOwnershipAvatars members={members} />
+            : <MaterialSymbol icon={trackerOwnershipIcon(ownership)} size={12} className="shrink-0" />}
+        </button>
+        {actions}
+      </div>
       <div className="pl-[25px] text-[10px] leading-snug text-[var(--nim-text-faint)]">
         {trackerOwnershipShortDescription(ownership, memberCount)}
       </div>

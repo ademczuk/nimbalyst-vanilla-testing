@@ -27,8 +27,12 @@ This guide explains how to set up the required secrets for building and releasin
    - Sign in → Security → App-Specific Passwords → Generate
    - Use "Preditor Notarization" as the label
 
-6. **KEYCHAIN_PASSWORD** (optional)
-   - Random password for temporary keychain (workflow will generate one if not provided)
+6. **KEYCHAIN_PASSWORD** — do not create this secret
+   - The cert-import step references it but falls back to `openssl rand` when it
+     is absent, which is the behavior we want: the temporary keychain password
+     is generated per run and never leaves the runner.
+   - It has never existed as a repository secret. Creating one would turn a
+     per-run random value into a long-lived credential for no benefit.
 
 ### Windows Code Signing via DigiCert KeyLocker (Optional)
 

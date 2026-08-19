@@ -287,6 +287,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setTitleBarOverlayColors: (colors: { color: string; symbolColor: string }) =>
     ipcRenderer.send('window-chrome:set-overlay-colors', colors),
 
+  // Fullscreen state for the custom title bar's own exit control
+  getWindowFullScreen: () => ipcRenderer.invoke('window-chrome:get-full-screen'),
+  exitWindowFullScreen: () => ipcRenderer.send('window-chrome:exit-full-screen'),
+
   // In-window menu bar (Windows/Linux; macOS keeps its system menu bar)
   getWindowMenuBar: () => ipcRenderer.invoke('window-menu:get'),
   invokeWindowMenuItem: (id: string, revision: number) =>

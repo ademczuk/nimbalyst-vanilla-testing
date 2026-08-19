@@ -20,6 +20,12 @@ import { extractItemCustomFields } from '../../services/tracker/trackerRowCustom
 import { nestRelationshipFieldsIntoCustomFields, readStoredFieldValue, writeStoredFieldValue } from '../../services/tracker/relationshipFieldStorage';
 import { isRelationshipField, matchesFilterSet, isUntriaged } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import { humanOnlyStatusMessage, isHumanOnlyStatus } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerReview';
+import {
+  STATUS_CATEGORY_FILTER_FIELD,
+  isTerminalStatus,
+  statusCategoryOfItem,
+  type StatusCategory,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
 import { trackerItemToRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { resolveRoleFieldName } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { getVisibleTrackerLinkedSessions, shouldPersistTrackerLinkedSessions } from '../../../shared/trackerSessionLinks';
@@ -474,7 +480,7 @@ export const trackerToolSchemas = [
   {
     name: "tracker_list",
     description:
-      "List tracker items (bugs, tasks, plans, ideas, decisions, etc.) with optional filtering. Returns a summary of each item. Use this to see what work items exist.",
+      "List tracker items (bugs, tasks, plans, ideas, decisions, etc.) with optional filtering. Returns a summary of each item. Use this to see what work items exist.\n\nIMPORTANT: only OPEN items are returned by default. Items in a terminal status (done or cancelled) are excluded unless you pass `includeClosed: true`, or ask for a closed status directly via `status` / `statusCategory`. So a result here is the outstanding work, not everything ever filed -- say so if you report a count.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -491,7 +497,17 @@ export const trackerToolSchemas = [
         status: {
           type: "string",
           description:
-            "Filter by status (e.g., 'to-do', 'in-progress', 'done')",
+            "Filter by status (e.g., 'to-do', 'in-progress', 'done'). Asking for a closed status implies includeClosed.",
+        },
+        statusCategory: {
+          type: "string",
+          description:
+            "Filter by lifecycle category: 'backlog', 'unstarted', 'started', 'done', or 'cancelled'. Unlike `status`, this is comparable across types -- each type closes on a different status value ('done' for a bug, 'completed' for a plan, 'rejected' for an idea) but they share a category. Implies includeClosed when set to 'done' or 'cancelled'.",
+        },
+        includeClosed: {
+          type: "boolean",
+          description:
+            "Include items in a terminal status -- done or cancelled (default: false). BY DEFAULT THIS TOOL RETURNS ONLY OPEN ITEMS, so a count here is a count of outstanding work, not of everything ever filed. Set true to see closed items too.",
         },
         priority: {
           type: "string",
@@ -787,7 +803,7 @@ export const trackerToolSchemas = [
         patch: {
           type: "object",
           description:
-            "Delta override for a tracker type (required: `type`). Merge semantics: `fields[]` by name (`{name, set?, options?, remove?}`); select options by value (`options: {set?: [{value,label,icon?,color?}], remove?: [value], order?: [value]}`); scalars (displayName, icon, color, inlineTemplate, sharing, draftByDefault) last-writer; `roles` shallow-merged. Example — add a status: {\"type\":\"feature\",\"fields\":[{\"name\":\"status\",\"options\":{\"set\":[{\"value\":\"wont-do\",\"label\":\"Won't Do\",\"icon\":\"do_not_disturb_on\",\"color\":\"#64748b\"}]}}]}.",
+            "Delta override for a tracker type (required: `type`). Merge semantics: `fields[]` by name (`{name, set?, options?, remove?}`); select options by value (`options: {set?: [{value,label,icon?,color?,category?}], remove?: [value], order?: [value]}`); scalars (displayName, icon, color, inlineTemplate, sharing, draftByDefault) last-writer; `roles` shallow-merged. On the workflow-status field, `category` declares where the status sits in the lifecycle — 'backlog', 'unstarted', 'started', 'done', or 'cancelled' — and is what makes an item count as closed for progress rollups and the Open/Closed filter. ALWAYS set it when adding a status; an omitted category is guessed from the value's name and defaults to open. Example — add a way to close something you are not going to do: {\"type\":\"feature\",\"fields\":[{\"name\":\"status\",\"options\":{\"set\":[{\"value\":\"wont-do\",\"label\":\"Won't Do\",\"icon\":\"do_not_disturb_on\",\"color\":\"#64748b\",\"category\":\"cancelled\"}]}}]}.",
         },
         fileName: {
           type: "string",
@@ -1018,6 +1034,15 @@ export async function handleTrackerList(
 
     const getFieldValue = (item: TrackerItem, field: string): unknown => {
       const record = item as unknown as Record<string, unknown>;
+      // The lifecycle category is synthetic -- no item stores it -- and it is
+      // the only field a "not closed" clause can be written over uniformly,
+      // because each type closes on a different status value. Kept in step with
+      // the renderer's accessor by both routing through statusCategoryOfItem.
+      if (field === STATUS_CATEGORY_FILTER_FIELD) {
+        return statusCategoryOfItem(item.type, name => (
+          record[name] !== undefined ? record[name] : item.customFields?.[name]
+        ));
+      }
       if (record[field] !== undefined) {
         return record[field];
       }
@@ -1038,6 +1063,21 @@ export async function handleTrackerList(
     // whose field is empty" (the idiom before `is-empty` existed). The shared
     // matcher SKIPS a blank binary clause -- right for a half-typed grid filter,
     // wrong for an explicit API query -- so rewrite those to the unary ops here.
+    // A caller who names a terminal status (or category, or a `where` clause
+    // over the category) has asked for closed work, so the open-only default
+    // must stand aside rather than silently return an empty list.
+    const terminalCategories: StatusCategory[] = ['done', 'cancelled'];
+    const asksForClosedCategory = terminalCategories.includes(
+      String(args.statusCategory ?? '').toLowerCase() as StatusCategory,
+    );
+    const whereMentionsCategory = (Array.isArray(args.where) ? args.where : [])
+      .some((clause: any) => clause?.field === STATUS_CATEGORY_FILTER_FIELD);
+    const includeClosed = args.includeClosed === true
+      || asksForClosedCategory
+      || whereMentionsCategory
+      || (typeof args.status === 'string' && args.status.trim() !== ''
+        && isTerminalStatus(String(args.type ?? ''), args.status));
+
     const whereClauses = (Array.isArray(args.where) ? args.where : []).map((clause: any) => {
       if (clause && (clause.op === '=' || clause.op === '!=')
         && (clause.value === '' || clause.value === null || clause.value === undefined)) {
@@ -1060,6 +1100,20 @@ export async function handleTrackerList(
         if (!args.status) return true;
         const statusField = resolveFieldForFilter('workflowStatus', 'status');
         return String(getFieldValue(item, statusField) ?? '').toLowerCase() === String(args.status).toLowerCase();
+      })
+      .filter((item) => {
+        if (!args.statusCategory) return true;
+        return statusCategoryOfItem(item.type, name => getFieldValue(item, name))
+          === String(args.statusCategory).toLowerCase();
+      })
+      .filter((item) => {
+        // Open-only by default. An explicit request for closed work -- via
+        // includeClosed, a terminal `status`, or a terminal `statusCategory` --
+        // turns it off: asking for done items and being handed nothing would be
+        // the one failure this default must never produce.
+        if (includeClosed) return true;
+        const statusField = resolveFieldForFilter('workflowStatus', 'status');
+        return !isTerminalStatus(item.type, String(getFieldValue(item, statusField) ?? ''));
       })
       .filter((item) => {
         if (!args.priority) return true;

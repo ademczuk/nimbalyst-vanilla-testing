@@ -1,9 +1,13 @@
 import type { BrowserWindow, BrowserWindowConstructorOptions } from 'electron';
 import {
   MAIN_WINDOW_TITLE_BAR_HEIGHT,
+  WINDOW_FULL_SCREEN_CHANNELS,
   isTitleBarOverlayColors,
   type TitleBarOverlayColors,
 } from '../../shared/windowChrome';
+
+/** Centres the traffic lights in the 38px custom title bar on macOS. */
+export const MAC_TRAFFIC_LIGHT_POSITION = { x: 10, y: 12 } as const;
 
 export interface CustomTitleBarOptionsInput {
   platform: NodeJS.Platform;
@@ -31,7 +35,7 @@ export function customTitleBarOptions(
     return {
       titleBarStyle: 'hiddenInset',
       titleBarOverlay: true,
-      trafficLightPosition: { x: 10, y: 12 },
+      trafficLightPosition: { ...MAC_TRAFFIC_LIGHT_POSITION },
     };
   }
 
@@ -99,6 +103,49 @@ export function registerCustomTitleBarWindow(
   window.once('closed', () => {
     overlayWindows.delete(window.id);
   });
+}
+
+interface FullScreenWindow {
+  isDestroyed(): boolean;
+  on(event: 'enter-full-screen' | 'leave-full-screen', listener: () => void): unknown;
+  setWindowButtonPosition?(position: { x: number; y: number } | null): void;
+  webContents: Pick<BrowserWindow['webContents'], 'send'>;
+}
+
+/**
+ * Keep a custom-title-bar window escapable in fullscreen.
+ *
+ * Two things happen on the way in. On macOS the custom `trafficLightPosition`
+ * pulls the buttons out of the standard title-bar accessory, which is the thing
+ * the OS slides down when the cursor hits the top edge in fullscreen — so the
+ * lights never come back and the green button is unreachable. Handing
+ * positioning back to the OS (`null`) restores that reveal, and the custom
+ * offset goes back on the way out.
+ *
+ * Either way the renderer is told, so the title bar can draw its own exit
+ * control where the window controls used to sit (GitHub #1310 covers persisting
+ * the state itself).
+ */
+export function registerFullScreenChrome(
+  window: FullScreenWindow,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  const applyFullScreen = (fullScreen: boolean): void => {
+    if (window.isDestroyed()) return;
+
+    if (platform === 'darwin' && typeof window.setWindowButtonPosition === 'function') {
+      window.setWindowButtonPosition(fullScreen ? null : { ...MAC_TRAFFIC_LIGHT_POSITION });
+    }
+
+    try {
+      window.webContents.send(WINDOW_FULL_SCREEN_CHANNELS.changed, fullScreen);
+    } catch (error) {
+      console.error('[WindowChrome] Failed to push fullscreen state:', error);
+    }
+  };
+
+  window.on('enter-full-screen', () => applyFullScreen(true));
+  window.on('leave-full-screen', () => applyFullScreen(false));
 }
 
 export function getTitleBarOverlayColors(

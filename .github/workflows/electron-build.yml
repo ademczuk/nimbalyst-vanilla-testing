@@ -1,14 +1,14 @@
 name: Build and Release Electron App
 
 on:
+  # The release ref is the tag, and only the tag. A branch-name trigger is a
+  # trusted entry point any collaborator with write access can reach by pushing
+  # a branch, so `release/**` branch and pull_request triggers are deliberately
+  # absent. Short-lived release PR branches are ordinary topic branches and must
+  # not regain a trigger here.
   push:
     tags:
       - 'v*'
-    branches:
-      - 'release/**'
-  pull_request:
-    branches:
-      - 'release'
   workflow_dispatch:
     inputs:
       release:
@@ -48,15 +48,11 @@ env:
   npm_config_fetch_retry_mintimeout: '20000'
   npm_config_fetch_retry_maxtimeout: '120000'
   npm_config_fetch_timeout: '300000'
-  # Keep this enabled for exactly the transition build so existing alpha
-  # installs still hard-coded to the R2 feed can migrate to the new
-  # GitHub-backed alpha channel. After shipping that bridge release, flip
-  # this to "false" (or remove the R2 step entirely) to complete cutover.
-  LEGACY_ALPHA_TRANSITION_R2_UPLOAD: 'true'
 
+# Minimum for the workflow as a whole. Only the `release` job needs to write,
+# and it grants itself `contents: write` at job scope.
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   build:
@@ -94,13 +90,34 @@ jobs:
             arch: arm64
 
     runs-on: ${{ matrix.os }}
-    
+
+    # Bound to the protected environment on the release path only. After the
+    # secret migration, the Apple and DigiCert credentials exist ONLY as
+    # `electron-release` environment secrets, so this binding is what lets a
+    # release build read them at all -- and what makes it wait for approval
+    # first. A validation dispatch resolves to no environment, runs without
+    # approval, and is genuinely secretless because every credential below is
+    # gated on IS_RELEASE.
+    #
+    # If this expression ever resolves wrong on a tag, the release build fails
+    # to find its secrets rather than running unprotected. Verify both paths
+    # after creating the environment: a tag push must show "Waiting for
+    # review", a `release: false` dispatch must not.
+    environment: ${{ (github.ref_type == 'tag' || inputs.release == true || inputs.release == 'true') && 'electron-release' || '' }}
+
+    # Every signing and notarization credential below is gated on this. A
+    # validation dispatch (release: false) resolves it to 'false' and gets empty
+    # strings instead of secrets, so no credential ever reaches the runner on a
+    # non-release build.
+    env:
+      IS_RELEASE: ${{ github.ref_type == 'tag' || inputs.release == true || inputs.release == 'true' }}
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
           cache: 'npm'
@@ -320,10 +337,14 @@ jobs:
 
       # macOS specific setup
       - name: Import macOS certificates
-        if: startsWith(matrix.os, 'macos')
+        if: startsWith(matrix.os, 'macos') && env.IS_RELEASE == 'true'
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          # Deliberately not a repository secret. The fallback below generates a
+          # per-run random value that never leaves the runner; creating a real
+          # KEYCHAIN_PASSWORD secret would turn that into a standing credential
+          # for no benefit. See .github/SETUP_SECRETS.md.
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           # Create temporary keychain
@@ -347,7 +368,7 @@ jobs:
 
       # Windows code signing setup (DigiCert KeyLocker)
       - name: Decode DigiCert Client Certificate (Windows)
-        if: matrix.platform == 'win' && env.DIGICERT_CLIENT_CERT_BASE64 != ''
+        if: matrix.platform == 'win' && env.IS_RELEASE == 'true' && env.DIGICERT_CLIENT_CERT_BASE64 != ''
         env:
           DIGICERT_CLIENT_CERT_BASE64: ${{ secrets.DIGICERT_CLIENT_CERT_BASE64 }}
         run: |
@@ -362,8 +383,8 @@ jobs:
       # NSIS uninstaller and the installer, so the payload executable is signed
       # before it is embedded in the distributable (#853).
       - name: Set up DigiCert KeyLocker for Windows payload signing
-        if: matrix.platform == 'win' && matrix.arch != 'arm64' && env.DIGICERT_CLIENT_CERT_BASE64 != '' && (github.ref_type == 'tag' || inputs.release == true || inputs.release == 'true')
-        uses: digicert/code-signing-software-trust-action@v1.0.0
+        if: matrix.platform == 'win' && matrix.arch != 'arm64' && env.IS_RELEASE == 'true' && env.DIGICERT_CLIENT_CERT_BASE64 != ''
+        uses: digicert/code-signing-software-trust-action@9b30180369343eb1ce0dcbebb933cfa3e17b6cc8 # v1.0.0
         with:
           simple-signing-mode: true
         env:
@@ -446,30 +467,34 @@ jobs:
         env:
           # Ensure production build (disables sourcemaps, enables optimizations)
           NODE_ENV: production
+          # Every credential here is gated on IS_RELEASE. On a validation
+          # dispatch these all resolve to empty strings, so electron-builder
+          # produces an unsigned, un-notarized build and no signing material is
+          # present on the runner at any point.
           # macOS notarization
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_ID: ${{ env.IS_RELEASE == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ env.IS_RELEASE == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: '3GYP4YJ3DH'
           # Keep Apple credentials under macOS-only names. CSC_LINK is a shared
           # electron-builder fallback and must never leak into a Windows build.
-          MACOS_CSC_NAME: ${{ secrets.CSC_NAME }}
-          MACOS_CSC_LINK: ${{ secrets.MACOS_CERTIFICATE }}
-          MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-          DIGICERT_KEYPAIR_ALIAS: ${{ (github.ref_type == 'tag' || inputs.release == true || inputs.release == 'true') && secrets.DIGICERT_KEYPAIR_ALIAS || '' }}
+          MACOS_CSC_NAME: ${{ env.IS_RELEASE == 'true' && secrets.CSC_NAME || '' }}
+          MACOS_CSC_LINK: ${{ env.IS_RELEASE == 'true' && secrets.MACOS_CERTIFICATE || '' }}
+          MACOS_CSC_KEY_PASSWORD: ${{ env.IS_RELEASE == 'true' && secrets.MACOS_CERTIFICATE_PWD || '' }}
+          DIGICERT_KEYPAIR_ALIAS: ${{ env.IS_RELEASE == 'true' && secrets.DIGICERT_KEYPAIR_ALIAS || '' }}
           SM_HOST: "https://clientauth.one.digicert.com"
-          SM_API_KEY: ${{ secrets.DIGICERT_CLIENT_API_TOKEN }}
+          SM_API_KEY: ${{ env.IS_RELEASE == 'true' && secrets.DIGICERT_CLIENT_API_TOKEN || '' }}
           SM_CLIENT_CERT_FILE: ${{ runner.temp }}\digicert_client_cert.p12
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.DIGICERT_CLIENT_CERT_PW }}
+          SM_CLIENT_CERT_PASSWORD: ${{ env.IS_RELEASE == 'true' && secrets.DIGICERT_CLIENT_CERT_PW || '' }}
           # ARM64 is re-signed by the dedicated x64-hosted job below until
           # DigiCert publishes native ARM64 smctl tooling.
-          ALLOW_UNSIGNED_WINDOWS_BUILD: ${{ github.ref_type != 'tag' && inputs.release != true && inputs.release != 'true' || matrix.platform == 'win' && matrix.arch == 'arm64' }}
+          ALLOW_UNSIGNED_WINDOWS_BUILD: ${{ env.IS_RELEASE != 'true' || (matrix.platform == 'win' && matrix.arch == 'arm64') }}
           # GH_TOKEN is intentionally unset: electron-builder is invoked with
           # --publish never on all platforms below, so GitHub Release creation
           # does not happen at the build step. The dedicated release step later
           # in this workflow creates or updates the GitHub release explicitly.
           # Require notarization for release builds
           # Release builds require notarization (push to tag, or explicit release input)
-          REQUIRE_NOTARIZE: ${{ github.ref_type == 'tag' || inputs.release == true || inputs.release == 'true' }}
+          REQUIRE_NOTARIZE: ${{ env.IS_RELEASE }}
           # Mark as official build for analytics tracking
           # This ensures PostHog only sends data from official GitHub release builds
           OFFICIAL_BUILD: 'true'
@@ -481,9 +506,19 @@ jobs:
           # handled explicitly later in this workflow, and electron-builder
           # must not create GitHub Releases on its own.
           if [ "${{ matrix.platform }}" == "mac" ]; then
-            export CSC_NAME="$MACOS_CSC_NAME"
-            export CSC_LINK="$MACOS_CSC_LINK"
-            export CSC_KEY_PASSWORD="$MACOS_CSC_KEY_PASSWORD"
+            if [ -n "$MACOS_CSC_LINK" ]; then
+              export CSC_NAME="$MACOS_CSC_NAME"
+              export CSC_LINK="$MACOS_CSC_LINK"
+              export CSC_KEY_PASSWORD="$MACOS_CSC_KEY_PASSWORD"
+            else
+              # Validation build: IS_RELEASE gated the signing material to
+              # empty. Make the unsigned path explicit, the same way the
+              # Windows branch below does. Exporting an EMPTY CSC_LINK makes
+              # electron-builder resolve "" to the working directory and fail
+              # with "packages/electron not a file" (run 32300739314).
+              unset CSC_NAME CSC_LINK CSC_KEY_PASSWORD
+              export CSC_IDENTITY_AUTO_DISCOVERY=false
+            fi
             if [ "${{ github.ref_type }}" == "tag" ] || [ "${{ inputs.release }}" == "true" ]; then
               npm run build:mac:notarized -- --${{ matrix.arch }} --mac dmg zip --publish never
             else
@@ -506,7 +541,7 @@ jobs:
         shell: bash
 
       - name: Verify Windows payload and installer signatures
-        if: matrix.platform == 'win' && matrix.arch != 'arm64' && (github.ref_type == 'tag' || inputs.release == true || inputs.release == 'true')
+        if: matrix.platform == 'win' && matrix.arch != 'arm64' && env.IS_RELEASE == 'true'
         shell: pwsh
         working-directory: packages/electron
         run: |
@@ -573,7 +608,7 @@ jobs:
 
       # Generate update metadata files
       - name: Generate update metadata
-        if: github.ref_type == 'tag' || inputs.release == true || inputs.release == 'true'
+        if: env.IS_RELEASE == 'true'
         working-directory: packages/electron
         run: |
           node build/generate-update-yml.js || true
@@ -581,7 +616,7 @@ jobs:
 
       # Upload artifacts
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.platform }}-${{ matrix.arch }}
           path: |
@@ -606,20 +641,25 @@ jobs:
   sign-windows-arm64:
     needs: build
     runs-on: windows-latest
+    # The `env` context is not available in a job-level `if:`, so this repeats
+    # the release condition rather than reusing the build job's IS_RELEASE.
     if: github.ref_type == 'tag' || inputs.release == true || inputs.release == 'true'
+    environment: electron-release
+    permissions:
+      contents: read
     env:
       DIGICERT_CLIENT_CERT_BASE64: ${{ secrets.DIGICERT_CLIENT_CERT_BASE64 }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
 
       - name: Download win-arm64 artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: win-arm64
           path: win-arm64
@@ -653,7 +693,7 @@ jobs:
       # JavaScript (~200 DigiCert calls per ARM64 build).
       - name: Set up DigiCert KeyLocker for Windows ARM64 signing
         if: env.DIGICERT_CLIENT_CERT_BASE64 != ''
-        uses: digicert/code-signing-software-trust-action@v1.0.0
+        uses: digicert/code-signing-software-trust-action@9b30180369343eb1ce0dcbebb933cfa3e17b6cc8 # v1.0.0
         with:
           simple-signing-mode: true
         env:
@@ -716,7 +756,7 @@ jobs:
           Copy-Item "packages/electron/release/Nimbalyst-Windows-arm64.exe" "win-arm64/Nimbalyst-Windows-arm64.exe"
 
       - name: Re-upload signed win-arm64 artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: win-arm64
           path: win-arm64/*
@@ -726,21 +766,29 @@ jobs:
   release:
     needs: [build, sign-windows-arm64]
     runs-on: ubuntu-latest
+    # The `env` context is not available in a job-level `if:`, so this repeats
+    # the release condition rather than reusing the build job's IS_RELEASE.
     if: github.ref_type == 'tag' || inputs.release == true || inputs.release == 'true'
-    
+    environment: electron-release
+    # The only job that publishes anything. `contents: write` is what
+    # softprops/action-gh-release needs to create or update the release.
+    permissions:
+      contents: write
+
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: release-artifacts
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
 
@@ -767,13 +815,13 @@ jobs:
           cp release/*.yaml ../../release-files/ 2>/dev/null || true
           ls -la ../../release-files/
 
-      - name: Generate release notes for R2 and public release
+      - name: Generate release notes
         id: release_notes
         run: |
           # Get recent commits for release notes
           git fetch --depth=50
 
-          # Create technical release notes file for R2 (commit-based)
+          # Create technical release notes file (commit-based)
           {
             echo "## Recent Changes"
             echo ""
@@ -855,33 +903,6 @@ jobs:
           echo "=== Internal GitHub Release Body (GITHUB_RELEASE_BODY.md) ==="
           cat release-files/GITHUB_RELEASE_BODY.md
 
-      # Transitional bridge for legacy alpha installs that still read the
-      # Cloudflare R2 feed. Disable after the one transition release ships.
-      - name: Upload to Cloudflare R2
-        if: env.LEGACY_ALPHA_TRANSITION_R2_UPLOAD == 'true'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          # Install AWS CLI
-          pip install awscli
-
-          # Upload to R2 (overwrites previous release)
-          aws s3 sync release-files/ s3://nimbalyst-alpha-updates-a7592ff2/ \
-            --endpoint-url https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com \
-            --exclude "*" \
-            --include "*.dmg" \
-            --include "*.zip" \
-            --include "*.exe" \
-            --include "*.AppImage" \
-            --include "*.yml" \
-            --include "*.yaml" \
-            --include "RELEASE_NOTES.md" \
-            --include "PUBLIC_RELEASE_NOTES.md"
-
-          echo "✅ Uploaded transition assets to the legacy R2 alpha channel"
-
       - name: Get version from tag
         id: get_version
         run: |
@@ -900,7 +921,7 @@ jobs:
       # clears the prerelease flag, making it the stable release.
       - name: Publish GitHub Release
         if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1 (v0.1.15)
         with:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
           name: Release ${{ steps.get_version.outputs.VERSION }}
@@ -928,12 +949,6 @@ jobs:
           echo "   5. Save and restart the app"
           echo "   6. Check for updates (should find version $VERSION)"
           echo ""
-          if [[ "${LEGACY_ALPHA_TRANSITION_R2_UPLOAD}" == "true" ]]; then
-            echo "🔁 Legacy transition bridge also uploaded to R2:"
-            echo "   Bucket: nimbalyst-alpha-updates-a7592ff2"
-            echo "   URL: https://pub-4357a3345db7463580090984c0e4e2ba.r2.dev/"
-            echo ""
-          fi
           if [[ "${{ inputs.create_github_release }}" == "true" ]]; then
             echo "🚀 GitHub release promoted from prerelease to stable:"
             echo "   https://github.com/nimbalyst/nimbalyst/releases/tag/$VERSION"
@@ -944,7 +959,7 @@ jobs:
 
       - name: Notify Slack - Release Published
         if: success() && env.SLACK_WEBHOOK_URL != ''
-        uses: slackapi/slack-github-action@v2.1.0
+        uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52 # v2.1.0
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         with:
@@ -974,7 +989,7 @@ jobs:
 
       - name: Notify Slack - Release Failed
         if: failure() && env.SLACK_WEBHOOK_URL != ''
-        uses: slackapi/slack-github-action@v2.1.0
+        uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52 # v2.1.0
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         with:

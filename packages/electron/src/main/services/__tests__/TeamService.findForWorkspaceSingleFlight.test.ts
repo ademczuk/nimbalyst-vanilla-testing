@@ -3,12 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   fetchMock, gitRemoteMock, safeHandleMock, handlers, workspaceStates, directories, madeDirectories,
-  directoryContents,
+  directoryContents, ensureTrackerSyncMock,
 } = vi.hoisted(() => {
   const handlers = new Map<string, (...args: any[]) => any>();
   return {
     fetchMock: vi.fn(),
     gitRemoteMock: vi.fn(),
+    ensureTrackerSyncMock: vi.fn(async () => {}),
     handlers,
     workspaceStates: new Map<string, any>(),
     directories: new Set<string>(),
@@ -110,7 +111,7 @@ vi.mock('@nimbalyst/runtime', () => ({
 vi.mock('../../database/initialize', () => ({}));
 vi.mock('../OrgProjectionService', () => ({}));
 vi.mock('../OrgAccessResolver', () => ({}));
-vi.mock('../TrackerSyncManager', () => ({}));
+vi.mock('../TrackerSyncManager', () => ({ ensureTrackerSyncForWorkspace: ensureTrackerSyncMock }));
 vi.mock('../CollabBackupService', () => ({}));
 // createTeamAuthBootstrap is invoked at TeamService module scope (assigned to
 // runAuthenticatedTeamBootstrap), so the mock must return a callable factory
@@ -118,6 +119,7 @@ vi.mock('../CollabBackupService', () => ({}));
 vi.mock('../TeamAuthBootstrap', () => ({ createTeamAuthBootstrap: (fn: unknown) => fn }));
 
 import {
+  autoMatchTeamForWorkspace,
   bindWorkspaceToSharedProject,
   findTeamForWorkspace,
   invalidateListTeamsCache,
@@ -551,6 +553,62 @@ describe('listTeams TTL cache + invalidation (RC4)', () => {
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer fresh-personal-jwt' }),
     }));
+  });
+});
+
+/**
+ * `isAuthenticated()` flips as soon as a session exists, but the personal JWT
+ * the team directory needs can arrive a beat later. The old one-shot retry
+ * fired into that gap, read the resulting empty list as "no team", and left
+ * tracker sync off for the entire app session.
+ */
+describe('autoMatchTeamForWorkspace across the JWT arrival gap', () => {
+  const okTeams = (teams: unknown[]) => async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ teams }),
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMock.mockReset();
+    gitRemoteMock.mockReset();
+    workspaceStates.clear();
+    invalidateListTeamsCache();
+    vi.useFakeTimers();
+    gitRemoteMock.mockResolvedValue(REMOTE);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('retries a lookup that could not complete, and starts tracker sync once it does', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error('Not authenticated. Sign in first.'))
+      .mockImplementation(okTeams([{
+        orgId: 'org-1', name: 'Widgets Team', gitRemoteHash: REMOTE_HASH,
+        teamProjectId: 'tp-1', createdAt: new Date().toISOString(), role: 'admin',
+      }]));
+
+    await autoMatchTeamForWorkspace('/workspace/jwt-gap');
+    expect(ensureTrackerSyncMock).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(ensureTrackerSyncMock).toHaveBeenCalledWith('/workspace/jwt-gap');
+  });
+
+  // The other half: a complete lookup that found nothing is the truth, and
+  // must not turn into a retry loop against the team API.
+  it('does not retry when the directory came back complete and nothing matched', async () => {
+    fetchMock.mockImplementation(okTeams([]));
+
+    await autoMatchTeamForWorkspace('/workspace/genuinely-solo');
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(apiTeamsFetchCallCount()).toBe(1);
+    expect(ensureTrackerSyncMock).not.toHaveBeenCalled();
   });
 });
 

@@ -9,6 +9,7 @@ import {
   trackerModeLayoutAtom,
 } from '../../store/atoms/trackers';
 import { orgInboxUnreadCountAtomFamily } from '../../store/atoms/teamInbox';
+import { windowFullScreenAtom } from '../../store/atoms/windowFullScreen';
 import { formatUnreadCount } from '../../store/projectWindowUnreadViewModel';
 import { useProjectOrg } from '../../hooks/useProjectOrg';
 import { TRACKER_DOCUMENT_PANEL_MODES } from '../TrackerMode/trackerDocumentPanelModes';
@@ -432,6 +433,32 @@ function GitStatusMenu({
   );
 }
 
+/**
+ * The way back out of fullscreen.
+ *
+ * Fullscreen removes the OS window controls, and the traffic lights the macOS
+ * title-bar accessory would reveal are not reachable while the window carries a
+ * custom traffic-light position. Without this the only exits are the menu bar
+ * and the accelerator, so the window reads as stuck.
+ */
+function ExitFullScreenButton() {
+  const fullScreen = useAtomValue(windowFullScreenAtom);
+  if (!fullScreen) return null;
+
+  return (
+    <button
+      type="button"
+      className={`window-top-bar__exit-full-screen px-1.5 ${CONTROL_BASE} ${CONTROL_GHOST} ${NO_DRAG_REGION}`}
+      data-testid="window-top-bar-exit-full-screen"
+      title="Exit Full Screen"
+      aria-label="Exit Full Screen"
+      onClick={() => window.electronAPI?.exitWindowFullScreen?.()}
+    >
+      <MaterialSymbol icon="fullscreen_exit" size={18} />
+    </button>
+  );
+}
+
 export function WindowTopBar({
   workspaceName,
   activeModeLabel,
@@ -491,9 +518,11 @@ export function WindowTopBar({
       {/* The env() inset keeps the bar clear of the OS window controls: the
           traffic lights on macOS, the caption buttons on Windows. */}
       <div className="window-top-bar__available-area absolute top-0 bottom-0 left-[env(titlebar-area-x,0px)] w-[env(titlebar-area-width,100%)] box-border grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 pl-2 pr-3.5">
-        {/* Windows/Linux only: macOS keeps the menu in the system menu bar and
-            WindowMenuBar renders nothing there. */}
-        <div className="window-top-bar__left flex items-center min-w-0 overflow-hidden">
+        {/* The exit-fullscreen control takes the space the OS window controls
+            vacate. WindowMenuBar is Windows/Linux only — macOS keeps the menu in
+            the system menu bar and it renders nothing there. */}
+        <div className="window-top-bar__left flex items-center gap-1 min-w-0 overflow-hidden">
+          <ExitFullScreenButton />
           <WindowMenuBar />
         </div>
 

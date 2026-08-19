@@ -20,6 +20,7 @@ import {
   upsertWorkspaceTrackerSchemaPatch,
   writeThroughTeamTrackerSchemaEdit,
 } from '../../services/TrackerSchemaService';
+import { applyTrackerSharingChangeToNavigation } from '../../services/TrackerNavigationService';
 import { isTrackerSyncActive, syncTrackerItem } from '../../services/TrackerSyncManager';
 import { awaitServerIssueKey } from '../../services/tracker/awaitServerIssueKey';
 import { TrackerSchemaChangeBlockedError } from '../../services/tracker/trackerSchemaChangeGuard';
@@ -98,6 +99,10 @@ async function publishExistingItemsForTrackerPromotion(
       );
     }
   }
+
+  // The tracker is the team's now, so its sidebar placement can't stay inside a
+  // personal folder — and its navigation row has to re-enter the push lane.
+  await applyTrackerSharingChangeToNavigation(workspacePath, trackerType, 'team');
 
   return {
     publishedCount,

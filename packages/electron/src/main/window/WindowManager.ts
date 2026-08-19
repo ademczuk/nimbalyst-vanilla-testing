@@ -34,6 +34,7 @@ import { windows, windowStates, anyWindowReferencesWorkspace, resolveDocumentSer
 import { shouldSaveSessionOnWindowClose } from './sessionSaveOnClose';
 import {
     registerCustomTitleBarWindow,
+    registerFullScreenChrome,
     titleBarOptionsForWindow,
 } from './windowChrome';
 
@@ -291,6 +292,7 @@ export function createWindow(
         const window = new BrowserWindow(windowOptions);
         if (isWorkspaceMode) {
             registerCustomTitleBarWindow(window);
+            registerFullScreenChrome(window);
         }
 
         // Join the startup cohort before ready-to-show can fire, so launch

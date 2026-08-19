@@ -78,7 +78,8 @@ If `JAVA_HOME` points at GraalVM, Android builds can fail during the AGP `jlink`
 - `google-services` is applied conditionally (only when `app/google-services.json` exists), so the build is green without it and push stays inert until the file is added.
 - CI can inject Firebase config from the optional `ANDROID_GOOGLE_SERVICES_JSON_BASE64` GitHub secret by decoding it to `app/google-services.json` before the Gradle build.
 - The release `signingConfig` reads the keystore path and credentials from environment variables: `NIMBALYST_ANDROID_KEYSTORE`, `NIMBALYST_ANDROID_KEYSTORE_PASSWORD`, `NIMBALYST_ANDROID_KEY_ALIAS`, `NIMBALYST_ANDROID_KEY_PASSWORD`. With no keystore the release build is unsigned. Minification stays off.
-- `.github/workflows/android-build.yml` builds both the APK and Play-ready AAB in CI and supplies the signing secrets to produce signed release artifacts when secrets are present.
+- `.github/workflows/android-build.yml` builds both the APK and Play-ready AAB in CI. Pushes and pull requests run the unsigned validation job, which receives no signing secrets at all and uploads `android-unsigned-apk` / `android-unsigned-aab`. A signed build runs only for an `android/v*` tag, in a separate job gated on the `android-release` protected environment. To get a signed AAB without cutting a tag, build locally with `npm run android:bundle:signed`.
+- To cut a signed Android release: `git tag android/vX.Y.Z && git push origin android/vX.Y.Z`, then approve the `android-release` deployment when GitHub prompts. The signed APK and AAB arrive as `android-release-apk` / `android-release-aab` on that run.
 
 The app currently boots into a native Compose shell with placeholder project, session, and settings screens plus a `TranscriptWebView` container that will load the generated transcript asset bundle once `dist-transcript/` has been synced into the Android build assets.
 

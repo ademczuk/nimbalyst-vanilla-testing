@@ -4,6 +4,7 @@ import {
   customTitleBarOptions,
   getTitleBarOverlayColors,
   registerCustomTitleBarWindow,
+  registerFullScreenChrome,
   resetTitleBarOverlayColors,
   resetWindowChromeStateForTests,
   setResolvedTitleBarOverlayColors,
@@ -60,6 +61,55 @@ describe('customTitleBarOptions', () => {
       platform: 'linux',
       overlayColors: FALLBACK,
     })).toEqual({});
+  });
+});
+
+describe('fullscreen chrome', () => {
+  function fakeWindow() {
+    const listeners = new Map<string, () => void>();
+    return {
+      listeners,
+      isDestroyed: () => false,
+      on: (event: string, listener: () => void) => {
+        listeners.set(event, listener);
+      },
+      setWindowButtonPosition: vi.fn(),
+      webContents: { send: vi.fn() },
+    };
+  }
+
+  // The custom offset takes the buttons out of the title-bar accessory macOS
+  // reveals in fullscreen, which leaves the window with no visible way out.
+  it('hands the traffic lights back to macOS in fullscreen and restores the offset on exit', () => {
+    const window = fakeWindow();
+    registerFullScreenChrome(window, 'darwin');
+
+    window.listeners.get('enter-full-screen')!();
+    expect(window.setWindowButtonPosition).toHaveBeenLastCalledWith(null);
+    expect(window.webContents.send).toHaveBeenLastCalledWith(
+      'window-chrome:full-screen-changed',
+      true,
+    );
+
+    window.listeners.get('leave-full-screen')!();
+    expect(window.setWindowButtonPosition).toHaveBeenLastCalledWith({ x: 10, y: 12 });
+    expect(window.webContents.send).toHaveBeenLastCalledWith(
+      'window-chrome:full-screen-changed',
+      false,
+    );
+  });
+
+  it('reports fullscreen without moving buttons where there are none', () => {
+    const window = fakeWindow();
+    registerFullScreenChrome(window, 'win32');
+
+    window.listeners.get('enter-full-screen')!();
+
+    expect(window.setWindowButtonPosition).not.toHaveBeenCalled();
+    expect(window.webContents.send).toHaveBeenLastCalledWith(
+      'window-chrome:full-screen-changed',
+      true,
+    );
   });
 });
 

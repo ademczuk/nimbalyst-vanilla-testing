@@ -8,6 +8,7 @@ import { type TrackerItemType } from '@nimbalyst/runtime/plugins/TrackerPlugin';
 import { MANUAL_TRACKER_ORDERING, type TrackerGroupBy, type TrackerOrdering } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import { buildKanbanStatusColumns, getRecordTitle, resolveRoleFieldName } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { trackerRelationshipLabelAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
+import { trackerModeStatusScopeAtom } from '../../store/atoms/trackers';
 import {
   buildTrackerBoardColumns,
   groupItemsIntoBoardColumns,
@@ -196,9 +197,10 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
   const relationshipLabel = useAtomValue(trackerRelationshipLabelAtom);
   const boardAxis = resolveBoardAxis(groupBy);
+  const statusScope = useAtomValue(trackerModeStatusScopeAtom);
   const columns = useMemo(
-    () => buildTrackerBoardColumns(groupBy, filterType, allItems, relationshipLabel),
-    [groupBy, filterType, allItems, relationshipLabel],
+    () => buildTrackerBoardColumns(groupBy, filterType, allItems, relationshipLabel, statusScope),
+    [groupBy, filterType, allItems, relationshipLabel, statusScope],
   );
   const columnsByKey = useMemo(
     () => new Map(columns.map(col => [col.key, col])),

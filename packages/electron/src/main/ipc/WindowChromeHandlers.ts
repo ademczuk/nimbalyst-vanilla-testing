@@ -3,6 +3,7 @@ import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import { setResolvedTitleBarOverlayColors } from '../window/windowChrome';
 import { getWindowMenuBar, invokeWindowMenuItem } from '../menu/menuBarBridge';
 import { WINDOW_MENU_CHANNELS } from '../../shared/menuBar';
+import { WINDOW_FULL_SCREEN_CHANNELS } from '../../shared/windowChrome';
 
 let handlersRegistered = false;
 
@@ -20,6 +21,16 @@ export function registerWindowChromeHandlers(): void {
       return { invoked: false };
     }
     return invokeWindowMenuItem(id, revision, BrowserWindow.fromWebContents(event.sender));
+  });
+
+  safeHandle(WINDOW_FULL_SCREEN_CHANNELS.get, (event) =>
+    BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false);
+
+  safeOn(WINDOW_FULL_SCREEN_CHANNELS.exit, (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window && !window.isDestroyed()) {
+      window.setFullScreen(false);
+    }
   });
 
   handlersRegistered = true;

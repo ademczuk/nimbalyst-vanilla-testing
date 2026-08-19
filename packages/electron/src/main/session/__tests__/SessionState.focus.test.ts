@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   clearSessionState: vi.fn(),
   onStartupActivated: vi.fn(),
   updateTrackerSchemaWorkspace: vi.fn(),
+  ensureTrackerSyncForWorkspace: vi.fn(async () => undefined),
 }));
 
 vi.mock('electron', () => ({
@@ -74,6 +75,10 @@ vi.mock('../../services/TrackerSchemaService', () => ({
   updateTrackerSchemaWorkspace: mocks.updateTrackerSchemaWorkspace,
 }));
 
+vi.mock('../../services/TrackerSyncManager', () => ({
+  ensureTrackerSyncForWorkspace: mocks.ensureTrackerSyncForWorkspace,
+}));
+
 vi.mock('../../window/StartupActivation', () => ({
   onStartupActivated: mocks.onStartupActivated,
 }));
@@ -88,6 +93,7 @@ describe('restoreSessionState window activation', () => {
     mocks.clearSessionState.mockReset();
     mocks.onStartupActivated.mockReset();
     mocks.updateTrackerSchemaWorkspace.mockReset();
+    mocks.ensureTrackerSyncForWorkspace.mockClear();
 
     mocks.createWindow.mockImplementation(() => ({
       isDestroyed: () => false,
@@ -125,6 +131,9 @@ describe('restoreSessionState window activation', () => {
       undefined,
       { showInactive: true, startupReveal: true, startupFrontmost: true },
     );
+    expect(mocks.ensureTrackerSyncForWorkspace).toHaveBeenCalledTimes(2);
+    expect(mocks.ensureTrackerSyncForWorkspace).toHaveBeenNthCalledWith(1, '/workspace/older');
+    expect(mocks.ensureTrackerSyncForWorkspace).toHaveBeenNthCalledWith(2, '/workspace/newer');
   });
 
   it('defers saved DevTools restoration until startup foregrounding is done', async () => {

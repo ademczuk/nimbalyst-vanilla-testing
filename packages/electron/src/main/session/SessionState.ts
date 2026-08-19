@@ -11,6 +11,7 @@ import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { GitStatusService } from '../services/GitStatusService';
 import { autoMatchTeamForWorkspace } from '../services/TeamService';
 import { updateTrackerSchemaWorkspace } from '../services/TrackerSchemaService';
+import { ensureTrackerSyncForWorkspace } from '../services/TrackerSyncManager';
 import { onStartupActivated } from '../window/StartupActivation';
 import { shouldSuppressSafeModeSessionSave } from './safeModeSessionState';
 
@@ -184,6 +185,12 @@ export async function restoreSessionState(): Promise<boolean> {
                             // restored windows don't block the startup tick.
                             void autoMatchTeamForWorkspace(restoredWorkspacePath).catch(() => {});
                             updateTrackerSchemaWorkspace(restoredWorkspacePath);
+                            // #2966: the CLI-open and workspace-manager paths both
+                            // start tracker sync here; restore did not, so a restored
+                            // window published items that never left the machine.
+                            void ensureTrackerSyncForWorkspace(restoredWorkspacePath).catch((error) => {
+                                logger.session.warn('Could not start tracker sync for restored workspace:', error);
+                            });
                         }, 0);
 
                         // Note: Workspace tabs will be restored by the workspace's own tab state management

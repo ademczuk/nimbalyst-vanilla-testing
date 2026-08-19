@@ -202,6 +202,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   const openItemAsDocument = useSetAtom(openTrackerItemAsDocumentAtom);
   const selectedItemId = modeLayout.selectedItemId;
   const inboxScope = modeLayout.inboxScope;
+  const statusScope = modeLayout.statusScope;
   const detailPanelWidth = modeLayout.detailPanelWidth;
   const sortBy = modeLayout.sortBy as TrackerSortColumn;
   const sortDirection = modeLayout.sortDirection as TrackerSortDirection;
@@ -614,10 +615,15 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       : filtersArchived ? [...activeItems, ...archivedItems] : activeItems;
     return filterTrackerItems(
       sourceItems,
-      { activeFilters, tagFilter: [], recentlyViewedDays: modeLayout.recentlyViewedDays },
+      {
+        activeFilters,
+        tagFilter: [],
+        recentlyViewedDays: modeLayout.recentlyViewedDays,
+        statusScope,
+      },
       filterContext,
     );
-  }, [activeFilters, activeItems, archivedItems, columnFilters, filterContext, modeLayout.recentlyViewedDays]);
+  }, [activeFilters, activeItems, archivedItems, columnFilters, filterContext, modeLayout.recentlyViewedDays, statusScope]);
 
   const allTags = useMemo(() => buildTrackerTagOptions(baseFilteredItems), [baseFilteredItems]);
 
@@ -649,6 +655,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       tagFilter,
       sourceFilter,
       recentlyViewedDays: modeLayout.recentlyViewedDays,
+      statusScope,
     }, filterContext);
   }, [
     activeFilters,
@@ -658,6 +665,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     filterContext,
     modeLayout.recentlyViewedDays,
     sourceFilter,
+    statusScope,
     tagFilter,
   ]);
 
@@ -694,6 +702,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       tagFilter,
       sourceFilter,
       recentlyViewedDays: modeLayout.recentlyViewedDays,
+      statusScope,
     }, filterContext);
     return applyFilterSet(
       filterTrackerRecords(globalItems, { searchTerm: searchQuery, typeFilter: 'all' }),
@@ -715,6 +724,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     filterEvaluationContext,
     getViewFilterValue,
     modeLayout.recentlyViewedDays,
+    statusScope,
   ]);
 
   const personalStateRequired = activeFilters.includes('favorites')
@@ -1081,6 +1091,47 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   const displayedItemCount = viewMode === 'inbox'
     ? inboxFilteredItems.length
     : viewFilteredItems.length;
+
+  // How many rows the lifecycle scope alone is withholding. Computed against the
+  // same predicates as the visible rows so the number is exactly "what you would
+  // additionally see on All" -- never a raw total, which would over-promise once
+  // other filters are on.
+  const hiddenByScopeCount = useMemo(() => {
+    if (statusScope !== 'open') return 0;
+    const showArchived = activeFilters.includes('archived');
+    const filtersArchived = (columnFilters?.clauses ?? []).some(clause => clause.field === 'archived');
+    const sourceItems = showArchived
+      ? archivedItems
+      : filtersArchived ? [...activeItems, ...archivedItems] : activeItems;
+    const unscoped = filterTrackerItems(sourceItems, {
+      activeFilters,
+      tagFilter,
+      sourceFilter,
+      recentlyViewedDays: modeLayout.recentlyViewedDays,
+      statusScope: 'all',
+    }, filterContext);
+    const searched = applyFilterSet(
+      filterTrackerRecords(unscoped, { searchTerm: searchQuery, typeFilter: 'all' }),
+      columnFilters,
+      getViewFilterValue,
+      filterEvaluationContext,
+    );
+    return Math.max(0, searched.length - viewFilteredItems.length);
+  }, [
+    statusScope,
+    activeFilters,
+    activeItems,
+    archivedItems,
+    columnFilters,
+    filterContext,
+    filterEvaluationContext,
+    getViewFilterValue,
+    modeLayout.recentlyViewedDays,
+    searchQuery,
+    sourceFilter,
+    tagFilter,
+    viewFilteredItems.length,
+  ]);
   const showColumnControls = viewMode === 'list'
     || viewMode === 'table';
 
@@ -1292,6 +1343,8 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
           filters={columnFilters}
           onFiltersChange={handleColumnFiltersChange}
           openFiltersToken={openFiltersToken}
+          statusScope={statusScope}
+          onStatusScopeChange={scope => setModeLayout({ statusScope: scope })}
         />
 
         <div className="relative" ref={importMenuRef}>
@@ -1499,6 +1552,30 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               favoriteItemIds={favoriteItemIds}
               onToggleFavorite={handleToggleFavorite}
             />
+          )}
+
+          {/*
+            Says what the scope is withholding. Silent truncation is the failure
+            mode a default-on filter has to avoid: without this line, "where is
+            the bug I closed yesterday?" has no answer on screen.
+          */}
+          {hiddenByScopeCount > 0 && (
+            <div
+              className="flex shrink-0 items-center gap-1.5 border-t border-nim px-3 py-1.5 text-[11px] text-nim-faint"
+              data-testid="tracker-hidden-by-scope"
+            >
+              <span>
+                {hiddenByScopeCount} closed item{hiddenByScopeCount === 1 ? '' : 's'} hidden
+              </span>
+              <button
+                type="button"
+                className="font-semibold text-[var(--nim-primary)] hover:underline"
+                onClick={() => setModeLayout({ statusScope: 'all' })}
+                data-testid="tracker-hidden-by-scope-show-all"
+              >
+                Show all
+              </button>
+            </div>
           )}
 
           {/* Quick Add overlay */}

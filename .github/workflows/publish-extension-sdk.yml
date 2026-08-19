@@ -33,25 +33,25 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
-    name: Publish @nimbalyst/extension-sdk
+  # Verification and the dry-run path, split out of `publish` so checking a
+  # release candidate does not require an environment approval. This job holds
+  # no publish authority: no environment, no id-token.
+  verify:
+    name: Verify @nimbalyst/extension-sdk
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          # Node 24 ships with npm >= 11.5.1, which is required for Trusted
-          # Publishing. Earlier majors need an `npm install -g npm@latest`
-          # upgrade step that hits a known self-replace bug on the runner.
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
 
@@ -73,27 +73,52 @@ jobs:
       - name: Run public release checks
         run: npm run extension-sdk:check-public
 
+      - name: Dry run pack
+        working-directory: packages/extension-sdk
+        run: npm pack --dry-run
+
+  publish:
+    name: Publish @nimbalyst/extension-sdk
+    needs: verify
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    # Adding this environment changes npm's OIDC subject claim from a ref-based
+    # subject to an environment-based one. The npm trusted-publisher config for
+    # @nimbalyst/extension-sdk must name `npm-publish` before this lands, or
+    # publishing fails to authenticate. There is no npm write token here and
+    # one must never be added as a workaround -- see MAINTAINERS.md.
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          # Node 24 ships with npm >= 11.5.1, which is required for Trusted
+          # Publishing. Earlier majors need an `npm install -g npm@latest`
+          # upgrade step that hits a known self-replace bug on the runner.
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Publish to npm (Trusted Publishing via OIDC)
-        if: ${{ !inputs.dry_run }}
         working-directory: packages/extension-sdk
         # `--provenance` is what triggers npm's OIDC exchange. Without it the
         # CLI publishes anonymously and bails on ENEEDAUTH even when
         # id-token: write is granted.
         run: npm publish --access public --provenance
 
-      - name: Dry run pack
-        if: ${{ inputs.dry_run }}
-        working-directory: packages/extension-sdk
-        run: |
-          echo "Dry-run mode: skipping npm publish"
-          npm pack --dry-run
-
       - name: Summary
         run: |
           VERSION=$(node -p "require('./packages/extension-sdk/package.json').version")
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            echo "Dry-run complete for @nimbalyst/extension-sdk@$VERSION"
-          else
-            echo "Published @nimbalyst/extension-sdk@$VERSION"
-            echo "https://www.npmjs.com/package/@nimbalyst/extension-sdk/v/$VERSION"
-          fi
+          echo "Published @nimbalyst/extension-sdk@$VERSION"
+          echo "https://www.npmjs.com/package/@nimbalyst/extension-sdk/v/$VERSION"

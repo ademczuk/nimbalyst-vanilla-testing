@@ -4,7 +4,8 @@
  * Three linking mechanisms:
  * 1. Session-based: After proposal-widget commits, links to session's tracker items
  * 2. Issue key parsing: Parses NIM-123 from any commit message detected by GitRefWatcher
- * 3. Auto-close: Fixes/Closes/Resolves keywords change tracker item status to "done"
+ * 3. Auto-close: Fixes/Closes/Resolves keywords move the item to whichever status
+ *    its own type completes on (see `trackerStatusCategory`)
  *
  * The passive GitRefWatcher path is opt-in (`enabled`, per-project overridable),
  * because it reacts to every commit in the repo including ones no agent was part
@@ -21,6 +22,11 @@ import type { CommitDetectedEvent } from '../file/GitRefWatcher';
 import type { TrackerAutomationSettings } from '../utils/store';
 import { getEffectiveTrackerAutomation } from '../utils/store';
 import type { LinkedCommit } from '@nimbalyst/runtime';
+import {
+  getDoneStatusValue,
+  getWorkflowStatusFieldName,
+  isTerminalStatus,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
 
 // ---------------------------------------------------------------------------
 // Issue key parsing
@@ -353,7 +359,13 @@ export class CommitTrackerLinker {
   }
 
   /**
-   * Set a tracker item's status to "done" via a commit closing keyword.
+   * Close a tracker item via a commit closing keyword.
+   *
+   * The status written is the one the item's OWN type closes into, not the
+   * literal `'done'`. Every type ends on a different value -- a plan on
+   * `completed`, a release on `released` -- so hardcoding `'done'` stamped a
+   * status that was not in the type's option list at all, surviving only
+   * because the validator downgrades unknown select values to warnings.
    */
   private async closeTrackerItem(
     itemId: string,
@@ -364,7 +376,7 @@ export class CommitTrackerLinker {
     if (!db) return;
 
     const result = await db.query(
-      `SELECT data FROM tracker_items WHERE id = $1 AND workspace = $2`,
+      `SELECT type, data FROM tracker_items WHERE id = $1 AND workspace = $2`,
       [itemId, workspacePath]
     );
     if (result.rows.length === 0) return;
@@ -373,18 +385,35 @@ export class CommitTrackerLinker {
       ? JSON.parse(result.rows[0].data)
       : result.rows[0].data || {};
 
-    if (data.status === 'done') return; // Already closed
+    const type = String(result.rows[0].type ?? data.type ?? '');
+    const statusField = getWorkflowStatusFieldName(type);
+    const oldStatus = data[statusField];
 
-    const oldStatus = data.status;
-    data.status = 'done';
+    // Already terminal -- including cancelled. A commit must not reopen an
+    // abandoned item by "closing" it.
+    if (isTerminalStatus(type, oldStatus)) return;
+
+    const closingStatus = getDoneStatusValue(type);
+    if (!closingStatus) {
+      // A type with no done-category status (an idea ends cancelled or
+      // converted, never "done") cannot be closed by a commit. Leaving the
+      // status alone is right; inventing one is how the out-of-schema write
+      // this method used to make got started.
+      logger.main.info(
+        `[CommitTrackerLinker] ${itemId} (${type}) has no completed status; leaving it open`,
+      );
+      return;
+    }
+
+    data[statusField] = closingStatus;
 
     // Add activity log entry
     const activity: any[] = data.activity || [];
     activity.push({
       action: 'status_changed',
-      field: 'status',
+      field: statusField,
       oldValue: oldStatus,
-      newValue: 'done',
+      newValue: closingStatus,
       timestamp: new Date().toISOString(),
       note: `Closed via commit ${commitHash.slice(0, 7)}`,
     });

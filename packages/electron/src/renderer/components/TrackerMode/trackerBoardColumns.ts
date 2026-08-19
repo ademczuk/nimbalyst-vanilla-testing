@@ -45,7 +45,9 @@ import {
   resolveRoleFieldName,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { compareCellValues } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerRowData';
+import { isTerminalStatus } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
 import { generateKeyBetween } from '@nimbalyst/runtime/utils/fractionalIndex';
+import type { TrackerStatusScope } from '../../store/atoms/trackers';
 
 export interface TrackerBoardColumn {
   /**
@@ -78,6 +80,19 @@ export function resolveBoardAxis(groupBy: TrackerGroupBy): TrackerGroupingAxis {
   return groupBy === 'none' ? 'status' : groupBy;
 }
 
+/**
+ * Which type to resolve a status lane against on the all-types board.
+ *
+ * A lane there is just a status value, and the same value can be declared by
+ * several types. Any type that declares it answers the same way for terminality
+ * (that is what a shared value means), so the first item carrying it decides;
+ * with no item at all the lane is empty anyway and the fallback is harmless.
+ */
+function columnOwnerType(status: string, items: TrackerRecord[]): string {
+  const match = items.find(item => (getRecordStatus(item) || '').toLowerCase() === status);
+  return match?.primaryType ?? '';
+}
+
 /** The board's columns, left to right. */
 export function buildTrackerBoardColumns(
   groupBy: TrackerGroupBy,
@@ -85,15 +100,30 @@ export function buildTrackerBoardColumns(
   items: TrackerRecord[],
   /** Names relationship lanes from the referenced record; see the resolver's docs. */
   resolveLabel?: TrackerRelationshipLabelResolver,
+  /**
+   * Lifecycle scope. On `open`, terminal lanes are dropped -- the scope has
+   * already removed their cards, so leaving the lanes would render a row of
+   * permanently empty columns pushing the working ones off screen.
+   * `all` and `closed` keep every lane the schema declares.
+   */
+  statusScope: TrackerStatusScope = 'all',
 ): TrackerBoardColumn[] {
   const axis = resolveBoardAxis(groupBy);
   if (axis === 'status') {
-    return buildKanbanStatusColumns(filterType, items).map(column => ({
-      key: column.value,
-      value: column.value,
-      label: column.label,
-      empty: false,
-    }));
+    const type = filterType === 'all' ? '' : filterType;
+    return buildKanbanStatusColumns(filterType, items)
+      .filter(column => (
+        statusScope !== 'open'
+        // In the all-types board no single type owns the lane, so the lane is
+        // named by value and resolved against whichever type declares it.
+        || !isTerminalStatus(type || columnOwnerType(column.value, items), column.value)
+      ))
+      .map(column => ({
+        key: column.value,
+        value: column.value,
+        label: column.label,
+        empty: false,
+      }));
   }
 
   const byKey = new Map<string, TrackerBoardColumn>();

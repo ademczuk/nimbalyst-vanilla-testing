@@ -1,0 +1,51 @@
+# Code owners for the release trust boundary.
+#
+# This file deliberately does NOT cover the whole repository. Editor, runtime,
+# extension, UI, test, and documentation changes are ordinary maintainer
+# territory and need only a maintainer's approval.
+#
+# What is listed here is every path whose contents execute inside a job that
+# holds signing or publishing credentials. The signed release build runs
+# `npm ci` (which applies `patches/` via the root `postinstall`) and then runs
+# the electron-builder hooks with Apple notarization and DigiCert credentials in
+# the environment. A change to any of those paths can therefore reach those
+# credentials on the next tagged release, regardless of who wrote it.
+#
+# This follows from how the build works, not from a judgment about any
+# maintainer. It applies to the project lead's own pull requests on the same
+# paths. See MAINTAINERS.md for the public explanation and the exit condition.
+
+# --- Workflow and release definitions ---------------------------------------
+
+/.github/workflows/       @ghinkle
+/.github/actions/         @ghinkle
+/.github/CODEOWNERS       @ghinkle
+
+# The release job runs generated and helper scripts from this directory, so the
+# whole directory is owned rather than an allowlist of filenames that goes stale
+# silently as scripts are added.
+/scripts/                 @ghinkle
+
+# Release runbooks followed by the release operator. The explicit entries are
+# the ones named in the plan; the glob also catches convention-named release
+# commands added later, which an allowlist alone would miss.
+/.claude/commands/*release*.md          @ghinkle
+/.claude/commands/release-alpha.md      @ghinkle
+/.claude/commands/promote-public-release.md @ghinkle
+/.claude/commands/release-ios.md        @ghinkle
+/.claude/commands/ios-release.md        @ghinkle
+
+# --- Code executed by the secret-bearing build, signing, and publish jobs ----
+
+# electron-builder invokes afterPack.js, afterSign.js, and notarize.js with
+# APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, MACOS_CERTIFICATE, and the DigiCert
+# credentials in the environment.
+/packages/electron/build/ @ghinkle
+
+# Applied by patch-package from the root postinstall during `npm ci`.
+/patches/                 @ghinkle
+
+# Define what `npm ci` installs and executes inside the credentialed job.
+/package.json             @ghinkle
+/package-lock.json        @ghinkle
+/packages/electron/package.json @ghinkle

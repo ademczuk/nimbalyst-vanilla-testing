@@ -104,6 +104,8 @@ function renderControls(overrides: Partial<Parameters<typeof TrackerViewHeaderCo
         filterFields={filterFields}
         filters={null}
         onFiltersChange={onFiltersChange}
+        statusScope="open"
+        onStatusScopeChange={vi.fn()}
         {...overrides}
       />
     </Provider>,
@@ -222,6 +224,8 @@ describe('TrackerViewHeaderControls', () => {
       showColumnControls: true,
       filters: null,
       onFiltersChange,
+      statusScope: 'open' as const,
+      onStatusScopeChange: vi.fn(),
     };
     const { rerender } = render(
       <TrackerViewHeaderControls {...sharedProps} filterFields={filterFields} />,

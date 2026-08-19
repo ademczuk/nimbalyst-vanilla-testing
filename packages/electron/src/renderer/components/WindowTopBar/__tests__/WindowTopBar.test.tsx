@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { getDefaultStore } from 'jotai';
 import { WindowTopBar, clampGitFeedbackMessage } from '../WindowTopBar';
+import { windowFullScreenAtom } from '../../../store/atoms/windowFullScreen';
 import { NO_DRAG_REGION } from '../dragRegion';
 
 // Only the icon needs stubbing (jsdom has no font ligatures). The rest of the
@@ -14,7 +16,10 @@ vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   ),
 }));
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  getDefaultStore().set(windowFullScreenAtom, false);
+});
 
 describe('WindowTopBar', () => {
   it('renders stable markers, workspace identity, and active mode', () => {
@@ -346,6 +351,37 @@ describe('WindowTopBar', () => {
     expect(feedback.textContent!.endsWith('…')).toBe(true);
     expect(feedback.textContent).toContain('log line 0');
     expect(feedback.getAttribute('title')!.length).toBeLessThanOrEqual(2001);
+  });
+
+  // Fullscreen takes the OS window controls away, so the bar has to carry the
+  // only visible way back out.
+  it('exposes an exit control only while the window is fullscreen', () => {
+    const exitWindowFullScreen = vi.fn();
+    (window as unknown as { electronAPI: Record<string, unknown> }).electronAPI = {
+      exitWindowFullScreen,
+    };
+
+    render(
+      <WindowTopBar
+        workspaceName="Repo"
+        activeModeLabel="Files"
+        gitStatus={null}
+        gitActions={{
+          onPull: () => {},
+          onPush: () => {},
+          onOpenLog: () => {},
+        }}
+      />,
+    );
+
+    expect(screen.queryByTestId('window-top-bar-exit-full-screen')).toBeNull();
+
+    act(() => {
+      getDefaultStore().set(windowFullScreenAtom, true);
+    });
+
+    fireEvent.click(screen.getByTestId('window-top-bar-exit-full-screen'));
+    expect(exitWindowFullScreen).toHaveBeenCalledTimes(1);
   });
 
   it('leaves short git feedback untouched', () => {
