@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- A Claude Code CLI session no longer hangs when the CLI asks you to confirm a model switch.
 - Opening an extension panel while an agent session is running no longer takes the whole window down.
 - Starting an agent after moving, renaming, or deleting the project folder now says the folder is gone and names it, instead of reporting a broken agent binary and then hanging for minutes.
 - Feedback requests now validate attached artifacts before publishing, keep artifact links in their originating team project, and reliably hand live-preview capacity to the next waiting preview.
@@ -49,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Team messages, mentions, and notifications now arrive when the app finishes starting before you are signed in, instead of going quiet for the rest of the session.
 - The inbox's organization filter no longer opens onto an empty menu when there is nothing to narrow by.
 - The effort level you select now applies to Claude Code CLI sessions instead of being ignored. (#996, contributed by @Derazien)
+- MCP servers configured for a specific project in Claude Code now load on Windows instead of being silently ignored. (#1317, contributed by @Derazien)
 
 ### Removed
 <!-- Removed features go here -->
