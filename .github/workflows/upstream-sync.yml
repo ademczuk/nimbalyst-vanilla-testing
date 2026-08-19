@@ -39,7 +39,8 @@ jobs:
       - name: Fetch upstream
         run: |
           git remote add upstream https://github.com/nimbalyst/nimbalyst.git
-          git fetch upstream main --tags --prune --no-recurse-submodules
+          # --force so a moved upstream tag (e.g. v0.72.0) updates instead of failing the run
+          git fetch upstream main --tags --prune --force --no-recurse-submodules
 
       - name: Merge upstream/main
         run: |
@@ -48,4 +49,5 @@ jobs:
       - name: Push main and tags
         run: |
           git push origin HEAD:main
-          git push origin --tags
+          # --force on tags only: mirror must follow re-tagged upstream releases
+          git push origin --tags --force
