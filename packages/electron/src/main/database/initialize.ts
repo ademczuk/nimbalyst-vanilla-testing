@@ -10,6 +10,9 @@ import path from 'path';
 import { database, legacyPgliteDatabase } from './PGLiteDatabaseWorker';
 import { CORRUPTED_METADATA_WIPE_SQL } from './corruptedMetadataWipe';
 import { resolveBackend } from './sqlite/BackendSelector';
+import { refreshMigrationFlagInBackground } from './sqlite/migrationFlag';
+import { dirSizeBytes } from './sqlite/dirSize';
+import { runForcedMigration } from './bootMigration';
 import { SQLiteDatabaseProxy } from './sqlite/SQLiteDatabaseProxy';
 import { logger } from '../utils/logger';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
@@ -132,10 +135,30 @@ export async function initializeDatabase(): Promise<SessionStore> {
     //   - fresh install      -> SQLite (set by the migration flow)
     // For now the boot path always opens PGLite; the actual switchover is
     // a follow-up step in the migration plan (see service-layer audit).
-    const backendChoice = resolveBackend({ userDataPath });
+    let backendChoice = resolveBackend({ userDataPath });
     logger.main.info(
       `[Database] Backend selector resolved to '${backendChoice.backend}' (reason: ${backendChoice.reason})`,
     );
+
+    // Unconditional per-launch heartbeat. Until this shipped there was no way
+    // to size the population still on PGLite: `database_error` carries the
+    // backend but only fires on failure, and `pglite_legacy_dir_present` only
+    // fires *after* a migration. `pglite_dir_size_bytes` is what tells us how
+    // long a forced migration would take for the heavy tail.
+    try {
+      AnalyticsService.getInstance().sendEvent('database_backend_active', {
+        active_backend: backendChoice.backend,
+        reason: backendChoice.reason,
+        pglite_dir_size_bytes: dirSizeBytes(path.join(userDataPath, 'pglite-db')),
+        migration_attempts: backendChoice.state?.migrationAttempts?.count ?? 0,
+      });
+    } catch (heartbeatErr) {
+      logger.main.warn('[Database] backend heartbeat failed', heartbeatErr);
+    }
+
+    // Keep the kill switch warm for the next launch. Never awaited — the boot
+    // path reads only the disk cache.
+    refreshMigrationFlagInBackground(userDataPath);
 
     // Heartbeat: when SQLite is active but a preserved `pglite-db.migrated-*`
     // directory still exists, surface it so we can decide when to retire the
@@ -178,6 +201,29 @@ export async function initializeDatabase(): Promise<SessionStore> {
       database.useDatabase(legacyPgliteDatabase, 'pglite');
       await timeStartupPhase('PGLite.initialize', () => database.initialize());
       logger.main.info('[Database] PGLite initialized successfully');
+
+      // Forced migration to SQLite. This runs *after* PGLite is open because
+      // the migrator reads source rows through the live worker (see the
+      // `__ELECTRON_LOG__` trap documented on `LivePgliteReader`). Anything
+      // short of a successful cutover falls through and the user keeps
+      // running on the PGLite store that is already initialized above.
+      if (backendChoice.migrationDue) {
+        const migrated = await runForcedMigration({
+          userDataPath,
+          schemaDir: resolveSchemaDir(),
+          resolved: backendChoice,
+          proxy: await getMigrationProxy(),
+        }).catch((err) => {
+          logger.main.error('[Database] Forced migration wiring failed; staying on PGLite', err);
+          return false;
+        });
+        if (migrated) {
+          // app.relaunch() + app.quit() are already in flight. Park here so
+          // nothing else initializes against a database that is being torn
+          // down; the process exits out from under this promise.
+          await new Promise<never>(() => {});
+        }
+      }
     }
 
     logger.main.info('[Database] Backup service initialized', {

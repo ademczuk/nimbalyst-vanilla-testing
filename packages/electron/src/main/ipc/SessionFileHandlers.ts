@@ -95,8 +95,27 @@ export function setupSessionFileHandlers(): void {
    */
   safeHandle('session-files:get-by-sessions', async (event, sessionIds: string[], linkType?: string) => {
     try {
-      const files = await SessionFilesRepository.getFilesBySessionMany(sessionIds, linkType as any);
-      return { success: true, files };
+      const unique = Array.from(new Set(sessionIds ?? [])).filter(Boolean);
+      if (unique.length === 0) return { success: true, files: [] };
+
+      // Go through the per-session cache so batching keeps NIM-816's
+      // epoch-based invalidation semantics, but let every cache MISS share a
+      // single `getFilesBySessionMany` round trip. The shared query is created
+      // lazily, so an all-hit batch issues no query at all. It fetches the
+      // whole requested set (a superset of the misses) — one query either way.
+      let shared: Promise<FileLink[]> | null = null;
+      const runShared = () => (shared ??= SessionFilesRepository.getFilesBySessionMany(unique, linkType as any));
+
+      const perSession = await Promise.all(
+        unique.map((sessionId) =>
+          sessionFilesCache.get(sessionId, linkType, async () => {
+            const all = await runShared();
+            return all.filter((file) => file.sessionId === sessionId);
+          })
+        )
+      );
+
+      return { success: true, files: perSession.flat() };
     } catch (error) {
       logger.main.error('[SessionFileHandlers] Failed to batch get files by sessions:', error);
       return { success: false, error: String(error), files: [] };

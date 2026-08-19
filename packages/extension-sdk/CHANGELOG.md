@@ -8,6 +8,7 @@ The SDK is versioned independently of the Nimbalyst app. Each release declares i
 
 | SDK version | Minimum Nimbalyst app version |
 | --- | --- |
+| 0.5.0 | 0.70.0 |
 | 0.4.0 | 0.70.0 |
 | 0.3.0 | 0.70.0 |
 | 0.2.2 | 0.58.5 |
@@ -17,6 +18,20 @@ The SDK is versioned independently of the Nimbalyst app. Each release declares i
 | 0.1.0 | 0.58.5 |
 
 ## [Unreleased]
+
+## [0.5.0]
+
+Still runs on Nimbalyst 0.70.0: a host that declares no capabilities is treated as fully capable, so an extension written against this release keeps working on older desktop builds.
+
+### Added
+
+- `host.capabilities` plus `editorHostSupports()` and `editorHostCapabilityGap()` let one editor bundle run in hosts that cannot honour every part of `EditorHost` — check a capability before calling instead of discovering the gap at runtime.
+- `AiAgentProviderContribution` declares `supportsSlashCommands`, `supportsSkills`, and `compaction` instead of having the app infer them; all three default to off, so an unclaimed affordance is hidden rather than offered and silently broken.
+- `AgentProtocol.compactSession()` is the optional real compaction entry point for a transport that has one.
+
+### Changed
+
+- `host.filePath` is documented as an opaque document identifier — an absolute path on the desktop host, a synthetic URI on a host with no filesystem. Gate anything that touches disk on the `localFileSave` / `projectFileSystem` capabilities.
 
 ## [0.4.0]
 

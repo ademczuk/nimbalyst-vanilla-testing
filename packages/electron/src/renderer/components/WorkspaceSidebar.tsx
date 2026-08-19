@@ -15,6 +15,7 @@ import { KeyboardShortcuts } from '../../shared/KeyboardShortcuts';
 import { HelpTooltip } from '../help';
 import { store, gitStatusMapAtom, revealRequestAtom, rawFileTreeAtom, fileTreeLoadedAtom, type FileGitStatus as AtomFileGitStatus } from '../store';
 import { sessionFileEditsAtom } from '../store/atoms/sessionFiles';
+import { loadSessionFilesResult } from '../services/sessionFilesLoader';
 import { refreshFileTree } from '../store/listeners/fileTreeListeners';
 import { useTabsActions } from '../contexts/TabsContext';
 import { useProjectOrg } from '../hooks/useProjectOrg';
@@ -551,8 +552,8 @@ export function WorkspaceSidebar({
 
     try {
       const [readResult, writtenResult] = await Promise.all([
-        window.electronAPI.invoke('session-files:get-by-session', sessionId, 'read'),
-        window.electronAPI.invoke('session-files:get-by-session', sessionId, 'edited')
+        loadSessionFilesResult(sessionId, 'read'),
+        loadSessionFilesResult(sessionId, 'edited')
       ]);
 
       setSessionFileFilters({

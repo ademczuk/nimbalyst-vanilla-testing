@@ -38,6 +38,7 @@ import {
 import { MigrationProgressReporter } from './MigrationProgressReporter';
 import { commitMigrationToSqlite } from './BackendSelector';
 import { classifyDatabaseError } from '../DatabaseErrorTelemetry';
+import { dirSizeBytes } from './dirSize';
 
 /**
  * Read surface satisfied by the live PGLiteDatabaseWorker. Mirrors the adapter
@@ -334,32 +335,6 @@ function buildReadOnlyAdapter(reader: LivePgliteReader): PGLiteHandle {
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
-
-function dirSizeBytes(dir: string): number {
-  let total = 0;
-  const stack: string[] = [dir];
-  while (stack.length > 0) {
-    const p = stack.pop()!;
-    let stat: fs.Stats;
-    try {
-      stat = fs.lstatSync(p);
-    } catch {
-      continue;
-    }
-    if (stat.isDirectory()) {
-      let entries: string[] = [];
-      try {
-        entries = fs.readdirSync(p);
-      } catch {
-        continue;
-      }
-      for (const e of entries) stack.push(path.join(p, e));
-    } else if (stat.isFile()) {
-      total += stat.size;
-    }
-  }
-  return total;
-}
 
 async function freeBytesOnPath(p: string): Promise<number> {
   // `fs.statfs` is Node 18.15+ / 20+. We're on Node 22 in Electron 33+.

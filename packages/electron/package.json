@@ -67,7 +67,7 @@
     "@nimbalyst/extension-datamodellm": "*",
     "@nimbalyst/mockuplm": "*",
     "@nimbalyst/runtime": "*",
-    "@openai/codex-sdk": "^0.144.1",
+    "@openai/codex-sdk": "^0.148.0",
     "@revolist/react-datagrid": "^4.20.2",
     "@types/glob": "^8.1.0",
     "@types/js-yaml": "^4.0.9",

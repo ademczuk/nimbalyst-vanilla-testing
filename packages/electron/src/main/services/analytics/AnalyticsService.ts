@@ -101,6 +101,24 @@ export class AnalyticsService {
     })
   }
 
+  /**
+   * Resolve a PostHog feature flag. Returns `null` when the answer is unknown
+   * — client not up, analytics opted out, or the network call failed — so
+   * callers can distinguish "off" from "we couldn't ask". Never throws.
+   */
+  public async getFeatureFlag(key: string): Promise<boolean | null> {
+    if (!this.postHogClient || !this.allowedToSendAnalytics()) {
+      return null;
+    }
+    try {
+      const value = await this.postHogClient.isFeatureEnabled(key, this.getDistinctId());
+      return value ?? null;
+    } catch (err) {
+      this.log.warn(`[Analytics] Feature flag '${key}' lookup failed`, err);
+      return null;
+    }
+  }
+
   public async optIn(): Promise<void> {
     this.log.info('Processing analytics opt-in');
 

@@ -15,6 +15,7 @@ import {
   setFileGutterCollapsedAtom,
 } from '../../store/atoms/projectState';
 import { sessionFileEditsAtom, sessionPendingReviewFilesAtom } from '../../store/atoms/sessionFiles';
+import { loadSessionFilesResult } from '../../services/sessionFilesLoader';
 
 interface FileGutterProps {
   sessionId: string | null;
@@ -142,11 +143,7 @@ export function FileGutter({ sessionId, workspacePath, type, onFileClick, pendin
     }
     try {
       if (typeof window !== 'undefined' && (window as any).electronAPI) {
-        const result = await (window as any).electronAPI.invoke(
-          'session-files:get-by-session',
-          sessionId,
-          type
-        );
+        const result = await loadSessionFilesResult(sessionId, type);
         if (result.success && result.files) {
           const fileData: FileData[] = result.files.map((f: any) => ({
             filePath: f.filePath,

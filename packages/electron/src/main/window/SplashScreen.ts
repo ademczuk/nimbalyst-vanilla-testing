@@ -90,6 +90,40 @@ function buildSplashHTML(): string {
     align-items: center;
     gap: 2px;
   }
+  /* Migration progress. Hidden until the boot path calls into it, so an
+     ordinary launch renders exactly as it always has. */
+  #migration { display: none; width: 100%; padding: 0 30px; }
+  body.migrating #migration { display: block; }
+  body.migrating .status { display: none; }
+  body.migrating .icon { width: 64px; height: 64px; margin-bottom: 20px; }
+  body.migrating .title { font-size: 19px; margin-bottom: 6px; }
+  #migration-headline {
+    font-size: 12.5px; color: ${subtextColor};
+    margin-bottom: 22px; text-align: center; line-height: 1.45;
+  }
+  #migration-track {
+    width: 100%; height: 4px; border-radius: 2px;
+    background: ${dark ? '#3a3a3a' : '#e5e7eb'};
+    overflow: hidden;
+  }
+  #migration-fill {
+    height: 100%; width: 0%; border-radius: 2px;
+    background: #60a5fa;
+    transition: width 400ms ease-out;
+  }
+  #migration-meta {
+    display: flex; justify-content: space-between;
+    margin-top: 10px; font-size: 11.5px; color: ${subtextColor};
+  }
+  #migration-eta { color: ${dotColor}; }
+  #migration-phase {
+    margin-top: 16px; text-align: center;
+    font-size: 11px; color: ${dotColor};
+  }
+  #migration-note {
+    margin-top: 18px; font-size: 10.5px; color: ${dotColor};
+    text-align: center; line-height: 1.5;
+  }
   .dots {
     display: inline-flex;
     gap: 3px;
@@ -114,6 +148,16 @@ function buildSplashHTML(): string {
   ${iconHtml}
   <div class="title">Nimbalyst</div>
   <div class="status">Initializing<span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span></div>
+  <div id="migration">
+    <div id="migration-headline">Upgrading your local database</div>
+    <div id="migration-track"><div id="migration-fill"></div></div>
+    <div id="migration-meta">
+      <span id="migration-primary">Preparing&hellip;</span>
+      <span id="migration-eta"></span>
+    </div>
+    <div id="migration-phase"></div>
+    <div id="migration-note">This happens once. Please leave Nimbalyst open &mdash; it will restart itself when finished.</div>
+  </div>
 </body>
 </html>`;
 }
@@ -160,6 +204,55 @@ export function showSplashScreen(): BrowserWindow | null {
     });
 
     return splashWindow;
+}
+
+/**
+ * Switch the splash into migration mode.
+ *
+ * The window is about to be on screen for minutes rather than a second, so it
+ * has to behave like a real window: reachable from the taskbar/dock switcher
+ * and not lost behind whatever the user does next. (It is already draggable —
+ * the body carries `-webkit-app-region: drag`.)
+ */
+export function enterSplashMigrationMode(): void {
+    if (!splashWindow || splashWindow.isDestroyed()) return;
+    splashWindow.setSize(340, 380);
+    splashWindow.center();
+    splashWindow.setAlwaysOnTop(true);
+    splashWindow.setSkipTaskbar(false);
+    void runInSplash("document.body.classList.add('migrating')");
+}
+
+/**
+ * Push a progress frame into the splash. Fire-and-forget: a failed update is
+ * a cosmetic problem, and must never interrupt the migration driving it.
+ */
+export function updateSplashMigrationProgress(view: {
+    percent: number;
+    primary: string;
+    eta: string;
+    phase: string;
+}): void {
+    const set = (id: string, prop: 'textContent' | 'width', value: string) =>
+        prop === 'width'
+            ? `(function(){var e=document.getElementById('${id}'); if(e) e.style.width=${JSON.stringify(value)};})();`
+            : `(function(){var e=document.getElementById('${id}'); if(e) e.textContent=${JSON.stringify(value)};})();`;
+
+    void runInSplash([
+        set('migration-fill', 'width', `${view.percent}%`),
+        set('migration-primary', 'textContent', view.primary),
+        set('migration-eta', 'textContent', view.eta),
+        set('migration-phase', 'textContent', view.phase),
+    ].join(''));
+}
+
+async function runInSplash(script: string): Promise<void> {
+    if (!splashWindow || splashWindow.isDestroyed()) return;
+    try {
+        await splashWindow.webContents.executeJavaScript(script);
+    } catch {
+        // The window can close underneath us mid-migration; nothing to do.
+    }
 }
 
 /**

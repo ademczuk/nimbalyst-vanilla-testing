@@ -2427,9 +2427,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@openai/codex@0.144.1",
+      "id": "@openai/codex@0.148.0",
       "name": "@openai/codex",
-      "version": "0.144.1",
+      "version": "0.148.0",
       "rawLicense": "Apache-2.0",
       "selectedLicense": "Apache-2.0",
       "reviewRequired": false,
@@ -2443,14 +2443,14 @@
       "installPaths": [
         "node_modules/@openai/codex"
       ],
-      "resolved": "https://registry.npmjs.org/@openai/codex/-/codex-0.144.1.tgz",
+      "resolved": "https://registry.npmjs.org/@openai/codex/-/codex-0.148.0.tgz",
       "licenseFiles": [],
       "noticeFiles": []
     },
     {
-      "id": "@openai/codex-sdk@0.144.1",
+      "id": "@openai/codex-sdk@0.148.0",
       "name": "@openai/codex-sdk",
-      "version": "0.144.1",
+      "version": "0.148.0",
       "rawLicense": "Apache-2.0",
       "selectedLicense": "Apache-2.0",
       "reviewRequired": false,
@@ -2462,7 +2462,7 @@
       "installPaths": [
         "node_modules/@openai/codex-sdk"
       ],
-      "resolved": "https://registry.npmjs.org/@openai/codex-sdk/-/codex-sdk-0.144.1.tgz",
+      "resolved": "https://registry.npmjs.org/@openai/codex-sdk/-/codex-sdk-0.148.0.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",

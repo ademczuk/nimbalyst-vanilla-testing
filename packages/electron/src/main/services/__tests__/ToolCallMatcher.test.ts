@@ -911,87 +911,109 @@ describe('ToolCallMatcher', () => {
   describe('matchSession raw-message bounds', () => {
     const queryMock = database.query as ReturnType<typeof vi.fn>;
 
+    /**
+     * Dispatch by SQL, and assert AFTER matchSession returns.
+     *
+     * These used to chain mockImplementationOnce with the expectations inside
+     * the mock bodies. matchSession wraps everything in try/catch, so when the
+     * query ORDER changed the expect() threw, got swallowed, and the tests
+     * still passed on the fallback `return 0` — green while testing nothing.
+     * Capture here, assert outside.
+     */
+    function stubSession(opts: {
+      files: Array<Record<string, unknown>>;
+      messages?: Array<Record<string, unknown>>;
+      existingMatches?: Array<{ session_file_id: string; match_score: number; tool_use_id: string | null }>;
+    }) {
+      const captured: {
+        messagesSql?: string;
+        messagesParams?: unknown[];
+        insertParams?: unknown[];
+        sawMessagesQuery: boolean;
+      } = { sawMessagesQuery: false };
+
+      queryMock.mockImplementation(async (sql: string, params: unknown[]) => {
+        if (sql.includes('FROM ai_sessions')) return { rows: [{ workspace_id: '/workspace' }] };
+        if (sql.includes('FROM session_files')) return { rows: opts.files };
+        if (sql.includes('FROM ai_tool_call_file_edits')) return { rows: opts.existingMatches ?? [] };
+        if (sql.includes('FROM ai_agent_messages')) {
+          captured.sawMessagesQuery = true;
+          captured.messagesSql = sql;
+          captured.messagesParams = params;
+          return { rows: opts.messages ?? [] };
+        }
+        if (/^\s*INSERT/i.test(sql)) captured.insertParams = params;
+        return { rows: [] };
+      });
+
+      return captured;
+    }
+
+    const BOUND_LOWER = '(EXTRACT(EPOCH FROM created_at) * 1000) >= $2';
+    const BOUND_UPPER = '(EXTRACT(EPOCH FROM created_at) * 1000) <= $3';
+
     it('bounds sessions without definitive tool IDs to the editable file window', async () => {
       const sessionId = 'bounded-session';
       const earliestTimestamp = 1_700_000_000_000;
       const latestTimestamp = earliestTimestamp + 45_000;
 
-      queryMock
-        .mockImplementationOnce(async (sql: string, params: unknown[]) => {
-          expect(sql).toContain('FROM ai_sessions');
-          expect(params).toEqual([sessionId]);
-          return { rows: [{ workspace_id: '/workspace' }] };
-        })
-        .mockImplementationOnce(async (sql: string, params: unknown[]) => {
-          expect(sql).toContain('FROM session_files');
-          expect(params).toEqual([sessionId]);
-          return {
-            rows: [
-              { id: 'early-file', file_path: '/workspace/src/early.ts', timestamp_ms: earliestTimestamp, metadata: {} },
-              { id: 'late-file', file_path: '/workspace/src/late.ts', timestamp_ms: latestTimestamp, metadata: {} },
-            ],
-          };
-        })
-        .mockImplementationOnce(async (sql: string, params: unknown[]) => {
-          expect(sql).toContain('FROM ai_agent_messages');
-          expect(sql).toContain('(EXTRACT(EPOCH FROM created_at) * 1000) >= $2');
-          expect(sql).toContain('(EXTRACT(EPOCH FROM created_at) * 1000) <= $3');
-          expect(params).toEqual([sessionId, earliestTimestamp - 10_000, latestTimestamp + 10_000]);
-          return { rows: [] };
-        });
+      const captured = stubSession({
+        files: [
+          { id: 'early-file', file_path: '/workspace/src/early.ts', timestamp_ms: earliestTimestamp, metadata: {} },
+          { id: 'late-file', file_path: '/workspace/src/late.ts', timestamp_ms: latestTimestamp, metadata: {} },
+        ],
+      });
 
       await expect(toolCallMatcher.matchSession(sessionId)).resolves.toBe(0);
-      expect(queryMock).toHaveBeenCalledTimes(3);
+
+      expect(captured.sawMessagesQuery).toBe(true);
+      expect(captured.messagesSql).toContain(BOUND_LOWER);
+      expect(captured.messagesSql).toContain(BOUND_UPPER);
+      expect(captured.messagesParams).toEqual([
+        sessionId,
+        earliestTimestamp - 10_000,
+        latestTimestamp + 10_000,
+      ]);
     });
 
     it('preserves out-of-window exact toolUseId matches with an unbounded lookup', async () => {
       const sessionId = 'definitive-id-session';
       const fileTimestamp = 1_700_000_000_000;
       const toolTimestamp = fileTimestamp - 60_000;
-      let insertedParams: unknown[] | undefined;
 
-      queryMock
-        .mockImplementationOnce(async () => ({ rows: [{ workspace_id: '/workspace' }] }))
-        .mockImplementationOnce(async () => ({
-          rows: [{
-            id: 'file-1',
-            file_path: '/workspace/src/kept.ts',
-            timestamp_ms: fileTimestamp,
-            metadata: { toolUseId: 'tool-definitive' },
-          }],
-        }))
-        .mockImplementationOnce(async (sql: string, params: unknown[]) => {
-          expect(sql).toContain('FROM ai_agent_messages');
-          expect(sql).not.toContain('(EXTRACT(EPOCH FROM created_at) * 1000) >= $2');
-          expect(sql).not.toContain('(EXTRACT(EPOCH FROM created_at) * 1000) <= $3');
-          expect(params).toEqual([sessionId]);
-          return {
-            rows: [{
-              id: 42,
-              created_at_ms: toolTimestamp,
-              metadata: {},
-              content: JSON.stringify({
-                type: 'assistant',
-                message: {
-                  content: [{
-                    type: 'tool_use',
-                    id: 'tool-definitive',
-                    name: 'Edit',
-                    input: { file_path: '/workspace/src/kept.ts' },
-                  }],
-                },
-              }),
-            }],
-          };
-        })
-        .mockImplementationOnce(async () => ({ rows: [] }))
-        .mockImplementationOnce(async (_sql: string, params: unknown[]) => {
-          insertedParams = params;
-          return { rows: [] };
-        });
+      const captured = stubSession({
+        files: [{
+          id: 'file-1',
+          file_path: '/workspace/src/kept.ts',
+          timestamp_ms: fileTimestamp,
+          metadata: { toolUseId: 'tool-definitive' },
+        }],
+        messages: [{
+          id: 42,
+          created_at_ms: toolTimestamp,
+          metadata: {},
+          content: JSON.stringify({
+            type: 'assistant',
+            message: {
+              content: [{
+                type: 'tool_use',
+                id: 'tool-definitive',
+                name: 'Edit',
+                input: { file_path: '/workspace/src/kept.ts' },
+              }],
+            },
+          }),
+        }],
+      });
 
       await expect(toolCallMatcher.matchSession(sessionId)).resolves.toBe(1);
-      expect(insertedParams).toEqual(expect.arrayContaining([
+
+      // The tool call is 60s before the edit — far outside TIME_CUTOFF_MS — so
+      // it is only reachable because the lookup stayed unbounded.
+      expect(captured.messagesSql).not.toContain(BOUND_LOWER);
+      expect(captured.messagesSql).not.toContain(BOUND_UPPER);
+      expect(captured.messagesParams).toEqual([sessionId]);
+      expect(captured.insertParams).toEqual(expect.arrayContaining([
         sessionId,
         'file-1',
         42,
@@ -1001,26 +1023,95 @@ describe('ToolCallMatcher', () => {
 
     it('falls back to an unbounded lookup when a stored file timestamp is invalid', async () => {
       const sessionId = 'invalid-timestamp-session';
-      queryMock
-        .mockImplementationOnce(async () => ({ rows: [{ workspace_id: '/workspace' }] }))
-        .mockImplementationOnce(async () => ({
-          rows: [{
-            id: 'file-invalid',
-            file_path: '/workspace/src/invalid.ts',
-            timestamp_ms: 'not-a-number',
-            metadata: {},
-          }],
-        }))
-        .mockImplementationOnce(async (sql: string, params: unknown[]) => {
-          expect(sql).toContain('FROM ai_agent_messages');
-          expect(sql).not.toContain('(EXTRACT(EPOCH FROM created_at) * 1000) >= $2');
-          expect(sql).not.toContain('(EXTRACT(EPOCH FROM created_at) * 1000) <= $3');
-          expect(params).toEqual([sessionId]);
-          return { rows: [] };
-        });
+
+      const captured = stubSession({
+        files: [{
+          id: 'file-invalid',
+          file_path: '/workspace/src/invalid.ts',
+          timestamp_ms: 'not-a-number',
+          metadata: {},
+        }],
+      });
 
       await expect(toolCallMatcher.matchSession(sessionId)).resolves.toBe(0);
-      expect(queryMock).toHaveBeenCalledTimes(3);
+
+      expect(captured.sawMessagesQuery).toBe(true);
+      expect(captured.messagesSql).not.toContain(BOUND_LOWER);
+      expect(captured.messagesSql).not.toContain(BOUND_UPPER);
+      expect(captured.messagesParams).toEqual([sessionId]);
+    });
+  });
+
+  describe('matchSession incremental work (NIM-3085)', () => {
+    const queryMock = database.query as ReturnType<typeof vi.fn>;
+
+    /**
+     * Dispatch by SQL rather than call order — this suite is about WHICH
+     * queries run, so pinning an order would obscure the thing under test.
+     */
+    function stubQueries(opts: {
+      files: Array<{ id: string; file_path: string; timestamp_ms: number; metadata: any }>;
+      existingMatches: Array<{ session_file_id: string; match_score: number; tool_use_id: string | null }>;
+    }) {
+      const seen: string[] = [];
+      queryMock.mockImplementation(async (sql: string) => {
+        seen.push(sql);
+        if (sql.includes('FROM ai_sessions')) return { rows: [{ workspace_id: '/workspace' }] };
+        if (sql.includes('FROM session_files')) return { rows: opts.files };
+        if (sql.includes('FROM ai_tool_call_file_edits')) return { rows: opts.existingMatches };
+        if (sql.includes('FROM ai_agent_messages')) return { rows: [] };
+        return { rows: [] };
+      });
+      return { seen, scannedMessages: () => seen.some(s => s.includes('FROM ai_agent_messages')) };
+    }
+
+    it('skips the transcript scan when every file already has a definitive match', async () => {
+      // score 100 == exact toolUseId match, the ceiling scoreMatch can return.
+      // Re-scoring these can never change the outcome, so the expensive
+      // unbounded ai_agent_messages scan is pure waste.
+      const probe = stubQueries({
+        files: [
+          { id: 'f1', file_path: '/workspace/a.ts', timestamp_ms: 1_700_000_000_000, metadata: { toolUseId: 't1' } },
+          { id: 'f2', file_path: '/workspace/b.ts', timestamp_ms: 1_700_000_001_000, metadata: { toolUseId: 't2' } },
+        ],
+        existingMatches: [
+          { session_file_id: 'f1', match_score: 100, tool_use_id: 't1' },
+          { session_file_id: 'f2', match_score: 100, tool_use_id: 't2' },
+        ],
+      });
+
+      await expect(toolCallMatcher.matchSession('settled-session')).resolves.toBe(0);
+
+      expect(probe.scannedMessages()).toBe(false);
+    });
+
+    it('still scans when at least one file is unmatched', async () => {
+      const probe = stubQueries({
+        files: [
+          { id: 'f1', file_path: '/workspace/a.ts', timestamp_ms: 1_700_000_000_000, metadata: { toolUseId: 't1' } },
+          { id: 'f2', file_path: '/workspace/b.ts', timestamp_ms: 1_700_000_001_000, metadata: { toolUseId: 't2' } },
+        ],
+        existingMatches: [{ session_file_id: 'f1', match_score: 100, tool_use_id: 't1' }],
+      });
+
+      await toolCallMatcher.matchSession('partial-session');
+
+      expect(probe.scannedMessages()).toBe(true);
+    });
+
+    it('still scans a file whose existing match is below the ceiling (replaceable)', async () => {
+      // A 70-score heuristic match CAN be beaten by a later exact-id match,
+      // so these files must stay in the candidate set.
+      const probe = stubQueries({
+        files: [
+          { id: 'f1', file_path: '/workspace/a.ts', timestamp_ms: 1_700_000_000_000, metadata: { toolUseId: 't1' } },
+        ],
+        existingMatches: [{ session_file_id: 'f1', match_score: 70, tool_use_id: null }],
+      });
+
+      await toolCallMatcher.matchSession('improvable-session');
+
+      expect(probe.scannedMessages()).toBe(true);
     });
   });
 });

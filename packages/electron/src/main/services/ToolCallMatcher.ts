@@ -187,6 +187,15 @@ export interface SessionEnrichmentContext {
 
 const TIME_CUTOFF_MS = 10_000; // 10 second hard cutoff around tool call
 const MIN_MATCH_SCORE = 30; // Must have at least a filename match
+
+/**
+ * The ceiling `scoreMatch` can return: an exact metadata toolUseId match scores
+ * 100 and returns immediately. Every other path tops out at 70 (40 name_in_args
+ * + 30 name_in_output). A file already recorded at this score therefore cannot
+ * be improved by a later pass — the match loop would `continue` on it anyway —
+ * which is what makes it safe to leave such files out of the candidate set.
+ */
+const MAX_MATCH_SCORE = 100;
 const WORKSPACE_CLEAR_WINNER_MARGIN = 12;
 const WORKSPACE_MIN_CONFIDENCE_SCORE = 55;
 
@@ -992,16 +1001,50 @@ class ToolCallMatcherImpl {
       // raw-message scan entirely.
       if (sessionFiles.length === 0) return 0;
 
+      // Load existing matches BEFORE the raw-message scan (NIM-3085).
+      // matchSession runs after every tool execution, and the scan below is
+      // unbounded for any session carrying toolUseIds — i.e. every Claude Code
+      // session — so re-deriving settled matches made this O(messages) per tool
+      // call, O(N^2) per session, against the largest table in the database.
+      // Knowing what is already matched lets us skip the scan entirely once a
+      // session reaches steady state.
+      const existingResult = await database.query<{
+        session_file_id: string;
+        match_score: number;
+        tool_use_id: string | null;
+      }>(
+        `SELECT session_file_id, match_score, tool_use_id FROM ai_tool_call_file_edits WHERE session_id = $1`,
+        [sessionId]
+      );
+      // Best existing score per file (a file may have multiple rows from legacy data)
+      const existingBestScore = new Map<string, number>();
+      for (const row of existingResult.rows) {
+        const prev = existingBestScore.get(row.session_file_id) ?? 0;
+        existingBestScore.set(row.session_file_id, Math.max(prev, ensureNumber(row.match_score)));
+      }
+
+      // Only files without a match, or with a beatable one, are worth scoring.
+      // Dedup above still ran over the FULL set, so watcher/tracker duplicate
+      // rows collapse exactly as before — we narrow after dedup, never before,
+      // or a settled row could drop out and let its duplicate match a second time.
+      const filesNeedingWork = sessionFiles.filter(
+        file => (existingBestScore.get(file.id) ?? -1) < MAX_MATCH_SCORE
+      );
+      if (filesNeedingWork.length === 0) return 0;
+
       // Bound raw history for providers whose file rows have no definitive
       // tool IDs (notably Codex). Exact metadata toolUseId matches deliberately
       // bypass scoreMatch's time cutoff, so sessions carrying any such ID must
       // retain the unbounded lookup to preserve those matches.
-      const hasDefinitiveToolUseIds = sessionFiles.some(file =>
+      // Computed over filesNeedingWork, not all files: a session whose only
+      // outstanding rows are Codex-style now gets the bounded window even if
+      // settled Claude Code rows exist alongside them.
+      const hasDefinitiveToolUseIds = filesNeedingWork.some(file =>
         typeof file.metadata?.toolUseId === 'string' && file.metadata.toolUseId.length > 0
       );
       let rawWindowOptions: { afterDate: Date; beforeDate: Date } | undefined;
       if (!hasDefinitiveToolUseIds) {
-        const fileTimestamps = sessionFiles.map(file => ensureNumber(file.timestamp_ms));
+        const fileTimestamps = filesNeedingWork.map(file => ensureNumber(file.timestamp_ms));
         const hasInvalidTimestamp = fileTimestamps.some(timestamp => !Number.isFinite(timestamp));
         let minFileTs = Infinity;
         let maxFileTs = -Infinity;
@@ -1037,23 +1080,8 @@ class ToolCallMatcherImpl {
         toolWindowCount: deduped.length,
       });
 
-      // 6. Load existing matches so we can skip unchanged files and replace stale ones
-      const existingResult = await database.query<{
-        session_file_id: string;
-        match_score: number;
-        tool_use_id: string | null;
-      }>(
-        `SELECT session_file_id, match_score, tool_use_id FROM ai_tool_call_file_edits WHERE session_id = $1`,
-        [sessionId]
-      );
-      // Best existing score per file (a file may have multiple rows from legacy data)
-      const existingBestScore = new Map<string, number>();
-      for (const row of existingResult.rows) {
-        const prev = existingBestScore.get(row.session_file_id) ?? 0;
-        existingBestScore.set(row.session_file_id, Math.max(prev, ensureNumber(row.match_score)));
-      }
-
-      // 7. Match each file, replacing old matches when a better one is found
+      // 6. Match each file, replacing old matches when a better one is found.
+      //    (Existing matches were loaded before the scan above.)
       const matches: Array<{
         sessionId: string;
         sessionFileId: string;
@@ -1068,7 +1096,7 @@ class ToolCallMatcherImpl {
       // Track file IDs where a new match replaces an old one
       const replacedFileIds: string[] = [];
 
-      for (const file of sessionFiles) {
+      for (const file of filesNeedingWork) {
         const metadataToolUseId = file.metadata?.toolUseId;
         const fileTimestamp = ensureNumber(file.timestamp_ms);
 

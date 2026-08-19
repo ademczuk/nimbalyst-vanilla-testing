@@ -26,6 +26,7 @@ import { workstreamStagedFilesAtom, setWorkstreamStagedFilesAtom } from '../atom
 import { getRelativeWorkspacePath } from '../../../shared/pathUtils';
 import { createToolCallMatchesCoalescer } from './toolCallMatchesCoalescer';
 import { createPerKeyDebouncer } from './perKeyDebounce';
+import { loadSessionFilesResult } from '../../services/sessionFilesLoader';
 
 /**
  * Track which workspace path is currently open.
@@ -140,12 +141,8 @@ async function loadInitialSessionFileStateImpl(sessionId: string, workspacePath:
   registerSessionWorkspace(sessionId, workspacePath);
 
   try {
-    // Load file edits
-    const fileResult = await window.electronAPI.invoke(
-      'session-files:get-by-session',
-      sessionId,
-      'edited'
-    );
+    // Load file edits (batched across sessions loading in the same tick)
+    const fileResult = await loadSessionFilesResult(sessionId, 'edited');
 
     // Debug logging - uncomment if needed
     // console.log('[fileStateListeners] File result for', sessionId, ':', fileResult);
@@ -245,11 +242,7 @@ export function initFileStateListeners(workspacePath: string): () => void {
   // sibling helper so the event handler below can debounce its invocation.
   const runSessionFilesRefresh = async (sessionId: string) => {
       try {
-        const result = await window.electronAPI.invoke(
-          'session-files:get-by-session',
-          sessionId,
-          'edited'
-        );
+        const result = await loadSessionFilesResult(sessionId, 'edited');
 
         if (result.success && result.files) {
           const sessionWorkspacePath = sessionWorkspaceRegistry.get(sessionId) ?? currentWorkspacePath ?? '';

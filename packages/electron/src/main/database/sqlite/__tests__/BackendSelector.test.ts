@@ -27,11 +27,12 @@ describe('BackendSelector', () => {
     expect(result.reason).toBe('fresh-install-defaults-sqlite');
   });
 
-  it('stays on pglite when an existing pglite-db directory is present and no flag is set', () => {
+  it('marks an existing pglite-db directory with no flag as migration-due', () => {
     fs.mkdirSync(path.join(tmp, 'pglite-db'));
     const result = resolveBackend({ userDataPath: tmp });
     expect(result.backend).toBe('pglite');
-    expect(result.reason).toBe('existing-pglite-no-flag');
+    expect(result.reason).toBe('existing-pglite-migration-due');
+    expect(result.migrationDue).toBe(true);
   });
 
   it('obeys the flag file when present (sqlite)', () => {
@@ -42,12 +43,16 @@ describe('BackendSelector', () => {
     expect(result.state?.pgliteMigratedDir).toBe('/some/pglite-db.migrated-12345');
   });
 
-  it('obeys the flag file when present (pglite, after rollback)', () => {
+  it('never re-migrates an install that rolled back to pglite', () => {
+    fs.mkdirSync(path.join(tmp, 'pglite-db'));
     commitRollbackToPglite(tmp);
     const result = resolveBackend({ userDataPath: tmp });
     expect(result.backend).toBe('pglite');
-    expect(result.reason).toBe('flag-file-pglite');
+    expect(result.reason).toBe('flag-file-pglite-rollback');
     expect(result.state?.setBy).toBe('rollback');
+    // The whole point: they told us SQLite went badly. Auto-migration must
+    // not drag them back onto it.
+    expect(result.migrationDue).toBe(false);
   });
 
   it('records the fresh-install marker on commitFreshInstallSqlite', () => {

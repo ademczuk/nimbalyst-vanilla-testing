@@ -131,6 +131,7 @@ export class SQLiteDatabaseProxy {
   private backupServiceFacade: AppDatabaseBackupService;
   private pgliteReader: LivePgliteReader | null = null;
   private migrationControl: MigrationControlHandler | null = null;
+  private migrationObserver: ((event: string, payload: unknown) => void) | null = null;
 
   constructor(opts: SQLiteDatabaseProxyOptions) {
     this.opts = opts;
@@ -144,6 +145,15 @@ export class SQLiteDatabaseProxy {
    */
   setPgliteReader(reader: LivePgliteReader): void {
     this.pgliteReader = reader;
+  }
+
+  /**
+   * Observe migration progress on the main process. Used by the boot-time
+   * forced migration to drive the splash screen; the renderer path uses the
+   * IPC broadcast instead.
+   */
+  setMigrationObserver(observer: (event: string, payload: unknown) => void): void {
+    this.migrationObserver = observer;
   }
 
   /** Inject the control handler used for `closePglite` / cutover hooks. */
@@ -510,6 +520,17 @@ export class SQLiteDatabaseProxy {
       || msg.event === 'db:migration:failed'
     ) {
       this.broadcastToWindows(msg.event, msg.payload);
+      // Main-side observer. The boot-time forced migration drives the splash
+      // screen, which is a plain data-URL BrowserWindow with no preload — it
+      // cannot receive an ipcRenderer message, so the broadcast above never
+      // reaches it.
+      if (this.migrationObserver) {
+        try {
+          this.migrationObserver(msg.event, msg.payload);
+        } catch (err) {
+          logger.main.warn('[SQLiteProxy] migration observer threw', err);
+        }
+      }
       return;
     }
     if (msg.event === 'db:migration:cutoverSuccess') {

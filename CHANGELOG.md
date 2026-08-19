@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Nimbalyst now upgrades its local database to the faster storage engine on its own, showing progress while it works and restarting when it finishes; if anything goes wrong it keeps running on the old one.
 - Mockup project files can no longer be shared to a team, since their screens do not yet sync between people.
 - Opening an editor no longer fetches a font from a third-party server.
 - Codex no longer offers slash commands it cannot actually run.
@@ -51,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The inbox's organization filter no longer opens onto an empty menu when there is nothing to narrow by.
 - The effort level you select now applies to Claude Code CLI sessions instead of being ignored. (#996, contributed by @Derazien)
 - MCP servers configured for a specific project in Claude Code now load on Windows instead of being silently ignored. (#1317, contributed by @Derazien)
+- Long agent sessions that edit many files no longer slow the rest of the app down as they run.
 
 ### Removed
 <!-- Removed features go here -->
