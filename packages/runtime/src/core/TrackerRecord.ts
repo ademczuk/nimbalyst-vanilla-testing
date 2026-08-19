@@ -9,6 +9,12 @@
 import type { TrackerIdentity, TrackerActivity, TrackerItem, TrackerItemSource, TrackerOrigin } from './DocumentService';
 import type { TrackerCommentEntry as TrackerComment } from '../sync/trackerProtocol';
 import { fromDbBoolean } from './dbBoolean';
+import {
+  derivePlanStatusSignals,
+  type TrackerDerivedSignal,
+} from '../plugins/TrackerPlugin/models/planStatusIntegrity';
+
+export type { TrackerDerivedSignal } from '../plugins/TrackerPlugin/models/planStatusIntegrity';
 
 // Re-exported so hosts reading tracker rows share one coercion (NIM-2280).
 export { fromDbBoolean } from './dbBoolean';
@@ -50,6 +56,8 @@ export interface TrackerRecordSystem {
   linkedSessions?: string[];
   linkedCommitSha?: string;
   linkedCommits?: LinkedCommit[];
+  /** Read-only signals derived from fields and linked evidence; never persisted. */
+  derivedSignals?: TrackerDerivedSignal[];
   linkedPullRequests?: LinkedPullRequest[];
   documentId?: string;
   activity?: TrackerActivity[];
@@ -72,6 +80,13 @@ export interface TrackerRecord {
   typeTags: string[];
   issueNumber?: number;
   issueKey?: string;
+  /**
+   * This machine's private number for the item (`NIM.12`). Never synced: a
+   * teammate's copy of the same item has none, and the same value on another
+   * machine means a different item. Separate from `issueKey` because the room
+   * owns that field and rejects an item that arrives already carrying a key.
+   */
+  localKey?: string;
   source: 'native' | 'inline' | 'frontmatter' | 'import';
   sourceRef?: string;
   archived: boolean;
@@ -79,6 +94,21 @@ export interface TrackerRecord {
   content?: unknown;
   system: TrackerRecordSystem;
   fields: Record<string, unknown>;
+}
+
+function attachDerivedSignals(record: TrackerRecord): TrackerRecord {
+  const derivedSignals = derivePlanStatusSignals({
+    primaryType: record.primaryType,
+    status: record.fields.status,
+    linkedCommits: record.system.linkedCommits,
+  });
+  if (derivedSignals.length > 0) {
+    record.system.derivedSignals = [
+      ...(record.system.derivedSignals ?? []),
+      ...derivedSignals,
+    ];
+  }
+  return record;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +129,7 @@ const SYSTEM_KEYS = new Set([
   'origin',
   'triagedAt',
   'triagedBy',
+  'derivedSignals',
   // also pulled from row-level columns, not from data JSONB
   'assigneeId',
   'reporterId',
@@ -110,7 +141,7 @@ const SYSTEM_KEYS = new Set([
  */
 const NON_FIELD_KEYS = new Set([
   // top-level record props
-  'id', 'type', 'typeTags', 'issueNumber', 'issueKey',
+  'id', 'type', 'typeTags', 'issueNumber', 'issueKey', 'localKey',
   'source', 'sourceRef', 'archived', 'archivedAt', 'syncStatus',
   'content', 'module', 'lineNumber', 'workspace', 'lastIndexed',
   'created', 'updated',
@@ -192,6 +223,7 @@ export function trackerItemToRecord(item: TrackerItem): TrackerRecord {
     typeTags: item.typeTags ?? [item.type],
     issueNumber: item.issueNumber,
     issueKey: item.issueKey,
+    localKey: item.localKey,
     source: (item.source as TrackerRecord['source']) ?? 'native',
     sourceRef: item.sourceRef,
     archived: fromDbBoolean(item.archived),
@@ -227,7 +259,7 @@ export function trackerItemToRecord(item: TrackerItem): TrackerRecord {
     }
   }
 
-  return record;
+  return attachDerivedSignals(record);
 }
 
 /**
@@ -263,6 +295,7 @@ export function trackerRecordToItem(record: TrackerRecord): TrackerItem {
     typeTags: record.typeTags,
     issueNumber: record.issueNumber,
     issueKey: record.issueKey,
+    localKey: record.localKey,
     // Map fields to TrackerItem's fixed properties
     title: (f.title as string) ?? '',
     status: (f.status as string) ?? 'to-do',
@@ -373,12 +406,13 @@ export function dbRowToRecord(row: any): TrackerRecord {
   const systemValue = (key: string): unknown =>
     data[key] !== undefined ? data[key] : nestedCustomFields?.[key];
 
-  return {
+  const record: TrackerRecord = {
     id: row.id,
     primaryType: row.type,
     typeTags,
     issueNumber: row.issue_number ?? undefined,
     issueKey: row.issue_key ?? undefined,
+    localKey: row.local_key ?? undefined,
     source: row.source || (row.document_path ? 'inline' : 'native'),
     sourceRef: row.source_ref ?? undefined,
     archived: fromDbBoolean(row.archived),
@@ -407,6 +441,8 @@ export function dbRowToRecord(row: any): TrackerRecord {
     },
     fields,
   };
+
+  return attachDerivedSignals(record);
 }
 
 /**

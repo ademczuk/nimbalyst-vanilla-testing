@@ -1011,7 +1011,7 @@ export { TrackerDocumentHeader, shouldRenderTrackerHeader } from './documentHead
 
 // Export data models
 export { ModelLoader, loadBuiltinTrackers } from './models/ModelLoader';
-export type { TrackerDataModel, FieldDefinition, TrackerSyncPolicy, TrackerSyncMode, TrackerSchemaRole } from './models/TrackerDataModel';
+export type { TrackerDataModel, FieldDefinition, TrackerSharing, TrackerSharingPolicy, TrackerSchemaRole } from './models/TrackerDataModel';
 export { parseTrackerYAML } from './models/YAMLParser';
 export { globalRegistry, getRoleField, getFieldByRole } from './models/TrackerDataModel';
 
@@ -1039,6 +1039,8 @@ export {
   getTypeColor,
   getTypeIcon,
   formatRelativeDate,
+  formatRelativeCalendarDay,
+  formatTrackerDateCell,
   getEffectiveUpdatedDate,
 } from './components/trackerColumns';
 export type { TrackerColumnDef, TypeColumnConfig, ColumnRenderType } from './components/trackerColumns';

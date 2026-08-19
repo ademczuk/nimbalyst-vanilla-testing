@@ -8,6 +8,15 @@
  * - Toolbar enabled by default
  *
  * Extensions import this as `MarkdownEditor` from '@nimbalyst/runtime'.
+ *
+ * Pushing content in: pass `onContentController` and keep the handle it gives
+ * you (see `MarkdownEditorContentController`). Its `applyMarkdown` replaces the
+ * editor's content in place -- through the host's enhanced markdown pipeline,
+ * preserving the caret -- which is what a collaborative binding or an
+ * extension-owned sync loop wants instead of remounting the editor. The
+ * enhanced converters themselves stay inside the host: an extension that fell
+ * back to vanilla `@lexical/markdown` would silently drop frontmatter,
+ * list-indent normalization and every contributed transformer.
  */
 
 import React, { useCallback } from 'react';

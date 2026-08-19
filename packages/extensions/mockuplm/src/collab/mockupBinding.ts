@@ -30,7 +30,6 @@
 
 import * as Y from 'yjs';
 import type * as awarenessProtocol from 'y-protocols/awareness';
-import { COLLAB_INIT_ORIGIN } from '@nimbalyst/extension-sdk';
 import { getYMockupText } from './seed';
 
 const SYNC_DEBOUNCE_MS = 150;
@@ -90,11 +89,17 @@ export class MockupBinding {
     ): void => {
       if (this.destroyed) return;
       // Ignore echoes of our own writes; the editor already has the latest
-      // HTML in contentRef. Also ignore the SDK's bootstrap transaction
-      // (the editor's applyContent already ran on the seed input before
-      // this binding was constructed).
+      // HTML in contentRef.
+      //
+      // Bootstrap-origin transactions are deliberately NOT filtered. Reopening
+      // a durable offline replica replays the whole document under
+      // COLLAB_INIT_ORIGIN, and this binding is constructed before that replay
+      // lands, so filtering it left the editor showing the empty seed. The
+      // `lastSyncedContent` check below already suppresses the case that filter
+      // was aimed at -- a bootstrap that matches what the editor was seeded
+      // with. Same fix as csvBinding, datamodelBinding, and
+      // mockupProjectBinding; mockupProjectBinding.hydration.test.ts pins it.
       if (txn.origin === this.localTxnOrigin) return;
-      if (txn.origin === COLLAB_INIT_ORIGIN) return;
       const content = this.yText.toString();
       if (content === this.lastSyncedContent) return;
       this.lastSyncedContent = content;

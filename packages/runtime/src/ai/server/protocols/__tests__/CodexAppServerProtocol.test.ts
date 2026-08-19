@@ -294,6 +294,229 @@ describe('CodexAppServerProtocol', () => {
     protocol.cleanupSession(session);
   });
 
+  // #1251: the payload below is copied verbatim from a live codex 0.144.1
+  // app-server (temptests/codex-appserver-probe.mjs). The notification nests
+  // everything under `tokenUsage`, not `usage`, so the old reader always saw
+  // undefined and every Codex turn reported zero tokens and no context fill.
+  //
+  // `last` is the context fill and `total` is cumulative thread spend: after a
+  // compaction `total` held at 19147 while `last` dropped to 4555.
+  it('reports context fill and window from thread/tokenUsage/updated', async () => {
+    const protocol = new CodexAppServerProtocol();
+    const sessionPromise = protocol.createSession({ workspacePath: '/tmp/ws' });
+    const initReq = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: initReq.id, result: { codexHome: '/fake', platformFamily: 'unix', platformOs: 'macos', userAgent: 'fake/0' } });
+    const startReq = await nextWrittenMatching(child, 'thread/start');
+    child.emitLine({ id: startReq.id, result: { thread: { id: 'thread-abc' } } });
+    const session = await sessionPromise;
+
+    const events: ProtocolEvent[] = [];
+    const collector = (async () => {
+      for await (const ev of protocol.sendMessage(session, { content: 'hi' })) events.push(ev);
+    })();
+
+    const turnReq = await nextWrittenMatching(child, 'turn/start');
+    child.emitLine({ id: turnReq.id, result: { turn: { id: 'turn-1', items: [], status: 'inProgress' } } });
+    child.emitLine({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'thread-abc',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: { totalTokens: 19151, inputTokens: 19146, cachedInputTokens: 9984, outputTokens: 5, reasoningOutputTokens: 0 },
+          last: { totalTokens: 4555, inputTokens: 4550, cachedInputTokens: 0, outputTokens: 5, reasoningOutputTokens: 0 },
+          modelContextWindow: 258400,
+        },
+      },
+    });
+    child.emitLine({ method: 'turn/completed', params: { threadId: 'thread-abc', turn: { id: 'turn-1', status: 'completed' } } });
+
+    await collector;
+
+    const complete = events[events.length - 1];
+    expect(complete).toMatchObject({
+      type: 'complete',
+      contextFillTokens: 4555,
+      contextWindow: 258400,
+      usage: { input_tokens: 19146, output_tokens: 5, total_tokens: 19151 },
+    });
+
+    protocol.cleanupSession(session);
+  });
+
+  // #1251 follow-on: turn/completed carries no usage at all on this transport
+  // (confirmed across 1,663 recorded turns), so the zeroed fallback must not be
+  // the only thing a turn can report.
+  it('does not report all-zero usage when tokenUsage arrived earlier in the turn', async () => {
+    const protocol = new CodexAppServerProtocol();
+    const sessionPromise = protocol.createSession({ workspacePath: '/tmp/ws' });
+    const initReq = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: initReq.id, result: { codexHome: '/fake', platformFamily: 'unix', platformOs: 'macos', userAgent: 'fake/0' } });
+    const startReq = await nextWrittenMatching(child, 'thread/start');
+    child.emitLine({ id: startReq.id, result: { thread: { id: 'thread-abc' } } });
+    const session = await sessionPromise;
+
+    const events: ProtocolEvent[] = [];
+    const collector = (async () => {
+      for await (const ev of protocol.sendMessage(session, { content: 'hi' })) events.push(ev);
+    })();
+
+    const turnReq = await nextWrittenMatching(child, 'turn/start');
+    child.emitLine({ id: turnReq.id, result: { turn: { id: 'turn-1', items: [], status: 'inProgress' } } });
+    child.emitLine({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'thread-abc',
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: { totalTokens: 100, inputTokens: 90, outputTokens: 10 },
+          last: { totalTokens: 100, inputTokens: 90, outputTokens: 10 },
+          modelContextWindow: 400000,
+        },
+      },
+    });
+    // Verbatim from the probe: no `usage` key anywhere on this notification.
+    child.emitLine({
+      method: 'turn/completed',
+      params: { threadId: 'thread-abc', turn: { id: 'turn-1', status: 'completed', startedAt: 1, completedAt: 2, durationMs: 1 } },
+    });
+
+    await collector;
+
+    const complete = events[events.length - 1];
+    expect(complete.type).toBe('complete');
+    expect(complete.usage?.total_tokens).toBe(100);
+  });
+
+  // #1252: the Compact button used to send the literal string "/compact" as a
+  // user turn, which reached the model as prompt text and did nothing. The
+  // app-server has a real RPC for this; against a live server it dropped the
+  // context fill from 19147 to 4555.
+  it('compacts via thread/compact/start rather than a literal /compact message', async () => {
+    const protocol = new CodexAppServerProtocol();
+    const sessionPromise = protocol.createSession({ workspacePath: '/tmp/ws' });
+    const initReq = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: initReq.id, result: { codexHome: '/fake', platformFamily: 'unix', platformOs: 'macos', userAgent: 'fake/0' } });
+    const startReq = await nextWrittenMatching(child, 'thread/start');
+    child.emitLine({ id: startReq.id, result: { thread: { id: 'thread-abc' } } });
+    const session = await sessionPromise;
+
+    const compactPromise = protocol.compactSession(session);
+    const compactReq = await nextWrittenMatching(child, 'thread/compact/start');
+    expect(compactReq.params).toEqual({ threadId: 'thread-abc' });
+    child.emitLine({ id: compactReq.id, result: {} });
+
+    await expect(compactPromise).resolves.toBeUndefined();
+    expect(child.writtenLines.some((l) => (l as { method?: string }).method === 'turn/start')).toBe(false);
+
+    protocol.cleanupSession(session);
+  });
+
+  it('surfaces a failed compaction instead of resolving silently', async () => {
+    const protocol = new CodexAppServerProtocol();
+    const sessionPromise = protocol.createSession({ workspacePath: '/tmp/ws' });
+    const initReq = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: initReq.id, result: { codexHome: '/fake', platformFamily: 'unix', platformOs: 'macos', userAgent: 'fake/0' } });
+    const startReq = await nextWrittenMatching(child, 'thread/start');
+    child.emitLine({ id: startReq.id, result: { thread: { id: 'thread-abc' } } });
+    const session = await sessionPromise;
+
+    const compactPromise = protocol.compactSession(session);
+    const compactReq = await nextWrittenMatching(child, 'thread/compact/start');
+    child.emitLine({ id: compactReq.id, error: { code: -32600, message: 'nothing to compact' } });
+
+    await expect(compactPromise).rejects.toThrow(/compact/i);
+
+    protocol.cleanupSession(session);
+  });
+
+  // #1253: AgentWorkflowService already exports Nimbalyst's skills to
+  // <workspace>/.agents/skills/.nimbalyst-generated for Codex, but codex never
+  // scanned that directory, so the agent saw none of them. Against a live
+  // app-server, registering this root took the visible skill count from 16 to
+  // 105.
+  it('registers the workspace skills root so Nimbalyst skills reach the agent', async () => {
+    const protocol = new CodexAppServerProtocol();
+    const sessionPromise = protocol.createSession({ workspacePath: '/tmp/ws' });
+    const initReq = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: initReq.id, result: { codexHome: '/fake', platformFamily: 'unix', platformOs: 'macos', userAgent: 'fake/0' } });
+
+    const rootsReq = await nextWrittenMatching(child, 'skills/extraRoots/set');
+    expect(rootsReq.params).toEqual({
+      extraRoots: ['/tmp/ws/.agents/skills/.nimbalyst-generated'],
+    });
+    child.emitLine({ id: rootsReq.id, result: {} });
+
+    const startReq = await nextWrittenMatching(child, 'thread/start');
+    child.emitLine({ id: startReq.id, result: { thread: { id: 'thread-abc' } } });
+    const session = await sessionPromise;
+    expect(session.id).toBe('thread-abc');
+
+    protocol.cleanupSession(session);
+  });
+
+  // An older codex without the skills/ namespace must not take every session
+  // down -- skills are an enhancement, not a precondition for running a turn.
+  it('starts the thread anyway when the codex build has no skills/extraRoots/set', async () => {
+    const protocol = new CodexAppServerProtocol();
+    const sessionPromise = protocol.createSession({ workspacePath: '/tmp/ws' });
+    const initReq = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: initReq.id, result: { codexHome: '/fake', platformFamily: 'unix', platformOs: 'macos', userAgent: 'fake/0' } });
+
+    const rootsReq = await nextWrittenMatching(child, 'skills/extraRoots/set');
+    child.emitLine({ id: rootsReq.id, error: { code: -32601, message: 'Method not found' } });
+
+    const startReq = await nextWrittenMatching(child, 'thread/start');
+    child.emitLine({ id: startReq.id, result: { thread: { id: 'thread-abc' } } });
+
+    const session = await sessionPromise;
+    expect(session.id).toBe('thread-abc');
+
+    protocol.cleanupSession(session);
+  });
+
+  it('ignores child-thread and stale-turn completion until the active root turn completes', async () => {
+    const protocol = new CodexAppServerProtocol();
+    const sessionPromise = protocol.createSession({ workspacePath: '/tmp/ws' });
+    const initReq = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: initReq.id, result: { codexHome: '/fake', platformFamily: 'unix', platformOs: 'macos', userAgent: 'fake/0' } });
+    const startReq = await nextWrittenMatching(child, 'thread/start');
+    child.emitLine({ id: startReq.id, result: { thread: { id: 'thread-root' } } });
+    const session = await sessionPromise;
+
+    const events: ProtocolEvent[] = [];
+    let streamCompleted = false;
+    const collector = (async () => {
+      for await (const ev of protocol.sendMessage(session, { content: 'delegate and synthesize' })) {
+        events.push(ev);
+      }
+      streamCompleted = true;
+    })();
+
+    const turnReq = await nextWrittenMatching(child, 'turn/start');
+    child.emitLine({ id: turnReq.id, result: { turn: { id: 'turn-root', items: [], status: 'inProgress' } } });
+
+    child.emitLine({ method: 'item/agentMessage/delta', params: { threadId: 'thread-child', turnId: 'turn-child', itemId: 'msg-child', delta: 'child-only report' } });
+    child.emitLine({ method: 'item/completed', params: { threadId: 'thread-child', turnId: 'turn-child', item: { type: 'agentMessage', id: 'msg-child', text: 'child-only report' } } });
+    child.emitLine({ method: 'turn/completed', params: { threadId: 'thread-child', turn: { id: 'turn-child', status: 'completed' } } });
+    child.emitLine({ method: 'turn/completed', params: { threadId: 'thread-root', turn: { id: 'turn-stale', status: 'completed' } } });
+    await Promise.resolve();
+
+    expect(streamCompleted).toBe(false);
+    expect(events).toHaveLength(0);
+
+    child.emitLine({ method: 'item/agentMessage/delta', params: { threadId: 'thread-root', turnId: 'turn-root', itemId: 'msg-root', delta: 'root synthesis' } });
+    child.emitLine({ method: 'turn/completed', params: { threadId: 'thread-root', turn: { id: 'turn-root', status: 'completed' } } });
+
+    await collector;
+
+    expect(events.filter((event) => event.type === 'text').map((event) => event.content)).toEqual(['root synthesis']);
+    expect(events.filter((event) => event.type === 'complete')).toHaveLength(1);
+    expect(events[events.length - 1]).toMatchObject({ type: 'complete', content: 'root synthesis' });
+
+    protocol.cleanupSession(session);
+  });
+
   it('translates fileChange item/completed into a tool_call event with diff-based baselines', async () => {
     const protocol = new CodexAppServerProtocol();
     const sessionPromise = protocol.createSession({ workspacePath: '/tmp/ws' });
@@ -437,6 +660,24 @@ describe('CodexAppServerProtocol', () => {
     const session = await sessionPromise;
     expect(session.id).toBe('existing-thread-id');
     protocol.cleanupSession(session);
+  });
+
+  // #1254: a failed resume used to be swallowed and downgraded to thread/start.
+  // The transcript still showed the prior messages, so the agent looked like it
+  // had forgotten everything rather than like something had gone wrong.
+  it('fails the turn when thread/resume errors instead of silently starting a new thread', async () => {
+    const protocol = new CodexAppServerProtocol();
+    const sessionPromise = protocol.resumeSession('missing-thread-id', { workspacePath: '/tmp/ws' });
+    const initReq = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: initReq.id, result: { codexHome: '/fake', platformFamily: 'unix', platformOs: 'macos', userAgent: 'fake/0' } });
+
+    const resumeReq = await nextWrittenMatching(child, 'thread/resume');
+    child.emitLine({ id: resumeReq.id, error: { code: -32600, message: 'thread not found' } });
+
+    await expect(sessionPromise).rejects.toThrow(/resume/i);
+
+    // The silent fallback would have issued a thread/start on the same child.
+    expect(child.writtenLines.some((l) => (l as { method?: string }).method === 'thread/start')).toBe(false);
   });
 
   it('forwards mcp_servers and other thread config on thread/resume so the resumed agent has tools', async () => {

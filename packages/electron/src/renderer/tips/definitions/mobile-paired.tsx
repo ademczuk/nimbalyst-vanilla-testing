@@ -28,7 +28,7 @@ export const mobilePairedTip: TipDefinition = {
   content: {
     icon: PhoneIcon,
     title: 'Drive sessions from your phone',
-    body: 'Pair the iOS app and prompt your Mac\'s agents from anywhere. The desktop runs the heavy work; you steer it from the couch or the road.',
+    body: 'Pair the iOS app and prompt your desktop agents from anywhere. The desktop runs the heavy work; you steer it from the couch or the road.',
     action: {
       label: 'Open Sync Settings',
       onClick: () => {

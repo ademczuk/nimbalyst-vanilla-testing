@@ -1,15 +1,17 @@
 /**
- * AI Sessions Button Walkthrough
+ * AI Sessions Walkthrough
  *
- * Introduces users to the AI Sessions button in the unified editor header.
- * This button lets users jump to past AI sessions that edited the current document.
+ * Introduces the session control in the unified editor header. It targets the
+ * control's wrapper, not the sparkle button, because the trigger renders as a
+ * session chip once the document has a linked session -- targeting the button
+ * would silently stop the walkthrough from ever showing on those documents.
  */
 
 import type { WalkthroughDefinition } from '../types';
 import { getHelpContent } from '../../help';
 import { isTargetValid } from '../WalkthroughService';
 
-const aiSessionsHelp = getHelpContent('ai-sessions-button')!;
+const aiSessionsHelp = getHelpContent('document-session-control')!;
 
 export const aiSessionsButton: WalkthroughDefinition = {
   id: 'ai-sessions-button',
@@ -20,8 +22,8 @@ export const aiSessionsButton: WalkthroughDefinition = {
     screen: 'files',
     // Only show when the AI sessions button is visible AND not in diff mode
     condition: () => {
-      const button = document.querySelector('[data-testid="ai-sessions-button"]');
-      if (!button || !isTargetValid(button as HTMLElement)) return false;
+      const control = document.querySelector('[data-testid="document-session-control"]');
+      if (!control || !isTargetValid(control as HTMLElement)) return false;
 
       // Don't show if in diff mode (unified diff header or monaco diff approval bar visible)
       const unifiedDiffHeader = document.querySelector('.unified-diff-header');
@@ -39,7 +41,7 @@ export const aiSessionsButton: WalkthroughDefinition = {
     {
       id: 'ai-sessions-intro',
       target: {
-        testId: 'ai-sessions-button',
+        testId: 'document-session-control',
       },
       title: aiSessionsHelp.title,
       body: aiSessionsHelp.body,

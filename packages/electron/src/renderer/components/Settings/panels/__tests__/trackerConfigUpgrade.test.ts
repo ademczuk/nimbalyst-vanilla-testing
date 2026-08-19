@@ -1,31 +1,27 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import {
-  buildTrackerUpgradeConfirmOptions,
-  canUpgradeTrackerMode,
+  buildTrackerSharingConfirmOptions,
+  canChangeTrackerSharing,
   getTrackerStorageCopy,
-  requiresTrackerUpgradeConfirmation,
+  requiresTrackerSharingConfirmation,
 } from '../trackerConfigUpgrade';
 
 describe('trackerConfigUpgrade', () => {
-  it('requires confirmation when upgrading a local tracker into a synced mode', () => {
-    expect(requiresTrackerUpgradeConfirmation('local', 'shared')).toBe(true);
-    expect(requiresTrackerUpgradeConfirmation('local', 'hybrid')).toBe(true);
+  it('requires confirmation when promoting a personal tracker to the team', () => {
+    expect(requiresTrackerSharingConfirmation('personal', 'team')).toBe(true);
   });
 
   it('does not require confirmation for unchanged or non-upgrade mode changes', () => {
-    expect(requiresTrackerUpgradeConfirmation('local', 'local')).toBe(false);
-    expect(requiresTrackerUpgradeConfirmation('shared', 'hybrid')).toBe(false);
-    expect(requiresTrackerUpgradeConfirmation('hybrid', 'shared')).toBe(false);
-    expect(requiresTrackerUpgradeConfirmation('shared', 'local')).toBe(false);
+    expect(requiresTrackerSharingConfirmation('personal', 'personal')).toBe(false);
+    expect(requiresTrackerSharingConfirmation('team', 'team')).toBe(false);
+    expect(requiresTrackerSharingConfirmation('team', 'personal')).toBe(false);
   });
 
   it('allows local-to-shared upgrades only for admins', () => {
-    expect(canUpgradeTrackerMode('local', 'shared', true)).toBe(true);
-    expect(canUpgradeTrackerMode('local', 'hybrid', true)).toBe(true);
-    expect(canUpgradeTrackerMode('local', 'shared', false)).toBe(false);
-    expect(canUpgradeTrackerMode('local', 'hybrid', false)).toBe(false);
-    expect(canUpgradeTrackerMode('shared', 'local', false)).toBe(true);
+    expect(canChangeTrackerSharing('personal', 'team', true)).toBe(true);
+    expect(canChangeTrackerSharing('personal', 'team', false)).toBe(false);
+    expect(canChangeTrackerSharing('team', 'personal', false)).toBe(true);
   });
 
   it('describes where local and shared tracker config are stored', () => {
@@ -34,9 +30,9 @@ describe('trackerConfigUpgrade', () => {
   });
 
   it('builds the required local-to-shared confirmation copy', () => {
-    const options = buildTrackerUpgradeConfirmOptions('Bugs', 'shared');
+    const options = buildTrackerSharingConfirmOptions('Bugs', 'team');
 
-    expect(options.title).toContain('Upgrade Bugs to shared?');
+    expect(options.title).toContain('Share Bugs with the team?');
     expect(options.confirmLabel).toBe('Proceed');
     expect(options.cancelLabel).toBe('Cancel');
     expect(options.message).toContain('local YAML config');

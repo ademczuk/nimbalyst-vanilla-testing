@@ -34,6 +34,24 @@ export interface ToolCallDiffResult {
   linesAdded?: number;
   linesRemoved?: number;
   debugInfo?: string; // how this file was linked to the tool call
+  historySource?: 'history-post-edit' | 'history-disk-fallback';
+}
+
+export type ToolCallDiffOmissionReason =
+  | 'input-too-large'
+  | 'time-limit'
+  | 'edit-distance-limit';
+
+export interface ToolCallDiffLoadResult {
+  state: 'ready' | 'partial' | 'none' | 'failed';
+  diffs: ToolCallDiffResult[];
+  omissions: Array<{
+    filePath: string;
+    reason: ToolCallDiffOmissionReason;
+    inputBytes?: { before: number; after: number };
+    limitBytes?: number;
+  }>;
+  errorCode?: 'snapshot-read-failed' | 'worker-failed' | 'queue-full';
 }
 
 export interface TranscriptViewMessage {

@@ -30,8 +30,29 @@ vi.mock('@nimbalyst/runtime', () => ({
   },
 }));
 
-const fsMock = vi.hoisted(() => ({ readFile: vi.fn() }));
-vi.mock('fs/promises', () => ({ readFile: fsMock.readFile, default: { readFile: fsMock.readFile } }));
+// `stat` matters: the history disk fallback size-guards the file before reading
+// it, and a missing stat makes the whole diff computation bail out silently.
+// The real runner spawns a worker thread from a bundle that only exists after a
+// build; stand in with an inline whole-file diff so the assertions still see the
+// snapshot content flow through.
+vi.mock('../HistoryDiffWorkerClient', () => ({
+  historyDiffWorkerClient: {
+    runDiff: async (before: string, after: string) => ({
+      status: 'ready' as const,
+      oldString: before,
+      newString: after,
+      linesAdded: after.split('\n').length,
+      linesRemoved: before.split('\n').length,
+    }),
+  },
+}));
+
+const fsMock = vi.hoisted(() => ({ readFile: vi.fn(), stat: vi.fn() }));
+vi.mock('fs/promises', () => ({
+  readFile: fsMock.readFile,
+  stat: fsMock.stat,
+  default: { readFile: fsMock.readFile, stat: fsMock.stat },
+}));
 
 import { enrichTranscriptMessagesWithToolCallDiffs } from '../TranscriptToolCallEnricher';
 
@@ -83,7 +104,9 @@ describe('enrichTranscriptMessagesWithToolCallDiffs batching', () => {
   beforeEach(() => {
     dbMock.query.mockReset();
     fsMock.readFile.mockReset();
-    fsMock.readFile.mockResolvedValue('line1\nAFTER\nline3\n');
+    fsMock.readFile.mockResolvedValue(Buffer.from('line1\nAFTER\nline3\n'));
+    fsMock.stat.mockReset();
+    fsMock.stat.mockResolvedValue({ size: 20 });
     // Reset the ToolCallMatcher diff cache so counts are per-test.
     // (createSessionEnrichmentContext repopulates it.)
 

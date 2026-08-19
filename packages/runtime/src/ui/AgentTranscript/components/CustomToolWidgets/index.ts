@@ -38,12 +38,13 @@
  * ```
  */
 
-import type { TranscriptViewMessage } from '../../../../ai/server/transcript/TranscriptProjector';
+import type { ToolCallDiffLoadResult, TranscriptViewMessage } from '../../../../ai/server/transcript/TranscriptProjector';
 
 // Re-export widgets
 export { EditorScreenshotWidget, MockupScreenshotWidget } from './EditorScreenshotWidget';
 export { AskUserQuestionWidget } from './AskUserQuestionWidget';
 export { RequestUserInputWidget } from './RequestUserInputWidget';
+export { FeedbackRequestComposeWidget } from './feedback/FeedbackRequestComposeWidget';
 export { VisualDisplayWidget } from './VisualDisplayWidget';
 export { BashWidget } from './BashWidget';
 export { GitCommitConfirmationWidget } from './GitCommitConfirmationWidget';
@@ -80,6 +81,8 @@ export interface CustomToolWidgetProps {
   sessionId: string;
   /** Optional: Read a file from the filesystem (for loading persisted output files) */
   readFile?: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+  /** Resolve history-derived file changes after explicit user disclosure. */
+  loadToolCallDiffs?: () => Promise<ToolCallDiffLoadResult>;
   // Note: Interactive widgets read their host from interactiveWidgetHostAtom(sessionId)
   // No host prop needed - avoids prop drilling through the component tree
 }
@@ -101,6 +104,7 @@ const WINDOWS_SHELL_NAME_REGEX = /^(?:"?[A-Za-z]:\\[^"]*\\)?(?:powershell|pwsh|c
 import { EditorScreenshotWidget } from './EditorScreenshotWidget';
 import { AskUserQuestionWidget } from './AskUserQuestionWidget';
 import { RequestUserInputWidget } from './RequestUserInputWidget';
+import { FeedbackRequestComposeWidget } from './feedback/FeedbackRequestComposeWidget';
 import { VisualDisplayWidget } from './VisualDisplayWidget';
 import { BashWidget } from './BashWidget';
 import { GitCommitConfirmationWidget } from './GitCommitConfirmationWidget';
@@ -153,6 +157,13 @@ const BUILT_IN_TOOL_WIDGETS: CustomToolWidgetRegistry = {
   // Back-compat: any historical sessions that recorded the old name still render.
   'RequestUserInput': RequestUserInputWidget,
 
+  // RequestFeedback tool - the cross-user ask. Draws the compose surface: the
+  // agent drafts a request to other people and the author reviews it here
+  // before anything leaves the machine. Deliberately a separate tool from
+  // AskUserQuestion so the local, blocking, no-server path cannot acquire a
+  // network dependency through an `audience` argument.
+  'RequestFeedback': FeedbackRequestComposeWidget,
+
   // ExitPlanMode tool - interactive confirmation widget for exiting planning mode
   'ExitPlanMode': ExitPlanModeWidget,
 
@@ -171,9 +182,9 @@ const BUILT_IN_TOOL_WIDGETS: CustomToolWidgetRegistry = {
   // Tool permission - interactive permission widget for tools requiring approval
   'ToolPermission': ToolPermissionWidget,
 
-  // Note: Codex `file_change` is intentionally NOT registered here. It is handled by
-  // EditToolResultCard via the EDIT_TOOL_NAMES path in RichTranscriptView so it renders
-  // as an inline red/green diff instead of the older snapshot-only widget.
+  // Note: Codex `file_change` is intentionally NOT registered here. RichTranscriptView
+  // routes it to EditToolResultCard via extractCodexFileChanges so it renders as an
+  // inline red/green diff instead of the older snapshot-only widget.
 
   // Super Loop progress snapshot - shows progress.json at iteration start/end
   'SuperProgressSnapshot': SuperProgressSnapshotWidget,

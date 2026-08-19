@@ -196,9 +196,38 @@ export interface TurnFailedNotification {
   };
 }
 
+/**
+ * Shape captured verbatim from codex 0.144.1 (see temptests/codex-probe-output).
+ *
+ * The payload key is `tokenUsage`, NOT `usage` -- reading the wrong key is what
+ * made every Codex turn report zero tokens and no context fill (#1251).
+ *
+ * `total` is cumulative spend for the whole thread; `last` is the live context
+ * fill. They diverge after a compaction: total held at 19147 while last dropped
+ * to 4555. Anything context-indicator-shaped must read `last`.
+ */
 export interface ThreadTokenUsageUpdatedNotification {
   threadId: string;
-  usage: TokenUsage;
+  turnId?: string;
+  tokenUsage: {
+    total?: TokenUsage;
+    last?: TokenUsage;
+    modelContextWindow?: number;
+  };
+}
+
+/** Response shape of `skills/list`, grouped by cwd (verified against 0.144.1). */
+export interface SkillsListResponse {
+  data?: Array<{
+    cwd?: string;
+    skills?: Array<{
+      name?: string;
+      description?: string;
+      path?: string;
+      scope?: string;
+      enabled?: boolean;
+    }>;
+  }>;
 }
 
 export interface TokenUsage {
@@ -210,6 +239,8 @@ export interface TokenUsage {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  cachedInputTokens?: number;
+  reasoningOutputTokens?: number;
 }
 
 // ---- Item notifications ----

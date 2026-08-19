@@ -12,6 +12,8 @@
 import { atom } from 'jotai';
 import { atomFamily } from 'jotai-family';
 import type { TrackerRecord } from '../../core/TrackerRecord';
+import type { TrackerRelationshipLabelResolver } from './models/trackerGrouping';
+import { getRecordTitle } from './trackerRecordAccessors';
 
 // ============================================================
 // Primary Data Store
@@ -39,6 +41,20 @@ export const trackerDataLoadedAtom = atom(false);
  */
 export const trackerItemsArrayAtom = atom((get) => {
   return Array.from(get(trackerItemsMapAtom).values());
+});
+
+/**
+ * Names a referenced item by its record rather than by the snapshot stored on
+ * the relationship, which is missing whenever the link was written from the
+ * other side and stale after a rename. Grouping surfaces read this so a
+ * milestone lane, chip, or row header shows the milestone's current title.
+ */
+export const trackerRelationshipLabelAtom = atom<TrackerRelationshipLabelResolver>((get) => {
+  const items = get(trackerItemsMapAtom);
+  return (itemId: string) => {
+    const record = items.get(itemId);
+    return record ? getRecordTitle(record).trim() || undefined : undefined;
+  };
 });
 
 /** Check if a record matches a type filter (primary type or any type tag) */

@@ -40,7 +40,6 @@ import type {
   TrackerTypeSummary,
   UpdateInput,
 } from './types.js';
-import { deriveIssueKeyPrefix } from './issueKeyPrefix.js';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 250;
@@ -414,26 +413,6 @@ export class DirectGateway implements TrackerGateway {
       .get({ ref: reference });
   }
 
-  /** Derive the prefix from an existing key, else from the project name. */
-  private issueKeyPrefix(db: DB, workspace: string): string {
-    try {
-      const row = db
-        .prepare(
-          `SELECT issue_key FROM tracker_items
-           WHERE workspace = ? AND issue_key IS NOT NULL AND issue_key != ''
-           ORDER BY issue_number DESC LIMIT 1`,
-        )
-        .get(workspace) as { issue_key: string } | undefined;
-      if (row?.issue_key) {
-        const idx = row.issue_key.lastIndexOf('-');
-        if (idx > 0) return row.issue_key.slice(0, idx);
-      }
-    } catch {
-      /* fall through to default */
-    }
-    return deriveIssueKeyPrefix(workspace);
-  }
-
   /** Mark a row pending iff it is already part of the sync set. Local-only items
    *  stay local (new items drain via the app's sync_id-IS-NULL backfill). */
   private markPendingIfSyncEligible(db: DB, row: any): void {
@@ -550,11 +529,11 @@ export class DirectGateway implements TrackerGateway {
     this.txn((db) => {
       db.prepare(
         `INSERT INTO tracker_items (
-          id, type, type_tags, data, workspace, document_path, line_number,
+          id, issue_number, issue_key, type, type_tags, data, workspace, document_path, line_number,
           created, updated, last_indexed, sync_status, content, archived,
           source, source_ref, body_version
         ) VALUES (
-          @id, @type, @typeTags, @data, @workspace, '', NULL,
+          @id, NULL, NULL, @type, @typeTags, @data, @workspace, '', NULL,
           @created, @updated, @lastIndexed, 'local', @content, 0,
           'native', NULL, @bodyVersion
         )`,
@@ -570,19 +549,6 @@ export class DirectGateway implements TrackerGateway {
         content: contentJson,
         bodyVersion,
       });
-
-      // Allocate a local issue key (NULL issue_number on the new row is ignored
-      // by MAX, so this picks the next number in the workspace).
-      const prefix = this.issueKeyPrefix(db, workspace);
-      const maxRow = db
-        .prepare(`SELECT MAX(issue_number) AS m FROM tracker_items WHERE workspace = ?`)
-        .get(workspace) as { m: number | null };
-      const nextNum = (maxRow?.m ?? 0) + 1;
-      db.prepare(`UPDATE tracker_items SET issue_number = ?, issue_key = ? WHERE id = ?`).run(
-        nextNum,
-        `${prefix}-${nextNum}`,
-        id,
-      );
 
       if (description && bodyVersion > 0) {
         db.prepare(

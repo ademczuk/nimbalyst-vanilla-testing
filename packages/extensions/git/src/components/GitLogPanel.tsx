@@ -14,6 +14,7 @@ import { GitStatusBar } from './GitStatusBar';
 import { PanelHideButton } from './PanelHideButton';
 import { useOperationLog, getSuggestionForError } from '../hooks/useOperationLog';
 import { usePanelState, readSelectedHash } from '../hooks/usePanelState';
+import { useSessionsForCommits } from '../hooks/useSessionsForCommits';
 import { filterCommits } from '../commitFilters';
 
 interface GitCommit {
@@ -57,6 +58,15 @@ const ipc = (window as unknown as {
     invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
   };
 }).electronAPI;
+
+/** App.tsx listens for this event and routes the session into Agent mode. */
+function openSession(sessionId: string, workspacePath: string): void {
+  window.dispatchEvent(
+    new CustomEvent('open-ai-session', {
+      detail: { sessionId, workspacePath },
+    }),
+  );
+}
 
 function formatRelativeDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -128,6 +138,10 @@ export function GitLogPanel({ host }: PanelHostProps) {
     () => filterCommits(unfilteredCommits, searchFilter),
     [unfilteredCommits, searchFilter],
   );
+  // Keyed off the fetched page, not the search-filtered view, so typing in the
+  // search box re-filters locally instead of refiring the lookup.
+  const commitShas = useMemo(() => unfilteredCommits.map(c => c.hash), [unfilteredCommits]);
+  const sessionLinks = useSessionsForCommits(commitShas);
   const selectedIndex = useMemo(() => {
     if (!selectedHash) return null;
     const idx = commits.findIndex(c => c.hash === selectedHash);
@@ -202,17 +216,39 @@ export function GitLogPanel({ host }: PanelHostProps) {
   const [fileMaskHistory, setFileMaskHistory] = useState<string[]>(
     () => host.storage.getGlobal<string[]>('changesFileMaskHistory') ?? []
   );
+  const fileMaskEnabledDirtyRef = useRef(false);
+  const fileMaskInputDirtyRef = useRef(false);
+  const fileMaskHistoryDirtyRef = useRef(false);
+  useEffect(() => {
+    const hydrateFileMaskStorage = () => {
+      if (!fileMaskEnabledDirtyRef.current) {
+        setFileMaskEnabled(host.storage.get<boolean>('changesFileMaskEnabled') ?? false);
+      }
+      if (!fileMaskInputDirtyRef.current) {
+        setFileMaskInput(host.storage.get<string>('changesFileMask') ?? '');
+      }
+      if (!fileMaskHistoryDirtyRef.current) {
+        setFileMaskHistory(host.storage.getGlobal<string[]>('changesFileMaskHistory') ?? []);
+      }
+    };
+    hydrateFileMaskStorage();
+    window.addEventListener('nimbalyst:extension-storage-hydrated', hydrateFileMaskStorage);
+    return () => window.removeEventListener('nimbalyst:extension-storage-hydrated', hydrateFileMaskStorage);
+  }, [host.storage]);
   const updateFileMaskEnabled = useCallback((enabled: boolean) => {
+    fileMaskEnabledDirtyRef.current = true;
     setFileMaskEnabled(enabled);
     void host.storage.set('changesFileMaskEnabled', enabled);
   }, [host.storage]);
   const updateFileMaskInput = useCallback((value: string) => {
+    fileMaskInputDirtyRef.current = true;
     setFileMaskInput(value);
     void host.storage.set('changesFileMask', value);
   }, [host.storage]);
   const commitFileMaskToHistory = useCallback((value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
+    fileMaskHistoryDirtyRef.current = true;
     setFileMaskHistory(prev => {
       const next = [trimmed, ...prev.filter(v => v !== trimmed)].slice(0, 10);
       void host.storage.setGlobal('changesFileMaskHistory', next);
@@ -220,6 +256,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
     });
   }, [host.storage]);
   const removeFileMaskHistoryEntry = useCallback((value: string) => {
+    fileMaskHistoryDirtyRef.current = true;
     setFileMaskHistory(prev => {
       const next = prev.filter(v => v !== value);
       void host.storage.setGlobal('changesFileMaskHistory', next);
@@ -816,6 +853,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
                     <th className="git-log-th git-log-th--hash">Hash</th>
                     <th className="git-log-th git-log-th--message">Message</th>
                     <th className="git-log-th git-log-th--author">Author</th>
+                    <th className="git-log-th git-log-th--session">Session</th>
                     <th className="git-log-th git-log-th--date">Date</th>
                   </tr>
                 </thead>
@@ -857,6 +895,21 @@ export function GitLogPanel({ host }: PanelHostProps) {
                         <td className="git-log-td git-log-td--author">
                           {commit.author}
                         </td>
+                        <td className="git-log-td git-log-td--session">
+                          {sessionLinks[commit.hash] && (
+                            <button
+                              type="button"
+                              className="git-log-session-chip"
+                              title={`Open session: ${sessionLinks[commit.hash].title || 'Untitled session'}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openSession(sessionLinks[commit.hash].sessionId, workspacePath);
+                              }}
+                            >
+                              {sessionLinks[commit.hash].title || 'Untitled session'}
+                            </button>
+                          )}
+                        </td>
                         <td className="git-log-td git-log-td--date">
                           {formatRelativeDate(commit.date)}
                         </td>
@@ -881,6 +934,8 @@ export function GitLogPanel({ host }: PanelHostProps) {
                 layout="vertical"
                 workspacePath={workspacePath}
                 commitHash={commits[selectedIndex].hash}
+                sessionLink={sessionLinks[commits[selectedIndex].hash] ?? null}
+                onOpenSession={(sessionId) => openSession(sessionId, workspacePath)}
               />
             </div>
           )}

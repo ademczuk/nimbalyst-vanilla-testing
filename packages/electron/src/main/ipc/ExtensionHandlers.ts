@@ -8,7 +8,7 @@
  * - Directory listing
  */
 
-import { app } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { logger } from '../utils/logger';
@@ -37,6 +37,7 @@ import {
   detectStaleBuiltinExtensionBundle,
   formatStaleBundleWarning,
 } from '../extensions/staleExtensionBundle';
+import { rebuildExtensionForDev } from '../extensions/extensionDevRebuild';
 import {
   startExtensionBackendModules,
   stopExtensionBackendModules,
@@ -239,6 +240,21 @@ export async function initializeExtensionFileTypes(): Promise<void> {
  * In Playwright tests, uses a temp directory to avoid touching production extensions.
  */
 export async function getUserExtensionsDirectory(): Promise<string> {
+  // Per-run extension dir for E2E fixtures. Never honoured in a packaged
+  // build, so a stray environment variable cannot redirect a user's
+  // extensions directory.
+  const playwrightExtensionDir = process.env.PLAYWRIGHT === '1' && !app.isPackaged
+    ? process.env.NIMBALYST_E2E_EXTENSIONS_DIR
+    : undefined;
+  if (playwrightExtensionDir) {
+    const resolved = path.resolve(playwrightExtensionDir);
+    const tempRoot = path.resolve(app.getPath('temp'));
+    if (resolved === tempRoot || !resolved.startsWith(`${tempRoot}${path.sep}`)) {
+      throw new Error('NIMBALYST_E2E_EXTENSIONS_DIR must be inside the system temp directory');
+    }
+    await fs.mkdir(resolved, { recursive: true });
+    return resolved;
+  }
   // Use test-specific path for Playwright tests to avoid conflicts
   const userDataPath = process.env.PLAYWRIGHT === '1'
     ? path.join(app.getPath('temp'), 'nimbalyst-test-extensions')
@@ -1017,6 +1033,7 @@ export function registerExtensionHandlers(): void {
         path: string;
         manifest: unknown;
         isBuiltin: boolean;
+        staleBundleWarning?: string;
       }> = [];
       const seenExtensionIds = new Set<string>();
       const currentChannel = getReleaseChannel();
@@ -1111,6 +1128,7 @@ export function registerExtensionHandlers(): void {
             // older than its source, so features that run at activate() time
             // (e.g. collab codec registration) aren't silently broken by a
             // stale dev bundle. See NIM-1983.
+            let staleBundleWarning: string | undefined;
             if (isBuiltinDir && !app.isPackaged) {
               try {
                 const stale = await detectStaleBuiltinExtensionBundle(
@@ -1118,7 +1136,10 @@ export function registerExtensionHandlers(): void {
                   extensionPath,
                   typeof manifest.main === 'string' ? manifest.main : undefined,
                 );
-                if (stale) logger.main.warn(formatStaleBundleWarning(stale));
+                if (stale) {
+                  staleBundleWarning = formatStaleBundleWarning(stale);
+                  logger.main.warn(staleBundleWarning);
+                }
               } catch {
                 // Diagnostic only -- never block loading.
               }
@@ -1129,6 +1150,7 @@ export function registerExtensionHandlers(): void {
               path: extensionPath,
               manifest,
               isBuiltin: isBuiltinDir,
+              staleBundleWarning,
             });
           } catch {
             // Skip directories without valid manifest
@@ -1385,21 +1407,42 @@ export function registerExtensionHandlers(): void {
   // The renderers will unload the old version and load the new one
   safeHandle('extensions:dev-reload', async (_event, extensionId: string, extensionPath: string) => {
     try {
-      const { BrowserWindow } = await import('electron');
-      const windows = BrowserWindow.getAllWindows();
-
-      logger.main.info(`[ExtensionHandlers] Broadcasting extension reload: ${extensionId} from ${extensionPath}`);
-
-      // Broadcast reload message to all renderer windows
-      for (const win of windows) {
-        if (!win.isDestroyed()) {
-          win.webContents.send('extension:dev-reload', { extensionId, extensionPath });
-        }
+      if (app.isPackaged) {
+        return { success: false, error: 'Extension rebuild is only available in development mode.' };
+      }
+      if (typeof extensionId !== 'string' || !extensionId.trim()) {
+        return { success: false, error: 'Extension rebuild requires an extension ID.' };
+      }
+      if (typeof extensionPath !== 'string' || !extensionPath.trim()) {
+        return { success: false, error: 'Extension rebuild requires an extension path.' };
       }
 
-      return { success: true };
+      const normalizedPath = path.resolve(extensionPath);
+      const manifest = JSON.parse(await fs.readFile(path.join(normalizedPath, 'manifest.json'), 'utf-8'));
+      if (manifest.id !== extensionId) {
+        return {
+          success: false,
+          error: `Extension manifest ID ${String(manifest.id)} does not match ${extensionId}.`,
+        };
+      }
+
+      return await rebuildExtensionForDev(
+        { extensionId, extensionPath: normalizedPath },
+        {
+          broadcastReload: async (request) => {
+            logger.main.info(
+              `[ExtensionHandlers] Broadcasting extension reload: ${request.extensionId} from ${request.extensionPath}`,
+            );
+            for (const win of BrowserWindow.getAllWindows()) {
+              if (!win.isDestroyed()) {
+                win.webContents.send('extension:dev-reload', request);
+              }
+            }
+          },
+        },
+      );
     } catch (error) {
-      logger.main.error('[ExtensionHandlers] Failed to broadcast extension reload:', error);
+      logger.main.error('[ExtensionHandlers] Failed to rebuild extension:', error);
       return { success: false, error: String(error) };
     }
   });
@@ -1407,7 +1450,6 @@ export function registerExtensionHandlers(): void {
   // Notify all renderer processes to unload an extension
   safeHandle('extensions:dev-unload', async (_event, extensionId: string) => {
     try {
-      const { BrowserWindow } = await import('electron');
       const windows = BrowserWindow.getAllWindows();
 
       logger.main.info(`[ExtensionHandlers] Broadcasting extension unload: ${extensionId}`);

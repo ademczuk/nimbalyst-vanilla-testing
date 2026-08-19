@@ -72,7 +72,6 @@ import { extractFilePath } from './tools/extractFilePath';
 import { SoundNotificationService } from '../SoundNotificationService';
 import { notificationService } from '../NotificationService';
 import { composeNotificationTitle } from '../../../shared/notificationTitle';
-import { TrayManager } from '../../tray/TrayManager';
 import { logger } from '../../utils/logger';
 import { windowStates, findWindowByWorkspace } from '../../window/WindowManager';
 import { sessionFileTracker } from '../SessionFileTracker';
@@ -83,6 +82,7 @@ import { ToolUsageService } from '../ToolUsageService';
 import { historyManager } from '../../HistoryManager';
 import { addGitignoreBypass } from '../../file/WorkspaceEventBus';
 import { getSyncProvider, isDesktopTrulyAway } from '../SyncManager';
+import { requestMobilePush } from './mobilePushRequest';
 import { setSessionPendingPrompt } from './pendingPromptPersistence';
 import { getAgentWorkflowService } from '../AgentWorkflowService';
 import { getMetaAgentOpenAITools } from '../../mcp/metaAgentServer';
@@ -115,6 +115,8 @@ import {
 } from './aiServiceUtils';
 import { disableParentNotificationsAfterDirectTakeover } from './childSessionTakeover';
 import { installScopedProviderListener } from './providerListenerRegistry';
+import { shouldSettleUnterminatedTurn } from './sessionSettlePolicy';
+import { captureTutorialMilestone } from '../tutorial/tutorialAnalytics';
 import type Store from 'electron-store';
 import type { AIService } from './AIService';
 import type { HooklessAgentFileWatcher } from './HooklessAgentFileWatcher';
@@ -815,6 +817,7 @@ export class MessageStreamingHandler {
       servers?: unknown[];
       lastCheckedAt?: number | null;
       configuredNames?: string[] | null;
+      withheldNames?: string[] | null;
     }) => {
       const mcpSessionId = data?.sessionId || session.id;
       safeSend(event, 'ai:mcp-status:changed', {
@@ -824,6 +827,7 @@ export class MessageStreamingHandler {
           active: true,
           statuses: (data?.servers || []) as McpSessionStatusInput[],
           configuredNames: data?.configuredNames ?? null,
+          withheldNames: data?.withheldNames ?? null,
           lastCheckedAt: data?.lastCheckedAt ?? null,
         }),
         workspacePath: effectiveWorkspacePath,
@@ -881,7 +885,6 @@ export class MessageStreamingHandler {
       logger.main.info('[AIService] ExitPlanMode confirmation requested:', data.requestId);
       safeSend(event, 'ai:exitPlanModeConfirm', { ...data, workspacePath: effectiveWorkspacePath });
       syncPendingPrompt(data.sessionId, true);
-      TrayManager.getInstance().onPromptCreated(data.sessionId);
 
       // Update session status so all windows show the pending indicator
       getSessionStateManager().updateActivity({
@@ -918,7 +921,6 @@ export class MessageStreamingHandler {
     }) => {
       logger.main.info('[AIService] ExitPlanMode resolved:', data.requestId, 'approved=', data.approved);
       syncPendingPrompt(data.sessionId, false);
-      TrayManager.getInstance().onPromptResolved(data.sessionId);
 
       getSessionStateManager().updateActivity({
         sessionId: data.sessionId,
@@ -935,7 +937,6 @@ export class MessageStreamingHandler {
       // logger.main.info('[AIService] AskUserQuestion requested:', data.questionId);
       safeSend(event, 'ai:askUserQuestion', { ...data, workspacePath: effectiveWorkspacePath });
       syncPendingPrompt(data.sessionId, true);
-      TrayManager.getInstance().onPromptCreated(data.sessionId);
 
       // Update session status to waiting_for_input so all windows show the pending indicator
       getSessionStateManager().updateActivity({
@@ -961,7 +962,6 @@ export class MessageStreamingHandler {
       // logger.main.info('[AIService] AskUserQuestion answered:', data.questionId);
       safeSend(event, 'ai:askUserQuestionAnswered', { ...data, workspacePath: effectiveWorkspacePath });
       syncPendingPrompt(data.sessionId, false);
-      TrayManager.getInstance().onPromptResolved(data.sessionId);
 
       // Update session status back to running so all windows clear the pending indicator
       getSessionStateManager().updateActivity({
@@ -977,7 +977,6 @@ export class MessageStreamingHandler {
       logger.main.info('[AIService] Tool permission requested:', data.requestId);
       safeSend(event, 'ai:toolPermission', data);
       syncPendingPrompt(data.sessionId, true);
-      TrayManager.getInstance().onPromptCreated(data.sessionId);
 
       // Update session status so all windows show the pending indicator
       getSessionStateManager().updateActivity({
@@ -1007,7 +1006,6 @@ export class MessageStreamingHandler {
       logger.main.info('[AIService] Tool permission resolved:', data.requestId);
       safeSend(event, 'ai:toolPermissionResolved', { ...data, workspacePath: effectiveWorkspacePath });
       syncPendingPrompt(data.sessionId, false);
-      TrayManager.getInstance().onPromptResolved(data.sessionId);
 
       // Update session status back to running so all windows clear the pending indicator
       getSessionStateManager().updateActivity({
@@ -1203,6 +1201,10 @@ export class MessageStreamingHandler {
       }),
     });
 
+    // Separates "opened the tutorial" from "actually used it". No-ops for every
+    // other workspace.
+    void captureTutorialMilestone(effectiveWorkspacePath, 'prompt_sent');
+
     // Mark session as running/active
     const stateManager = getSessionStateManager();
     await stateManager.startSession({
@@ -1228,6 +1230,8 @@ export class MessageStreamingHandler {
       let hasStreamingContent = false;  // Track if we used streamContent tool
       let hadError = false;  // Track if an error occurred during the stream
       let providerError: string | undefined;
+      let sawCompleteChunk = false;  // A terminal 'complete' chunk arrived
+      let settledOnErrorChunk = false;  // The error branch already ended the session
       let firstChunkTime: number | undefined;
       let chunkCount = 0;
       let textChunks = 0;
@@ -2237,6 +2241,7 @@ export class MessageStreamingHandler {
                 await stateManager.updateActivity({ sessionId: session.id, status: 'error' });
                 await stateManager.endSession(session.id);
                 await this.svc.hooklessWatcher.stopForSession(session.id);
+                settledOnErrorChunk = true;
               } catch (settleErr) {
                 logger.main.error('[AIService] Failed to settle extension-agent error chunk:', settleErr);
               }
@@ -2246,6 +2251,7 @@ export class MessageStreamingHandler {
           case 'complete':
             // if (isClaudeCode) {
             // }
+            sawCompleteChunk = true;
             perfLog.totalTime = Date.now() - startTime;
             perfLog.streamTime = Date.now() - streamStartTime;
             perfLog.chunkCount = chunkCount;
@@ -2688,6 +2694,7 @@ export class MessageStreamingHandler {
               await notificationService.showNotification({
                 title: composeNotificationTitle(sessionLabel, 'Response Ready'),
                 body: notificationBody,
+                kind: 'agent-complete',
                 sessionId: session.id,
                 workspacePath: workspacePath,
                 sourceLabel: sessionLabel,
@@ -2700,10 +2707,11 @@ export class MessageStreamingHandler {
               // the Electron notification above already covers it -- sending a mobile push
               // too causes duplicates via iPhone Mirroring / Continuity.
               if (syncProvider && isDesktopTrulyAway()) {
-                syncProvider.requestMobilePush?.(
+                void requestMobilePush(
                   session.id,
                   session.title || 'AI Session',
-                  notificationBody
+                  notificationBody,
+                  { reason: 'session_complete' }
                 );
               }
 
@@ -2790,6 +2798,31 @@ export class MessageStreamingHandler {
             }
 
             break;
+        }
+      }
+
+      // A built-in provider can yield an in-band 'error' chunk and then return
+      // normally instead of throwing (the Codex app-server transport catches
+      // RPC failures this way). That reaches neither the 'complete' branch nor
+      // the outer catch, so nothing ended the session and it stayed 'running'
+      // forever -- Cancel then no-ops, because the turn is already gone, while
+      // the renderer's processing reconcile keeps re-asserting the spinner.
+      if (session?.id && shouldSettleUnterminatedTurn({
+        sawComplete: sawCompleteChunk,
+        providerError,
+        alreadySettled: settledOnErrorChunk,
+        queuedChainActive: this.svc.sessionsProcessingQueue.has(session.id),
+      })) {
+        logger.main.warn(
+          `[AIService] Provider stream for ${session.id} ended on an error chunk without completing -- settling session`
+        );
+        try {
+          await stateManager.updateActivity({ sessionId: session.id, status: 'error' });
+          await stateManager.endSession(session.id);
+          await this.svc.hooklessWatcher.stopForSession(session.id);
+          codexEditWindowRegistry.clearSession(session.id);
+        } catch (settleErr) {
+          logger.main.error('[AIService] Failed to settle unterminated provider error:', settleErr);
         }
       }
 
@@ -2916,14 +2949,16 @@ export class MessageStreamingHandler {
             metadata: { isExecuting: false, hasPendingPrompt: false, updatedAt: Date.now() },
           });
 
-          // Request mobile push notification for agent error (only when truly away)
-          if (isDesktopTrulyAway()) {
-            syncProvider.requestMobilePush?.(
-              session.id,
-              session.title || 'AI Session',
-              'Error occurred'
-            );
-          }
+          // Forced (#1268): a session that died unattended is exactly when the
+          // user needs to hear about it, so the server -- not this process --
+          // decides whether the desktop counts as present. Gating on
+          // isDesktopTrulyAway() here would stop `force` ever being sent.
+          void requestMobilePush(
+            session.id,
+            session.title || 'AI Session',
+            'Error occurred',
+            { force: true, reason: 'agent_error' }
+          );
         }
       }
 

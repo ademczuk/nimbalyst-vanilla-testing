@@ -64,6 +64,17 @@ import {
 import { ensureExtensionSDKDocsTrusted, getExtensionSDKDocsPath } from '../utils/workspaceDetection';
 import { database } from '../database/PGLiteDatabaseWorker';
 import { getRegisteredWalkthroughs, getRegisteredTips } from '../ipc/WalkthroughHandlers';
+import { BrowserSessionService } from '../services/BrowserSessionService';
+
+/**
+ * Applies a zoom factor to the focused window and re-positions any native
+ * browser views hosted in it. Those views live outside the renderer's CSS
+ * pixel grid, so their bounds have to be re-derived from the new factor.
+ */
+function applyZoomFactor(window: BrowserWindow, factor: number): void {
+    window.webContents.setZoomFactor(factor);
+    BrowserSessionService.getInstance().refreshBoundsForWindow(window);
+}
 
 // Create window list menu items
 function createWindowListMenu(): any[] {
@@ -769,7 +780,7 @@ export async function createApplicationMenu() {
                     accelerator: KeyboardShortcuts.view.actualSize,
                     click: async () => {
                         const focused = getFocusedWindow();
-                        if (focused) focused.webContents.setZoomFactor(1);
+                        if (focused) applyZoomFactor(focused, 1);
                     }
                 },
                 {
@@ -779,7 +790,7 @@ export async function createApplicationMenu() {
                         const focused = getFocusedWindow();
                         if (focused) {
                             const currentZoom = focused.webContents.getZoomFactor();
-                            focused.webContents.setZoomFactor(currentZoom + 0.1);
+                            applyZoomFactor(focused, currentZoom + 0.1);
                         }
                     }
                 },
@@ -797,7 +808,7 @@ export async function createApplicationMenu() {
                         const focused = getFocusedWindow();
                         if (focused) {
                             const currentZoom = focused.webContents.getZoomFactor();
-                            focused.webContents.setZoomFactor(currentZoom + 0.1);
+                            applyZoomFactor(focused, currentZoom + 0.1);
                         }
                     }
                 },
@@ -813,7 +824,7 @@ export async function createApplicationMenu() {
                         const focused = getFocusedWindow();
                         if (focused) {
                             const currentZoom = focused.webContents.getZoomFactor();
-                            focused.webContents.setZoomFactor(currentZoom + 0.1);
+                            applyZoomFactor(focused, currentZoom + 0.1);
                         }
                     }
                 },
@@ -828,7 +839,7 @@ export async function createApplicationMenu() {
                         const focused = getFocusedWindow();
                         if (focused) {
                             const currentZoom = focused.webContents.getZoomFactor();
-                            focused.webContents.setZoomFactor(currentZoom + 0.1);
+                            applyZoomFactor(focused, currentZoom + 0.1);
                         }
                     }
                 },
@@ -839,7 +850,7 @@ export async function createApplicationMenu() {
                         const focused = getFocusedWindow();
                         if (focused) {
                             const currentZoom = focused.webContents.getZoomFactor();
-                            focused.webContents.setZoomFactor(Math.max(0.5, currentZoom - 0.1));
+                            applyZoomFactor(focused, Math.max(0.5, currentZoom - 0.1));
                         }
                     }
                 },
@@ -853,7 +864,7 @@ export async function createApplicationMenu() {
                         const focused = getFocusedWindow();
                         if (focused) {
                             const currentZoom = focused.webContents.getZoomFactor();
-                            focused.webContents.setZoomFactor(Math.max(0.5, currentZoom - 0.1));
+                            applyZoomFactor(focused, Math.max(0.5, currentZoom - 0.1));
                         }
                     }
                 },

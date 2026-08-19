@@ -113,6 +113,7 @@ function Segment({
           type="button"
           data-testid="comment-mention-agent"
           data-session-id={segment.sessionId}
+          data-pending={segment.pending ? 'true' : 'false'}
           title={
             segment.ownerDisplayName
               ? `Agent session ${segment.sessionName}, owned by ${segment.ownerDisplayName}`
@@ -131,6 +132,9 @@ function Segment({
             <MaterialSymbol icon="smart_toy" size={11} />
           </span>
           @{segment.sessionName}
+          {segment.pending && (
+            <MaterialSymbol icon="hourglass_top" size={10} aria-label="Pending dispatch" />
+          )}
         </button>
       );
 

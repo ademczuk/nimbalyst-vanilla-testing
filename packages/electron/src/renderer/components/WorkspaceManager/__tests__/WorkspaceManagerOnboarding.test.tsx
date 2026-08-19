@@ -13,6 +13,11 @@ vi.mock('../WorkspaceManager', () => ({
   ),
 }));
 
+// Onboarding completion now reports analytics; keep the real client out of jsdom.
+vi.mock('posthog-js', () => ({
+  default: { capture: vi.fn(), people: { set: vi.fn() } },
+}));
+
 const { WorkspaceManagerOnboarding } = await import('../WorkspaceManagerOnboarding');
 
 describe('WorkspaceManagerOnboarding', () => {

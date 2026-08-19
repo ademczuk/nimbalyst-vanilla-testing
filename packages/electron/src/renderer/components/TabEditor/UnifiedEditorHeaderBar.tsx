@@ -26,17 +26,19 @@ import {
   type TrackerTypeInfo,
 } from '@nimbalyst/runtime';
 import { $generateHtmlFromNodes } from '@lexical/html';
-import { copyToClipboard, ProviderIcon } from '@nimbalyst/runtime';
+import { copyToClipboard } from '@nimbalyst/runtime';
 import { historyDialogFileAtom } from '../../store';
 import { useFloatingMenu, FloatingPortal } from '../../hooks/useFloatingMenu';
 import { getDocumentService } from '../../services/RendererDocumentService';
-import { isWorktreePath } from '../../../shared/pathUtils';
 import { CommonFileActions } from '../CommonFileActions';
+import { FeedbackBacklinkHeaderButton } from '../FeedbackRequest/FeedbackBacklinks';
+import type { FeedbackRequestSubjectRef } from '../../../shared/feedbackRequestIndex';
+import { DocumentSessionControl, type DocumentSessionActions } from './DocumentSessionControl';
 import { FilePathBreadcrumb } from '../common/FilePathBreadcrumb';
 import { dialogRef, DIALOG_IDS } from '../../dialogs';
 import type { ShareDialogData } from '../../dialogs';
 import { useLocalFileSharedDocLink } from '../../hooks/useCollabLocalOrigin';
-import { sharedDocumentsAtom, pendingCollabDocumentAtom, activeTeamOrgIdAtom, buildSharedDocumentDeepLink } from '../../store/atoms/collabDocuments';
+import { sharedDocumentsAtom, pendingCollabDocumentAtom, activeCollabScopeAtom, activeTeamOrgIdAtom, buildSharedDocumentDeepLink } from '../../store/atoms/collabDocuments';
 import { setWindowModeAtom } from '../../store/atoms/windowMode';
 import { getCollabNodeName, getCollabParentPath, normalizeCollabPath } from '../CollabMode/collabTree';
 
@@ -53,46 +55,6 @@ interface EditorLike {
   getElementByKey: (key: string) => HTMLElement | null;
   update: (fn: () => void) => void;
 }
-
-interface AISession {
-  id: string;
-  title: string;
-  provider: string;
-  model?: string;
-  createdAt: number;
-  updatedAt: number;
-  messageCount: number;
-  worktreeId?: string | null;
-  isCurrentWorkspace?: boolean;
-}
-
-const SessionItem: React.FC<{
-  session: AISession;
-  isLast?: boolean;
-  onClick?: (id: string) => void;
-  onOpenChat?: (id: string) => void;
-  formatTime: (ts: number) => string;
-}> = ({ session, isLast, onClick, onOpenChat, formatTime }) => (
-  <div
-    className={`ai-session-item py-2 px-3 flex items-center gap-2 ${isLast ? 'last:border-b-0' : ''} hover:bg-[var(--nim-bg-hover)] cursor-pointer`}
-    onClick={() => onClick?.(session.id)}
-  >
-    <span className="shrink-0 text-[var(--nim-text-muted)]"><ProviderIcon provider={session.provider} size={14} /></span>
-    <div className="ai-session-title text-sm font-medium whitespace-nowrap overflow-hidden text-ellipsis text-[var(--nim-text)] flex-1 min-w-0">{session.title}</div>
-    <div className="ai-session-time text-xs text-[var(--nim-text-faint)] shrink-0">{formatTime(session.updatedAt)}</div>
-    {onOpenChat && (
-      <button
-        className="shrink-0 w-6 h-6 flex items-center justify-center rounded text-[var(--nim-text-faint)] hover:text-[var(--nim-text)] hover:bg-[var(--nim-bg-tertiary)] transition-colors duration-150 bg-transparent border-none cursor-pointer"
-        title="Open in Chat panel"
-        onClick={(e) => { e.stopPropagation(); onOpenChat(session.id); }}
-      >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-        </svg>
-      </button>
-    )}
-  </div>
-);
 
 interface TOCItem {
   text: string;
@@ -130,9 +92,12 @@ interface UnifiedEditorHeaderBarProps {
   onToggleMarkdownMode?: () => void;  // Switch to Monaco for raw editing
   onDirtyChange?: (isDirty: boolean) => void;  // Mark document as dirty after changes
 
-  // AI session callbacks
-  onSwitchToAgentMode?: (planDocumentPath?: string, sessionId?: string) => void;
-  onOpenSessionInChat?: (sessionId: string) => void;
+  /**
+   * What the host lets the user do with this document's AI sessions. Supplied
+   * as one explicit bag so a host can't half-wire the control and leave inert
+   * rows behind.
+   */
+  documentSessionActions?: DocumentSessionActions;
 
   // Extension menu items (contributed by custom editors)
   extensionMenuItems?: ExtensionMenuItem[];
@@ -177,8 +142,7 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
   isSourceModeActive = false,
   onToggleMarkdownMode,
   onDirtyChange,
-  onSwitchToAgentMode,
-  onOpenSessionInChat,
+  documentSessionActions,
   extensionMenuItems = [],
   extraActionItems = [],
   onOpenExtensionSettings,
@@ -195,7 +159,6 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
   const openHistoryDialog = useSetAtom(historyDialogFileAtom);
 
   // Dropdown states
-  const [showAISessions, setShowAISessions] = useState(false);
   const [showTOC, setShowTOC] = useState(false);
   const [showDocTypeSubmenu, setShowDocTypeSubmenu] = useState(false);
 
@@ -207,6 +170,7 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
   const sharedDocLink = useLocalFileSharedDocLink(workspaceId ?? '', filePath);
   const sharedDocuments = useAtomValue(sharedDocumentsAtom);
   const teamOrgId = useAtomValue(activeTeamOrgIdAtom);
+  const activeCollabScope = useAtomValue(activeCollabScopeAtom);
   const setWindowMode = useSetAtom(setWindowModeAtom);
   const setPendingCollabDoc = useSetAtom(pendingCollabDocumentAtom);
 
@@ -234,10 +198,12 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
 
   const handleOpenSharedDoc = useCallback(() => {
     const documentId = sharedDocLink.binding?.documentId;
-    if (!documentId) return;
+    if (!documentId || !activeCollabScope) return;
     setWindowMode('collab');
     setPendingCollabDoc({
       documentId,
+      scopeKey: activeCollabScope.scopeKey,
+      orgId: activeCollabScope.orgId,
       documentType: sharedDocument?.documentType ?? sharedDocLink.binding?.documentType,
       analyticsSource: 'home',
     });
@@ -245,6 +211,7 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
   }, [
     sharedDocLink.binding?.documentId,
     sharedDocLink.binding?.documentType,
+    activeCollabScope,
     sharedDocument?.documentType,
     setWindowMode,
     setPendingCollabDoc,
@@ -270,6 +237,18 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
     teamOrgId,
   ]);
 
+  /**
+   * The artifact feedback is asked about. Same two identity sources as the deep
+   * link -- a collaborative tab knows its own document, a local file knows the
+   * shared document it is bound to -- so a request about the shared document
+   * surfaces from either side of that pair.
+   */
+  const feedbackSubject = useMemo<FeedbackRequestSubjectRef | null>(() => {
+    const documentId = sharedDocumentLinkTarget?.documentId
+      ?? sharedDocLink.binding?.documentId;
+    return documentId ? { kind: 'document', sourceId: documentId } : null;
+  }, [sharedDocumentLinkTarget?.documentId, sharedDocLink.binding?.documentId]);
+
   const handleCopyDeepLink = useCallback(async () => {
     if (!sharedDocumentDeepLink) return;
     try {
@@ -284,10 +263,6 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
   // Dev mode check
   const isDevMode = import.meta.env.DEV;
 
-  // AI Sessions state
-  const [aiSessions, setAISessions] = useState<AISession[]>([]);
-  const [loadingSessions, setLoadingSessions] = useState(false);
-
   // TOC state
   const [tocItems, setTocItems] = useState<TOCItem[]>([]);
 
@@ -295,31 +270,7 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
   const [currentDocumentType, setCurrentDocumentType] = useState<string | null>(null);
 
   // Refs for click-outside handling
-  const aiSessionsButtonRef = useRef<HTMLButtonElement>(null);
   const tocButtonRef = useRef<HTMLButtonElement>(null);
-
-  // Load AI sessions
-  const loadAISessions = useCallback(async () => {
-    if (!filePath || !workspaceId || !(window as any).electronAPI) return;
-
-    setLoadingSessions(true);
-    try {
-      const sessions = await (window as any).electronAPI.invoke('sessions:get-by-file', workspaceId, filePath);
-      setAISessions(sessions || []);
-    } catch (error) {
-      console.error('Failed to load AI sessions:', error);
-      setAISessions([]);
-    } finally {
-      setLoadingSessions(false);
-    }
-  }, [filePath, workspaceId]);
-
-  // Load sessions when dropdown opens
-  useEffect(() => {
-    if (showAISessions && aiSessions.length === 0) {
-      loadAISessions();
-    }
-  }, [showAISessions, aiSessions.length, loadAISessions]);
 
   // Extract TOC from Lexical editor
   const extractTOC = useCallback(() => {
@@ -554,14 +505,6 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
-        aiSessionsButtonRef.current &&
-        !aiSessionsButtonRef.current.contains(event.target as Node) &&
-        !(event.target as Element).closest('.unified-header-ai-dropdown')
-      ) {
-        setShowAISessions(false);
-      }
-
-      if (
         tocButtonRef.current &&
         !tocButtonRef.current.contains(event.target as Node) &&
         !(event.target as Element).closest('.unified-header-toc-dropdown')
@@ -590,28 +533,6 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
     });
   };
 
-  // Handle AI session actions
-  const handleStartAgentSession = () => {
-    if (onSwitchToAgentMode && filePath) {
-      onSwitchToAgentMode(filePath);
-    }
-    setShowAISessions(false);
-  };
-
-  const handleLoadSessionInAgentMode = (sessionId: string) => {
-    if (onSwitchToAgentMode) {
-      onSwitchToAgentMode(undefined, sessionId);
-    }
-    setShowAISessions(false);
-  };
-
-  const handleLoadSessionInChat = (sessionId: string) => {
-    if (onOpenSessionInChat) {
-      onOpenSessionInChat(sessionId);
-    }
-    setShowAISessions(false);
-  };
-
   // Format relative time
   const formatRelativeTime = (timestamp: number): string => {
     const now = Date.now();
@@ -634,11 +555,6 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
 
   // Determine if we should show AI button (shown in both editor and agent modes)
   const shouldShowAIButton = showAIButton ?? Boolean(workspaceId);
-  // Group sessions: current workspace first, then others
-  const isInWorktree = workspaceId ? isWorktreePath(workspaceId) : false;
-  const currentWorkspaceSessions = useMemo(() => aiSessions.filter(s => s.isCurrentWorkspace), [aiSessions]);
-  const otherSessions = useMemo(() => aiSessions.filter(s => !s.isCurrentWorkspace), [aiSessions]);
-  const hasGroupedSessions = currentWorkspaceSessions.length > 0 && otherSessions.length > 0;
 
   // Determine if we should show TOC button (Markdown only)
   const showTOCButton = isMarkdown && Boolean(lexicalEditor);
@@ -650,87 +566,13 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
 
       {/* Right: Action Buttons */}
       <div className="unified-header-actions flex items-center gap-1">
-        {/* AI Sessions Button */}
+        {/* AI sessions for this document: chip + caret, or a sparkle icon when there are none */}
         {shouldShowAIButton && (
-          <div className="unified-header-dropdown-container relative">
-            <button
-              ref={aiSessionsButtonRef}
-              data-testid="ai-sessions-button"
-              className={`unified-header-button nim-btn-icon w-7 h-7 rounded border-none bg-transparent cursor-pointer flex items-center justify-center transition-all duration-150 text-[var(--nim-text-muted)] hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)] ${
-                showAISessions ? 'active bg-[var(--nim-bg-tertiary)] text-[var(--nim-text)]' : ''
-              }`}
-              onClick={() => {
-                setShowAISessions(!showAISessions);
-                if (!showAISessions) {
-                  loadAISessions();
-                }
-              }}
-              title="AI Sessions"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2L13.5 8.5L20 10L13.5 11.5L12 18L10.5 11.5L4 10L10.5 8.5L12 2Z" opacity="0.8"/>
-                <path d="M14 16L18 12L20 14L16 18M14 16L16 18L10 24H8V22L14 16Z" opacity="0.8"/>
-              </svg>
-            </button>
-
-            {showAISessions && (
-              <div className="unified-header-ai-dropdown absolute top-[calc(100%+4px)] right-0 min-w-[300px] max-w-[400px] overflow-hidden rounded-md z-[1000] bg-[var(--nim-bg)] border border-[var(--nim-border)] shadow-[0_4px_12px_rgba(0,0,0,0.3)]">
-                {/* Dropdown header */}
-                <div className="ai-sessions-header px-4 py-2.5 border-b border-[var(--nim-border)]">
-                  <div className="ai-sessions-title text-[11px] font-semibold uppercase tracking-wide text-[var(--nim-text-muted)]">
-                    AI Sessions that edited this file
-                  </div>
-                </div>
-
-                {loadingSessions ? (
-                  <div className="ai-sessions-loading p-4 text-center text-[13px] text-[var(--nim-text-muted)]">Loading sessions...</div>
-                ) : aiSessions.length > 0 ? (
-                  <div className="ai-sessions-list max-h-[300px] overflow-y-auto">
-                    {hasGroupedSessions ? (
-                      <>
-                        {/* Current workspace sessions */}
-                        <div className="ai-sessions-group-header px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--nim-text-faint)] bg-[var(--nim-bg-secondary)]">
-                          {isInWorktree ? 'This worktree' : 'This project'}
-                        </div>
-                        {currentWorkspaceSessions.map((session) => (
-                          <SessionItem key={session.id} session={session} onClick={onSwitchToAgentMode ? handleLoadSessionInAgentMode : undefined} onOpenChat={onOpenSessionInChat ? handleLoadSessionInChat : undefined} formatTime={formatRelativeTime} />
-                        ))}
-                        {/* Other sessions */}
-                        <div className="ai-sessions-group-header px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--nim-text-faint)] bg-[var(--nim-bg-secondary)]">
-                          Other sessions
-                        </div>
-                        {otherSessions.map((session) => (
-                          <SessionItem key={session.id} session={session} isLast onClick={onSwitchToAgentMode ? handleLoadSessionInAgentMode : undefined} onOpenChat={onOpenSessionInChat ? handleLoadSessionInChat : undefined} formatTime={formatRelativeTime} />
-                        ))}
-                      </>
-                    ) : (
-                      aiSessions.map((session) => (
-                        <SessionItem key={session.id} session={session} isLast onClick={onSwitchToAgentMode ? handleLoadSessionInAgentMode : undefined} onOpenChat={onOpenSessionInChat ? handleLoadSessionInChat : undefined} formatTime={formatRelativeTime} />
-                      ))
-                    )}
-                  </div>
-                ) : (
-                  <div className="ai-sessions-empty p-4 text-center text-[13px] text-[var(--nim-text-muted)]">No AI sessions have edited this file yet</div>
-                )}
-
-                {/* Start new session button - only shown when agent mode switch is available */}
-                {onSwitchToAgentMode && (
-                  <div className="ai-session-start-container px-3 py-2.5 border-t border-[var(--nim-border)]">
-                    <button
-                      className="ai-session-start-button w-full py-1.5 px-3 border border-[var(--nim-border)] rounded text-[13px] font-medium text-left cursor-pointer flex items-center gap-2 transition-all duration-150 text-[var(--nim-text-muted)] bg-transparent hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)] hover:border-[var(--nim-primary)]"
-                      onClick={handleStartAgentSession}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <line x1="12" y1="5" x2="12" y2="19"/>
-                        <line x1="5" y1="12" x2="19" y2="12"/>
-                      </svg>
-                      Start new agent session
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          <DocumentSessionControl
+            filePath={filePath}
+            workspaceId={workspaceId}
+            actions={documentSessionActions}
+          />
         )}
 
         {/* TOC Button (Markdown only) */}
@@ -803,6 +645,9 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
           </button>
         )}
 
+        {/* Feedback backlinks - renders only when this document has feedback */}
+        <FeedbackBacklinkHeaderButton subject={feedbackSubject} />
+
         {/* Shared Doc Button - local file is already linked to a team-shared doc */}
         {showSharedDocButton && sharedDocLink.binding && (
           <div className="unified-header-dropdown-container relative">
@@ -861,6 +706,24 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
                       </div>
                     </button>
                   )}
+                  <button
+                    className="shared-doc-pull dropdown-item w-full py-2 px-3 border-none bg-transparent text-[13px] text-left cursor-pointer flex items-center gap-2.5 transition-colors duration-150 text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={sharedDocLink.busyAction !== null}
+                    onClick={async () => {
+                      const success = await sharedDocLink.pullFromSharedDoc();
+                      if (success) {
+                        await sharedDocLink.refresh();
+                        sharedDocMenu.setIsOpen(false);
+                      }
+                    }}
+                  >
+                    <svg className="w-4 h-4 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="4" />
+                    </svg>
+                    Pull from Shared Doc
+                  </button>
                   <button
                     className="dropdown-item w-full py-2 px-3 border-none bg-transparent text-[13px] text-left cursor-pointer flex items-center gap-2.5 transition-colors duration-150 text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
                     disabled={sharedDocLink.busyAction !== null}

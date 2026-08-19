@@ -29,6 +29,7 @@ import {
 } from './gitCommitProposalPromptUtils';
 import { buildToolPermissionResponseRecord } from './claudeCliToolPermission';
 import { getGitSubprocessEnv } from '../gitEnv';
+import { SessionCommitService } from '../SessionCommitService';
 import { findWindowByWorkspace } from '../../window/WindowManager';
 import { getDatabase } from '../../database/initialize';
 import { createWorktreeStore } from '../WorktreeStore';
@@ -674,6 +675,15 @@ async function handleGitCommitResponse(
         log.warn(`[Mobile] Failed to persist GitCommit response: ${err}`);
       });
     });
+
+    // Record the sha -> session link for the Git Log panel (idempotent; the
+    // MCP settle path records the same row when the tool is still waiting)
+    if (result.action === 'committed' && result.commitHash) {
+      void SessionCommitService.getInstance().recordCommit({
+        commitSha: result.commitHash,
+        sessionId,
+      });
+    }
 
     // Notify renderer to clear the pending interactive prompt indicator
     notifyAllWindows('ai:gitCommitProposalResolved', { sessionId, proposalId: canonicalPromptId });

@@ -49,6 +49,12 @@ export interface TeamWindowTarget {
   workspacePath?: string;
   /** Room or DM to display after the target organization is active. */
   conversationId?: string;
+  /**
+   * Feedback request to select in the Inbox after the target organization is
+   * active. The respond card lives in the Inbox's context pane, so a request
+   * link selects a row here rather than opening a tab.
+   */
+  feedbackRequestId?: string;
 }
 
 interface TeamWindowRouteState {
@@ -135,6 +141,7 @@ export function createTeamManagementWindow(target?: TeamWindowTarget): BrowserWi
       orgId: target?.orgId ?? null,
       workspacePath: target?.workspacePath ?? null,
       conversationId: target?.conversationId ?? null,
+      feedbackRequestId: target?.feedbackRequestId ?? null,
     });
     return teamManagementWindow;
   }
@@ -172,6 +179,7 @@ export function createTeamManagementWindow(target?: TeamWindowTarget): BrowserWi
   if (target?.orgId) query.orgId = target.orgId;
   if (target?.workspacePath) query.workspacePath = target.workspacePath;
   if (target?.conversationId) query.conversationId = target.conversationId;
+  if (target?.feedbackRequestId) query.feedbackRequestId = target.feedbackRequestId;
 
   if (process.env.NODE_ENV === 'development') {
     const devPort = process.env.VITE_PORT || '5273';

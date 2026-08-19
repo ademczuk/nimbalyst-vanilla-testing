@@ -23,7 +23,7 @@ import {
     getGitCommitProposalResponseChannel,
     resolveGitCommitProposalPromptId,
 } from '../services/ai/gitCommitProposalPromptUtils';
-import { enrichTranscriptMessagesWithToolCallDiffs } from '../services/TranscriptToolCallEnricher';
+import { SessionCommitService } from '../services/SessionCommitService';
 import { setSessionPendingPrompt } from '../services/ai/pendingPromptPersistence';
 import { normalizeSessionPhaseMetadataUpdate } from '../services/session/sessionPhaseTransition';
 import { destroyProviderForArchivedSession } from '../services/ai/archiveSessionProviderLifecycle';
@@ -1146,6 +1146,35 @@ export async function registerSessionHandlers() {
         }
     });
 
+    // Batch lookup of the session that produced each commit, for the Git Log
+    // panel's Session column. One call per page of the log, never per row.
+    //
+    // Keyed on sha alone -- do NOT add a workspacePath filter here. A session
+    // running in a worktree commits under the worktree path while the user
+    // browses the log from the main checkout; scoping by workspace would drop
+    // exactly the parallel-agent commits this column exists to show.
+    safeHandle('sessions:get-by-commits', async (event, shas: string[]) => {
+        try {
+            const service = SessionCommitService.getInstance();
+
+            // First read kicks off the historical backfill. Fire-and-forget so
+            // the log renders immediately with whatever is already recorded;
+            // the panel fills in on its next fetch.
+            void service.backfillFromRawMessages().catch((error) => {
+                console.error('[SessionHandlers] Session commit backfill failed:', error);
+            });
+
+            const links = await service.getSessionsForCommits(shas || []);
+            // The caller polls on this: on a first-ever open the scan is still
+            // running and `links` is empty, so the panel needs to ask again.
+            const backfillPending = !(await service.isBackfillComplete());
+            return { success: true, links, backfillPending };
+        } catch (error) {
+            console.error('[SessionHandlers] Failed to get sessions by commits:', error);
+            return { success: false, error: String(error), links: {}, backfillPending: false };
+        }
+    });
+
     // ============================================================
     // Interactive Prompts - Durable AI-to-User Interactions
     // These handlers support the durable interactive prompts architecture
@@ -1218,6 +1247,17 @@ export async function registerSessionHandlers() {
                     respondedAt: timestamp,
                     respondedBy,
                 };
+                // Record the sha -> session link for the Git Log panel. The MCP
+                // settle path records it too; the insert is idempotent, and this
+                // one still fires if the tool already timed out or the app
+                // restarted while the proposal was open.
+                if (response.action === 'committed' && response.commitHash) {
+                    void SessionCommitService.getInstance().recordCommit({
+                        commitSha: response.commitHash,
+                        sessionId,
+                        committedAt: new Date(timestamp),
+                    });
+                }
             } else if (promptType === 'request_user_input_request') {
                 responseContent = {
                     type: 'request_user_input_response',
@@ -1524,7 +1564,7 @@ export async function registerSessionHandlers() {
         );
 
         const viewModel = TranscriptProjector.project(tailEvents);
-        return await enrichTranscriptMessagesWithToolCallDiffs(sessionId, viewModel.messages);
+        return viewModel.messages;
     });
 
     // DEV/TESTING ONLY: Force a single session's canonical events to be

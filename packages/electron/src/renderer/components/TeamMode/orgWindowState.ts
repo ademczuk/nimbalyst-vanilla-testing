@@ -175,6 +175,10 @@ export function routeForInboxRow(
   if (row.orgId !== orgId) return null;
   if (row.availability !== 'available') return null;
   if (!row.sourceId) return null;
+  // A feedback request answers in the Inbox's own context pane, so activating
+  // one is already where it goes. Routing to the Inbox keeps it here instead of
+  // asking main to re-open this window at the row the user just clicked.
+  if (row.sourceKind === 'feedbackRequest') return INBOX_ROUTE;
   if (row.sourceKind !== 'roomMessage' && row.sourceKind !== 'dmMessage') {
     return null;
   }

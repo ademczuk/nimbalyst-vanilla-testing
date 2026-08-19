@@ -26,7 +26,7 @@
 
 import { useEffect } from 'react';
 import { getBodyDocCache, type BodyDocConfigFactory } from '../services/BodyDocCache';
-import { resolveCollabConfigForUri } from '../utils/collabDocumentOpener';
+import { resolveDesktopCollabConfigForUri } from '../utils/collabDocumentOpener';
 
 /**
  * Debounce window before firing prewarm after `itemIds` settles. Tuned
@@ -55,22 +55,12 @@ export interface UseTrackerBodyPrewarmOptions {
    * or before the team org is resolved. The hook is a no-op when false.
    */
   enabled: boolean;
-  /**
-   * Whether the room currently has more than one connected member. The
-   * cache caches the constructed `DocumentSyncProvider`; its
-   * `reviewGateEnabled` is fixed at construction, so we must construct
-   * with the same value the eventual detail-open would use -- otherwise
-   * a prewarm-then-acquire flow ends up with the wrong gating semantics.
-   * Defaults to false (matches the local-edit case).
-   */
-  multiUser?: boolean;
 }
 
 export function useTrackerBodyPrewarm({
   workspacePath,
   itemIds,
   enabled,
-  multiUser = false,
 }: UseTrackerBodyPrewarmOptions): void {
   useEffect(() => {
     if (!enabled) return;
@@ -85,7 +75,7 @@ export function useTrackerBodyPrewarm({
       const factory: BodyDocConfigFactory = async (id) => {
         const documentId = `tracker-content/${id}`;
         const uri = `collab://tracker-content/${id}`;
-        const config = await resolveCollabConfigForUri(
+        const config = await resolveDesktopCollabConfigForUri(
           workspacePath,
           uri,
           documentId,
@@ -96,10 +86,10 @@ export function useTrackerBodyPrewarm({
           serverUrl: config.serverUrl,
           getJwt: config.getJwt,
           orgId: config.orgId,
-          userId: config.userId,
+          teamMemberId: config.teamMemberId,
           documentId: config.documentId,
+          workspacePath,
           createWebSocket: config.createWebSocket,
-          reviewGateEnabled: multiUser,
         };
       };
       void getBodyDocCache().prewarm(prefix, factory);
@@ -114,7 +104,6 @@ export function useTrackerBodyPrewarm({
   }, [
     enabled,
     workspacePath,
-    multiUser,
     itemIds.slice(0, PREWARM_LIMIT).join('|'),
   ]);
 }

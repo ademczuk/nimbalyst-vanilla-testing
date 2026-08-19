@@ -36,6 +36,70 @@ export interface MonacoCollabBindingHandle {
   destroy(): void;
 }
 
+/**
+ * Wrap an awareness so its `change` listeners run on a microtask instead of
+ * synchronously.
+ *
+ * `MonacoBinding` calls `awareness.setLocalStateField('selection', ...)` from
+ * Monaco's cursor-selection event, and awareness emits `change` synchronously,
+ * so y-monaco's remote-cursor repaint (`deltaDecorations`) lands inside
+ * whatever decoration change produced that selection event -- Monaco's own
+ * WordHighlighter clearing its decorations is the usual one. Monaco reports the
+ * nested call through `onUnexpectedError` ("Invoking deltaDecorations
+ * recursively could lead to leaking decorations"), which reaches the user as an
+ * uncaught error even though the decorations still apply. Deferring the repaint
+ * takes it out of that window; remote cursors are a frame later, which is
+ * imperceptible.
+ *
+ * Only `change` is deferred. Everything else -- `getStates`, `setLocalStateField`,
+ * other events -- passes straight through, bound to the real awareness so no
+ * internal `this` ever sees the wrapper.
+ */
+function deferAwarenessChangeEvents(awareness: Awareness): {
+  awareness: Awareness;
+  cancelPending: () => void;
+} {
+  const deferredByOriginal = new Map<AwarenessListener, AwarenessListener>();
+  let cancelled = false;
+
+  const wrapListener = (listener: AwarenessListener): AwarenessListener => {
+    const existing = deferredByOriginal.get(listener);
+    if (existing) return existing;
+    const deferred: AwarenessListener = (...args: unknown[]) => {
+      queueMicrotask(() => {
+        if (cancelled) return;
+        listener(...args);
+      });
+    };
+    deferredByOriginal.set(listener, deferred);
+    return deferred;
+  };
+
+  const wrapped = new Proxy(awareness, {
+    get(target, prop) {
+      if (prop === 'on' || prop === 'off' || prop === 'once') {
+        return (eventName: string, listener: AwarenessListener) => {
+          const effective = eventName === 'change' ? wrapListener(listener) : listener;
+          return (target as unknown as Record<string, (...a: unknown[]) => unknown>)[
+            prop as string
+          ].call(target, eventName, effective);
+        };
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+
+  return {
+    awareness: wrapped,
+    cancelPending: () => {
+      cancelled = true;
+    },
+  };
+}
+
+type AwarenessListener = (...args: any[]) => void;
+
 export function createMonacoCollabBinding({
   yText,
   editor,
@@ -46,15 +110,19 @@ export function createMonacoCollabBinding({
     throw new Error('createMonacoCollabBinding: the Monaco editor has no text model');
   }
 
+  const deferred = awareness ? deferAwarenessChangeEvents(awareness) : null;
+
   const binding = new MonacoBinding(
     yText,
     model,
     new Set([editor]),
-    awareness ?? null,
+    deferred?.awareness ?? null,
   );
 
   return {
     destroy() {
+      // Drop any repaint still queued for an editor that is about to go away.
+      deferred?.cancelPending();
       binding.destroy();
     },
   };

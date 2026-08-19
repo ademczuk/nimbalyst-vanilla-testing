@@ -13,6 +13,11 @@ import { DIALOG_IDS } from './registry';
 import { ShareToTeamDialog } from '../components/ShareToTeamDialog';
 import { OrgCreationWizard } from '../components/TeamMode/onboarding/OrgCreationWizard';
 import { OrgManagementDialog } from '../components/OrgManagement/OrgManagementDialog';
+import {
+  OrgProjectWalkDialog,
+  type ProjectWalkOutcome,
+} from '../components/TeamMode/onboarding/OrgProjectWalkDialog';
+import type { ProjectWalkOrg } from '../../shared/orgProjectWalk';
 import type { AdminTab } from '../components/TeamMode/orgWindowState';
 import type { CollaborativeDocumentTypeDescriptor } from '../services/CollaborativeDocumentTypeCatalog';
 import type { EmbeddedDocumentCandidate } from '../services/embeddedDocumentShare';
@@ -32,6 +37,12 @@ export interface ShareToTeamData {
     sharedName: string;
     selectedEmbeddedDocumentPaths: string[];
   }) => void;
+  /**
+   * Fires when the dialog closes, confirmed or not -- `DialogProvider` calls it
+   * on removal. A caller awaiting the author's answers needs the dismissal too;
+   * without it a cancelled share is indistinguishable from one still waiting.
+   */
+  onDismiss?: () => void;
 }
 
 // ============================================================================
@@ -127,7 +138,43 @@ function OrgManagementDialogWrapper({
   );
 }
 
+/**
+ * The post-sign-in project walk. Registered next to the creation wizard because
+ * it answers the mirror-image question: the wizard is for someone who has no
+ * organization, this is for someone who has one but no folder bound to it.
+ */
+export interface OrgProjectWalkData {
+  org: ProjectWalkOrg;
+  onFinished?: (outcome: ProjectWalkOutcome) => void;
+}
+
+function OrgProjectWalkDialogWrapper({
+  isOpen,
+  onClose,
+  data,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  data: OrgProjectWalkData;
+}) {
+  return (
+    <OrgProjectWalkDialog
+      isOpen={isOpen}
+      onClose={onClose}
+      org={data.org}
+      onFinished={data.onFinished}
+    />
+  );
+}
+
 export function registerTeamDialogs() {
+  registerDialog<OrgProjectWalkData>({
+    id: DIALOG_IDS.ORG_PROJECT_WALK,
+    group: 'system',
+    component: OrgProjectWalkDialogWrapper as DialogConfig<OrgProjectWalkData>['component'],
+    priority: 150,
+  });
+
   registerDialog<OrgManagementDialogData>({
     id: DIALOG_IDS.ORG_MANAGEMENT,
     group: 'system',

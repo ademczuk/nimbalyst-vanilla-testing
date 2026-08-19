@@ -6,7 +6,7 @@
  * callback rather than reaching for `window.electronAPI` itself.
  *
  * Defaults come from the type's schema — the same id prefix, workflow status,
- * and sync mode the quick-add path uses — so a collection created from a chip is
+ * and sharing defaults the quick-add path uses — so a collection created from a chip is
  * indistinguishable from one created in the tracker view.
  */
 
@@ -38,7 +38,8 @@ export async function createCollectionItem(params: {
     status,
     priority: 'medium',
     workspace: workspacePath,
-    syncMode: model?.sync?.mode || 'local',
+    sharing: model?.sharing ?? 'personal',
+    draftByDefault: model?.draftByDefault ?? false,
   });
 
   if (!result.success) {

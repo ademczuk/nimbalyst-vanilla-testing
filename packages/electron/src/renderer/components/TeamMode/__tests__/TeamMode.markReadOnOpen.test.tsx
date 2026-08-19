@@ -3,6 +3,7 @@ import React from 'react';
 import { Provider, createStore } from 'jotai';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 
 import type { TeamInboxSnapshot } from '@nimbalyst/runtime/sync';
 import type { ConversationDirectoryEntry } from '../../../../shared/conversationDirectory';
@@ -25,9 +26,6 @@ vi.mock('../RoomView', () => ({
   RoomView: ({ entry }: { entry: ConversationDirectoryEntry }) => (
     <div data-testid="org-room-view" data-conversation-id={entry.id} />
   ),
-}));
-vi.mock('../../Settings/panels/OrganizationMembersRolesPanel', () => ({
-  OrganizationMembersRolesPanel: () => <div />,
 }));
 vi.mock('../../Settings/panels/OrganizationProjectsPanel', () => ({ OrganizationProjectsPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationBillingPanel', () => ({ OrganizationBillingPanel: () => <div /> }));
@@ -63,7 +61,7 @@ function snapshotWith(
 function delivery(id: string, conversationId: string) {
   return {
     id,
-    recipientUserId: 'member-a',
+    teamMemberId: asTeamMemberId('member-a'),
     orgId: 'org-1',
     orgName: 'Acme',
     source: {

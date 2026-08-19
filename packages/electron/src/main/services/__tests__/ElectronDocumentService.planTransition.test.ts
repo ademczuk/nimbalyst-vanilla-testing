@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Integration test for full-document tracker status-transition capture.
  *
@@ -54,7 +55,6 @@ vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel', () =
 
 import { ElectronDocumentService } from '../ElectronDocumentService';
 import { syncTrackerItem, unsyncTrackerItem, isTrackerSyncActive } from '../TrackerSyncManager';
-import { applyHeadlessBodyMarkdown } from '../MainBodyDocService';
 
 let tempDir: string;
 let service: ElectronDocumentService;
@@ -174,11 +174,12 @@ describe('captureFrontmatterTrackerTransition', () => {
   describe('per-plan share reconciliation (NIM-876)', () => {
     beforeEach(() => {
       // plan is a hybrid type: per-item sharing gated by the share flag.
-      mockGlobalRegistryGet.mockReturnValue({ sync: { mode: 'hybrid', scope: 'project' } });
+      mockGlobalRegistryGet.mockReturnValue({ sharing: 'team', draftByDefault: true });
     });
 
-    it('shares a flagged plan: a share-only flip pushes the item to the team room', async () => {
+    it('routes a direct frontmatter publish through the canonical promotion pipeline', async () => {
       vi.mocked(isTrackerSyncActive).mockReturnValue(true);
+      const publish = vi.spyOn(service, 'setTrackerItemPublished').mockResolvedValue({} as any);
       // 1) SELECT existing (unshared, status unchanged)
       mockQuery.mockResolvedValueOnce({
         rows: [{ id: `fm:plan:${REL}`, data: JSON.stringify({ title: 'Example', status: 'draft', activity: [] }) }],
@@ -202,13 +203,15 @@ describe('captureFrontmatterTrackerTransition', () => {
       expect(updateCall[0]).toContain('UPDATE tracker_items SET data');
       expect(JSON.parse(updateCall[1][0]).share).toEqual({ status: 'team', body: 'team' });
 
-      // The item was pushed to the team room (sync active), not just marked pending.
-      expect(syncTrackerItem).toHaveBeenCalledTimes(1);
-      expect(unsyncTrackerItem).not.toHaveBeenCalled();
+      // Promotion, body movement, and provenance-file finalization are one
+      // pipeline; capture must not push the old fm: item directly.
+      expect(publish).toHaveBeenCalledWith(`fm:plan:${REL}`, true);
+      expect(syncTrackerItem).not.toHaveBeenCalled();
     });
 
-    it('marks a flagged plan pending when sync is not yet active', async () => {
+    it('uses the same promotion pipeline when publication starts offline', async () => {
       vi.mocked(isTrackerSyncActive).mockReturnValue(false);
+      const publish = vi.spyOn(service, 'setTrackerItemPublished').mockResolvedValue({} as any);
       mockQuery.mockResolvedValueOnce({
         rows: [{ id: `fm:plan:${REL}`, data: JSON.stringify({ title: 'Example', status: 'draft', activity: [] }) }],
       });
@@ -221,13 +224,11 @@ describe('captureFrontmatterTrackerTransition', () => {
           sync_status: 'local', last_indexed: new Date().toISOString(),
         }],
       });
-      mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE sync_status pending
 
       await capture({ planStatus: { title: 'Example', status: 'draft', share: { status: 'team' } } });
 
+      expect(publish).toHaveBeenCalledWith(`fm:plan:${REL}`, true);
       expect(syncTrackerItem).not.toHaveBeenCalled();
-      const lastCall = mockQuery.mock.calls[mockQuery.mock.calls.length - 1];
-      expect(lastCall[0]).toContain("sync_status = 'pending'");
     });
 
     it('unshares a plan: removing the share flag deletes it from the room and resets to local', async () => {
@@ -263,42 +264,6 @@ describe('captureFrontmatterTrackerTransition', () => {
       expect(syncTrackerItem).not.toHaveBeenCalled();
       const lastCall = mockQuery.mock.calls[mockQuery.mock.calls.length - 1];
       expect(lastCall[0]).toContain("sync_status = 'local'");
-    });
-
-    it('seeds the plan body into the tracker-content room when sharing (body rides the item)', async () => {
-      vi.mocked(isTrackerSyncActive).mockReturnValue(true);
-
-      // A real file with frontmatter + body must exist so shareFrontmatterBody
-      // can read the markdown to seed the tracker-content room.
-      await fs.mkdir(path.join(tempDir, 'plans'), { recursive: true });
-      await fs.writeFile(
-        path.join(tempDir, REL),
-        '---\nplanStatus:\n  title: Example\n  status: draft\n  share:\n    status: team\n---\n## Plan body\n\nDetails here.\n',
-        'utf8',
-      );
-
-      const sharedRow = {
-        id: `fm:plan:${REL}`, type: 'plan', source: 'frontmatter', source_ref: REL,
-        workspace: tempDir,
-        data: JSON.stringify({ title: 'Example', status: 'draft', share: { status: 'team' }, activity: [] }),
-        sync_status: 'local', body_version: 1, last_indexed: new Date().toISOString(),
-      };
-      // 1) initial SELECT: UNSHARED so the share flip is detected.
-      mockQuery.mockResolvedValueOnce({
-        rows: [{ id: `fm:plan:${REL}`, data: JSON.stringify({ title: 'Example', status: 'draft', activity: [] }) }],
-      });
-      mockQuery.mockResolvedValueOnce({ rows: [] }); // 2) UPDATE data
-      mockQuery.mockResolvedValueOnce({ rows: [sharedRow] }); // 3) SELECT persisted (now shared)
-      // Catch-all for reconcile -> updateTrackerItemContent queries.
-      mockQuery.mockResolvedValue({ rows: [sharedRow] });
-
-      await capture({ planStatus: { title: 'Example', status: 'draft', share: { status: 'team' } } });
-
-      expect(applyHeadlessBodyMarkdown).toHaveBeenCalledTimes(1);
-      const [ws, itemId, body] = vi.mocked(applyHeadlessBodyMarkdown).mock.calls[0];
-      expect(ws).toBe(tempDir);
-      expect(itemId).toBe(`fm:plan:${REL}`);
-      expect(body).toContain('Plan body');
     });
 
     it('does not share an unflagged plan on an ordinary status change (no leak)', async () => {
@@ -377,43 +342,6 @@ describe('captureFrontmatterTrackerTransition', () => {
       expect(pendingCall).toBeDefined();
     });
 
-    // NIM-880 (d): sharing a plan while sync is inactive must still seed the
-    // body locally (bump body_version + cache + headless doc) so the reconnect
-    // backfill ships a real bodyVersion and the body is present for teammates.
-    it('seeds the plan body when sharing offline (sync inactive)', async () => {
-      vi.mocked(isTrackerSyncActive).mockReturnValue(false);
-
-      await fs.mkdir(path.join(tempDir, 'plans'), { recursive: true });
-      await fs.writeFile(
-        path.join(tempDir, REL),
-        '---\nplanStatus:\n  title: Example\n  status: draft\n  share:\n    status: team\n---\n## Plan body\n\nDetails here.\n',
-        'utf8',
-      );
-
-      const sharedRow = {
-        id: `fm:plan:${REL}`, type: 'plan', source: 'frontmatter', source_ref: REL,
-        workspace: tempDir,
-        data: JSON.stringify({ title: 'Example', status: 'draft', share: { status: 'team' }, activity: [] }),
-        sync_status: 'local', body_version: 1, last_indexed: new Date().toISOString(),
-      };
-      mockQuery.mockResolvedValueOnce({
-        rows: [{ id: `fm:plan:${REL}`, data: JSON.stringify({ title: 'Example', status: 'draft', activity: [] }) }],
-      }); // 1) SELECT existing (unshared)
-      mockQuery.mockResolvedValueOnce({ rows: [] }); // 2) UPDATE data
-      mockQuery.mockResolvedValueOnce({ rows: [sharedRow] }); // 3) SELECT persisted (now shared)
-      mockQuery.mockResolvedValue({ rows: [sharedRow] }); // catch-all for body persist + pending
-
-      await capture({ planStatus: { title: 'Example', status: 'draft', share: { status: 'team' } } });
-
-      // Body seeded into the tracker-content room even though sync is offline...
-      expect(applyHeadlessBodyMarkdown).toHaveBeenCalledTimes(1);
-      // ...and the row is marked pending for the reconnect backfill.
-      const pendingCall = mockQuery.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes("sync_status = 'pending'"));
-      expect(pendingCall).toBeDefined();
-      // No live push while offline.
-      expect(syncTrackerItem).not.toHaveBeenCalled();
-    });
-
     // NIM-880 (c): unsharing while offline must mark the row pending (not
     // 'local') so the reconnect backfill can issue the room tombstone. Resetting
     // straight to 'local' with sync_id intact stranded the deletion.
@@ -454,7 +382,7 @@ describe('per-item sync gating for body-save and archive', () => {
   beforeEach(() => {
     vi.mocked(isTrackerSyncActive).mockReturnValue(true);
     // hybrid type: per-item sharing gated by the share flag.
-    mockGlobalRegistryGet.mockReturnValue({ sync: { mode: 'hybrid', scope: 'project' } });
+    mockGlobalRegistryGet.mockReturnValue({ sharing: 'team', draftByDefault: true });
   });
 
   function nativeRow(data: Record<string, any>, extra: Record<string, any> = {}) {

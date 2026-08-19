@@ -149,7 +149,8 @@ describe('TrackerDocumentViewHeader', () => {
       modes: { inline: true, fullDocument: true },
       idPrefix: 'DPS',
       idFormat: 'ulid',
-      sync: { mode: 'local', scope: 'workspace' },
+      sharing: 'personal',
+      draftByDefault: false,
       fields: [
         { name: 'title', type: 'string', required: true },
         {
@@ -235,7 +236,8 @@ describe('TrackerDocumentViewHeader', () => {
       expect(updateTrackerItem).toHaveBeenCalledWith({
         itemId: item.id,
         updates: { state: 'done' },
-        syncMode: 'local',
+        sharing: 'personal',
+        draftByDefault: false,
       });
     });
   });

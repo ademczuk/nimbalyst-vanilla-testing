@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Promotion of file-backed (frontmatter) tracker items to stable native ids at
  * share time.
@@ -19,7 +20,11 @@ import * as path from 'path';
 import * as os from 'os';
 import { PGlite } from '@electric-sql/pglite';
 
-const { dbRef } = vi.hoisted(() => ({ dbRef: { current: null as any } }));
+const { dbRef, mockGlobalRegistryGet, mockFindLinkedDocumentForLocalPath } = vi.hoisted(() => ({
+  dbRef: { current: null as any },
+  mockGlobalRegistryGet: vi.fn(),
+  mockFindLinkedDocumentForLocalPath: vi.fn(),
+}));
 
 vi.mock('../../database/PGLiteDatabaseWorker', () => ({
   database: {
@@ -43,13 +48,17 @@ vi.mock('../TrackerIdentityService', () => ({
   getCurrentIdentity: () => ({ email: 'greg@stravu.com', displayName: 'Greg' }),
 }));
 
+vi.mock('../CollabLocalOriginService', () => ({
+  findLinkedDocumentForLocalPath: mockFindLinkedDocumentForLocalPath,
+}));
+
 vi.mock('../../utils/store', () => ({
   getWorkspaceState: vi.fn(() => ({})),
   isAnalyticsEnabled: () => true,
 }));
 
 vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel', () => ({
-  globalRegistry: { get: vi.fn(() => ({ sync: { mode: 'hybrid', scope: 'project' } })) },
+  globalRegistry: { get: mockGlobalRegistryGet },
 }));
 
 import { ElectronDocumentService, getCanonicalTrackerItemIdFromRow } from '../ElectronDocumentService';
@@ -157,7 +166,10 @@ async function countRowsForFile(): Promise<number> {
 }
 
 beforeEach(async () => {
+  vi.restoreAllMocks();
   vi.clearAllMocks();
+  mockGlobalRegistryGet.mockReturnValue({ sharing: 'team', draftByDefault: true });
+  mockFindLinkedDocumentForLocalPath.mockResolvedValue(null);
   pglite = new PGlite();
   await pglite.exec(SCHEMA);
   dbRef.current = pglite;
@@ -227,8 +239,8 @@ describe('promoted rows survive a rescan', () => {
   async function promoteViaShare(): Promise<string> {
     await seedPlanFile();
     await seedFmRow();
-    vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(undefined);
-    const item = await service.setTrackerItemShared(FM_ID, true);
+    vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(true);
+    const item = await service.setTrackerItemPublished(FM_ID, true);
     return item.id;
   }
 
@@ -320,38 +332,98 @@ describe('promoted rows survive a rescan', () => {
   });
 });
 
-describe('setTrackerItemShared promotes before the first room push', () => {
-  it('shares under the stable id and writes trackerId + share in one file write', async () => {
+describe('setTrackerItemPublished promotes before the first room push', () => {
+  it('refuses publication when the plan is already a separately shared document', async () => {
     await seedPlanFile();
     await seedFmRow();
-    const reconcile = vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(undefined);
+    mockFindLinkedDocumentForLocalPath.mockResolvedValue({
+      documentId: 'shared-doc-plan-copy',
+      relativePath: REL,
+      resolutionStatus: 'resolved',
+    });
 
-    const item = await service.setTrackerItemShared(FM_ID, true);
+    await expect(service.setTrackerItemPublished(FM_ID, true)).rejects.toThrow(
+      /already shared as a standalone document.*shared-doc-plan-copy/i,
+    );
+
+    const row = (await pglite.query<any>(`SELECT * FROM tracker_items WHERE id = $1`, [FM_ID])).rows[0];
+    expect(row.source).toBe('frontmatter');
+    expect(applyHeadlessBodyMarkdown).not.toHaveBeenCalled();
+    expect(await fs.readFile(path.join(tempDir, REL), 'utf-8')).toContain(FILE_BODY);
+  });
+
+  it('moves the body into the stable tracker item and leaves only a provenance pointer on disk', async () => {
+    await seedPlanFile();
+    await seedFmRow();
+    (applyHeadlessBodyMarkdown as any).mockResolvedValue(true);
+
+    const item = await service.setTrackerItemPublished(FM_ID, true);
 
     expect(item.id).not.toContain('fm:');
-    // The room push uses the NEW id -- the fm: id must never reach the wire.
-    expect(reconcile).toHaveBeenCalledWith(
-      expect.objectContaining({ id: item.id }),
-      item.id,
-      REL,
-      true,
-    );
+    // The room write uses the NEW id exactly once -- the fm: id must never
+    // reach the wire, and publication must not create a document-sharing path.
+    expect(applyHeadlessBodyMarkdown).toHaveBeenCalledTimes(1);
+    expect(applyHeadlessBodyMarkdown).toHaveBeenCalledWith(tempDir, item.id, FILE_BODY);
+
+    const promoted = (await pglite.query<any>(
+      `SELECT content, body_version FROM tracker_items WHERE id = $1`,
+      [item.id],
+    )).rows[0];
+    expect(promoted.content).toBe(FILE_BODY);
+    expect(Number(promoted.body_version)).toBe(1);
 
     const written = await fs.readFile(path.join(tempDir, REL), 'utf-8');
     expect(written).toContain(`trackerId: ${item.id}`);
-    expect(written).toContain('status: team');
-    // The plan extension's own block is still untouched.
+    expect(written).toContain('Moved to the team tracker');
+    expect(written).toContain('tracker_get');
+    expect(written).not.toContain(FILE_BODY);
+    // Publication lives on the item, not in a second file-level share flag.
+    expect(written).not.toMatch(/^share:/m);
+    // The plan extension's provenance block survives for a future unpublish.
     expect(written).toContain('planStatus:');
     expect(written).not.toContain('trackerStatus:');
+  });
+
+  it('promotes a plan published by frontmatter instead of leaving an fm: item and editable file copy', async () => {
+    const fullPath = await seedPlanFile();
+    await fs.writeFile(
+      fullPath,
+      `---\nplanStatus:\n  planId: p1\n  title: Example\n  status: draft\n  share:\n    status: team\n    body: team\n---\n${FILE_BODY}\n`,
+      'utf-8',
+    );
+    await seedFmRow();
+    (applyHeadlessBodyMarkdown as any).mockResolvedValue(true);
+
+    await (service as any).captureFrontmatterTrackerTransition(REL, {
+      planStatus: {
+        planId: 'p1',
+        title: 'Example',
+        status: 'draft',
+        share: { status: 'team', body: 'team' },
+      },
+    });
+
+    const rows = (await pglite.query<any>(`SELECT * FROM tracker_items`)).rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).not.toContain('fm:');
+    expect(rows[0].source).toBe('native');
+    expect(rows[0].content).toBe(FILE_BODY);
+
+    const written = await fs.readFile(path.join(tempDir, REL), 'utf-8');
+    expect(written).toContain(`trackerId: ${rows[0].id}`);
+    expect(written).toContain('Moved to the team tracker');
+    expect(written).not.toContain(FILE_BODY);
+    expect(written).not.toMatch(/^share:/m);
+    expect(written).not.toMatch(/^\s+share:/m);
   });
 
   it('unsharing de-promotes: the row goes back to its fm: id and the file drops trackerId', async () => {
     await seedPlanFile();
     await seedFmRow();
-    vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(undefined);
-    const shared = await service.setTrackerItemShared(FM_ID, true);
+    vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(true);
+    const shared = await service.setTrackerItemPublished(FM_ID, true);
 
-    const unshared = await service.setTrackerItemShared(shared.id, false);
+    const unshared = await service.setTrackerItemPublished(shared.id, false);
 
     expect(unshared.id).toBe(FM_ID);
     const row = (await pglite.query<any>(`SELECT * FROM tracker_items WHERE source_ref = $1`, [REL])).rows;
@@ -388,9 +460,9 @@ describe('legacy fm: items can be unshared and reshared onto a stable id', () =>
 
   it('unshares instead of refusing, restoring file provenance', async () => {
     await seedLegacySharedRow();
-    vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(undefined);
+    vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(true);
 
-    const item = await service.setTrackerItemShared(FM_ID, false);
+    const item = await service.setTrackerItemPublished(FM_ID, false);
 
     expect(item.id).toBe(FM_ID);
     const row = (await pglite.query<any>(`SELECT * FROM tracker_items WHERE id = $1`, [FM_ID])).rows[0];
@@ -402,9 +474,9 @@ describe('legacy fm: items can be unshared and reshared onto a stable id', () =>
   it('flushes the room body into the file so unsharing does not revert content', async () => {
     await seedLegacySharedRow();
     (readHeadlessBodyMarkdown as any).mockResolvedValue('## Body\n\nEdited by a teammate.');
-    vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(undefined);
+    vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(true);
 
-    await service.setTrackerItemShared(FM_ID, false);
+    await service.setTrackerItemPublished(FM_ID, false);
 
     const written = await fs.readFile(path.join(tempDir, REL), 'utf-8');
     expect(written).toContain('Edited by a teammate');
@@ -415,10 +487,10 @@ describe('legacy fm: items can be unshared and reshared onto a stable id', () =>
 
   it('resharing then lands it on a stable id', async () => {
     await seedLegacySharedRow();
-    vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(undefined);
+    vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(true);
 
-    await service.setTrackerItemShared(FM_ID, false);
-    const reshared = await service.setTrackerItemShared(FM_ID, true);
+    await service.setTrackerItemPublished(FM_ID, false);
+    const reshared = await service.setTrackerItemPublished(FM_ID, true);
 
     expect(reshared.id).not.toContain('fm:');
     expect(await countRowsForFile()).toBe(1);
@@ -432,6 +504,28 @@ describe('migrateSharedFrontmatterItemsToStableIds', () => {
 
   beforeEach(() => {
     (isTrackerSyncActive as any).mockReturnValue(true);
+    (applyHeadlessBodyMarkdown as any).mockResolvedValue(true);
+  });
+
+  it('skips a legacy item whose source is still a standalone shared document', async () => {
+    await seedPlanFile();
+    await seedFmRow({ sync_status: 'synced', sync_id: 16417 });
+    mockFindLinkedDocumentForLocalPath.mockResolvedValue({
+      documentId: 'legacy-shared-plan-doc',
+      relativePath: REL,
+      resolutionStatus: 'resolved',
+    });
+
+    const report = await service.migrateSharedFrontmatterItemsToStableIds();
+
+    expect(report.migrated).toHaveLength(0);
+    expect(report.skipped).toEqual([
+      expect.objectContaining({
+        id: FM_ID,
+        reason: expect.stringContaining('legacy-shared-plan-doc'),
+      }),
+    ]);
+    expect(applyHeadlessBodyMarkdown).not.toHaveBeenCalled();
   });
 
   it('carries the body from the OLD room, not from the stale file', async () => {
@@ -458,6 +552,29 @@ describe('migrateSharedFrontmatterItemsToStableIds', () => {
     expect(String(promoted.content)).not.toContain('Pre-share file text');
   });
 
+  /**
+   * The body this migration moves comes from the OLD room or the local cache --
+   * never from the file. Both can come back empty on a row whose file still
+   * carries the plan: the sync round-trip nulls `content`, and an unreachable
+   * room is now reported as unknown rather than empty. Nothing was moved, so
+   * nothing may be deleted.
+   */
+  it('leaves the file intact when there was no body to move into the new room', async () => {
+    await seedPlanFile();
+    await seedFmRow({ sync_status: 'synced', sync_id: 16417, content: null });
+    (readHeadlessBodyMarkdown as any).mockResolvedValue(null);
+
+    const report = await service.migrateSharedFrontmatterItemsToStableIds();
+
+    expect(report.migrated).toHaveLength(1);
+    expect(report.migrated[0].bodySource).toBe('empty');
+    expect(applyHeadlessBodyMarkdown).not.toHaveBeenCalled();
+
+    const written = await fs.readFile(path.join(tempDir, REL), 'utf-8');
+    expect(written).toContain(FILE_BODY);
+    expect(written).not.toContain('Moved to the team tracker');
+  });
+
   it('keeps the issue key and tombstones the old id', async () => {
     await seedPlanFile();
     await seedFmRow({ sync_status: 'synced', sync_id: 16417, issue_number: 2324, issue_key: 'NIM-2324' });
@@ -475,6 +592,9 @@ describe('migrateSharedFrontmatterItemsToStableIds', () => {
 
     const written = await fs.readFile(path.join(tempDir, REL), 'utf-8');
     expect(written).toContain(`trackerId: ${newId}`);
+    expect(written).toContain('Moved to the team tracker');
+    expect(written).not.toContain(FILE_BODY);
+    expect(written).not.toMatch(/^share:/m);
   });
 
   it('picks up rows the sync round-trip already flipped to native with no file path', async () => {
@@ -529,5 +649,100 @@ describe('migrateSharedFrontmatterItemsToStableIds', () => {
     expect(unsyncTrackerItem).not.toHaveBeenCalled();
     const row = (await pglite.query<any>(`SELECT id FROM tracker_items WHERE source_ref = $1`, [REL])).rows[0];
     expect(row.id).toBe(FM_ID);
+  });
+});
+
+/**
+ * D7's destructive half: publication overwrites the plan's markdown body with an
+ * inert provenance pointer. The body then exists in exactly one place, so the
+ * write may only happen once the SERVER holds it.
+ *
+ * A `body_version > 0` row does not say that. It is bumped locally before the
+ * room write is attempted, so a socket drop between the local Y.Doc mutation and
+ * the `docUpdateAck` leaves a promoted row with `body_version = 1`, an empty
+ * room, and a file that is now the only copy of the plan. The rescan and
+ * frontmatter-save normalizers used to read that marker as proof and collapse
+ * the file anyway -- deleting the last copy.
+ */
+describe('the origin file is only collapsed once the room is observed holding the body', () => {
+  /**
+   * Publish with the room write failing (socket dropped before the ack), which
+   * leaves exactly the at-risk state: promoted row, `body_version = 1`, and a
+   * file that still carries the plan.
+   */
+  async function publishWithoutAcknowledgment(): Promise<string> {
+    await seedPlanFile();
+    await seedFmRow();
+    (applyHeadlessBodyMarkdown as any).mockResolvedValue(false);
+
+    await expect(service.setTrackerItemPublished(FM_ID, true)).rejects.toThrow(
+      /left intact.*retry publication/i,
+    );
+
+    const row = (await pglite.query<any>(
+      `SELECT id, body_version FROM tracker_items WHERE source_ref = $1`,
+      [REL],
+    )).rows[0];
+    expect(row.id).not.toContain('fm:');
+    // The local durability marker is set: this is the state that used to be
+    // mistaken for proof.
+    expect(Number(row.body_version)).toBeGreaterThan(0);
+    expect(await fs.readFile(path.join(tempDir, REL), 'utf-8')).toContain(FILE_BODY);
+    return row.id;
+  }
+
+  it('publication that never reaches the room leaves the body on disk', async () => {
+    await publishWithoutAcknowledgment();
+  });
+
+  it('retries the same half-promoted row and finishes the acknowledged body move', async () => {
+    const promotedId = await publishWithoutAcknowledgment();
+    (applyHeadlessBodyMarkdown as any).mockResolvedValue(true);
+
+    const item = await service.setTrackerItemPublished(promotedId, true);
+
+    expect(item.id).toBe(promotedId);
+    expect(applyHeadlessBodyMarkdown).toHaveBeenLastCalledWith(tempDir, promotedId, FILE_BODY);
+    const written = await fs.readFile(path.join(tempDir, REL), 'utf-8');
+    expect(written).toContain(`trackerId: ${promotedId}`);
+    expect(written).toContain('Moved to the team tracker');
+    expect(written).not.toContain(FILE_BODY);
+  });
+
+  it('a rescan does not collapse the file while the room has no body', async () => {
+    await publishWithoutAcknowledgment();
+    (readHeadlessBodyMarkdown as any).mockResolvedValue(null);
+
+    await (service as any).ensureFrontmatterProjectionRow(REL, 'plan');
+
+    const written = await fs.readFile(path.join(tempDir, REL), 'utf-8');
+    expect(written).toContain(FILE_BODY);
+    expect(written).not.toContain('Moved to the team tracker');
+  });
+
+  it('a frontmatter save does not collapse the file while the room has no body', async () => {
+    await publishWithoutAcknowledgment();
+    (readHeadlessBodyMarkdown as any).mockResolvedValue('');
+
+    await (service as any).captureFrontmatterTrackerTransition(REL, {
+      planStatus: { planId: 'p1', title: 'Example', status: 'draft' },
+    });
+
+    const written = await fs.readFile(path.join(tempDir, REL), 'utf-8');
+    expect(written).toContain(FILE_BODY);
+    expect(written).not.toContain('Moved to the team tracker');
+  });
+
+  it('collapses the file once the room answers with a body', async () => {
+    const itemId = await publishWithoutAcknowledgment();
+    // The retry landed: the room now holds the plan.
+    (readHeadlessBodyMarkdown as any).mockResolvedValue(FILE_BODY);
+
+    await (service as any).ensureFrontmatterProjectionRow(REL, 'plan');
+
+    const written = await fs.readFile(path.join(tempDir, REL), 'utf-8');
+    expect(written).not.toContain(FILE_BODY);
+    expect(written).toContain('Moved to the team tracker');
+    expect(written).toContain(`trackerId: ${itemId}`);
   });
 });

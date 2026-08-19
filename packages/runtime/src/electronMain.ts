@@ -33,6 +33,17 @@ export type {
   ConversationSyncEvent,
   ConversationTarget,
 } from './sync/ConversationSync';
+export {
+  FeedbackRequestSync,
+  FeedbackRequestSyncError,
+} from './sync/FeedbackRequestSync';
+export type {
+  FeedbackRequestNudgeReceipt,
+  FeedbackRequestSyncConfig,
+  FeedbackRequestSyncEvent,
+  FeedbackRequestSyncState,
+  FeedbackRequestTarget,
+} from './sync/FeedbackRequestSync';
 export type {
   AgentMessage,
   ChatAttachment,
@@ -94,6 +105,17 @@ export {
   setFileSystemServiceFor,
 } from './core/FileSystemService';
 export { VIRTUAL_DOCS, isVirtualPath } from './constants/virtualDocs';
+export {
+  PLAN_INVALID_STATUS_SIGNAL_KIND,
+  PLAN_STATUS_DRIFT_SIGNAL_KIND,
+  derivePlanStatusSignals,
+  normalizePlanStatusForProjection,
+} from './plugins/TrackerPlugin/models/planStatusIntegrity';
+export type {
+  InvalidPlanStatusSignal,
+  PlanStatusDriftSignal,
+  StalePlanStatus,
+} from './plugins/TrackerPlugin/models/planStatusIntegrity';
 export { fuzzyMatchPath } from './utils/fuzzyMatch';
 export { DocumentContextService } from './ai/services/DocumentContextService';
 export {

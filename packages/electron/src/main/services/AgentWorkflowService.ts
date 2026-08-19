@@ -419,9 +419,16 @@ export class AgentWorkflowService {
       await this.ensureGeneratedClaudePluginsSynced(snapshot);
     }
 
+    // #1213: descriptors first, because the dedupe below keeps the first entry
+    // per name. The SDK's `slash_commands` enumerates every command and skill it
+    // discovered, not just provider builtins, so a native-first order lets a
+    // synthetic entry shadow the file it was discovered from -- dropping the
+    // frontmatter description, body, argument hint, allowed tools, and the real
+    // source/kind. Native entries now only fill in names no file backs: genuine
+    // builtins like /compact, and plugin skills we cannot see on disk.
     const providerEntries = [
-      ...this.buildProviderNativeEntries(provider, options.nativeCommands ?? [], options.nativeSkills ?? []),
       ...this.buildDescriptorEntries(snapshot.descriptors, provider),
+      ...this.buildProviderNativeEntries(provider, options.nativeCommands ?? [], options.nativeSkills ?? []),
     ];
 
     const seenNames = new Set<string>();

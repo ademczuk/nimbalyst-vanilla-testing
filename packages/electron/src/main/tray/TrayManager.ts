@@ -19,6 +19,14 @@ import { isShowTrayIcon, setShowTrayIcon, getSessionSyncConfig, setSessionSyncCo
 import { logger } from '../utils/logger';
 import { isPreventingSleep, getSleepPreventionMode } from '../services/PowerSaveService';
 import { updateSleepPrevention, resolvePreventSleepMode, getSyncProvider } from '../services/SyncManager';
+import {
+  closeTrayPanelWindow,
+  isTrayPanelSupported,
+  isTrayPanelWindow,
+  pushTrayPanelFeed,
+  toggleTrayPanelWindow,
+} from '../window/TrayPanelWindow';
+import type { TrayPanelFeed, TrayPanelSession } from '../../shared/traySessions';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -34,6 +42,16 @@ interface TraySessionInfo {
   hasUnread: boolean;
   /** Timestamp when session completed, used for lingering display */
   completedAt?: number;
+  /** Provider id (`claude-code`, `openai-codex`, …) for the panel's avatar tile. */
+  provider?: string;
+  /** Provider-qualified model id; the panel strips the prefix for display. */
+  model?: string;
+  /** Last activity, so the panel can show a relative time like the in-app popover. */
+  updatedAt?: number;
+  /** Kanban phase. `complete` sessions are hidden, matching the in-app popover. */
+  phase?: string;
+  /** Archived sessions are hidden, matching the in-app popover. */
+  isArchived?: boolean;
 }
 
 // ─── Database interface (same as SessionStateManager) ───────────────────────
@@ -54,6 +72,102 @@ interface TrayUnreadClearPayload {
 
 const MENU_REBUILD_DEBOUNCE_MS = 300;
 const COMPLETED_LINGER_MS = 60_000; // Keep completed sessions visible for 1 minute
+
+/**
+ * Project windows only.
+ *
+ * The tray panel is a BrowserWindow too, so it appears in `getAllWindows()`.
+ * Focusing it in response to "Open Nimbalyst" would be a no-op from the user's
+ * point of view, and counting it as a visible foreground window makes the app
+ * look focused whenever the panel is open.
+ */
+function projectWindows(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter(
+    (window) => !window.isDestroyed() && !isTrayPanelWindow(window),
+  );
+}
+
+// ─── Row helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Read the whole `metadata` column rather than sub-extracting keys in SQL:
+ * `data->'key'` yields a parsed object on PGLite but a JSON string on SQLite,
+ * and both backends are live. See packages/electron/DATABASE.md.
+ */
+function parseMetadataColumn(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) ?? {};
+    } catch {
+      return {};
+    }
+  }
+  return value as Record<string, unknown>;
+}
+
+/** `updated_at` arrives as a Date on PGLite and an ISO string or epoch on SQLite. */
+function toMillis(value: unknown): number {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
+// ─── Grouping ───────────────────────────────────────────────────────────────
+
+function toPanelSession(session: TraySessionInfo, hasPendingPrompt: boolean): TrayPanelSession {
+  return {
+    sessionId: session.sessionId,
+    title: session.title || 'Untitled Session',
+    workspacePath: session.workspacePath,
+    workspaceName: session.workspacePath ? path.basename(session.workspacePath) : '',
+    provider: session.provider || 'claude',
+    ...(session.model ? { model: session.model } : {}),
+    updatedAt: session.updatedAt ?? session.completedAt ?? 0,
+    isStreaming: session.isStreaming,
+    hasPendingPrompt,
+    hasError: session.status === 'error',
+  };
+}
+
+/**
+ * Classify cached sessions into the three attention buckets.
+ *
+ * Deliberately mirrors `agentSessionAttentionAtom` in the renderer: archived and
+ * `phase === 'complete'` sessions are excluded, and each session lands in exactly
+ * one bucket by priority. It diverges in two intended ways — the scope is every
+ * workspace (the menu bar is global), and `status === 'error'` counts as needing
+ * attention, which the in-app popover has no equivalent for.
+ *
+ * `hasPendingPrompt` is kept in step with the persisted bit by
+ * `setSessionPendingPrompt`, which notifies this class as it writes -- see the
+ * header of pendingPromptPersistence.ts for why that is a single call.
+ *
+ * Exported as a free function so the grouping is testable without the singleton.
+ */
+export function groupTraySessions(sessions: Iterable<TraySessionInfo>): TrayPanelFeed {
+  const feed: TrayPanelFeed = { needsAttention: [], running: [], unread: [] };
+
+  const visible = Array.from(sessions)
+    .filter((session) => !session.isArchived && session.phase !== 'complete')
+    .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+
+  for (const session of visible) {
+    if (session.hasPendingPrompt || session.status === 'error') {
+      feed.needsAttention.push(toPanelSession(session, session.hasPendingPrompt));
+    } else if (session.status === 'running') {
+      feed.running.push(toPanelSession(session, false));
+    } else if (session.hasUnread) {
+      feed.unread.push(toPanelSession(session, false));
+    }
+  }
+
+  return feed;
+}
 
 // ─── TrayManager ────────────────────────────────────────────────────────────
 
@@ -161,6 +275,17 @@ export class TrayManager {
     const icon = this.getIconForState('idle');
     this.tray = new Tray(icon);
     this.tray.setToolTip('Nimbalyst');
+
+    // Where the panel is supported, the sessions live in it and the NSMenu is
+    // reduced to app actions on right-click. Elsewhere `rebuildMenu` installs
+    // the full session menu via `setContextMenu` and these handlers never run.
+    if (isTrayPanelSupported()) {
+      this.tray.on('click', () => this.toggleSessionsPanel());
+      this.tray.on('right-click', () => {
+        if (this.tray && this.appMenu) this.tray.popUpContextMenu(this.appMenu);
+      });
+    }
+
     this.rebuildMenu();
   }
 
@@ -169,6 +294,18 @@ export class TrayManager {
       this.tray.destroy();
       this.tray = null;
     }
+    closeTrayPanelWindow();
+  }
+
+  /** Open the tray panel anchored to the icon, or dismiss it if already open. */
+  private toggleSessionsPanel(): void {
+    if (!this.tray) return;
+    toggleTrayPanelWindow(this.tray.getBounds(), () => this.buildPanelFeed());
+  }
+
+  /** The current cross-workspace feed the panel renders. */
+  buildPanelFeed(): TrayPanelFeed {
+    return groupTraySessions(this.sessionCache.values());
   }
 
   /**
@@ -200,6 +337,8 @@ export class TrayManager {
       this.tray = null;
     }
 
+    closeTrayPanelWindow();
+    this.appMenu = null;
     this.sessionCache.clear();
     logger.main.info('[TrayManager] Shutdown');
   }
@@ -286,9 +425,10 @@ export class TrayManager {
           session.hasPendingPrompt = false; // Session done -- can't be blocked
           session.completedAt = Date.now();
 
-          // Check if app is backgrounded -- if so, mark as unread
-          const allWindows = BrowserWindow.getAllWindows();
-          const hasVisibleFocusedWindow = allWindows.some(w => w.isVisible() && w.isFocused());
+          // Check if app is backgrounded -- if so, mark as unread. The tray
+          // panel does not count: the user opening it to check on sessions must
+          // not suppress the unread flag on everything that finishes meanwhile.
+          const hasVisibleFocusedWindow = projectWindows().some(w => w.isVisible() && w.isFocused());
           if (!hasVisibleFocusedWindow) {
             session.hasUnread = true;
           }
@@ -329,6 +469,12 @@ export class TrayManager {
         return;
       }
     }
+
+    // Every branch above is a state change, so the panel's relative-time label
+    // should track it -- the cached `updated_at` from the DB goes stale as soon
+    // as the session starts moving.
+    const touched = this.sessionCache.get(event.sessionId);
+    if (touched) touched.updatedAt = Date.now();
 
     this.scheduleMenuRebuild();
   }
@@ -391,23 +537,44 @@ export class TrayManager {
     }, MENU_REBUILD_DEBOUNCE_MS);
   }
 
+  /** Last built app-actions menu, popped up on right-click when the panel owns left-click. */
+  private appMenu: Electron.Menu | null = null;
+
   private rebuildMenu(): void {
     if (!this.tray) return;
 
-    const needsAttention: TraySessionInfo[] = [];
-    const running: TraySessionInfo[] = [];
-    const unread: TraySessionInfo[] = [];
+    const feed = this.buildPanelFeed();
+    const menuItems: Electron.MenuItemConstructorOptions[] = [];
 
-    for (const session of this.sessionCache.values()) {
-      if (session.hasPendingPrompt || session.status === 'error') {
-        needsAttention.push(session);
-      } else if (session.status === 'running') {
-        running.push(session);
-      } else if (session.hasUnread) {
-        unread.push(session);
-      }
+    // Sessions only appear in the NSMenu on platforms without the panel.
+    if (!isTrayPanelSupported()) {
+      menuItems.push(...this.buildSessionMenuItems(feed));
     }
 
+    menuItems.push(...this.buildAppMenuItems());
+
+    const menu = Menu.buildFromTemplate(menuItems);
+    this.appMenu = menu;
+    if (isTrayPanelSupported()) {
+      // Left-click opens the panel, so no context menu is installed -- the menu
+      // is popped up explicitly from the 'right-click' handler instead.
+      pushTrayPanelFeed(feed);
+    } else {
+      this.tray.setContextMenu(menu);
+    }
+
+    // Update icon state
+    this.updateIcon();
+
+    // Update dock badge
+    this.updateDockBadge(feed.needsAttention.length);
+  }
+
+  /**
+   * Legacy flat session sections. Retained for Windows/Linux, where the tray
+   * panel (which needs `type: 'panel'` and vibrancy) is not available.
+   */
+  private buildSessionMenuItems(feed: TrayPanelFeed): Electron.MenuItemConstructorOptions[] {
     const menuItems: Electron.MenuItemConstructorOptions[] = [];
 
     const blueDot = this.getDotIcon('#3B82F6');
@@ -415,14 +582,13 @@ export class TrayManager {
     const redDot = this.getDotIcon('#EF4444');
 
     // Needs Attention section
-    if (needsAttention.length > 0) {
+    if (feed.needsAttention.length > 0) {
       menuItems.push({ label: 'Needs Attention', enabled: false });
-      for (const session of needsAttention) {
-        const isError = session.status === 'error';
-        const suffix = isError ? ' (error)' : ' (blocked)';
+      for (const session of feed.needsAttention) {
+        const suffix = session.hasError ? ' (error)' : ' (blocked)';
         menuItems.push({
           label: this.truncateTitle(session.title) + suffix,
-          icon: isError ? redDot : orangeDot,
+          icon: session.hasError ? redDot : orangeDot,
           click: () => this.handleSessionClick(session.sessionId, session.workspacePath),
         });
       }
@@ -430,9 +596,9 @@ export class TrayManager {
     }
 
     // Running section
-    if (running.length > 0) {
+    if (feed.running.length > 0) {
       menuItems.push({ label: 'Running', enabled: false });
-      for (const session of running) {
+      for (const session of feed.running) {
         const suffix = session.isStreaming ? ' (streaming...)' : '';
         menuItems.push({
           label: this.truncateTitle(session.title) + suffix,
@@ -443,9 +609,9 @@ export class TrayManager {
     }
 
     // Unread section
-    if (unread.length > 0) {
+    if (feed.unread.length > 0) {
       menuItems.push({ label: 'Unread', enabled: false });
-      for (const session of unread) {
+      for (const session of feed.unread) {
         menuItems.push({
           label: this.truncateTitle(session.title),
           icon: blueDot,
@@ -461,20 +627,20 @@ export class TrayManager {
       menuItems.push({ type: 'separator' });
     }
 
-    // Always show these items
+    return menuItems;
+  }
+
+  /** App-level actions. The whole right-click menu once the panel owns sessions. */
+  private buildAppMenuItems(): Electron.MenuItemConstructorOptions[] {
+    const menuItems: Electron.MenuItemConstructorOptions[] = [];
+
     menuItems.push({
       label: 'New Session',
       click: () => this.handleNewSession(),
     });
     menuItems.push({
       label: 'Open Nimbalyst',
-      click: () => {
-        const windows = BrowserWindow.getAllWindows();
-        if (windows.length > 0) {
-          windows[0].show();
-          windows[0].focus();
-        }
-      },
+      click: () => this.handleOpenApp(),
     });
     // Prevent Sleep submenu (only show when sync is configured)
     const syncConfig = getSessionSyncConfig();
@@ -511,14 +677,7 @@ export class TrayManager {
       click: () => app.quit(),
     });
 
-    const menu = Menu.buildFromTemplate(menuItems);
-    this.tray.setContextMenu(menu);
-
-    // Update icon state
-    this.updateIcon();
-
-    // Update dock badge
-    this.updateDockBadge(needsAttention.length);
+    return menuItems;
   }
 
   // ─── Icon management ───────────────────────────────────────────────────
@@ -688,8 +847,8 @@ export class TrayManager {
 
   // ─── Session click handling ────────────────────────────────────────────
 
-  private handleNewSession(): void {
-    const windows = BrowserWindow.getAllWindows();
+  handleNewSession(): void {
+    const windows = projectWindows();
     if (windows.length > 0) {
       const win = windows[0];
       win.show();
@@ -699,7 +858,16 @@ export class TrayManager {
     }
   }
 
-  private handleSessionClick(sessionId: string, workspacePath: string): void {
+  /** Focus any project window. Shared by the native menu item and the panel footer. */
+  handleOpenApp(): void {
+    const windows = projectWindows();
+    if (windows.length > 0) {
+      windows[0].show();
+      windows[0].focus();
+    }
+  }
+
+  handleSessionClick(sessionId: string, workspacePath: string): void {
     if (!workspacePath) {
       throw new Error(`[TrayManager] workspacePath is missing for session ${sessionId} -- cache bug`);
     }
@@ -712,7 +880,7 @@ export class TrayManager {
       targetWindow.webContents.send('tray:navigate-to-session', { sessionId, workspacePath });
     } else {
       // No window for this workspace -- just show any window
-      const windows = BrowserWindow.getAllWindows();
+      const windows = projectWindows();
       if (windows.length > 0) {
         windows[0].show();
         windows[0].focus();
@@ -726,7 +894,7 @@ export class TrayManager {
   /**
    * Clear every unread session from the tray in one action.
    */
-  private async clearAllUnreadSessions(): Promise<void> {
+  async clearAllUnreadSessions(): Promise<void> {
     const unreadSessions = Array.from(this.sessionCache.values())
       .filter((session) => session.hasUnread && session.workspacePath)
       .map((session) => ({
@@ -826,7 +994,7 @@ export class TrayManager {
       // metadata.metadata.hasUnread is the nested path used by sessionStateListeners.
       // Also check metadata.hasUnread for backwards compatibility.
       const { rows } = await this.database.query<any>(
-        `SELECT id, title, workspace_id, metadata FROM ai_sessions
+        `SELECT id, title, workspace_id, provider, model, updated_at, metadata FROM ai_sessions
          WHERE is_archived = false
            AND (metadata->'metadata'->>'hasUnread' = 'true'
                 OR metadata->>'hasUnread' = 'true')`
@@ -836,6 +1004,7 @@ export class TrayManager {
         // Don't overwrite sessions already in cache (e.g., currently running)
         if (this.sessionCache.has(row.id)) continue;
 
+        const metadata = parseMetadataColumn(row.metadata);
         this.sessionCache.set(row.id, {
           sessionId: row.id,
           title: row.title || 'Untitled Session',
@@ -846,6 +1015,11 @@ export class TrayManager {
           // a completed session that's merely unread isn't blocked on user input.
           hasPendingPrompt: false,
           hasUnread: true,
+          provider: row.provider || 'claude',
+          model: row.model || undefined,
+          updatedAt: toMillis(row.updated_at),
+          phase: typeof metadata.phase === 'string' ? metadata.phase : undefined,
+          isArchived: false,
         });
       }
 
@@ -865,7 +1039,8 @@ export class TrayManager {
 
     try {
       const { rows } = await this.database.query<any>(
-        `SELECT id, title, workspace_id, metadata FROM ai_sessions WHERE id = $1`,
+        `SELECT id, title, workspace_id, provider, model, updated_at, is_archived, metadata
+         FROM ai_sessions WHERE id = $1`,
         [sessionId]
       );
 
@@ -874,7 +1049,7 @@ export class TrayManager {
       }
 
       const row = rows[0];
-      const metadata = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : (row.metadata || {});
+      const metadata = parseMetadataColumn(row.metadata);
 
       return {
         sessionId,
@@ -884,6 +1059,11 @@ export class TrayManager {
         isStreaming: false,
         hasPendingPrompt: !!metadata.hasPendingPrompt,
         hasUnread: !!metadata.hasUnread,
+        provider: row.provider || 'claude',
+        model: row.model || undefined,
+        updatedAt: toMillis(row.updated_at),
+        phase: typeof metadata.phase === 'string' ? metadata.phase : undefined,
+        isArchived: !!row.is_archived,
       };
     } catch (error) {
       // Database query failure is not fatal -- title is cosmetic
@@ -901,6 +1081,8 @@ export class TrayManager {
       isStreaming: false,
       hasPendingPrompt: false,
       hasUnread: false,
+      provider: 'claude',
+      updatedAt: Date.now(),
     };
   }
 

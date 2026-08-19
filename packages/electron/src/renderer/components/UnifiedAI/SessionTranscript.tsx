@@ -18,6 +18,8 @@ import React, { useCallback, useRef, useImperativeHandle, forwardRef, useEffect,
 import { useAtom, useSetAtom, useAtomValue } from 'jotai';
 import { store, registerInteractiveWidgetHost, unregisterInteractiveWidgetHost } from '@nimbalyst/runtime/store';
 import type { SessionData, ChatAttachment, TranscriptViewMessage } from '@nimbalyst/runtime/ai/server/types';
+import { agentCapabilitiesForProviderType } from '@nimbalyst/runtime/ai/server/agentCapabilities';
+import type { ToolCallDiffLoadResult } from '@nimbalyst/runtime/ai/server/transcript';
 import { AgentTranscriptPanel } from '@nimbalyst/runtime/ui/AgentTranscript/components/AgentTranscriptPanel';
 import { ClaudeCliTerminalStrip } from './ClaudeCliTerminalStrip';
 import { ClaudeCliNotInstalledNotice } from './ClaudeCliNotInstalledNotice';
@@ -28,6 +30,7 @@ import { AIInput, AIInputRef } from './AIInput';
 import { PromptQueueList } from './PromptQueueList';
 import { TranscriptEmbeddedFileCard } from './TranscriptEmbeddedFileCard';
 import { getDiffPeekSizeForInteractiveWidgetHost } from './interactiveWidgetHostProxy';
+import { createFeedbackComposeHost } from '../FeedbackRequest/createFeedbackComposeHost';
 import { customEditorRegistry } from '../CustomEditors/registry';
 import { useDialog } from '../../contexts/DialogContext';
 import { FileGutter } from '../AIChat/FileGutter';
@@ -415,6 +418,17 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
   const posthog = usePostHog();
   const inputRef = useRef<AIInputRef>(null);
   const transcriptPanelRef = useRef<{ scrollToMessage: (index: number) => void; scrollToTop: () => void }>(null);
+  const loadToolCallDiffs = useCallback(
+    (toolCallItemId: string, toolCallTimestamp?: number): Promise<ToolCallDiffLoadResult> =>
+      window.electronAPI.invoke(
+        'session-files:get-tool-call-diffs',
+        workspacePath,
+        sessionId,
+        toolCallItemId,
+        toolCallTimestamp,
+      ),
+    [sessionId, workspacePath],
+  );
 
   // Get effective document context - prefer getter for fresh data (reads from disk at call time)
   const getEffectiveDocumentContext = useCallback(async () => {
@@ -431,6 +445,9 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
   // ============================================================
   const messages = useAtomValue(sessionMessagesAtom(sessionId));
   const provider = useAtomValue(sessionProviderAtom(sessionId));
+  // Declared, not guessed: 'unsupported' hides the Compact affordance instead
+  // of offering a button that silently does nothing (#1252).
+  const compactionSupport = agentCapabilitiesForProviderType(provider).compaction;
   const tokenUsage = useAtomValue(sessionTokenUsageAtom(sessionId));
   const isDataLoading = useAtomValue(sessionLoadingAtom(sessionId));
   const chatShowToolCalls = useAtomValue(chatShowToolCallsAtom);
@@ -1422,6 +1439,26 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
   const handleCompact = useCallback(async () => {
     if (!sessionData) return;
 
+    // Phase 4: the provider's declared capability chooses the mechanism. This
+    // used to read `provider === 'openai-codex'`, which is fine until the next
+    // provider grows a compaction RPC and nobody remembers this line exists.
+    if (compactionSupport === 'rpc') {
+      try {
+        const result = await window.electronAPI.invoke('ai:compactSession', sessionId) as
+          { success: boolean; error?: string };
+        if (!result?.success) {
+          console.error('[SessionTranscript] Compaction failed:', result?.error);
+        }
+      } catch (error) {
+        console.error('[SessionTranscript] Compaction failed:', error);
+      }
+      return;
+    }
+
+    // #1252: sending "/compact" as a user turn only compacts anything when the
+    // agent itself interprets slash commands. For every other provider it
+    // reaches the model as literal prompt text and does nothing, which is why
+    // the affordance is hidden entirely rather than offered as a no-op.
     const message = '/compact';
     const userMessage = makeOptimisticUserMessage(
       message,
@@ -1447,7 +1484,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
     } catch (error) {
       console.error('[SessionTranscript] Failed to send /compact command:', error);
     }
-  }, [sessionId, sessionData, messages, getEffectiveDocumentContext, aiMode, workspacePath, updateSessionStore]);
+  }, [sessionId, sessionData, messages, getEffectiveDocumentContext, aiMode, workspacePath, updateSessionStore, compactionSupport]);
 
   const handleTodoClick = useCallback((todo: TodoItem) => {
     onTodoClick?.(todo);
@@ -1852,6 +1889,20 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
         refreshPendingPrompts(sessionId);
       },
 
+      // Feedback request operations. Fire-and-forget: send publishes the
+      // subjects the author confirmed, creates the request, and returns. The
+      // turn does not wait for a recipient.
+      feedbackRequestSend: async (payload) =>
+        createFeedbackComposeHost({
+          workspacePath: workspacePath || '',
+          sessionId,
+        }).send(payload),
+      feedbackRequestCancel: async (draftId: string) =>
+        createFeedbackComposeHost({
+          workspacePath: workspacePath || '',
+          sessionId,
+        }).cancel(draftId),
+
       // Auto-commit
       autoCommitEnabled,
       setAutoCommitEnabled: (enabled: boolean) => {
@@ -1868,7 +1919,8 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
             'git:commit',
             gitWorkspacePath,
             message,
-            files
+            files,
+            sessionId
           ) as { success: boolean; commitHash?: string; commitDate?: string; error?: string };
 
           // Send response via unified IPC channel for the durable prompt.
@@ -2086,6 +2138,8 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       exitPlanModeCancel: (...args) => liveHostRef.current!.exitPlanModeCancel(...args),
       toolPermissionSubmit: (...args) => liveHostRef.current!.toolPermissionSubmit(...args),
       toolPermissionCancel: (...args) => liveHostRef.current!.toolPermissionCancel(...args),
+      feedbackRequestSend: (...args) => liveHostRef.current!.feedbackRequestSend!(...args),
+      feedbackRequestCancel: (...args) => liveHostRef.current!.feedbackRequestCancel!(...args),
       setAutoCommitEnabled: (...args) => liveHostRef.current!.setAutoCommitEnabled(...args),
       gitCommit: (...args) => liveHostRef.current!.gitCommit(...args),
       gitCommitCancel: (...args) => liveHostRef.current!.gitCommitCancel(...args),
@@ -2455,13 +2509,14 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
             onGroupByDirectoryChange={setGroupByDirectory}
             onOpenInExternalEditor={hasExternalEditor ? handleOpenInExternalEditor : undefined}
             externalEditorName={externalEditorName}
-            onCompact={handleCompact}
+            onCompact={compactionSupport === 'unsupported' ? undefined : handleCompact}
             promptAdditions={showPromptAdditions ? promptAdditions : null}
             currentTeammates={transcriptTeammates}
             waitingForNoun={waitingForNoun}
             appStartTime={appStartTime ?? undefined}
             renderEmbeddedFile={renderEmbeddedFile}
             canEmbedFile={canEmbedFile}
+            loadToolCallDiffs={loadToolCallDiffs}
             currentPhase={currentPhase}
             phaseColumns={SESSION_PHASE_COLUMNS}
             onSetPhase={handleSetPhase}

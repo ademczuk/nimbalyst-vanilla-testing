@@ -82,6 +82,23 @@ export function CalcSheetEditor({ host }: EditorHostProps) {
     [],
   );
 
+  // In collab mode the Monaco model (bound to the shared Y.Text) is the source
+  // of truth for the results gutter. `host.loadContent()` only returns the
+  // share-time seed -- usually empty -- so anything that re-seeds from it after
+  // sync (a late-resolving load, a host rebuilt on tab activation, a remount
+  // that reuses the path-keyed Monaco model) blanks the gutter until the next
+  // keystroke. Read the model back instead whenever it already has content.
+  const syncFromCollabModel = useCallback(
+    (editor: any): boolean => {
+      if (!collaborative || !editor?.getModel?.()) return false;
+      const value = editor.getValue();
+      if (!value) return false;
+      setRawContent(value);
+      return true;
+    },
+    [collaborative],
+  );
+
   const collabConfig = useMemo<MonacoEditorCollabConfig | undefined>(
     () =>
       collaborative
@@ -89,10 +106,11 @@ export function CalcSheetEditor({ host }: EditorHostProps) {
             textField: 'content',
             onBindingReady: ({ editor, monaco }) => {
               applyFrontmatterHide(editor, monaco);
+              syncFromCollabModel(editor);
             },
           }
         : undefined,
-    [collaborative, applyFrontmatterHide],
+    [collaborative, applyFrontmatterHide, syncFromCollabModel],
   );
 
   useEffect(() => {
@@ -107,6 +125,7 @@ export function CalcSheetEditor({ host }: EditorHostProps) {
     host.loadContent()
       .then((nextContent) => {
         if (!mounted) return;
+        if (syncFromCollabModel(editorRef.current?.editor)) return;
         setRawContent(nextContent);
       })
       .catch((error) => {
@@ -116,7 +135,7 @@ export function CalcSheetEditor({ host }: EditorHostProps) {
     return () => {
       mounted = false;
     };
-  }, [host]);
+  }, [host, syncFromCollabModel]);
 
   useEffect(() => {
     return () => {
@@ -226,6 +245,9 @@ export function CalcSheetEditor({ host }: EditorHostProps) {
     selectionListenerRef.current?.dispose();
 
     applyCalcSheetMonaco(editor, monaco, host.theme);
+    // A remount reuses the path-keyed Monaco model, so it can already hold the
+    // synced document before any change event fires here.
+    syncFromCollabModel(editor);
     refreshLayout(editor);
     if (gutterRef.current) {
       gutterRef.current.scrollTop = editor.getScrollTop();
@@ -275,7 +297,7 @@ export function CalcSheetEditor({ host }: EditorHostProps) {
     selectionListenerRef.current = editor.onDidChangeCursorSelection((event: { selection: CalcSheetSelectionRange }) => {
       updateSelection(event.selection);
     });
-  }, [refreshLayout, composeRawContent, host.theme, collaborative, applyFrontmatterHide]);
+  }, [refreshLayout, composeRawContent, host.theme, collaborative, applyFrontmatterHide, syncFromCollabModel]);
 
   useEffect(() => {
     // In collab mode the binding (shared Y.Text) is the source of truth; a

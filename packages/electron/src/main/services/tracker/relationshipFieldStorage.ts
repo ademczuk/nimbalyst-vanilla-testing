@@ -37,6 +37,26 @@ export function readStoredFieldValue(
 }
 
 /**
+ * Write a field back to the shape that already owns it. A nested field stays
+ * nested even when the writer's schema is stale and does not recognize its
+ * relationship type. Removing the top-level shadow keeps read and sync
+ * serialization from observing different values.
+ */
+export function writeStoredFieldValue(
+  data: Record<string, unknown>,
+  name: string,
+  value: unknown,
+): void {
+  const cf = nestedCustomFields(data);
+  if (cf && name in cf) {
+    cf[name] = value;
+    delete data[name];
+    return;
+  }
+  data[name] = value;
+}
+
+/**
  * Move every relationship-typed field that currently sits at the TOP LEVEL of
  * `data` into the nested `data.customFields` bag (the durable synced location),
  * removing the top-level shadow so the two can never diverge (nested wins on read,

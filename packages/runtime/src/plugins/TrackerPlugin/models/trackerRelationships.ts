@@ -39,6 +39,8 @@ export const BUILTIN_RELATIONSHIP_TYPES: TrackerRelationshipType[] = [
   // "is a subtask of".
   { key: 'has-item', displayName: 'Includes', inverseKey: 'in-collection', inverseDisplayName: 'In collection', category: 'hierarchy', icon: 'inventory_2' },
   { key: 'in-collection', displayName: 'In collection', inverseKey: 'has-item', inverseDisplayName: 'Includes', category: 'hierarchy', icon: 'inventory_2' },
+  { key: 'contributes-to', displayName: 'Contributes', inverseKey: 'contributed-by', inverseDisplayName: 'Goal', category: 'hierarchy', icon: 'flag' },
+  { key: 'contributed-by', displayName: 'Goal', inverseKey: 'contributes-to', inverseDisplayName: 'Contributes', category: 'hierarchy', icon: 'flag' },
 ];
 
 const BUILTIN_BY_KEY = new Map(BUILTIN_RELATIONSHIP_TYPES.map((t) => [t.key, t]));

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseTrackerYAML } from '../YAMLParser';
+import { parseTrackerYAML, serializeTrackerYAML } from '../YAMLParser';
 
 const BASE = `
 type: plan
@@ -60,5 +60,42 @@ fields:
 `);
     const field = model.fields.find((f) => f.name === 'relatesTo');
     expect(field!.targetTrackerTypes).toBe('*');
+  });
+});
+
+describe('parseTrackerYAML — tracker sharing migration', () => {
+  it.each([
+    ['local', 'personal', false],
+    ['shared', 'team', false],
+    ['hybrid', 'team', true],
+  ] as const)('keeps loading legacy sync.mode %s', (mode, sharing, draftByDefault) => {
+    const model = parseTrackerYAML(`${BASE}\nsync:\n  mode: ${mode}\n  scope: project\nfields:\n  - name: title\n    type: string\n`);
+
+    expect(model.sharing).toBe(sharing);
+    expect(model.draftByDefault).toBe(draftByDefault);
+    expect(model).not.toHaveProperty('sync');
+  });
+
+  it('writes only the new sharing shape and drops dead sync.scope config', () => {
+    const legacy = parseTrackerYAML(`${BASE}\nsync:\n  mode: hybrid\n  scope: workspace\nfields:\n  - name: title\n    type: string\n`);
+    const serialized = serializeTrackerYAML(legacy);
+
+    expect(serialized).toContain('sharing: team');
+    expect(serialized).toContain('draftByDefault: true');
+    expect(serialized).not.toContain('sync:');
+    expect(serialized).not.toContain('scope:');
+  });
+
+  // For a team tracker the YAML is what carries the archived state to
+  // teammates. Losing it on the round trip would quietly reopen a retired
+  // tracker for editing on every other machine.
+  it('round-trips the archived flag, and stays silent when a tracker is active', () => {
+    const archived = parseTrackerYAML(`${BASE}\nsharing: team\narchived: true\nfields:\n  - name: title\n    type: string\n`);
+    expect(archived.archived).toBe(true);
+    expect(parseTrackerYAML(serializeTrackerYAML(archived)).archived).toBe(true);
+
+    const active = parseTrackerYAML(`${BASE}\nsharing: team\nfields:\n  - name: title\n    type: string\n`);
+    expect(active.archived).toBeUndefined();
+    expect(serializeTrackerYAML(active)).not.toContain('archived:');
   });
 });

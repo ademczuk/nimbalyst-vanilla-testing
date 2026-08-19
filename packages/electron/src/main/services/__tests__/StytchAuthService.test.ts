@@ -23,17 +23,10 @@ vi.mock('fs', () => ({
   unlinkSync: vi.fn((filePath: string) => files.delete(filePath)),
 }));
 
-vi.mock('@nimbalyst/runtime', () => ({
-  STYTCH_CONFIG: {
-    live: { projectId: 'test', publicToken: 'test', apiBase: 'https://test.invalid' },
-  },
-  asPersonalJwt: (jwt: string) => jwt,
-  asPersonalMemberId: (id: string) => id,
-}));
-
 vi.mock('../../utils/store', () => ({
   getSessionSyncConfig: vi.fn(() => ({ serverUrl: 'https://sync.example' })),
   setSessionSyncConfig: vi.fn(),
+  clearOrgWalkPreferences: vi.fn(),
 }));
 
 vi.mock('../../utils/logger', () => ({
@@ -77,6 +70,20 @@ function createJwt(payload: Record<string, unknown>): string {
     'signature',
   ].join('.');
 }
+
+// A "Not now" on the project walk used to outlive the account that dismissed
+// it, permanently silencing the walk -- for the next person to sign in on this
+// computer as much as for the one who dismissed it.
+describe('StytchAuthService sign-out clears organization preferences', () => {
+  it('forgets the dismissed walk and last selected org', async () => {
+    const { clearOrgWalkPreferences } = await import('../../utils/store');
+    (clearOrgWalkPreferences as ReturnType<typeof vi.fn>).mockClear();
+
+    await signOut();
+
+    expect(clearOrgWalkPreferences).toHaveBeenCalled();
+  });
+});
 
 describe('StytchAuthService personal JWT refresh', () => {
   beforeEach(async () => {
@@ -193,6 +200,38 @@ describe('StytchAuthService personal JWT refresh', () => {
 
     await expect(refreshPersonalSession('https://sync.example')).resolves.toBe(true);
     expect(getPersonalSessionJwt()).toBe(freshPersonalJwt);
+  });
+});
+
+describe('StytchAuthService personal JWT scope guard', () => {
+  beforeEach(async () => {
+    await signOut();
+    files.clear();
+    fetchMock.mockReset();
+  });
+
+  it('does not expose an ambient team-org JWT as a personal JWT', () => {
+    files.set(
+      '/mock/user-data/stytch-accounts.enc',
+      Buffer.from(JSON.stringify({
+        version: 3,
+        syncAccountId: 'org-personal',
+        accounts: [{
+          sessionToken: 'team-scoped-session-token',
+          sessionJwt: createJwt({ sub: 'member-team', organization_id: 'org-team' }),
+          userId: 'member-team',
+          expiresAt: Date.now() + 60_000,
+          orgId: 'org-team',
+          personalOrgId: 'org-personal',
+          personalUserId: 'member-personal',
+        }],
+      })),
+    );
+
+    initializeStytchAuth({ projectId: 'test', publicToken: 'test', apiBase: 'https://test.invalid' });
+
+    expect(getAuthState().orgId).toBe('org-team');
+    expect(getPersonalSessionJwt()).toBeNull();
   });
 });
 
@@ -1000,6 +1039,43 @@ describe('StytchAuthService account refresh outcome classification', () => {
     await expect(refreshSessionForAccountDetailed('personal-other')).resolves.toEqual({
       ok: true,
       jwt: freshJwt,
+    });
+  });
+
+  it('brands an account refresh as personal only when the refreshed org is the personal org', async () => {
+    const freshJwt = createJwt({ sub: 'member-other', organization_id: 'personal-other' });
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        session_token: 'token-other-2',
+        session_jwt: freshJwt,
+        user_id: 'member-other',
+        org_id: 'personal-other',
+        expires_at: new Date(future).toISOString(),
+      }),
+    });
+
+    await expect(refreshPersonalSessionForAccountDetailed('personal-other')).resolves.toEqual({
+      ok: true,
+      jwt: freshJwt,
+    });
+  });
+
+  it('refuses to launder a team-scoped account refresh into a personal JWT', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        session_token: 'token-team-2',
+        session_jwt: createJwt({ sub: 'member-team', organization_id: 'team-other' }),
+        user_id: 'member-team',
+        org_id: 'team-other',
+        expires_at: new Date(future).toISOString(),
+      }),
+    });
+
+    await expect(refreshPersonalSessionForAccountDetailed('personal-other')).resolves.toEqual({
+      ok: false,
+      reason: 'auth',
     });
   });
 

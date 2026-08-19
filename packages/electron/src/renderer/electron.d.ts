@@ -165,12 +165,18 @@ interface ElectronAPI {
         name: string | null;
         slug: string | null;
         gitRemoteHash: string | null;
+        remoteUrl?: string;
         localStatus: 'open' | 'closed' | 'notLocal';
         workspacePath: string | null;
       }>;
       error?: string;
     }>;
     openProjectWorkspace: (workspacePath: string) => Promise<{ success: boolean; error?: string }>;
+    openSharedProject: (payload: {
+      orgId: string;
+      teamProjectId: string;
+      directoryPath: string;
+    }) => Promise<{ success: boolean; workspacePath?: string; error?: string }>;
     [method: string]: any;
   };
   organization: {
@@ -188,7 +194,11 @@ interface ElectronAPI {
     findPendingInvitation: (email: string) => Promise<any>;
     acceptInvitation: (orgId: string) => Promise<any>;
     listMembers: (orgId: string) => Promise<any>;
-    inviteMember: (orgId: string, email: string) => Promise<any>;
+    inviteMember: (
+      orgId: string,
+      email: string,
+      role?: 'owner' | 'admin' | 'member' | 'viewer' | 'guest',
+    ) => Promise<any>;
     removeMember: (orgId: string, memberId: string) => Promise<any>;
     updateMemberRole: (orgId: string, memberId: string, role: string) => Promise<any>;
     listProjects: (orgId: string) => Promise<any>;
@@ -209,6 +219,29 @@ interface ElectronAPI {
       success: boolean;
       error?: string;
     }>;
+  };
+  feedbackRequest: {
+    start: (
+      target: import('../shared/feedbackRequest').FeedbackRequestServiceTarget,
+    ) => Promise<import('../shared/feedbackRequest').FeedbackRequestServiceState>;
+    getCached: (
+      target: import('../shared/feedbackRequest').FeedbackRequestServiceTarget,
+    ) => Promise<import('../shared/feedbackRequest').FeedbackRequestServiceState>;
+    create: (
+      request: import('../shared/feedbackRequest').FeedbackRequestCreateIpcRequest,
+    ) => Promise<import('../shared/feedbackRequest').FeedbackRequestServiceState>;
+    respond: (
+      request: import('../shared/feedbackRequest').FeedbackRequestRespondIpcRequest,
+    ) => Promise<import('../shared/feedbackRequest').FeedbackRequestServiceState>;
+    comment: (
+      request: import('../shared/feedbackRequest').FeedbackRequestCommentIpcRequest,
+    ) => Promise<import('../shared/feedbackRequest').FeedbackRequestCommentIpcResult>;
+    close: (
+      request: import('../shared/feedbackRequest').FeedbackRequestCloseIpcRequest,
+    ) => Promise<import('../shared/feedbackRequest').FeedbackRequestServiceState>;
+    nudge: (
+      request: import('../shared/feedbackRequest').FeedbackRequestNudgeIpcRequest,
+    ) => Promise<import('@nimbalyst/runtime/sync').FeedbackRequestNudgeReceipt>;
   };
   // Global semantic search (nimbalyst-memory). Empty/false when memory is off.
   semanticSearch: {
@@ -295,7 +328,20 @@ interface ElectronAPI {
     filters?: Array<{ name: string; extensions: string[] }>;
     defaultPath?: string;
   }) => Promise<{ canceled: boolean; filePaths: string[] }>;
-  saveFile: (content: string, filePath: string, lastKnownContent?: string) => Promise<{ success: boolean; filePath: string; conflict?: boolean; diskContent?: string } | null>;
+  saveFile: (
+    content: string,
+    filePath: string,
+    lastKnownContent?: string,
+    saveSource?: 'auto' | 'manual',
+  ) => Promise<{
+    success: boolean;
+    filePath: string;
+    conflict?: boolean;
+    deleted?: boolean;
+    diskContent?: string;
+    errorType?: string;
+    errorCode?: string;
+  } | null>;
   saveFileAs: (content: string) => Promise<{ success: boolean; filePath: string } | null>;
   showErrorDialog: (title: string, message: string) => Promise<void>;
   showSaveDialogPdf: (options: { defaultPath?: string }) => Promise<string | null>;
@@ -524,6 +570,8 @@ interface ElectronAPI {
   onMcpRenameSharedItem: (callback: (data: { itemId: string, kind: 'doc' | 'folder', newName: string, resultChannel: string }) => void) => () => void;
   onMcpDeleteSharedItem: (callback: (data: { itemId: string, kind: 'doc' | 'folder', resultChannel: string }) => void) => () => void;
   sendMcpCollabIndexResult: (resultChannel: string, result: { success: boolean; error?: string; [key: string]: unknown }) => void;
+  onMcpGetResourceSharingStatus: (callback: (data: { sourceId: string; resultChannel: string }) => void) => () => void;
+  sendMcpCollabReadResult: (resultChannel: string, result: { success: boolean; result?: unknown; error?: string }) => void;
   updateMcpDocumentState: (state: any) => void;
   clearMcpDocumentState: () => Promise<void>;
 
@@ -579,7 +627,13 @@ interface ElectronAPI {
       | { success: true; exists: boolean; workspacePath?: string }
       | { success: false; exists: false; error: string }
     >;
-    start: () => Promise<
+    start: (
+      entryPoint?:
+        | 'onboarding'
+        | 'welcome_pane'
+        | 'project_manager_sidebar'
+        | 'help_menu'
+    ) => Promise<
       | { success: true; workspacePath: string; reused: boolean }
       | { success: false; error: string }
     >;
@@ -590,6 +644,17 @@ interface ElectronAPI {
     canMove: (oldPath: string) => Promise<{ canMove: boolean; reason?: string }>;
     move: (oldPath: string, newPath: string) => Promise<{ success: boolean; error?: string; newPath?: string }>;
     rename: (oldPath: string, newName: string) => Promise<{ success: boolean; error?: string; newPath?: string }>;
+  };
+
+  // Tracker lifecycle: personal -> team promotion (one-way) and archive.
+  trackerLifecycle: {
+    promoteToTeam: (payload: { workspacePath: string; type: string }) => Promise<{
+      success: boolean;
+      promotion?: { publishedCount: number; assignedKeyCount: number; pendingKeyCount: number };
+      error?: string;
+    }>;
+    setArchived: (payload: { workspacePath: string; type: string; archived: boolean }) =>
+      Promise<{ success: boolean; error?: string }>;
   };
 
   // Document Service
@@ -613,7 +678,8 @@ interface ElectronAPI {
       owner?: string;
       tags?: string[];
       customFields?: Record<string, any>;
-      syncMode?: string;
+      sharing?: 'personal' | 'team';
+      draftByDefault?: boolean;
       content?: any;
       source?: string;
       sourceRef?: string;
@@ -621,12 +687,33 @@ interface ElectronAPI {
     updateTrackerItem: (payload: {
       itemId: string;
       updates: Record<string, any>;
-      syncMode?: string;
+      sharing?: 'personal' | 'team';
+      draftByDefault?: boolean;
     }) => Promise<{ success: boolean; item?: any; error?: string }>;
-    setTrackerItemShared: (payload: {
+    /** Update 1-100 items in one call; each well-formed entry names its own routing. */
+    updateTrackerItems: (payload: {
+      entries: Array<{
+        itemId: string;
+        fileUpdates?: Record<string, any>;
+        storeUpdates?: Record<string, any>;
+        sharing?: 'personal' | 'team';
+        draftByDefault?: boolean;
+      }>;
+    }) => Promise<{
+      success: boolean;
+      results?: Array<{ itemId: string; success: boolean; error?: string }>;
+      error?: string;
+    }>;
+    setTrackerItemPublished: (payload: {
       itemId: string;
-      shared: boolean;
-    }) => Promise<{ success: boolean; item?: any; error?: string }>;
+      published: boolean;
+    }) => Promise<{
+      success: boolean;
+      item?: any;
+      /** Effective type policy plus item flag, computed in main after the write. */
+      teamVisible?: boolean;
+      error?: string;
+    }>;
     migrateSharedFrontmatterIds: (payload?: { dryRun?: boolean }) => Promise<{
       success: boolean;
       dryRun?: boolean;
@@ -778,7 +865,15 @@ interface ElectronAPI {
 
   // Extensions API
   extensions: {
-    listInstalled: () => Promise<Array<{ id: string; path: string; manifest: any; name: string; enabled: boolean }>>;
+    listInstalled: () => Promise<Array<{
+      id: string;
+      path: string;
+      manifest: any;
+      name: string;
+      enabled: boolean;
+      isBuiltin?: boolean;
+      staleBundleWarning?: string;
+    }>>;
     getAllSettings: () => Promise<Record<string, { enabled: boolean; claudePluginEnabled?: boolean; agentWorkflowsEnabled?: boolean }>>;
     getEnabled: (extensionId: string, defaultEnabled?: boolean) => Promise<boolean>;
     setEnabled: (extensionId: string, enabled: boolean) => Promise<{ success: boolean; error?: string }>;
@@ -1086,7 +1181,7 @@ interface ElectronAPI {
         documentType?: string;
         serverUrl: string;
         accountId: string;
-        userId: string;
+        teamMemberId: import('@nimbalyst/runtime/auth/jwtScopes').TeamMemberId;
         userName?: string;
         userEmail?: string;
         urlExtraQuery?: string;
@@ -1314,6 +1409,40 @@ interface ElectronAPI {
       lastEditorId?: string | null;
       lastEditedAt?: number | null;
     }>;
+    pullLocalOrigin: (payload: {
+      workspacePath: string;
+      documentId: string;
+      forceOverwriteLocal?: boolean;
+      conflictToken?: string;
+    }) => Promise<{
+      success: boolean;
+      status: 'noop' | 'pulled' | 'conflict' | 'missing-source' | 'unsupported' | 'error';
+      conflictKind?: 'missing-baseline' | 'local-ahead' | 'diverged';
+      conflictToken?: string;
+      message?: string;
+      binding?: {
+        orgId: string;
+        documentId: string;
+        gitRemoteHash: string | null;
+        workspacePathHash: string | null;
+        relativePath: string;
+        documentType: string;
+        sourceBasename: string;
+        lastLocalContentHash: string | null;
+        lastCollabContentHash: string | null;
+        lastSyncedAt: string | null;
+        lastSeenMtimeMs: number | null;
+        lastSeenSizeBytes: number | null;
+        resolutionStatus: 'resolved' | 'missing' | 'relinked' | 'conflict';
+        resolutionError: string | null;
+        createdAt: string;
+        updatedAt: string;
+        resolvedPath: string | null;
+      } | null;
+      lastEditorId?: string | null;
+      lastEditedAt?: number | null;
+      materializedAssetCount?: number;
+    }>;
     findLocalOriginLink: (workspacePath: string, sourceFilePath: string) => Promise<{
       success: boolean;
       binding?: {
@@ -1339,7 +1468,7 @@ interface ElectronAPI {
     }>;
     getJwt: (orgId: string, forceRefresh?: boolean) => Promise<{
       success: boolean;
-      jwt?: string;
+      jwt?: import('@nimbalyst/runtime/auth/jwtScopes').TeamJwt;
       error?: string;
     }>;
     resolveIndexConfig: (workspacePath: string) => Promise<{
@@ -1348,9 +1477,10 @@ interface ElectronAPI {
         orgId: string;
         teamProjectId?: string | null;
         serverUrl: string;
-        userId: string;
+        teamMemberId: import('@nimbalyst/runtime/auth/jwtScopes').TeamMemberId;
         userName?: string;
         userEmail?: string;
+        urlExtraQuery?: string;
       };
       error?: string;
     }>;
@@ -1374,14 +1504,18 @@ interface ElectronAPI {
       config?: {
         serverUrl: string;
         orgId: string;
-        userId: string;
+        personalMemberId: import('@nimbalyst/runtime/auth/jwtScopes').PersonalMemberId;
         encryptionKeyBase64: string;
         syncId: string;
         userName: string;
       };
       error?: string;
     }>;
-    getPersonalJwt: () => Promise<{ success: boolean; jwt?: string; error?: string }>;
+    getPersonalJwt: () => Promise<{
+      success: boolean;
+      jwt?: import('@nimbalyst/runtime/auth/jwtScopes').PersonalJwt;
+      error?: string;
+    }>;
 
     // Collaborative document attachments
     closeDoc: (documentId: string) => Promise<{ success: boolean; error?: string }>;

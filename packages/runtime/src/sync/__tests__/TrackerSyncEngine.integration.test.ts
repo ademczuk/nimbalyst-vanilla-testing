@@ -20,6 +20,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { asTeamJwt, asTeamMemberId } from '../../auth/jwtScopes';
 import {
   TrackerSyncEngine,
   type TrackerSyncEngineConfig,
@@ -95,10 +96,10 @@ async function buildEngine(opts: {
     serverUrl: 'ws://fake',
     orgId: 'test-org',
     teamProjectId: 'tracker-test-project',
-    userId: `user-${Math.random().toString(36).slice(2, 8)}`,
+    teamMemberId: asTeamMemberId(`user-${Math.random().toString(36).slice(2, 8)}`),
     persistence,
     initializeIssueKeyPrefix: opts.initializeIssueKeyPrefix,
-    getJwt: async () => 'fake-jwt',
+    getJwt: async () => asTeamJwt('fake-jwt'),
     createWebSocket: () => opts.serverConnect(),
   };
   const engine = new TrackerSyncEngine(config);
@@ -182,7 +183,6 @@ describe('TrackerSyncEngine (in-memory)', () => {
     const b = await buildEngine({ room: server.room, serverConnect: server.connect, encryptionKey: key });
     const bApplied: Array<{ type: string; model: string | null; syncId: number }> = [];
     b.config.schemaSync = {
-      getMaxSyncId: async () => 0,
       listUnsynced: async () => [],
       applyRemote: async (def) => { bApplied.push(def); },
     };
@@ -194,7 +194,6 @@ describe('TrackerSyncEngine (in-memory)', () => {
     const aApplied: Array<{ type: string; model: string | null; syncId: number }> = [];
     const a = await buildEngine({ room: server.room, serverConnect: server.connect, encryptionKey: key });
     a.config.schemaSync = {
-      getMaxSyncId: async () => 0,
       listUnsynced: async () => aPending,
       applyRemote: async (def) => {
         aApplied.push(def);
@@ -215,7 +214,6 @@ describe('TrackerSyncEngine (in-memory)', () => {
     const c = await buildEngine({ room: server.room, serverConnect: server.connect, encryptionKey: key });
     const cApplied: Array<{ type: string; model: string | null; syncId: number }> = [];
     c.config.schemaSync = {
-      getMaxSyncId: async () => 0,
       listUnsynced: async () => [],
       applyRemote: async (def) => { cApplied.push(def); },
     };
@@ -229,6 +227,92 @@ describe('TrackerSyncEngine (in-memory)', () => {
     a.engine.destroy();
     b.engine.destroy();
     c.engine.destroy();
+  });
+
+  it('completes schema bootstrap before applying the first item batch', async () => {
+    const server = createFakeServer();
+    const model = schemaModelJson('epic');
+
+    let pendingSchemas = [{ type: 'epic', model, deleted: false }];
+    const publisher = await buildEngine({
+      room: server.room,
+      serverConnect: server.connect,
+      encryptionKey: key,
+    });
+    publisher.config.schemaSync = {
+      listUnsynced: async () => pendingSchemas,
+      applyRemote: async (def) => {
+        pendingSchemas = pendingSchemas.filter(row => row.type !== def.type);
+      },
+    };
+
+    await publisher.engine.connect();
+    await waitUntil(() => server.room.getStoredSchemas().length === 1);
+    await publisher.engine.upsertItem(basePayload('epic-1', { primaryType: 'epic' }));
+    await waitUntil(() => server.room.getStoredItems().length === 1);
+
+    const applicationOrder: string[] = [];
+    const subscriber = await buildEngine({
+      room: server.room,
+      serverConnect: server.connect,
+      encryptionKey: key,
+    });
+    subscriber.config.schemaSync = {
+      listUnsynced: async () => [],
+      applyRemote: async () => { applicationOrder.push('schema'); },
+    };
+    subscriber.config.onItemApplied = () => { applicationOrder.push('item'); };
+
+    await subscriber.engine.connect();
+    await waitUntil(() => subscriber.engine.getStatus() === 'connected');
+
+    expect(applicationOrder).toEqual(['schema', 'item']);
+
+    publisher.engine.destroy();
+    subscriber.engine.destroy();
+  });
+
+  it('still loads items when the schema lane never answers', async () => {
+    const server = createFakeServer();
+    const publisher = await buildEngine({
+      room: server.room,
+      serverConnect: server.connect,
+      encryptionKey: key,
+    });
+    await publisher.engine.connect();
+    await waitUntil(() => publisher.engine.getStatus() === 'connected');
+    await publisher.engine.upsertItem(basePayload('deaf-schema-1'));
+    await waitUntil(() => server.room.getStoredItems().length === 1);
+
+    // A server too old to implement `trackerSchemaSync` never answers it. The
+    // schema lane runs first, so an unbounded wait there would strand the item
+    // bootstrap behind it and leave this client with an empty tracker.
+    const subscriber = await buildEngine({
+      room: server.room,
+      encryptionKey: key,
+      serverConnect: () => {
+        const ws = server.connect();
+        const relay = ws as unknown as { onSendFromClient: ((data: string) => void) | null };
+        const forward = relay.onSendFromClient;
+        relay.onSendFromClient = (data) => {
+          if ((JSON.parse(data) as { type: string }).type === 'trackerSchemaSync') return;
+          forward?.(data);
+        };
+        return ws;
+      },
+    });
+    subscriber.config.schemaBootstrapTimeoutMs = 50;
+    subscriber.config.schemaSync = {
+      listUnsynced: async () => [],
+      applyRemote: async () => {},
+    };
+
+    await subscriber.engine.connect();
+    await waitUntil(() => subscriber.engine.getStatus() === 'connected', 2000);
+    expect(subscriber.persistence.items.has('deaf-schema-1')).toBe(true);
+
+    publisher.engine.destroy();
+    subscriber.engine.destroy();
   });
 
   it('syncs tracker folders and type placements through outbox, live delta, and bootstrap', async () => {
@@ -609,6 +693,28 @@ describe('TrackerSyncEngine (in-memory)', () => {
 
     a.engine.destroy();
     b.engine.destroy();
+  });
+
+  it('returns a legible correlated rejection when the server says a prefix is taken', async () => {
+    const server = createFakeServer({ rejectConfigPrefix: 'TAKEN' });
+    const a = await buildEngine({ room: server.room, serverConnect: server.connect, encryptionKey: key });
+    const diagnostics: string[] = [];
+    a.config.onServerError = error => diagnostics.push(error.message);
+
+    await a.engine.connect();
+    await waitUntil(() => a.engine.getStatus() === 'connected');
+    const result = await a.engine.setIssueKeyPrefix('TAKEN');
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'issueKeyPrefixTaken',
+      conflictingProjectName: 'Other Project',
+      suggestedPrefix: 'FREE',
+    });
+    expect(result.message).toContain('already used by project "Other Project"');
+    expect(diagnostics).toEqual([result.message]);
+    expect(a.engine.getStatus()).toBe('connected');
+    a.engine.destroy();
   });
 
   it('initializes an empty room with the project-derived issue prefix', async () => {

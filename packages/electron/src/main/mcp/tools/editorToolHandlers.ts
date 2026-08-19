@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow } from "electron";
 import { isAbsolute } from "path";
 import { existsSync } from "fs";
 import {
@@ -7,6 +7,7 @@ import {
 } from "@nimbalyst/runtime";
 import { findWindowForFilePath, findWindowIdForWorkspacePath, workspaceToWindowMap, documentStateBySession } from "../mcpWorkspaceResolver";
 import { compressImageIfNeeded } from "../mcpImageCompression";
+import { requestFromRenderer } from "../rendererRequest";
 import { isFileInWorkspaceOrWorktree } from "../../utils/workspaceDetection";
 
 type McpToolResult = {
@@ -266,40 +267,31 @@ export async function handleApplyDiff(args: any): Promise<McpToolResult> {
       };
     }
 
-    const resultChannel = `mcp-result-${Date.now()}-${Math.random()}`;
+    const outcome = await requestFromRenderer<{ success?: boolean; error?: string }>(
+      targetWindow,
+      "mcp:applyDiff",
+      { replacements: typedArgs?.replacements, targetFilePath },
+      { timeoutMs: 30000 },
+    );
+    if (outcome.status === "timedOut") {
+      return {
+        content: [{ type: "text", text: "Timed out while waiting for diff to apply. The operation may still be in progress." }],
+        isError: true,
+      };
+    }
 
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        ipcMain.removeHandler(resultChannel);
-        resolve({
-          content: [{ type: "text", text: "Timed out while waiting for diff to apply. The operation may still be in progress." }],
-          isError: true,
-        });
-      }, 30000);
-
-      ipcMain.once(resultChannel, (event, result) => {
-        clearTimeout(timeout);
-        const success = result?.success ?? false;
-        const error = result?.error;
-        resolve({
-          content: [
-            {
-              type: "text",
-              text: success
-                ? `Successfully applied diff to ${targetFilePath}`
-                : `Failed to apply diff: ${error || "Unknown error"}`,
-            },
-          ],
-          isError: !success,
-        });
-      });
-
-      targetWindow.webContents.send("mcp:applyDiff", {
-        replacements: typedArgs?.replacements,
-        resultChannel,
-        targetFilePath,
-      });
-    });
+    const success = outcome.response?.success ?? false;
+    return {
+      content: [
+        {
+          type: "text",
+          text: success
+            ? `Successfully applied diff to ${targetFilePath}`
+            : `Failed to apply diff: ${outcome.response?.error || "Unknown error"}`,
+        },
+      ],
+      isError: !success,
+    };
   }
   return {
     content: [{ type: "text", text: "Error: No window available for target file" }],
@@ -334,36 +326,28 @@ export async function handleReadCollabDoc(args: any): Promise<McpToolResult> {
     };
   }
 
-  const resultChannel = `mcp-result-${Date.now()}-${Math.random()}`;
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      ipcMain.removeAllListeners(resultChannel);
-      resolve({
-        content: [{ type: "text", text: "Timed out while reading collab document." }],
-        isError: true,
-      });
-    }, 10000);
-
-    ipcMain.once(resultChannel, (_event, result: { success: boolean; content?: string; error?: string }) => {
-      clearTimeout(timeout);
-      if (!result?.success) {
-        resolve({
-          content: [{ type: "text", text: `Failed to read collab doc: ${result?.error || "Unknown error"}` }],
-          isError: true,
-        });
-        return;
-      }
-      resolve({
-        content: [{ type: "text", text: result.content ?? "" }],
-        isError: false,
-      });
-    });
-
-    targetWindow.webContents.send("mcp:readCollabDoc", {
-      targetFilePath,
-      resultChannel,
-    });
-  });
+  const outcome = await requestFromRenderer<{ success: boolean; content?: string; error?: string }>(
+    targetWindow,
+    "mcp:readCollabDoc",
+    { targetFilePath },
+    { timeoutMs: 10000 },
+  );
+  if (outcome.status === "timedOut") {
+    return {
+      content: [{ type: "text", text: "Timed out while reading collab document." }],
+      isError: true,
+    };
+  }
+  if (!outcome.response?.success) {
+    return {
+      content: [{ type: "text", text: `Failed to read collab doc: ${outcome.response?.error || "Unknown error"}` }],
+      isError: true,
+    };
+  }
+  return {
+    content: [{ type: "text", text: outcome.response.content ?? "" }],
+    isError: false,
+  };
 }
 
 /**
@@ -500,64 +484,57 @@ async function handleCollabCommentOperation(
     }
   }
 
-  const resultChannel = `mcp-result-${Date.now()}-${Math.random()}`;
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      ipcMain.removeAllListeners(resultChannel);
-      resolve({
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            error: {
-              code: "SYNC_TIMEOUT",
-              message: "Timed out while waiting for the collaborative comment operation.",
+  const channel = operation === "list"
+    ? "mcp:readCollabDocComments"
+    : operation === "reply"
+      ? "mcp:replyToCollabDocComment"
+      : "mcp:createCollabDocComment";
+
+  const outcome = await requestFromRenderer<{
+    success: boolean;
+    result?: unknown;
+    code?: string;
+    error?: string;
+  }>(
+    targetWindow,
+    channel,
+    { targetFilePath, input: args, agent, workspacePath },
+    { timeoutMs: 20000 },
+  );
+  if (outcome.status === "timedOut") {
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          error: {
+            code: "SYNC_TIMEOUT",
+            message: "Timed out while waiting for the collaborative comment operation.",
+          },
+        }),
+      }],
+      isError: true,
+    };
+  }
+
+  const result = outcome.response;
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(
+        result?.success
+          ? result.result
+          : {
+              error: {
+                code: result?.code || "COMMENT_OPERATION_FAILED",
+                message: result?.error || "Unknown collaborative comment error.",
+              },
             },
-          }),
-        }],
-        isError: true,
-      });
-    }, 20000);
-
-    ipcMain.once(resultChannel, (_event, result: {
-      success: boolean;
-      result?: unknown;
-      code?: string;
-      error?: string;
-    }) => {
-      clearTimeout(timeout);
-      resolve({
-        content: [{
-          type: "text",
-          text: JSON.stringify(
-            result?.success
-              ? result.result
-              : {
-                  error: {
-                    code: result?.code || "COMMENT_OPERATION_FAILED",
-                    message: result?.error || "Unknown collaborative comment error.",
-                  },
-                },
-            null,
-            2,
-          ),
-        }],
-        isError: !result?.success,
-      });
-    });
-
-    const channel = operation === "list"
-      ? "mcp:readCollabDocComments"
-      : operation === "reply"
-        ? "mcp:replyToCollabDocComment"
-        : "mcp:createCollabDocComment";
-    targetWindow.webContents.send(channel, {
-      targetFilePath,
-      input: args,
-      agent,
-      workspacePath,
-      resultChannel,
-    });
-  });
+        null,
+        2,
+      ),
+    }],
+    isError: !result?.success,
+  };
 }
 
 export function handleReadCollabDocComments(
@@ -609,43 +586,38 @@ export async function handleStreamContent(args: any): Promise<McpToolResult> {
   const targetWindow = await findWindowForFilePath(targetFilePath);
   if (targetWindow) {
     const streamId = `mcp-stream-${Date.now()}-${Math.random()}`;
-    const resultChannel = `mcp-result-${Date.now()}-${Math.random()}`;
 
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        ipcMain.removeHandler(resultChannel);
-        resolve({
-          content: [{ type: "text", text: "Timed out while waiting for content to stream. The operation may still be in progress." }],
-          isError: true,
-        });
-      }, 30000);
-
-      ipcMain.once(resultChannel, (event, result) => {
-        clearTimeout(timeout);
-        const success = result?.success ?? false;
-        const error = result?.error;
-        resolve({
-          content: [
-            {
-              type: "text",
-              text: success
-                ? `Successfully streamed content to ${targetFilePath}`
-                : `Failed to stream content: ${error || "Unknown error"}`,
-            },
-          ],
-          isError: !success,
-        });
-      });
-
-      targetWindow.webContents.send("mcp:streamContent", {
+    const outcome = await requestFromRenderer<{ success?: boolean; error?: string }>(
+      targetWindow,
+      "mcp:streamContent",
+      {
         streamId,
         content: typedArgs?.content,
         position: typedArgs?.position || "end",
         insertAfter: typedArgs?.insertAfter,
         targetFilePath,
-        resultChannel,
-      });
-    });
+      },
+      { timeoutMs: 30000 },
+    );
+    if (outcome.status === "timedOut") {
+      return {
+        content: [{ type: "text", text: "Timed out while waiting for content to stream. The operation may still be in progress." }],
+        isError: true,
+      };
+    }
+
+    const success = outcome.response?.success ?? false;
+    return {
+      content: [
+        {
+          type: "text",
+          text: success
+            ? `Successfully streamed content to ${targetFilePath}`
+            : `Failed to stream content: ${outcome.response?.error || "Unknown error"}`,
+        },
+      ],
+      isError: !success,
+    };
   }
   return {
     content: [{ type: "text", text: "Error: No window available for target file" }],

@@ -102,8 +102,11 @@ export async function initTrackerPanelLayout(workspacePath: string): Promise<voi
       const alreadyMigrated = savedModeLayout.viewModeMigrated === true;
       const migratedViewMode = migrateViewMode(savedModeLayout.viewMode, alreadyMigrated);
 
+      const selectedType = savedModeLayout.selectedType ?? DEFAULT_MODE_LAYOUT.selectedType;
+      const typeColumnConfigs = normalizeTypeColumnConfigs(savedModeLayout.typeColumnConfigs);
+      const legacyGroupBy = readLegacyTypeGroupBy(savedModeLayout.typeColumnConfigs, selectedType);
       const newLayout: TrackerModeLayout = {
-        selectedType: savedModeLayout.selectedType ?? DEFAULT_MODE_LAYOUT.selectedType,
+        selectedType,
         activeFilters: Array.isArray(savedModeLayout.activeFilters)
           ? savedModeLayout.activeFilters
           : DEFAULT_MODE_LAYOUT.activeFilters,
@@ -111,9 +114,10 @@ export async function initTrackerPanelLayout(workspacePath: string): Promise<voi
         selectedItemId: savedModeLayout.selectedItemId ?? DEFAULT_MODE_LAYOUT.selectedItemId,
         sidebarWidth: savedModeLayout.sidebarWidth ?? DEFAULT_MODE_LAYOUT.sidebarWidth,
         detailPanelWidth: savedModeLayout.detailPanelWidth ?? DEFAULT_MODE_LAYOUT.detailPanelWidth,
-        typeColumnConfigs: savedModeLayout.typeColumnConfigs ?? DEFAULT_MODE_LAYOUT.typeColumnConfigs,
+        typeColumnConfigs,
         typeColumnFilters: savedModeLayout.typeColumnFilters ?? DEFAULT_MODE_LAYOUT.typeColumnFilters,
-        groupBy: savedModeLayout.groupBy ?? DEFAULT_MODE_LAYOUT.groupBy,
+        groupBy: normalizeTrackerGroupBy(savedModeLayout.groupBy ?? legacyGroupBy),
+        ordering: normalizeTrackerOrdering(savedModeLayout.ordering),
         sortBy: typeof savedModeLayout.sortBy === 'string' ? savedModeLayout.sortBy : DEFAULT_MODE_LAYOUT.sortBy,
         sortDirection: savedModeLayout.sortDirection === 'asc' || savedModeLayout.sortDirection === 'desc'
           ? savedModeLayout.sortDirection
@@ -140,6 +144,8 @@ export async function initTrackerPanelLayout(workspacePath: string): Promise<voi
         ),
         documentRightPanelMode: normalizeDocumentPanelMode(savedModeLayout.documentRightPanelMode),
         documentChatSessions: normalizeDocumentChatSessions(savedModeLayout.documentChatSessions),
+        collapsedOwnershipSections: normalizeCollapsedOwnershipSections(savedModeLayout.collapsedOwnershipSections),
+        expandedNavFolders: normalizeExpandedNavFolders(savedModeLayout.expandedNavFolders),
         viewModeMigrated: true,
       };
 
@@ -182,14 +188,25 @@ import type { TypeColumnConfig } from '@nimbalyst/runtime/plugins/TrackerPlugin/
 import type { SortColumn, SortDirection } from '@nimbalyst/runtime/plugins/TrackerPlugin';
 import type { InboxScope, TrackerFilterSet } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import {
+  normalizeTrackerOrdering,
+  type TrackerOrdering,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerOrdering';
+import {
   mergeSavedViews,
   normalizeViewDefinition,
   normalizeViewMode,
+  normalizeTrackerGroupBy,
   parseSharedSavedView,
   serializeSharedSavedView,
   type SavedView,
   type TrackerGroupBy,
 } from '../../components/TrackerMode/trackerSavedViews';
+import type { TrackerViewMode } from '../../components/TrackerMode/trackerViewModes';
+import type { TrackerOwnership } from '../../components/TrackerMode/trackerNavigationTree';
+import {
+  normalizeCollapsedOwnershipSections,
+  normalizeExpandedNavFolders,
+} from '../../components/TrackerMode/trackerSidebarCollapse';
 
 export interface TrackerModeLayout {
   /** Selected type filter in sidebar ('all' or specific type) */
@@ -202,6 +219,8 @@ export interface TrackerModeLayout {
    * - `table`  -- virtualized, in-place-editable RevoGrid table
    *               (`TrackerGridView`).
    * - `kanban` -- column-per-status board (`KanbanBoard`).
+   * - `timeline` -- items along a time axis, one row per grouping bucket
+   *               (`TrackerTimelineView`).
    * - `tag-board` -- column-per-tag board (`TagBoard`).
    * - `inbox`  -- keyboard-driven triage queue of untriaged items
    *               (`TrackerInboxView`).
@@ -209,7 +228,7 @@ export interface TrackerModeLayout {
    * Legacy persisted state used `'table'` for the list view and `'grid'` for
    * the RevoGrid table; `migrateViewMode` rewrites both on load.
    */
-  viewMode: 'list' | 'table' | 'kanban' | 'tag-board' | 'inbox';
+  viewMode: TrackerViewMode;
   /** Currently selected tracker item ID (opens detail panel when non-null) */
   selectedItemId: string | null;
   /** Sidebar width in pixels */
@@ -226,6 +245,8 @@ export interface TrackerModeLayout {
   typeColumnFilters: Record<string, TrackerFilterSet>;
   /** Active grouping for grouped renderings (NIM-788). Defaults to 'none'. */
   groupBy: TrackerGroupBy;
+  /** Manual kanban ordering, or a sortable schema field id. */
+  ordering: TrackerOrdering;
   sortBy: SortColumn;
   sortDirection: SortDirection;
   recentlyViewedDays: 7 | 30 | 90 | null;
@@ -257,6 +278,10 @@ export interface TrackerModeLayout {
    * same way as {@link TrackerModeLayout.itemViews}.
    */
   documentChatSessions: Record<string, string>;
+  /** Sidebar ownership groups the user has collapsed. */
+  collapsedOwnershipSections: TrackerOwnership[];
+  /** Sidebar navigation folders the user has expanded. */
+  expandedNavFolders: string[];
   /**
    * Set to `true` once the one-shot `'table' -> 'list'` rewrite has run for
    * this workspace. Future loads pass `viewMode` through untouched so users
@@ -275,6 +300,7 @@ const DEFAULT_MODE_LAYOUT: TrackerModeLayout = {
   typeColumnConfigs: {},
   typeColumnFilters: {},
   groupBy: 'none',
+  ordering: 'manual',
   sortBy: 'lastIndexed',
   sortDirection: 'desc',
   recentlyViewedDays: 30,
@@ -286,8 +312,34 @@ const DEFAULT_MODE_LAYOUT: TrackerModeLayout = {
   documentRightPanelWidth: 380,
   documentRightPanelMode: 'chat',
   documentChatSessions: {},
+  collapsedOwnershipSections: [],
+  expandedNavFolders: [],
   viewModeMigrated: true,
 };
+
+function normalizeTypeColumnConfigs(raw: unknown): Record<string, TypeColumnConfig> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const normalized: Record<string, TypeColumnConfig> = {};
+  for (const [type, value] of Object.entries(raw)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const config = value as { visibleColumns?: unknown; columnWidths?: unknown };
+    if (!Array.isArray(config.visibleColumns)) continue;
+    normalized[type] = {
+      visibleColumns: config.visibleColumns.filter((column): column is string => typeof column === 'string'),
+      columnWidths: config.columnWidths && typeof config.columnWidths === 'object' && !Array.isArray(config.columnWidths)
+        ? config.columnWidths as Record<string, number>
+        : {},
+    };
+  }
+  return normalized;
+}
+
+function readLegacyTypeGroupBy(raw: unknown, selectedType: string): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const config = (raw as Record<string, unknown>)[selectedType];
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return undefined;
+  return (config as { groupBy?: unknown }).groupBy;
+}
 
 /** Presentation of a single tracker item inside Tracker Mode. */
 export type TrackerItemView = 'item' | 'document';
@@ -383,6 +435,16 @@ export const trackerModeSelectedItemIdAtom = atom(
   (get) => get(trackerModeLayoutAtom).selectedItemId
 );
 
+/** Sidebar ownership groups the user has collapsed. */
+export const trackerSidebarCollapsedSectionsAtom = atom(
+  (get) => get(trackerModeLayoutAtom).collapsedOwnershipSections
+);
+
+/** Sidebar navigation folders the user has expanded. */
+export const trackerSidebarExpandedFoldersAtom = atom(
+  (get) => get(trackerModeLayoutAtom).expandedNavFolders
+);
+
 let modeLayoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleModeLayoutPersist(workspacePath: string, layout: TrackerModeLayout): void {
@@ -415,6 +477,11 @@ export const setTrackerModeLayoutAtom = atom(
 /** Active grouping in tracker mode. */
 export const trackerModeGroupByAtom = atom(
   (get) => get(trackerModeLayoutAtom).groupBy
+);
+
+/** Active manual-or-field ordering in tracker mode. */
+export const trackerModeOrderingAtom = atom(
+  (get) => get(trackerModeLayoutAtom).ordering
 );
 
 /**

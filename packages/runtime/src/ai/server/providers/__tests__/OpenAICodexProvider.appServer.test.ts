@@ -140,3 +140,150 @@ describe('OpenAICodexProvider.maybeBuildAppServerFileChangeSnapshots', () => {
     expect(result.postEdit).toBeNull();
   });
 });
+
+// NIM-2962: a dead MCP server reports `status: 'failed'` on
+// mcpServer/startupStatus/updated. The protocol layer used to discard it as
+// "informational", so an agent could silently lose all of a server's tools
+// with nothing in the UI. Codex is not special here -- ClaudeCodeProvider
+// already emits `mcpServerStatus:changed` into a pipeline that ends at a
+// session chip, so the fix is to feed the SAME pipeline rather than invent a
+// new event.
+//
+// Payloads below are verbatim from a live codex 0.144.1 app-server
+// (temptests/codex-appserver-probe2.mjs) pointed at the retired
+// https://mcp.linear.app/sse endpoint.
+describe('OpenAICodexProvider MCP startup status', () => {
+  let provider: OpenAICodexProvider;
+
+  beforeEach(() => {
+    BaseAgentProvider.setTrustChecker({ shouldBypassPermissions: () => false } as never);
+    BaseAgentProvider.setPermissionPatternSaver({ savePattern: vi.fn() } as never);
+    BaseAgentProvider.setPermissionPatternChecker({ checkPattern: () => null } as never);
+    provider = new OpenAICodexProvider({}, {
+      transport: 'sdk',
+      protocol: {
+        platform: 'mock',
+        createSession: vi.fn() as never,
+        resumeSession: vi.fn() as never,
+        forkSession: vi.fn() as never,
+        sendMessage: () => (async function* () {})() as never,
+        abortSession: vi.fn() as never,
+        cleanupSession: vi.fn() as never,
+      } as never,
+    });
+  });
+
+  const statusEvent = (name: string, status: string, error: string | null = null) => ({
+    type: 'raw_event' as const,
+    metadata: {
+      transport: 'app-server',
+      method: 'mcpServer/startupStatus/updated',
+      params: { threadId: 't-1', name, status, error, failureReason: null },
+    },
+  });
+
+  it('emits mcpServerStatus:changed with a failed server so the UI can show it', () => {
+    const emitted: Array<{ servers: Array<{ name: string; status: string; error?: string }> }> = [];
+    provider.on('mcpServerStatus:changed', (p) => emitted.push(p as never));
+
+    provider.handleAppServerMcpStatus(statusEvent('home-assistant', 'starting'), 'sess-1');
+    provider.handleAppServerMcpStatus(statusEvent('home-assistant', 'ready'), 'sess-1');
+    provider.handleAppServerMcpStatus(
+      statusEvent(
+        'nimbalyst_dead',
+        'failed',
+        'MCP client for `nimbalyst_dead` failed to start: HTTP 404: 404 Not Found, when send initialize request',
+      ),
+      'sess-1',
+    );
+
+    expect(emitted.length).toBeGreaterThan(0);
+    const servers = emitted[emitted.length - 1].servers;
+    expect(servers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'home-assistant', status: 'connected' }),
+        expect.objectContaining({ name: 'nimbalyst_dead', status: 'failed' }),
+      ]),
+    );
+    const dead = servers.find((s) => s.name === 'nimbalyst_dead');
+    expect(dead?.error).toContain('404');
+  });
+
+  it('does not re-emit when a server repeats the status it already had', () => {
+    const emitted: unknown[] = [];
+    provider.on('mcpServerStatus:changed', (p) => emitted.push(p));
+
+    provider.handleAppServerMcpStatus(statusEvent('node_repl', 'ready'), 'sess-1');
+    const afterFirst = emitted.length;
+    provider.handleAppServerMcpStatus(statusEvent('node_repl', 'ready'), 'sess-1');
+
+    expect(emitted.length).toBe(afterFirst);
+  });
+
+  it('ignores events from other transports and other methods', () => {
+    const emitted: unknown[] = [];
+    provider.on('mcpServerStatus:changed', (p) => emitted.push(p));
+
+    provider.handleAppServerMcpStatus(
+      { type: 'raw_event' as const, metadata: { transport: 'sdk', method: 'mcpServer/startupStatus/updated', params: { name: 'x', status: 'failed' } } },
+      'sess-1',
+    );
+    provider.handleAppServerMcpStatus(
+      { type: 'raw_event' as const, metadata: { transport: 'app-server', method: 'item/completed', params: {} } },
+      'sess-1',
+    );
+
+    expect(emitted).toHaveLength(0);
+  });
+});
+
+// Phase 4 -- the declared capability contract.
+//
+// #1251-#1254 all shared one root cause: capabilities were optional
+// duck-typed methods, so "this provider never implemented it" and "this
+// provider has none right now" were the same observable -- an empty array.
+// Codex is the case that proves the two apart: it declares slash commands
+// UNSUPPORTED (nothing in the app-server interprets them, so
+// KNOWN_SLASH_COMMANDS is deliberately empty) while declaring skills
+// SUPPORTED, whose list is legitimately empty until the transport answers
+// skills/list.
+describe('OpenAICodexProvider declared capabilities', () => {
+  const mockProtocol = (extra: Record<string, unknown> = {}) => ({
+    platform: 'mock',
+    createSession: vi.fn() as never,
+    resumeSession: vi.fn() as never,
+    forkSession: vi.fn() as never,
+    sendMessage: () => (async function* () {})() as never,
+    abortSession: vi.fn() as never,
+    cleanupSession: vi.fn() as never,
+    ...extra,
+  });
+
+  beforeEach(() => {
+    BaseAgentProvider.setTrustChecker({ shouldBypassPermissions: () => false } as never);
+    BaseAgentProvider.setPermissionPatternSaver({ savePattern: vi.fn() } as never);
+    BaseAgentProvider.setPermissionPatternChecker({ checkPattern: () => null } as never);
+  });
+
+  it('reports unsupported slash commands and supported-but-empty skills distinctly', () => {
+    const provider = new OpenAICodexProvider({}, { transport: 'sdk', protocol: mockProtocol() as never });
+    const capabilities = provider.getAgentCapabilities();
+
+    // Both accessors return [] -- only the declaration tells them apart.
+    expect(provider.getSlashCommands()).toEqual([]);
+    expect(provider.getSkills()).toEqual([]);
+    expect(capabilities.slashCommands).toBe(false);
+    expect(capabilities.skills).toBe(true);
+  });
+
+  it('narrows compaction to the live transport rather than the provider type', () => {
+    const noCompact = new OpenAICodexProvider({}, { transport: 'sdk', protocol: mockProtocol() as never });
+    const withCompact = new OpenAICodexProvider({}, {
+      transport: 'sdk',
+      protocol: mockProtocol({ compactSession: vi.fn() }) as never,
+    });
+
+    expect(noCompact.getAgentCapabilities().compaction).toBe('unsupported');
+    expect(withCompact.getAgentCapabilities().compaction).toBe('rpc');
+  });
+});

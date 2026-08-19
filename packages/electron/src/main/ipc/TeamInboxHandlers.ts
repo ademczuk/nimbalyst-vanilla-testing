@@ -30,6 +30,11 @@ export function registerTeamInboxHandlers(
     dependencies.openInboxSource,
   );
   const unsubscribeDeliveries = service.subscribeNewDelivery((delivery) => {
+    // logger.main.info('[TeamInboxNotification] live delivery received:', {
+    //   id: delivery.id,
+    //   orgId: delivery.orgId,
+    //   source: 'source' in delivery ? delivery.source : null,
+    // });
     void notificationService.notify(delivery).catch((error) => {
       logger.main.warn(
         '[TeamInboxNotification] Failed to process live delivery:',

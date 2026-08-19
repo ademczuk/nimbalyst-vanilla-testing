@@ -3,7 +3,31 @@
  */
 
 import yaml from 'js-yaml';
-import type { TrackerDataModel, FieldDefinition, FieldOption, TrackerSyncPolicy, TrackerSyncMode, TrackerSchemaRole } from './TrackerDataModel';
+import type { TrackerDataModel, FieldDefinition, FieldOption, TrackerSharing, TrackerSchemaRole } from './TrackerDataModel';
+
+type LegacyTrackerSharing = 'local' | 'shared' | 'hybrid';
+
+function legacySharing(mode: LegacyTrackerSharing): { sharing: TrackerSharing; draftByDefault: boolean } {
+  if (mode === 'local') return { sharing: 'personal', draftByDefault: false };
+  return { sharing: 'team', draftByDefault: mode === 'hybrid' };
+}
+
+/** Normalize a parsed/JSON model without requiring a full YAML validation pass. */
+export function normalizeTrackerSharingModel<T extends TrackerDataModel>(model: T, fallbackSharing: TrackerSharing = 'personal'): T {
+  const legacyMode = (model as TrackerDataModel & { sync?: { mode?: LegacyTrackerSharing } }).sync?.mode;
+  const migrated = legacyMode && ['local', 'shared', 'hybrid'].includes(legacyMode)
+    ? legacySharing(legacyMode)
+    : null;
+  const { sync: _legacySync, ...rest } = model as TrackerDataModel & { sync?: unknown };
+  const sharing = model.sharing === 'team' || model.sharing === 'personal'
+    ? model.sharing
+    : migrated?.sharing ?? fallbackSharing;
+  return {
+    ...rest,
+    sharing,
+    draftByDefault: sharing === 'team' ? model.draftByDefault ?? migrated?.draftByDefault ?? false : false,
+  } as T;
+}
 
 /**
  * Parse a YAML string into a TrackerDataModel
@@ -153,14 +177,21 @@ export function parseTrackerYAML(yamlString: string): TrackerDataModel {
     }
   }
 
-  // Parse sync policy
-  if (data.sync) {
-    const validModes: TrackerSyncMode[] = ['local', 'shared', 'hybrid'];
-    const mode = validModes.includes(data.sync.mode) ? data.sync.mode : 'local';
-    const validScopes: TrackerSyncPolicy['scope'][] = ['project', 'workspace'];
-    const scope = validScopes.includes(data.sync.scope) ? data.sync.scope : 'project';
-    model.sync = { mode, scope };
-  }
+  // New files carry one tracker-level sharing axis. Legacy sync.mode remains a
+  // permanent read format because users check these files into git.
+  const validSharings: TrackerSharing[] = ['personal', 'team'];
+  const legacyModes: LegacyTrackerSharing[] = ['local', 'shared', 'hybrid'];
+  const legacyMode = legacyModes.includes(data.sync?.mode) ? data.sync.mode as LegacyTrackerSharing : null;
+  const migrated = legacyMode ? legacySharing(legacyMode) : null;
+  model.sharing = validSharings.includes(data.sharing)
+    ? data.sharing
+    : migrated?.sharing ?? 'personal';
+  model.draftByDefault = model.sharing === 'team'
+    ? (typeof data.draftByDefault === 'boolean' ? data.draftByDefault : migrated?.draftByDefault ?? false)
+    : false;
+  // Only written when true: an unarchived tracker is the overwhelming majority
+  // and `archived: false` on every file would be noise.
+  if (data.archived === true) model.archived = true;
 
   return model;
 }
@@ -169,7 +200,7 @@ export function parseTrackerYAML(yamlString: string): TrackerDataModel {
  * Serialize a TrackerDataModel to YAML string
  */
 export function serializeTrackerYAML(model: TrackerDataModel): string {
-  return yaml.dump(model, {
+  return yaml.dump(normalizeTrackerSharingModel(model), {
     indent: 2,
     lineWidth: 120,
     noRefs: true,

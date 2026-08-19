@@ -29,9 +29,6 @@ vi.mock('../onboarding/OrgWelcomeBanner', () => ({
     <div data-testid="org-welcome-card" data-org-id={orgId} />
   ),
 }));
-vi.mock('../../Settings/panels/OrganizationMembersRolesPanel', () => ({
-  OrganizationMembersRolesPanel: () => <div />,
-}));
 vi.mock('../../Settings/panels/OrganizationProjectsPanel', () => ({ OrganizationProjectsPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationBillingPanel', () => ({ OrganizationBillingPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationDangerZone', () => ({ OrganizationDangerZone: () => <div /> }));

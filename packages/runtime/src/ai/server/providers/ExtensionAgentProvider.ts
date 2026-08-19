@@ -38,6 +38,7 @@ import type {
   Message,
   AgentToolDefinition,
 } from '../types';
+import type { AgentCapabilities } from '../agentCapabilities';
 
 /**
  * Host bridge contract. The electron main process installs an
@@ -105,6 +106,15 @@ export interface ExtensionAgentBridge {
     extensionId: string;
     contributionId: string;
   }): ProviderCapabilities;
+
+  /**
+   * Host-surface capabilities, read off the contribution manifest. Fails closed
+   * for a contribution that declares nothing — see `agentCapabilities.ts`.
+   */
+  getAgentCapabilities(args: {
+    extensionId: string;
+    contributionId: string;
+  }): AgentCapabilities;
 }
 
 let installedBridge: ExtensionAgentBridge | null = null;
@@ -210,6 +220,13 @@ export class ExtensionAgentProvider extends EventEmitter implements AIProvider {
 
   getCapabilities(): ProviderCapabilities {
     return requireBridge().getCapabilities({
+      extensionId: this.extensionId,
+      contributionId: this.contributionId,
+    });
+  }
+
+  getAgentCapabilities(): AgentCapabilities {
+    return requireBridge().getAgentCapabilities({
       extensionId: this.extensionId,
       contributionId: this.contributionId,
     });

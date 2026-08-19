@@ -48,7 +48,10 @@ export const ContextLimitWidget: React.FC<ContextLimitWidgetProps> = ({ sessionI
           : 'This conversation exceeded the model\'s context window at this point.'}
       </div>
 
-      {isLastMessage && (
+      {/* No handler means the provider declared compaction unsupported. Offering
+          the button anyway is the #1252 failure mode: it looks like it worked
+          while the context keeps growing. */}
+      {isLastMessage && onCompact && (
         <div className="context-limit-actions flex gap-3 mt-1">
           <button
             onClick={handleCompact}
@@ -57,6 +60,12 @@ export const ContextLimitWidget: React.FC<ContextLimitWidgetProps> = ({ sessionI
           >
             {isCompacting ? 'Compacting...' : 'Compact'}
           </button>
+        </div>
+      )}
+
+      {isLastMessage && !onCompact && (
+        <div className="context-limit-unsupported text-[var(--nim-text-faint)] text-[0.8rem]">
+          This provider cannot compact from Nimbalyst. Start a new session to continue.
         </div>
       )}
     </div>

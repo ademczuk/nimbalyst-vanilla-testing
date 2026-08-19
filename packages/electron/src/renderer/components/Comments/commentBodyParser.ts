@@ -86,6 +86,7 @@ export interface ParseBodyContext {
   mentionedAgentSessionIds: readonly string[];
   directory: MentionDirectory;
   viewerUserId: string;
+  pendingAgentSessionIds?: readonly string[];
   /** Redacted pill views keyed by URN, produced by the view model. */
   pills: Record<string, ResourcePillView>;
   /**
@@ -348,6 +349,7 @@ function agentMentionSegment(
     sessionId,
     sessionName: agent?.sessionName ?? label ?? 'Agent session',
     ownerDisplayName: agent?.ownerDisplayName,
+    pending: ctx.pendingAgentSessionIds?.includes(sessionId) || undefined,
   };
 }
 

@@ -69,6 +69,38 @@ describe('buildMcpSessionStatusSnapshot', () => {
     });
   });
 
+  it('reports a server withheld for authorization, which never enters the snapshot', () => {
+    // nimbalyst#1057. Servers dropped for failing the OAuth check are removed
+    // before `configuredNames` is computed, so the absent diff cannot see them:
+    // the baseline it compares against already had them deleted. They arrive on
+    // their own channel and are the one case the user can act on directly.
+    const snapshot = buildMcpSessionStatusSnapshot({
+      sessionId: 's1',
+      supported: true,
+      active: true,
+      statuses: [status({ name: 'github' })],
+      configuredNames: ['github'],
+      withheldNames: ['atlassian'],
+      lastCheckedAt: POLLED_AT,
+    });
+
+    expect(snapshot.servers).toContainEqual({ name: 'atlassian', state: 'needs-auth' });
+  });
+
+  it('does not let a withheld server also count as absent', () => {
+    const snapshot = buildMcpSessionStatusSnapshot({
+      sessionId: 's1',
+      supported: true,
+      active: true,
+      statuses: [],
+      configuredNames: ['atlassian'],
+      withheldNames: ['atlassian'],
+      lastCheckedAt: POLLED_AT,
+    });
+
+    expect(snapshot.servers).toEqual([{ name: 'atlassian', state: 'needs-auth' }]);
+  });
+
   it('does not report absent servers before the first poll', () => {
     const snapshot = buildMcpSessionStatusSnapshot({
       sessionId: 's1',

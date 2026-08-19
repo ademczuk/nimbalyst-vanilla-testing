@@ -11,6 +11,7 @@ import {
   sessionRegistryAtom,
   sessionUnreadAtom,
 } from '../../../store/atoms/sessions';
+import { settingAtom } from '../../../store/atoms/settingAtomFamily';
 import { AgentSessionsPopover } from '../AgentSessionsPopover';
 
 vi.mock('@nimbalyst/runtime', async (importOriginal) => {
@@ -139,5 +140,43 @@ describe('AgentSessionsPopover', () => {
     fireEvent.click(screen.getByTestId('agent-sessions-mark-all-read'));
     expect(store.get(sessionUnreadAtom(unread.id))).toBe(false);
     expect(screen.queryByTestId('agent-sessions-row-unread')).toBeNull();
+  });
+
+  it('persists the popover width after a resize drag', () => {
+    const store = createStore();
+    const running = session('running');
+    store.set(sessionListWorkspaceAtom, WORKSPACE);
+    store.set(sessionRegistryAtom, new Map([[running.id, running]]));
+    store.set(sessionProcessingAtom(running.id), true);
+    store.set(settingAtom('agent.sessionsPopoverWidth'), 420);
+
+    render(
+      <JotaiProvider store={store}>
+        <AgentSessionsPopover onOpenAgentMode={vi.fn()} />
+      </JotaiProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('agent-sessions-bubble'));
+    const popover = screen.getByTestId('agent-sessions-popover');
+    expect(popover.style.width).toBe('420px');
+
+    // jsdom has no PointerEvent, so drive the drag with MouseEvents of the
+    // pointer types — React and the window listeners both accept them.
+    const pointer = (type: string, clientX: number) =>
+      new MouseEvent(type, { clientX, bubbles: true });
+
+    const handle = screen.getByTestId('agent-sessions-popover-resize');
+    act(() => { handle.dispatchEvent(pointer('pointerdown', 420)); });
+    act(() => { window.dispatchEvent(pointer('pointermove', 560)); });
+    expect(popover.style.width).toBe('560px');
+
+    act(() => { window.dispatchEvent(pointer('pointerup', 560)); });
+    expect(store.get(settingAtom('agent.sessionsPopoverWidth'))).toBe(560);
+
+    // Dragging below the floor clamps instead of collapsing the popover.
+    act(() => { handle.dispatchEvent(pointer('pointerdown', 560)); });
+    act(() => { window.dispatchEvent(pointer('pointermove', 100)); });
+    act(() => { window.dispatchEvent(pointer('pointerup', 100)); });
+    expect(store.get(settingAtom('agent.sessionsPopoverWidth'))).toBe(280);
   });
 });

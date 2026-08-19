@@ -1,3 +1,5 @@
+import { parseCollabUri } from '@nimbalyst/collab-protocol';
+
 export interface ImportedDocumentReference {
   documentId: string;
   name: string;
@@ -171,11 +173,11 @@ export function parseCollabReferenceDocumentId(href: string | null | undefined):
   if (deepLinkMatch) {
     return decodeURIComponent(deepLinkMatch[1]);
   }
-  const collabUriMatch = trimmed.match(/^collab:\/\/org:[^:]+:doc:(.+)$/);
-  if (collabUriMatch) {
-    return collabUriMatch[1];
+  try {
+    return parseCollabUri(trimmed).documentId;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export function resolveDocumentLinkLookupPath(

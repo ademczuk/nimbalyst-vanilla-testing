@@ -252,13 +252,118 @@ export function logEbadfDiagnostic(context: string, error: unknown): void {
 }
 
 /**
- * Get the normalized git remote URL for a workspace path.
+ * Get the LEGACY normalized git remote for a workspace path -- the form that
+ * existing stored hashes were computed from. See `legacyNormalizeGitRemote`.
  *
- * Runs `git remote get-url origin` asynchronously (no shell), then normalizes
- * the result by stripping protocol, git@ prefix, .git suffix, and lowercasing.
- * Returns null if the workspace is not a git repo or has no origin remote.
+ * Runs `git remote get-url origin` asynchronously (no shell). Returns null if
+ * the workspace is not a git repo or has no origin remote.
+ *
+ * Matching only. To mint a new identity, hash `normalizeGitRemote` instead --
+ * or take both forms at once from `getGitRemoteIdentities`.
  */
 export async function getNormalizedGitRemote(workspacePath: string): Promise<string | null> {
+  return legacyNormalizeGitRemote(await getRawGitRemote(workspacePath));
+}
+
+/** Both identifier forms of a workspace's `origin`, from a single git spawn. */
+export interface GitRemoteIdentities {
+  /** Credential-free. Hash THIS for anything newly written. */
+  canonical: string;
+  /** The historical form every already-stored hash was computed from. */
+  legacy: string;
+}
+
+/**
+ * Both identifier forms of a workspace's `origin` remote, or null when it has
+ * none. One `git remote get-url` spawn, because callers on the workspace-init
+ * hot path need both and must not pay twice for it.
+ */
+export async function getGitRemoteIdentities(
+  workspacePath: string,
+): Promise<GitRemoteIdentities | null> {
+  const raw = await getRawGitRemote(workspacePath);
+  const canonical = normalizeGitRemote(raw);
+  const legacy = legacyNormalizeGitRemote(raw);
+  if (!canonical || !legacy) return null;
+  return { canonical, legacy };
+}
+
+/**
+ * The canonical identifier form of a remote URL: no scheme, no userinfo, no
+ * `.git`, lowercased. Two clones of one repository normalize to the same string
+ * however each was addressed -- with an embedded token, with a bare username,
+ * over SCP-style SSH, or plainly over HTTPS.
+ *
+ * Hash THIS for every identity newly written to the server. Do not use it to
+ * look up an existing row: rows written before this existed are keyed on
+ * `legacyNormalizeGitRemote` and cannot be re-derived (SHA-256 is one-way).
+ */
+export function normalizeGitRemote(remoteUrl: string | null): string | null {
+  if (!remoteUrl) return null;
+  const trimmed = remoteUrl.trim();
+  if (!trimmed) return null;
+
+  let identity: string;
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      // `host` keeps a non-default port, which genuinely distinguishes remotes.
+      // Userinfo is dropped whole: it identifies whoever configured the clone,
+      // never the repository.
+      identity = `${parsed.host}${parsed.pathname}`;
+    } catch {
+      return null;
+    }
+  } else {
+    // SCP-style `[user@]host:org/repo.git`, which is not a parseable URL. The
+    // colon-to-slash step is what makes this form agree with the URL forms.
+    identity = trimmed.replace(/^[^/]*@/, '').replace(/:/, '/');
+  }
+
+  // Trailing slashes come off first so `repo.git/` still loses its suffix.
+  return identity
+    .replace(/\/+$/, '')
+    .replace(/\.git$/i, '')
+    .replace(/\/+$/, '')
+    .toLowerCase() || null;
+}
+
+/**
+ * The historical identifier form. It is wrong -- it mangles `user:pass@` into
+ * a path segment, and leaves `git@` in place for `ssh://` remotes, so the same
+ * repository yields different identifiers depending on how each teammate
+ * addressed it.
+ *
+ * It survives because its output is a PERSISTED KEY, not because it is correct:
+ * every project row, D1 discovery entry, and personal-index hash written before
+ * `normalizeGitRemote` existed is a SHA-256 of this, and a one-way hash cannot
+ * be migrated. Re-keying them would silently unbind those workspaces from their
+ * organizations, including `ssh://git@host/...` remotes that carry no
+ * credentials at all and match correctly today.
+ *
+ * Use it to MATCH existing rows, alongside the canonical form. Never use it to
+ * mint a new identity.
+ */
+export function legacyNormalizeGitRemote(remoteUrl: string | null): string | null {
+  if (!remoteUrl) return null;
+  return remoteUrl
+    .replace(/^https?:\/\//, '')
+    .replace(/^git@/, '')
+    .replace(/:/, '/')
+    .replace(/\.git$/, '')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+}
+
+/**
+ * The workspace's `origin` remote exactly as git reports it, or null when it
+ * has none.
+ *
+ * The normalized form above is an identifier, not an address — it has lost the
+ * scheme and its case. Anything that has to hand the remote back to git (the
+ * post-sign-in project walk's clone step) needs this one.
+ */
+export async function getRawGitRemote(workspacePath: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync('git', ['remote', 'get-url', 'origin'], {
       cwd: workspacePath,
@@ -266,18 +371,7 @@ export async function getNormalizedGitRemote(workspacePath: string): Promise<str
       timeout: 5000,
       maxBuffer: 1024 * 1024,
     });
-    const remoteUrl = stdout.trim();
-
-    if (!remoteUrl) return null;
-
-    // Normalize: strip protocol, .git suffix, trailing slashes
-    return remoteUrl
-      .replace(/^https?:\/\//, '')
-      .replace(/^git@/, '')
-      .replace(/:/, '/')
-      .replace(/\.git$/, '')
-      .replace(/\/+$/, '')
-      .toLowerCase();
+    return stdout.trim() || null;
   } catch {
     return null;
   }

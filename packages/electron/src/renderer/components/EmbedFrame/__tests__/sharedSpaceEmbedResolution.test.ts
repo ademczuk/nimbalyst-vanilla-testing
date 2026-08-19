@@ -7,6 +7,7 @@ const ORG_ID = 'organization-live-6bf853c3';
 
 function makeDocument(overrides: Partial<SharedDocument> & { documentId: string; title: string }): SharedDocument {
   return {
+    teamProjectId: null,
     documentType: 'mockup',
     fileExtension: '.mockup.html',
     editorId: 'com.nimbalyst.mockuplm',

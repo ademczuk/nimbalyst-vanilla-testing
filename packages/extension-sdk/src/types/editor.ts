@@ -160,6 +160,22 @@ export interface CollaborationContext {
    * Excalidraw scene JSON) deterministically so dedupe-on-hash is stable.
    */
   registerRevisionAdapter?(adapter: RevisionSnapshotAdapter): () => void;
+
+  /**
+   * Register a synchronous drain of the editor's pending local content into the
+   * Y.Doc. The returned function unregisters it -- call it on unmount.
+   *
+   * A binding that debounces its local pushes holds the newest edit outside the
+   * CRDT until the debounce fires. The host awaits this before it reports a
+   * write as complete -- notably after every mutating extension AI tool -- so an
+   * agent edit is in the Y.Doc and server-acked before the tool returns.
+   * Without it the tool reports success while the edit is still in the
+   * debounce, and a peer update landing in that window discards it: the same
+   * loss window that direct keystrokes close by calling `syncNow()`.
+   *
+   * Bindings that write through to the Y.Doc synchronously do not need this.
+   */
+  registerContentFlush?(flush: () => void | Promise<void>): () => void;
 }
 
 /**
@@ -189,6 +205,96 @@ export interface RevisionSnapshotAdapter {
    * absent, the dialog shows metadata only.
    */
   readonly previewKind?: 'text' | 'metadata-only';
+}
+
+// ============================================================================
+// Host capability negotiation
+// ============================================================================
+
+/**
+ * A thing an editor might want to do that not every host can provide.
+ *
+ * The same extension bundle now runs in more than one host: the Electron
+ * renderer (filesystem, AI panel, Monaco source mode) and a browser host
+ * driving a collaborative document (none of those). Optional members of
+ * {@link EditorHost} already answer "can I do X" by being absent, but the
+ * required ones -- `saveContent`, `onFileChanged`, `storage`,
+ * `setEditorContext` -- cannot disappear, and a host that stubs them into
+ * resolved no-ops tells the editor a write succeeded when nothing was written.
+ *
+ * A host that cannot do one of these must both (a) report it here so the
+ * editor can branch BEFORE calling, and (b) fail loudly if called anyway.
+ */
+export type EditorHostCapability =
+  /** `host.collaboration` is present and drives document state. */
+  | 'collaboration'
+  /** Remote presence/awareness is transported to other clients. */
+  | 'presence'
+  /** `setDirty` reaches a real dirty indicator. */
+  | 'dirtyState'
+  /** `theme` / `onThemeChanged` reflect the host's real theme. */
+  | 'theme'
+  /** `readOnly` / `onReadOnlyChanged` reflect a real host mode. */
+  | 'readOnly'
+  /** `visible` / `onVisibilityChanged` report real on-screen visibility. */
+  | 'visibility'
+  /** `loadContent` returns the document's own content. */
+  | 'initialContent'
+  /** `loadBinaryContent` returns real bytes. */
+  | 'binaryContent'
+  /** `saveContent` writes the document to a local file. */
+  | 'localFileSave'
+  /** `onFileChanged` fires when the backing file changes out of band. */
+  | 'fileChangeNotifications'
+  /** `host.fs` is present: workspace-wide compare-and-swap file access. */
+  | 'projectFileSystem'
+  /** `workspaceId` identifies a real workspace. */
+  | 'workspace'
+  /** `openHistory` opens document history. */
+  | 'history'
+  /** `openExternal` opens a URL outside the app. */
+  | 'externalLinks'
+  /** Source-mode toggle (`toggleSourceMode` and friends). */
+  | 'sourceMode'
+  /** AI diff review (`onDiffRequested` and friends). */
+  | 'diffMode'
+  /** `onFindRequested` delivers the app's Find command. */
+  | 'findCommand'
+  /** `setEditorContext` / `setEditorContextItems` reach an AI chat surface. */
+  | 'aiContext'
+  /** `registerEditorAPI` publishes the editor to AI tools. */
+  | 'editorApi'
+  /** `registerMenuItems` reaches a real actions menu. */
+  | 'menuItems'
+  /** `storage` survives a reload. */
+  | 'persistentStorage'
+  /** `storage.getSecret` / `setSecret` reach a real secret store. */
+  | 'secretStorage'
+  /** `getConfig` reads extension configuration. */
+  | 'configuration';
+
+/** Why a host cannot provide a capability. Shown in diagnostics, not to users. */
+export interface EditorHostCapabilityGap {
+  capability: EditorHostCapability;
+  reason: string;
+}
+
+/**
+ * What this host can and cannot do, answered up front.
+ *
+ * Present only on hosts that model capabilities. `undefined` means "this host
+ * makes no claim" -- see {@link editorHostSupports} for the one place that
+ * decision is interpreted, so extensions never re-derive it.
+ */
+export interface EditorHostCapabilities {
+  /** Stable id of the host environment, e.g. `'browser'`. */
+  readonly environment: string;
+
+  /** True when this host really provides `capability`. */
+  supports(capability: EditorHostCapability): boolean;
+
+  /** Every capability this host cannot provide, each with a reason. */
+  readonly unavailable: readonly EditorHostCapabilityGap[];
 }
 
 // ============================================================================
@@ -322,9 +428,29 @@ export interface DiffResult {
  * ```
  */
 export interface EditorHost {
+  // ============ CAPABILITIES ============
+
+  /**
+   * What this host can and cannot do. Read it through
+   * {@link editorHostSupports} rather than directly, so the "host makes no
+   * claim" case is interpreted in exactly one place.
+   *
+   * Optional: the Electron renderer omits it (it provides everything). A host
+   * that cannot honour part of this interface -- the browser collaborative
+   * host -- populates it, and rejects the calls it declares unavailable.
+   */
+  readonly capabilities?: EditorHostCapabilities;
+
   // ============ FILE INFO ============
 
-  /** Absolute path to the file being edited */
+  /**
+   * Identifier for the document being edited.
+   *
+   * On the Electron host this is an absolute path on disk. On a host with no
+   * filesystem it is a stable synthetic URI for the same document; treat it as
+   * an opaque key (registry lookups, React keys) and gate anything that
+   * actually touches disk on `projectFileSystem` / `localFileSave`.
+   */
   readonly filePath: string;
 
   /** File name (for display) */
@@ -470,7 +596,7 @@ export interface EditorHost {
    * Editor should call saveContent() in response.
    * Returns unsubscribe function.
    */
-  onSaveRequested(callback: () => void): () => void;
+  onSaveRequested(callback: () => void | Promise<void>): () => void;
 
   // ============ HISTORY ============
 
@@ -529,6 +655,20 @@ export interface EditorHost {
    * @returns Unsubscribe function
    */
   onDiffCleared?(callback: () => void): () => void;
+
+  // ============ FIND (OPTIONAL) ============
+
+  /**
+   * Subscribe to the app's Find command (Cmd+F).
+   *
+   * Cmd+F is a native menu accelerator, so the renderer never sees the
+   * keystroke -- an extension cannot bind it itself. The command arrives over
+   * IPC and the host routes it to whichever editor owns the active file, so an
+   * editor with its own find UI opens it from here.
+   *
+   * Returns an unsubscribe function.
+   */
+  onFindRequested?(callback: () => void): () => void;
 
   // ============ SOURCE MODE (OPTIONAL) ============
 

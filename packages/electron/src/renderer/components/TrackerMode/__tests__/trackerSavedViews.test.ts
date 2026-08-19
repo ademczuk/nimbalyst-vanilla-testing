@@ -524,7 +524,7 @@ describe('groupTrackerItems', () => {
     const groups = groupTrackerItems(items, 'status');
     expect(groups.map((g) => g.label)).toEqual(['In Progress', 'Done', 'None']);
     expect(groups[0].items.map((i) => i.id)).toEqual(['1', '2']);
-    expect(groups[groups.length - 1].key).toBe('');
+    expect(groups[groups.length - 1].key).toBe('status:empty');
   });
 
   it('groups by assignee with an Unassigned fallback bucket', () => {
@@ -543,7 +543,7 @@ describe('groupTrackerItems', () => {
       makeItem('3', {}, 'bug'),
     ];
     const groups = groupTrackerItems(items, 'type');
-    expect(groups.map((g) => g.key)).toEqual(['bug', 'task']);
+    expect(groups.map((g) => g.key)).toEqual(['type:value:bug', 'type:value:task']);
     expect(groups[0].items.map((i) => i.id)).toEqual(['1', '3']);
   });
 
@@ -597,6 +597,28 @@ describe('normalizeViewDefinition', () => {
       recentlyViewedDays: 90,
     });
   });
+
+  it('migrates legacy column-owned grouping and defaults ordering without retaining the old field', () => {
+    const legacy = normalizeViewDefinition({
+      columnConfig: {
+        visibleColumns: ['type', 'title'],
+        columnWidths: { title: 320 },
+        groupBy: 'owner',
+      } as any,
+    });
+    expect(legacy).toMatchObject({ groupBy: 'assignee', ordering: 'manual' });
+    expect(legacy.columnConfig).toEqual({
+      visibleColumns: ['type', 'title'],
+      columnWidths: { title: 320 },
+    });
+
+    const currentWins = normalizeViewDefinition({
+      groupBy: 'milestone',
+      ordering: 'priority',
+      columnConfig: { visibleColumns: ['title'], columnWidths: {}, groupBy: 'status' } as any,
+    });
+    expect(currentWins).toMatchObject({ groupBy: 'milestone', ordering: 'priority' });
+  });
 });
 
 describe('view definitions capture full table state', () => {
@@ -609,14 +631,13 @@ describe('view definitions capture full table state', () => {
 
   it('round-trips a captured column layout and filter set', () => {
     const def = normalizeViewDefinition({
-      columnConfig: { visibleColumns: ['type', 'title'], columnWidths: { title: 320 }, groupBy: null },
+      columnConfig: { visibleColumns: ['type', 'title'], columnWidths: { title: 320 } },
       columnFilters: { combinator: 'or', clauses: [{ field: 'status', op: '=', value: 'done' }] },
       inboxScope: 'global',
     });
     expect(def.columnConfig).toEqual({
       visibleColumns: ['type', 'title'],
       columnWidths: { title: 320 },
-      groupBy: null,
     });
     expect(def.columnFilters).toEqual({
       combinator: 'or',
@@ -662,6 +683,25 @@ describe('shared saved views', () => {
     const view = localView('v1', 'Sprint 7 bugs');
     const parsed = parseSharedSavedView({ viewId: 'v1', payload: serializeSharedSavedView(view) });
     expect(parsed).toEqual({ ...view, shared: true });
+  });
+
+  it('carries the Display Settings choices through a reload or a peer', () => {
+    const view: SavedView = {
+      id: 'v4',
+      name: 'Milestone board',
+      definition: {
+        ...createDefaultViewDefinition(),
+        viewMode: 'timeline',
+        groupBy: 'milestone',
+        ordering: 'priority',
+      },
+    };
+    const parsed = parseSharedSavedView({ viewId: 'v4', payload: serializeSharedSavedView(view) });
+    expect(parsed?.definition).toMatchObject({
+      viewMode: 'timeline',
+      groupBy: 'milestone',
+      ordering: 'priority',
+    });
   });
 
   it('normalizes a peer payload written by an older client', () => {

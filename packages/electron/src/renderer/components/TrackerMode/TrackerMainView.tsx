@@ -29,6 +29,8 @@ import { KanbanBoard } from './KanbanBoard';
 import { TagBoard } from './TagBoard';
 import { TrackerGridView } from './TrackerGridView';
 import { TrackerInboxView } from './TrackerInboxView';
+import { TrackerTimelineView } from './TrackerTimelineView';
+import { buildHeaderFilterFields } from './trackerHeaderFilterFields';
 import {
   TrackerItemDetail,
   type TrackerContentMode,
@@ -41,6 +43,7 @@ import { TrackerViewTitle } from './TrackerViewTitle';
 import { TrackerActiveFilterPills } from './TrackerActiveFilterPills';
 import { TrackerFilterOmnibox } from './TrackerFilterOmnibox';
 import { TrackerSyncRejectionBanner } from './TrackerSyncRejectionBanner';
+import { TrackerSharingMigrationBanner } from './TrackerSharingMigrationBanner';
 import { ImportFromSourceDialog } from './ImportFromSourceDialog';
 import { TrackerDocumentView } from './TrackerDocumentView';
 import {
@@ -55,6 +58,8 @@ import {
 } from '../../store/atoms/trackers';
 import { activeTeamOrgIdAtom, buildTrackerDeepLink, buildTrackerDocumentDeepLink } from '../../store/atoms/collabDocuments';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
+import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
+import { resolveTrackerWriteAccess } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerLifecycle';
 import { useTrackerBodyPrewarm } from '../../hooks/useTrackerBodyPrewarm';
 import { setSelectedWorkstreamAtom, sessionRegistryAtom, refreshSessionListAtom, initSessionList } from '../../store/atoms/sessions';
 import { trackerItemsMapAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
@@ -68,7 +73,6 @@ import { buildTrackerTagOptions } from './trackerTagFilterUtils';
 import {
   filterTrackerItems,
   getTrackerFilterValue,
-  normalizeTrackerGroupBy,
   recordSourceKey,
   STATUS_CHANGED_FROM_FILTER_FIELD,
   STATUS_CHANGED_TO_FILTER_FIELD,
@@ -86,8 +90,9 @@ import {
   type TrackerLaunchContext,
 } from './trackerSessionLaunch';
 import { trackTeamAnalyticsEvent } from '../../utils/teamAnalytics';
+import { TrackerQuickAddOverlay } from './TrackerQuickAddOverlay';
 
-export type ViewMode = 'list' | 'table' | 'kanban' | 'tag-board' | 'inbox';
+export type ViewMode = 'list' | 'table' | 'kanban' | 'timeline' | 'tag-board' | 'inbox';
 
 /** Human label for a source key without probing the importer (avoids backend start). */
 function sourceKeyLabel(key: string): string {
@@ -111,6 +116,8 @@ interface TrackerMainViewProps {
   onViewModeChange: (mode: ViewMode) => void;
   onSwitchToFilesMode?: () => void;
   workspacePath?: string;
+  /** Team that owns this workspace's shared trackers, when there is one. */
+  teamName?: string | null;
   trackerTypes: TrackerDataModel[];
   onClearSidebarFilters: () => void;
   tagFilter: string[];
@@ -137,6 +144,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   onViewModeChange,
   onSwitchToFilesMode,
   workspacePath,
+  teamName,
   trackerTypes,
   onClearSidebarFilters,
   tagFilter,
@@ -204,10 +212,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     const persisted = modeLayout.typeColumnConfigs[columnConfigKey];
     // If persisted config is missing or has too few columns (stale), use fresh defaults
     if (!persisted || persisted.visibleColumns.length < 3) {
-      const defaults = getDefaultColumnConfig(columnConfigKey === 'all' ? '' : columnConfigKey);
-      return modeLayout.groupBy === 'none'
-        ? defaults
-        : { ...defaults, groupBy: modeLayout.groupBy };
+      return getDefaultColumnConfig(columnConfigKey === 'all' ? '' : columnConfigKey);
     }
     // Silent migration: inject the structural 'key' column (issue key)
     // right after 'type' for users who saved configs before this column
@@ -221,20 +226,18 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       return { ...persisted, visibleColumns };
     }
     return persisted;
-  }, [modeLayout.groupBy, modeLayout.typeColumnConfigs, columnConfigKey]);
+  }, [modeLayout.typeColumnConfigs, columnConfigKey]);
 
   // The document view's left pane is a few hundred pixels wide, so it drops the
-  // badge columns and keeps grouping -- the title (plus its unread/favorite
-  // affordances) is all that fits.
+  // badge columns -- the title (plus its unread/favorite affordances) is all
+  // that fits.
   const slimColumnConfig = useMemo<TypeColumnConfig>(() => ({
     visibleColumns: ['title'],
     columnWidths: {},
-    groupBy: columnConfig.groupBy,
-  }), [columnConfig.groupBy]);
+  }), []);
 
   const handleColumnConfigChange = useCallback((config: TypeColumnConfig) => {
     setModeLayout({
-      groupBy: normalizeTrackerGroupBy(config.groupBy),
       typeColumnConfigs: {
         ...modeLayout.typeColumnConfigs,
         [columnConfigKey]: config,
@@ -347,6 +350,22 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
             icon: option.icon,
           });
         }
+      }
+
+      if (column.id === 'shared') {
+        // Draft/Published is a state you filter on ("show me my drafts"), not
+        // free text. The values are the publication states themselves, which is
+        // what getColumnValue('shared') returns.
+        return {
+          id: column.id,
+          label: column.label,
+          type: 'select',
+          group: 'system',
+          options: [
+            { value: 'draft', label: 'Draft' },
+            { value: 'published', label: 'Published' },
+          ],
+        };
       }
 
       if (column.id === 'type') {
@@ -642,71 +661,10 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     tagFilter,
   ]);
 
-  const headerFilterFields = useMemo<TrackerFilterField[]>(() => {
-    return filterFields.map(field => {
-      if (!['user', 'select', 'multiselect', 'array', 'relationship', 'reference'].includes(field.type ?? '')) {
-        return field;
-      }
-
-      const options = new Map<string, {
-        label: string;
-        count: number;
-        color?: string;
-        icon?: string;
-      }>();
-      for (const option of field.options ?? []) {
-        options.set(option.value, {
-          label: option.label,
-          count: 0,
-          color: option.color,
-          icon: option.icon,
-        });
-      }
-      const addValue = (value: unknown): void => {
-        if (value === undefined || value === null || value === '') return;
-        if (Array.isArray(value)) {
-          value.forEach(addValue);
-          return;
-        }
-        if (typeof value === 'object') {
-          const record = value as Record<string, unknown>;
-          const optionValue = record.itemId ?? record.issueKey ?? record.url
-            ?? record.email ?? record.gitEmail ?? record.gitName ?? record.displayName ?? record.title;
-          const label = record.title ?? record.name ?? record.displayName
-            ?? record.email ?? record.gitEmail ?? record.gitName ?? record.issueKey ?? optionValue;
-          if (optionValue !== undefined) {
-            const key = String(optionValue);
-            const existing = options.get(key);
-            options.set(key, {
-              label: existing?.label ?? String(label),
-              count: (existing?.count ?? 0) + 1,
-              color: existing?.color,
-              icon: existing?.icon,
-            });
-          }
-          return;
-        }
-        const key = String(value);
-        const existing = options.get(key);
-        options.set(key, {
-          label: existing?.label ?? key,
-          count: (existing?.count ?? 0) + 1,
-          color: existing?.color,
-          icon: existing?.icon,
-        });
-      };
-
-      for (const item of filteredItems) addValue(getViewFilterValue(item, field.id));
-      return {
-        ...field,
-        options: (field.options?.length
-          ? Array.from(options, ([value, option]) => ({ value, ...option }))
-          : Array.from(options, ([value, option]) => ({ value, ...option }))
-            .sort((left, right) => left.label.localeCompare(right.label)))
-          .slice(0, 100),
-      };
-    });
-  }, [filterFields, filteredItems, getViewFilterValue]);
+  const headerFilterFields = useMemo<TrackerFilterField[]>(
+    () => buildHeaderFilterFields(filterFields, filteredItems, getViewFilterValue),
+    [filterFields, filteredItems, getViewFilterValue],
+  );
 
   const viewFilteredItems = useMemo(() => {
     const searchedItems = filterTrackerRecords(filteredItems, {
@@ -801,8 +759,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
 
   // Pre-warm body Y.Docs for visible team-synced items so detail-open
   // hits a warm WebSocket + Y.Doc state (phase 4a of the tracker sync
-  // redesign, D5). Filter to types whose syncMode is not 'local' --
-  // local-only items have no DocumentRoom and `resolveCollabConfigForUri`
+  // redesign, D5). Filter to team trackers; personal items have no DocumentRoom and `resolveCollabConfigForUri`
   // would no-op for them. We also gate on a workspace-team check to
   // avoid 50 wasted IPC round-trips for workspaces without a team.
   const [hasTeam, setHasTeam] = useState(false);
@@ -827,7 +784,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   const teamSyncedTypes = useMemo(() => {
     const out = new Set<string>();
     for (const t of trackerTypes) {
-      if (t.sync?.mode && t.sync.mode !== 'local') out.add(t.type);
+      if (t.sharing === 'team') out.add(t.type);
     }
     return out;
   }, [trackerTypes]);
@@ -982,6 +939,12 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   }, []);
 
   const handleNewItem = useCallback((type: string) => {
+    // An archived tracker keeps everything it has and gains nothing more.
+    const writeAccess = resolveTrackerWriteAccess(globalRegistry.get(type));
+    if (!writeAccess.canWrite) {
+      errorNotificationService.showInfo('Archived tracker', writeAccess.readOnlyReason ?? '', { duration: 4000 });
+      return;
+    }
     setQuickAddType(type);
   }, []);
 
@@ -1003,7 +966,6 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       const statusFieldName = tracker?.roles?.workflowStatus ?? 'status';
       const statusField = tracker?.fields.find(f => f.name === statusFieldName);
       const defaultStatus = (statusField?.default as string) || 'to-do';
-      const syncMode = tracker?.sync?.mode || 'local';
 
       const result = await window.electronAPI.documentService.createTrackerItem({
         id,
@@ -1012,7 +974,8 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
         status: defaultStatus,
         priority,
         workspace: workspacePath,
-        syncMode,
+        sharing: tracker?.sharing ?? 'personal',
+        draftByDefault: tracker?.draftByDefault ?? false,
       });
 
       if (!result.success) {
@@ -1170,6 +1133,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       filterType={filterType}
       sortBy={sortBy}
       sortDirection={sortDirection}
+      groupBy={modeLayout.groupBy}
       hideTypeTabs
       hideToolbar
       preserveItemOrder={recencyOrderActive}
@@ -1210,6 +1174,8 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     <>
       {/* Sync rejection banner -- key rotation / stale-envelope feedback */}
       <TrackerSyncRejectionBanner workspacePath={workspacePath} />
+      {/* One-time summary of what the sharing-model upgrade moved (PRD D6) */}
+      <TrackerSharingMigrationBanner workspacePath={workspacePath} teamName={teamName} />
       {/* Toolbar */}
       <div className="tracker-toolbar flex items-center gap-2 px-3 py-2 border-b border-nim bg-nim shrink-0">
         {/* Title */}
@@ -1422,6 +1388,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               filterType={filterType}
               sortBy={sortBy}
               sortDirection={sortDirection}
+              groupBy={modeLayout.groupBy}
               hideTypeTabs={true}
               onSortChange={(column, direction) => {
                 trackTableSort();
@@ -1451,6 +1418,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               filterType={filterType}
               sortBy={sortBy}
               sortDirection={sortDirection}
+              groupBy={modeLayout.groupBy}
               preserveItemOrder={recencyOrderActive}
               onSwitchToFilesMode={onSwitchToFilesMode}
               onNewItem={handleNewItem}
@@ -1494,6 +1462,15 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               onScopeChange={(scope) => setModeLayout({ inboxScope: scope })}
               currentIdentity={currentIdentity}
             />
+          ) : viewMode === 'timeline' ? (
+            <TrackerTimelineView
+              items={viewFilteredItems}
+              groupBy={modeLayout.groupBy}
+              ordering={modeLayout.ordering}
+              onItemSelect={handleItemSelect}
+              onOpenDocument={handleOpenItemAsDocument}
+              selectedItemId={selectedItemId}
+            />
           ) : viewMode === 'tag-board' ? (
             <TagBoard
               filterType={filterType}
@@ -1508,6 +1485,8 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
           ) : (
             <KanbanBoard
               filterType={filterType}
+              groupBy={modeLayout.groupBy}
+              ordering={modeLayout.ordering}
               searchQuery={searchQuery}
               onSwitchToFilesMode={onSwitchToFilesMode}
               onItemSelect={handleItemSelect}
@@ -1524,7 +1503,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
 
           {/* Quick Add overlay */}
           {quickAddType && (
-            <QuickAddOverlay
+            <TrackerQuickAddOverlay
               type={quickAddType}
               tracker={trackerTypes.find(t => t.type === quickAddType)}
               onSubmit={handleQuickAddSubmit}
@@ -1582,97 +1561,5 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
         />
       )}
     </>
-  );
-};
-
-/**
- * Quick Add overlay (same pattern as TrackerBottomPanel's QuickAddInline)
- */
-interface QuickAddOverlayProps {
-  type: string;
-  tracker?: TrackerDataModel;
-  onSubmit: (title: string, priority: string) => void;
-  onClose: () => void;
-}
-
-const QuickAddOverlay: React.FC<QuickAddOverlayProps> = ({ type, tracker, onSubmit, onClose }) => {
-  const [title, setTitle] = React.useState('');
-  const [priority, setPriority] = React.useState('medium');
-  const inputRef = React.useRef<HTMLInputElement>(null);
-
-  React.useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (title.trim()) {
-      onSubmit(title.trim(), priority);
-    }
-  };
-
-  const color = tracker?.color || '#6b7280';
-  const displayName = tracker?.displayName || type.charAt(0).toUpperCase() + type.slice(1);
-  const icon = tracker?.icon || 'label';
-
-  return (
-    <div className="absolute top-0 left-0 right-0 bg-nim-secondary border-b border-nim shadow-sm z-20">
-      <form onSubmit={handleSubmit} className="flex items-center gap-3 px-4 py-2">
-        <span className="material-symbols-outlined text-lg shrink-0" style={{ color }}>
-          {icon}
-        </span>
-
-        <input
-          ref={inputRef}
-          type="text"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => {
-            // Prevent global keyboard shortcuts from intercepting while typing
-            e.stopPropagation();
-          }}
-          placeholder={`New ${displayName.toLowerCase()}...`}
-          className="flex-1 min-w-0 px-3 py-1.5 bg-nim border border-nim rounded text-sm text-nim placeholder:text-nim-faint focus:outline-none focus:border-[var(--nim-primary)]"
-          data-testid="tracker-quick-add-input"
-        />
-
-        <select
-          value={priority}
-          onChange={(e) => setPriority(e.target.value)}
-          className="px-2 py-1.5 bg-nim border border-nim rounded text-sm text-nim focus:outline-none focus:border-[var(--nim-primary)] shrink-0"
-        >
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-          <option value="critical">Critical</option>
-        </select>
-
-        <button
-          type="submit"
-          disabled={!title.trim()}
-          className="px-3 py-1.5 rounded text-sm font-medium text-white border-none cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90 shrink-0"
-          style={{ backgroundColor: color }}
-        >
-          Add
-        </button>
-
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-1 rounded hover:bg-nim-tertiary text-nim-muted shrink-0"
-          title="Cancel (Esc)"
-        >
-          <MaterialSymbol icon="close" size={18} />
-        </button>
-      </form>
-    </div>
   );
 };

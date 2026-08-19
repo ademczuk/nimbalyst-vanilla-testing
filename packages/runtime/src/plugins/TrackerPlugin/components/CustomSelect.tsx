@@ -4,9 +4,17 @@
  */
 
 import React, { useState } from 'react';
-import { useFloating, offset, flip, shift, FloatingPortal, size } from '@floating-ui/react';
+import {
+  useFloating,
+  offset,
+  flip,
+  shift,
+  FloatingPortal,
+  size,
+  useFloatingNodeId,
+} from '@floating-ui/react';
 import { windowControlsClearance } from '../../../ui/floating/windowControlsClearance';
-import {MaterialSymbol} from "../../../ui";
+import { MaterialSymbol } from '../../../ui/icons/MaterialSymbol';
 
 export interface SelectOption {
   value: string;
@@ -32,7 +40,16 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
 
+  // Registering in the floating tree is what tells an enclosing popover that a
+  // press on one of these options happened *inside* it. Without it the parent
+  // dismisses itself and unmounts the option before its click lands, so the
+  // select looks like it simply refuses to accept a choice.
+  const nodeId = useFloatingNodeId();
+
   const { refs, floatingStyles } = useFloating({
+    nodeId,
+    open: isOpen,
+    onOpenChange: setIsOpen,
     placement: 'bottom-start',
     middleware: [
       offset(4),

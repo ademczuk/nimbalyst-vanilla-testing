@@ -3,6 +3,7 @@
  */
 
 import { BaseAIProvider } from '../AIProvider';
+import { AgentCapabilities, BUILTIN_AGENT_CAPABILITIES } from '../agentCapabilities';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import {
@@ -777,6 +778,10 @@ export class LMStudioProvider extends BaseAIProvider {
       resumeSession: false,
       supportsFileTools: false  // Files should be attached to messages, not accessed via tools
     };
+  }
+
+  getAgentCapabilities(): AgentCapabilities {
+    return BUILTIN_AGENT_CAPABILITIES.lmstudio;
   }
 
   destroy(): void {

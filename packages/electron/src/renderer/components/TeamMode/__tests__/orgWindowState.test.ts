@@ -82,6 +82,14 @@ describe('routeForInboxRow', () => {
       .toEqual({ view: 'conversation', conversationId: 'dm-1' });
   });
 
+  it('keeps a feedback request in the Inbox it answers from', () => {
+    // The respond card is the Inbox's own context pane, so activating one is
+    // already where it goes. Routing it out would ask main to re-open this
+    // window at the row the user just clicked.
+    expect(routeForInboxRow(row({ sourceKind: 'feedbackRequest', sourceId: 'request-1' }), 'org-a'))
+      .toEqual({ view: 'inbox' });
+  });
+
   it('leaves anything this window cannot open to the existing deep link', () => {
     // Trackers and documents live in the project window.
     expect(routeForInboxRow(row({ sourceKind: 'trackerComment' }), 'org-a')).toBeNull();

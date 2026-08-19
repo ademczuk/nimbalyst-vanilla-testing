@@ -257,6 +257,12 @@ describe('resolveClaudeCliToolPermission (round-trip)', () => {
       requestId: 'tool-perm-fixed', toolName: 'Write', pattern: 'Write', isDestructive: true,
     });
     expect(spies.setWaitingStatus).toHaveBeenCalledWith(sessionId);
+    // The blocked hook is where the caller persists the pending-prompt bit (and,
+    // through it, tells the menu bar). A prompt that renders without firing it
+    // leaves the sidebar and the tray both claiming the session is running.
+    expect(spies.notifyBlocked).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId, workspacePath }),
+    );
     expect(spies.persistToolResult).toHaveBeenCalledTimes(1);
     expect(spies.persistToolResult.mock.calls[0][0].result).toMatchObject({ decision: 'allow', scope: 'once' });
     expect(spies.applySettle).toHaveBeenCalledWith(sessionId);

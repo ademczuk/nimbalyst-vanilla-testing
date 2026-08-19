@@ -142,13 +142,13 @@ public struct LoginView: View {
                 .fontWeight(.bold)
 
             if let pairedEmail {
-                Text("Sign in as **\(pairedEmail)** to sync with your Mac.")
+                Text("Sign in as **\(pairedEmail)** to sync with the desktop app.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             } else {
-                Text("Sign in with the same account you use on your Mac to sync your sessions.")
+                Text("Sign in with the same account you use on the desktop app to sync your sessions.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -409,7 +409,7 @@ public struct MainNavigationView: View {
             }
             Button("Dismiss", role: .cancel) {}
         } message: {
-            Text("Your sessions could not be decrypted. The encryption key on this device no longer matches your Mac. Please re-pair by scanning the QR code from your Mac's settings.")
+            Text("Your sessions could not be decrypted. The encryption key on this device no longer matches the desktop app. Please re-pair by scanning the QR code from the desktop app's settings.")
         }
         #if os(iOS)
         .alert(item: voiceActivationIssueBinding) { issue in
@@ -417,7 +417,7 @@ public struct MainNavigationView: View {
             case .missingOpenAIKey:
                 return Alert(
                     title: Text("Voice Agent Unavailable"),
-                    message: Text("Sync an OpenAI API key from Nimbalyst on your Mac before starting the voice agent."),
+                    message: Text("Sync an OpenAI API key from Nimbalyst on your computer before starting the voice agent."),
                     primaryButton: .default(Text("Open Voice Settings")) {
                         showVoiceSettings = true
                     },
@@ -521,7 +521,7 @@ struct IPadNavigationView: View {
                         .foregroundStyle(.secondary)
                     Text("No Projects")
                         .font(.title3)
-                    Text("Projects will appear once synced from your Mac.")
+                    Text("Projects will appear once synced from the desktop app.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

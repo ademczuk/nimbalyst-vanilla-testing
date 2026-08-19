@@ -1,8 +1,10 @@
 /**
  * The organizations a single signed-in login belongs to, rendered inline under
  * its account row in Account settings. This is the one place that answers
- * "which organizations am I in, and under which login?" — and the universal
- * entry point into administering any of them.
+ * "which organizations am I in, and under which login?" — the universal entry
+ * point into administering any of them, and the one surface that lists every
+ * membership, so it is also where a member with several picks which one to go
+ * and work in.
  *
  * Data comes from `groupOrganizationsByAccount`; this component only renders and
  * dispatches actions (no IPC subscriptions — the central Stytch listener owns
@@ -13,7 +15,7 @@ import React, { useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 
 import { AlphaBadge } from '../../common/AlphaBadge';
-import { TEAM_ALPHA_TOOLTIP } from '../../common/TeamAlphaNotice';
+import { TEAM_BETA_TOOLTIP } from '../../common/TeamBetaNotice';
 import { organizationCreationEnabled } from '../../../store/atoms/settingsDomains';
 // Imported from the registry/context directly rather than the `dialogs` barrel,
 // which pulls every dialog component (and the extension SDK) into this panel.
@@ -23,6 +25,7 @@ import {
   queueOrgWindowGeneralRoute,
   readOrgWelcomeDismissed,
 } from '../../TeamMode/onboarding/orgOnboardingStorage';
+import { openOrgProjectWalkFor } from '../../../store/listeners/orgProjectWalkListeners';
 import type { AccountOrganizationEntry, AccountOrganizationGroup } from './accountOrganizations';
 
 /**
@@ -154,14 +157,35 @@ function AccountOrgRow({ organization }: { organization: AccountOrganizationEntr
             {accepting ? 'Accepting…' : 'Accept'}
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={() => { void handleOpen(); }}
-            className="rounded border border-[var(--nim-border)] bg-transparent px-2.5 py-1 text-[11px] text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)]"
-            data-testid="account-org-manage"
-          >
-            Manage
-          </button>
+          <>
+            {/*
+              Membership used to be a dead end here: the list named every
+              organization and offered only administration, so a member with no
+              matching folder had nowhere to go and every org surface told them
+              they had no organization. Open is that missing step -- it runs the
+              existing project walk for this row's org, which finds a folder for
+              one of its projects and opens it.
+            */}
+            <button
+              type="button"
+              onClick={() => openOrgProjectWalkFor({
+                orgId: organization.orgId,
+                name: organization.name,
+              })}
+              className="rounded border border-[var(--nim-primary)] bg-transparent px-2.5 py-1 text-[11px] text-[var(--nim-primary)] hover:bg-[var(--nim-bg-hover)]"
+              data-testid="account-org-open-project"
+            >
+              Open
+            </button>
+            <button
+              type="button"
+              onClick={() => { void handleOpen(); }}
+              className="rounded border border-[var(--nim-border)] bg-transparent px-2.5 py-1 text-[11px] text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)]"
+              data-testid="account-org-manage"
+            >
+              Manage
+            </button>
+          </>
         )}
       </div>
     </article>
@@ -210,7 +234,7 @@ export function AccountOrgList({
           >
             New organization
           </button>
-          <AlphaBadge size="xs" tooltip={TEAM_ALPHA_TOOLTIP} />
+          <AlphaBadge size="xs" stage="beta" tooltip={TEAM_BETA_TOOLTIP} />
         </div>
       )}
     </div>

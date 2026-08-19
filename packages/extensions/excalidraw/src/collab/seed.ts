@@ -37,7 +37,9 @@ const EMPTY_FILE: ExcalidrawFile = {
  * was just sync'd in.
  */
 export function isExcalidrawYDocEmpty(yDoc: Y.Doc): boolean {
-  return yDoc.getArray('elements').length === 0 && yDoc.getMap('assets').size === 0;
+  return yDoc.getArray('elements').length === 0 &&
+    yDoc.getMap('assets').size === 0 &&
+    yDoc.getMap('appState').size === 0;
 }
 
 /**

@@ -101,9 +101,16 @@
 
 /* --- Reserve space for the docked panel ------------------------------------ */
 /* The toggle/panel portal into `.editor-container` (the editor pane). When the
-   panel is open, push the scrollable content left so text isn't hidden. */
+   panel is open, push the scrollable content left so text isn't hidden.
+
+   The panel's width and the space reserved for it are one number, so they read
+   it from one place. `--nim-comments-panel-width` is unset on every host that
+   doesn't resize the panel, which is all of desktop, and both rules fall back
+   to the 320px the panel has always been. A host that wants a draggable split
+   (the web console) sets the property on any ancestor of the editor pane and
+   both sides move together. */
 .editor-container.comments-panel-open .editor-scroller {
-  padding-right: 336px;
+  padding-right: calc(var(--nim-comments-panel-width, 320px) + 16px);
 }
 
 /* --- Panel toggle ---------------------------------------------------------- */
@@ -154,7 +161,7 @@
   top: 0;
   right: 0;
   bottom: 0;
-  width: 320px;
+  width: var(--nim-comments-panel-width, 320px);
   display: flex;
   flex-direction: column;
   background: var(--nim-bg-secondary);
@@ -197,6 +204,13 @@
 }
 .nim-comments-panel-close .material-symbols-outlined {
   font-size: 18px;
+}
+
+.nim-comments-panel-notice {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--nim-text-muted);
+  border-bottom: 1px solid var(--nim-border);
 }
 
 .nim-comments-panel-list {

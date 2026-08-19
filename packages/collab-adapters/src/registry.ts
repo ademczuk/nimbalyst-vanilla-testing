@@ -170,6 +170,8 @@ export function getRevisionSnapshotFns(adapter: CollabContentAdapter): {
     exportRevisionSnapshot:
       adapter.exportRevisionSnapshot?.bind(adapter) ?? defaultExportRevisionSnapshot,
     restoreRevisionSnapshot:
-      adapter.restoreRevisionSnapshot?.bind(adapter) ?? defaultRestoreRevisionSnapshot,
+      adapter.restoreRevisionSnapshot?.bind(adapter) ??
+      ((yDoc: Doc, bytes: Uint8Array) =>
+        defaultRestoreRevisionSnapshot(yDoc, bytes, adapter)),
   };
 }

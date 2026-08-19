@@ -2,7 +2,7 @@ import { detectStreamingIntent, parseStreamingChunk, StreamingEditRequest } from
 import { logger } from '../utils/logger';
 import type { DocumentContext, Message, SessionData } from '@nimbalyst/runtime/ai/server/types';
 import { editorRegistry } from '@nimbalyst/runtime/ai/EditorRegistry';
-import { isCollabUri } from '../utils/collabUri';
+import { isCollabUri } from '@nimbalyst/collab-protocol';
 
 const LOG_PREVIEW_LENGTH = 400;
 

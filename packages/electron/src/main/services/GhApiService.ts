@@ -13,6 +13,7 @@
 import { spawn } from 'child_process';
 import * as os from 'os';
 import * as path from 'path';
+import { StringDecoder } from 'string_decoder';
 import log from 'electron-log/main';
 import type {
   PullRequestRow,
@@ -285,28 +286,44 @@ async function spawnGhApi(args: string[], token?: string): Promise<SpawnResult> 
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    // Decode across chunk boundaries, not per chunk: a multi-byte character
+    // straddling two `data` events would otherwise be replaced by U+FFFD,
+    // mojibaking any PR title or body containing non-ASCII text.
+    const outDecoder = new StringDecoder('utf8');
+    const errDecoder = new StringDecoder('utf8');
     let stdout = '';
     let stderr = '';
 
-    child.stdout?.on('data', (data) => {
-      stdout += data.toString();
+    child.stdout?.on('data', (data: Buffer) => {
+      stdout += outDecoder.write(data);
     });
-    child.stderr?.on('data', (data) => {
-      stderr += data.toString();
+    child.stderr?.on('data', (data: Buffer) => {
+      stderr += errDecoder.write(data);
     });
 
     child.on('close', (code) => {
-      resolve({ stdout, stderr, exitCode: code });
+      resolve({
+        stdout: stdout + outDecoder.end(),
+        stderr: stderr + errDecoder.end(),
+        exitCode: code,
+      });
     });
 
     child.on('error', (error) => {
       logger.warn('gh spawn error', { message: error.message });
-      resolve({ stdout, stderr: error.message, exitCode: null });
+      resolve({ stdout: stdout + outDecoder.end(), stderr: error.message, exitCode: null });
     });
   });
 }
 
-function buildApiArgs(
+/**
+ * Exported for tests. `--cache` is deliberately dropped whenever `--paginate`
+ * is set: gh merges pages by splicing the page bodies together, and that
+ * splice races against its own shared on-disk cache when several gh processes
+ * run at once, emitting JSON that closes the merged array after page one
+ * (`[…page1…],{…},{…}]`). Reproduced against gh 2.92.0.
+ */
+export function buildApiArgs(
   endpoint: string,
   options: { cacheSeconds?: number; paginate?: boolean } = {},
 ): string[] {
@@ -321,7 +338,7 @@ function buildApiArgs(
   if (options.paginate) {
     args.push('--paginate');
   }
-  if (options.cacheSeconds && options.cacheSeconds > 0) {
+  if (!options.paginate && options.cacheSeconds && options.cacheSeconds > 0) {
     args.push('--cache', `${options.cacheSeconds}s`);
   }
   return args;
@@ -330,9 +347,15 @@ function buildApiArgs(
 /**
  * `gh api --paginate` returns multiple JSON arrays concatenated on stdout
  * (one per page). Parse defensively: try single parse first, then fall back
- * to per-line / per-array splitting.
+ * to walking the top-level values.
+ *
+ * Exported for tests. The fallback must survive gh emitting a *malformed*
+ * merge — `[…page1…],{…},{…}]` — which it does when its page splicing races
+ * the shared on-disk cache. Anything between top-level values (the
+ * separating commas, whitespace, and that stray trailing `]`) is skipped, so
+ * later pages are recovered one object at a time instead of being dropped.
  */
-function parsePagedJson<T>(stdout: string): T[] {
+export function parsePagedJson<T>(stdout: string): T[] {
   const trimmed = stdout.trim();
   if (!trimmed) return [];
 
@@ -341,15 +364,12 @@ function parsePagedJson<T>(stdout: string): T[] {
     const parsed = JSON.parse(trimmed);
     return Array.isArray(parsed) ? (parsed as T[]) : [parsed as T];
   } catch {
-    // Fall through to concatenated-arrays parse.
+    // Fall through to the top-level walk.
   }
 
-  // Concatenated JSON values from `--paginate`. Walk the string tracking
-  // bracket/brace depth (skipping string contents) and parse each top-level
-  // value, flattening arrays. Robust against spaces/newlines inside the JSON.
   const out: T[] = [];
   let depth = 0;
-  let sliceStart = 0;
+  let sliceStart = -1;
   let inStr = false;
   let esc = false;
   for (let i = 0; i < trimmed.length; i++) {
@@ -360,21 +380,30 @@ function parsePagedJson<T>(stdout: string): T[] {
       else if (c === '"') inStr = false;
       continue;
     }
+    if (depth === 0 && c !== '[' && c !== '{') {
+      // Separator, whitespace, or a stray closer left over from a bad merge.
+      continue;
+    }
     if (c === '"') { inStr = true; continue; }
     if (c === '[' || c === '{') {
+      if (depth === 0) sliceStart = i;
       depth++;
     } else if (c === ']' || c === '}') {
       depth--;
       if (depth === 0) {
-        const slice = trimmed.slice(sliceStart, i + 1).trim();
+        const slice = trimmed.slice(sliceStart, i + 1);
         try {
           const parsed = JSON.parse(slice) as T[] | T;
           if (Array.isArray(parsed)) out.push(...parsed);
           else out.push(parsed);
         } catch (error) {
-          logger.warn('Failed to parse gh api chunk', { error });
+          logger.warn('Failed to parse gh api chunk', {
+            chunkLength: slice.length,
+            preview: slice.slice(0, 200),
+            error,
+          });
         }
-        sliceStart = i + 1;
+        sliceStart = -1;
       }
     }
   }

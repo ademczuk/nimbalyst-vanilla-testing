@@ -4,6 +4,7 @@
  */
 
 import { basename, dirname, join, relative, normalize } from 'pathe';
+import { isCollabUri, parseCollabUri } from '@nimbalyst/collab-protocol';
 
 /**
  * Extract the filename from a path (cross-platform)
@@ -15,9 +16,12 @@ export function getFileName(filePath: string): string {
   // collab://org:{orgId}:doc:{documentId} -> extract the transport id.
   // User-facing collab surfaces must resolve a title or neutral placeholder;
   // TabsContext deliberately does not expose this value as a tab label.
-  if (filePath.startsWith('collab://')) {
-    const docMatch = filePath.match(/:doc:(.+)$/);
-    return docMatch ? docMatch[1] : filePath;
+  if (isCollabUri(filePath)) {
+    try {
+      return parseCollabUri(filePath).documentId;
+    } catch {
+      return filePath;
+    }
   }
   // virtual://<scheme>/<segment>?title=…&… -> fileless tabs may carry a display
   // title in the query (e.g. a browser tab's page title). Fall back to the last

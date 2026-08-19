@@ -279,4 +279,17 @@ export interface AgentProtocol {
    * @param session - Session to clean up
    */
   cleanupSession(session: ProtocolSession): void;
+
+  /**
+   * Compact the session's context in-place, if the transport supports it.
+   *
+   * Optional: a transport that cannot compact simply omits this, and callers
+   * must check for it before offering the action. Do NOT emulate compaction by
+   * sending a `/compact` string as a user turn -- for transports without a real
+   * compaction RPC that reaches the model as literal prompt text and silently
+   * does nothing (#1252).
+   *
+   * @param session - Session whose context should be compacted
+   */
+  compactSession?(session: ProtocolSession): Promise<void>;
 }

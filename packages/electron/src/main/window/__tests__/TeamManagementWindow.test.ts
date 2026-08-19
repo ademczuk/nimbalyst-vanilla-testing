@@ -131,6 +131,9 @@ describe('TeamManagementWindow', () => {
       orgId: 'org-2',
       workspacePath: '/ws2',
       conversationId: 'room-2',
+      // Cleared rather than omitted: a retarget carrying a stale feedback
+      // request would re-select a row the user did not ask for.
+      feedbackRequestId: null,
     });
   });
 

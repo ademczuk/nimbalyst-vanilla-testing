@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "status": "node ./scripts/marketplace-status.mjs",
+    "status:check": "node ./scripts/marketplace-status.mjs --check",
     "dev": "XDG_CONFIG_HOME=\"$HOME/.config/nimbalyst\" wrangler dev --local --ip 0.0.0.0",
     "deploy": "XDG_CONFIG_HOME=\"$HOME/.config/nimbalyst\" wrangler deploy",
     "deploy:production": "XDG_CONFIG_HOME=\"$HOME/.config/nimbalyst\" ./scripts/deploy.sh patch --env production",

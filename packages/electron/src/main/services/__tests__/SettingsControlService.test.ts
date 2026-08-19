@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from 'vitest';
 
 // SettingsControlService imports from many other modules (electron, store,
@@ -44,6 +46,9 @@ vi.mock('../SessionNamingService', () => ({
     getInstance: () => ({ setLanguage: vi.fn() }),
   },
 }));
+
+const setTrackerIssueKeyPrefix = vi.hoisted(() => vi.fn().mockResolvedValue({ success: true }));
+vi.mock('../TrackerSyncManager', () => ({ setTrackerIssueKeyPrefix }));
 
 vi.mock('../../theme/ThemeManager', () => ({
   updateNativeTheme: vi.fn(),
@@ -124,7 +129,7 @@ describe('SettingsControlService allowlist invariants', () => {
 
   it('only allows curated workspace-level keys', () => {
     expect([...ALLOWED_WORKSPACE_KEYS].sort()).toEqual(
-      ['agentPermissions', 'issueKeyPrefix', 'trackerSyncPolicies'].sort(),
+      ['agentPermissions', 'issueKeyPrefix'].sort(),
     );
   });
 });
@@ -153,5 +158,24 @@ describe('SettingsControlService.setExtensionEnabled', () => {
       'com.nimbalyst.github-issues-importer',
       expect.anything(),
     );
+  });
+});
+
+describe('SettingsControlService.setIssueKeyPrefix', () => {
+  it('returns the server conflict message instead of persisting a taken prefix', async () => {
+    setTrackerIssueKeyPrefix.mockResolvedValueOnce({
+      success: false,
+      error: 'Prefix NIM is already used by project "Nimbalyst Core". Try NIMA.',
+      suggestedPrefix: 'NIMA',
+    });
+    const result = await SettingsControlService.getInstance().setIssueKeyPrefix('session-prefix', {
+      workspacePath: '/workspace',
+      prefix: 'NIM',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message: 'Prefix NIM is already used by project "Nimbalyst Core". Try NIMA.',
+    });
   });
 });

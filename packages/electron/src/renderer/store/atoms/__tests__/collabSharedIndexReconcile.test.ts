@@ -16,6 +16,7 @@ function doc(
 ): SharedDocument {
   return {
     documentId,
+    teamProjectId: null,
     title,
     documentType: 'markdown',
     createdBy: 'u1',

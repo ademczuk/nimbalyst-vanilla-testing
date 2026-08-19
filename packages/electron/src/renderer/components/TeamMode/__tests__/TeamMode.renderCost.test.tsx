@@ -41,9 +41,6 @@ vi.mock('../RoomView', () => ({
 vi.mock('../Inbox', () => ({
   InboxSection: () => <div data-testid="inbox-stub" />,
 }));
-vi.mock('../../Settings/panels/OrganizationMembersRolesPanel', () => ({
-  OrganizationMembersRolesPanel: () => <div data-testid="members" />,
-}));
 vi.mock('../../Settings/panels/OrganizationProjectsPanel', () => ({ OrganizationProjectsPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationBillingPanel', () => ({ OrganizationBillingPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationDangerZone', () => ({ OrganizationDangerZone: () => <div /> }));

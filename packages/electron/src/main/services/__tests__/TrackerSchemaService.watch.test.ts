@@ -181,7 +181,13 @@ describe('TrackerSchemaService watcher', () => {
     await fs.unlink(filePath);
     watcherHandlers.unlink?.(filePath);
 
-    expect(service.getTrackerSchema('runtime-watch')).toBeUndefined();
+    // Deleting a schema file is async now: the handler first asks whether the
+    // team owns a copy (in which case the file is reprojected rather than
+    // treated as authoritative). The watcher fires it fire-and-forget, so a
+    // personal schema leaves the registry a tick after the unlink event.
+    await vi.waitFor(() => {
+      expect(service.getTrackerSchema('runtime-watch')).toBeUndefined();
+    });
     expect(mockWindowSend).toHaveBeenCalledWith('tracker-schema:changed', expect.any(Array));
   });
 });

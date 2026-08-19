@@ -50,6 +50,14 @@ export interface SessionReferenceChipProps {
   /** Compact chips drop the phase label, keeping the icon + title. */
   variant?: 'default' | 'compact';
   /**
+   * Presentation to use when the id isn't in `sessionRefMapAtom` — which the
+   * registry only covers for the current workspace. A caller that already has
+   * the session's title/provider from its own query (e.g. a session in another
+   * worktree) passes it here so the chip shows a name instead of a raw id.
+   * Live atom data always wins.
+   */
+  fallbackMeta?: Partial<SessionRefMeta>;
+  /**
    * Host-supplied navigation. Defaults to the `open-ai-session` window event;
    * hosts that already own an open-session action (e.g. the PR pane, which also
    * switches window mode) pass their own here.
@@ -60,9 +68,12 @@ export interface SessionReferenceChipProps {
 export function SessionReferenceChip({
   sessionId,
   variant = 'default',
+  fallbackMeta,
   onOpen: onOpenOverride,
 }: SessionReferenceChipProps): JSX.Element {
-  const meta = useAtomValue(sessionRefByIdAtom(sessionId));
+  const liveMeta = useAtomValue(sessionRefByIdAtom(sessionId));
+  const meta: SessionRefMeta | null =
+    liveMeta ?? (fallbackMeta ? { id: sessionId, title: '', ...fallbackMeta } : null);
 
   const label = meta?.title?.trim() || shortSessionId(sessionId);
   const dotColor = statusDotColor(meta);

@@ -12,6 +12,7 @@ import {
   ToolDefinition,
   AgentToolDefinition,
 } from './types';
+import type { AgentCapabilities } from './agentCapabilities';
 import { toolRegistry, toAnthropicTools, toOpenAITools } from '../tools';
 import { buildSystemPrompt } from '../prompt';
 import {
@@ -97,18 +98,38 @@ export function isToolPermissionProvider(
   return !!provider && typeof (provider as any).resolveToolPermission === 'function';
 }
 
+/**
+ * Accessors for a provider's native workflow catalog.
+ *
+ * These stay optional because they are *data*, not support: whether they mean
+ * anything is answered by `getAgentCapabilities()`, which every provider must
+ * declare. Never infer support from `typeof provider.getSkills === 'function'`
+ * — that is the conflation that let #1251-#1254 ship silently.
+ */
 export interface SlashCommandCatalogProvider {
   getSlashCommands?(): string[];
   getSkills?(): string[];
 }
 
-export function isSlashCommandCatalogProvider(
+export function readProviderWorkflowCatalog(
   provider: AIProvider | null | undefined
-): provider is AIProvider & SlashCommandCatalogProvider {
-  return !!provider && (
-    typeof (provider as any).getSlashCommands === 'function' ||
-    typeof (provider as any).getSkills === 'function'
-  );
+): { commands: string[]; skills: string[] } {
+  const catalog = provider as (SlashCommandCatalogProvider | null | undefined);
+  return {
+    commands: catalog?.getSlashCommands?.() ?? [],
+    skills: catalog?.getSkills?.() ?? [],
+  };
+}
+
+export interface InterruptTurnResult {
+  method: 'interrupt' | 'abort';
+  /**
+   * Whether there was actually a live turn to interrupt. Omitted by providers
+   * that can't tell — `false` is a positive claim that the interrupt hit
+   * nothing, which is what lets the caller clear a zombie running state
+   * (NIM-2434). Never report `false` on a guess.
+   */
+  hadActiveTurn?: boolean;
 }
 
 export interface AIProvider extends EventEmitter {
@@ -156,12 +177,24 @@ export interface AIProvider extends EventEmitter {
    * fall back to the default `abort()` and rely on the caller to trigger the
    * next queued prompt. The return value lets the caller distinguish the two.
    */
-  interruptCurrentTurn(): Promise<{ method: 'interrupt' | 'abort' }>;
+  interruptCurrentTurn(): Promise<InterruptTurnResult>;
 
   /**
-   * Get the capabilities of this provider
+   * Get the transport-shape capabilities of this provider (does it stream, does
+   * it drive tools, can it resume). For host-surface features — slash commands,
+   * skills, compaction — see `getAgentCapabilities()`.
    */
   getCapabilities(): ProviderCapabilities;
+
+  /**
+   * Declare which host-surface features this provider actually supports.
+   *
+   * Required, with no optional members and no defaults: a provider that gains
+   * a capability must say so, and one that never implemented it must say that
+   * too, so callers can tell "unsupported" from "supported but currently
+   * empty". See `agentCapabilities.ts`.
+   */
+  getAgentCapabilities(): AgentCapabilities;
 
   /**
    * Register a tool handler for executing tools
@@ -248,6 +281,12 @@ export abstract class BaseAIProvider extends EventEmitter implements AIProvider 
   ): AsyncIterableIterator<StreamChunk>;
   abstract abort(): void;
   abstract getCapabilities(): ProviderCapabilities;
+  /**
+   * Abstract on purpose. A concrete default here would let the next provider
+   * inherit somebody else's answer without noticing — the silent-omission hole
+   * this contract exists to close.
+   */
+  abstract getAgentCapabilities(): AgentCapabilities;
 
   /**
    * Default graceful-interrupt: hard abort. Providers with a real graceful
@@ -257,7 +296,7 @@ export abstract class BaseAIProvider extends EventEmitter implements AIProvider 
    * (always do, since both paths land in the same completion event in the
    * end).
    */
-  async interruptCurrentTurn(): Promise<{ method: 'interrupt' | 'abort' }> {
+  async interruptCurrentTurn(): Promise<InterruptTurnResult> {
     this.abort();
     return { method: 'abort' };
   }

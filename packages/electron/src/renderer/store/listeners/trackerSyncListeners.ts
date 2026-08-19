@@ -34,6 +34,7 @@ import { trackerSyncConfigChangeAtom, trackerSyncConnectionAtom, trackerSyncReje
 import { activeWorkspacePathAtom } from '../atoms/openProjects';
 import { loadTrackerNavigationAtom } from '../atoms/trackerNavigation';
 import { initTrackerPanelLayout, loadSharedTrackerViewsAtom } from '../atoms/trackers';
+import { getBodyDocCache } from '../../services/BodyDocCache';
 
 /** Auto-clear delay for transient rotation locks. Matches the typical
  *  team rotation window -- by 30s the org-wide write freeze should have
@@ -227,6 +228,64 @@ export function initTrackerSyncListeners(): () => void {
   // window, but a stray event from a buggy code path would still leak a
   // foreign item into our atoms and display it until the next refresh.
   let currentWorkspacePath: string | null = null;
+  // An agent body write routed in from the main process, to be applied through
+  // the DocumentSyncProvider the open editor is bound to. The warm BodyDocCache
+  // entry is the authority on whether this window can serve the write -- this
+  // handler deliberately does NOT compare against `currentWorkspacePath`, both
+  // because the item may belong to a non-active project this window has open
+  // and because that comparison disagreed with main's window selection, which
+  // sent writes that were then refused and demoted to the headless peer.
+  //
+  // `expiresAt` is main's deadline to START. Past it, main has already fallen
+  // back, and applying anyway would land the body twice: two replicas each
+  // running `clear + insert` against a different view of the room merge into two
+  // copies instead of replacing one another.
+  //
+  // `applied` says only that this window's Y.Doc was mutated; `acknowledged`
+  // says the SERVER persisted it. They are reported separately because main
+  // deletes the plan's markdown body from disk on the strength of the answer,
+  // and a mutated-but-unacknowledged replica is precisely the state where the
+  // file is the last remaining copy. Answering `{ applied: true }` alone -- as
+  // this handler used to -- reads to main as durable.
+  cleanups.push(
+    window.electronAPI.on(
+      'tracker-body:apply-markdown',
+      (data: {
+        workspacePath: string;
+        itemId: string;
+        markdown: string;
+        responseChannel: string;
+        expiresAt?: number;
+      }) => {
+        void (async () => {
+          let applied = false;
+          let acknowledged = false;
+          try {
+            if (
+              data?.workspacePath &&
+              typeof data.itemId === 'string' &&
+              typeof data.markdown === 'string' &&
+              !(typeof data.expiresAt === 'number' && Date.now() > data.expiresAt)
+            ) {
+              const outcome = await getBodyDocCache().applyMarkdownToWarmEntry(
+                data.itemId,
+                data.markdown,
+                data.workspacePath,
+              );
+              applied = outcome !== 'no-entry';
+              acknowledged = outcome === 'acknowledged';
+            }
+          } catch (error) {
+            console.error('[trackerSyncListeners] Failed to apply agent body write:', error);
+          } finally {
+            if (data?.responseChannel) {
+              window.electronAPI.send(data.responseChannel, { applied, acknowledged });
+            }
+          }
+        })();
+      },
+    ),
+  );
   cleanups.push(
     window.electronAPI.on('tracker-sync:status-changed', (value: string | { workspacePath: string; status: string; shared?: boolean }) => {
       if (!currentWorkspacePath) return;

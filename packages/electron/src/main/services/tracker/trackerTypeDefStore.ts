@@ -17,6 +17,7 @@
 import type { TrackerDataModel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import { getDatabase } from '../../database/initialize';
 import { logger } from '../../utils/logger';
+import { appendActivity } from './trackerActivity';
 
 /**
  * Minimal DB surface these writes need (PGLite or better-sqlite3). Injectable so
@@ -35,6 +36,269 @@ export interface TypeDefDb {
  */
 function typeDefId(workspace: string, type: string): string {
   return `${workspace}::${type}`;
+}
+
+/**
+ * Ownership of a type's definition.
+ *
+ * `sync_id IS NOT NULL` means the team's schema room has a version of this type:
+ * the SHARED definition is authoritative and local YAML may not overwrite it.
+ * `source` does not answer this — a row can be yaml-sourced and team-owned at
+ * once, which is exactly the state that used to let a stale file clobber the
+ * team's schema (#1178).
+ */
+interface TypeDefOwnershipRow {
+  sync_id: number | null;
+  model: string;
+  synced_model: string | null;
+}
+
+async function readOwnership(
+  db: TypeDefDb,
+  workspace: string,
+  type: string,
+): Promise<TypeDefOwnershipRow | null> {
+  const result = (await db.query(
+    `SELECT sync_id, model, synced_model FROM tracker_type_defs
+      WHERE workspace = $1 AND type = $2`,
+    [workspace, type],
+  )) as { rows?: TypeDefOwnershipRow[] } | undefined;
+  return result?.rows?.[0] ?? null;
+}
+
+/** Compare two stored/JSON models for semantic equality (key order ignored). */
+function sameModel(a: unknown, b: unknown): boolean {
+  const parse = (v: unknown): unknown => {
+    if (typeof v !== 'string') return v;
+    try {
+      return JSON.parse(v);
+    } catch {
+      return v;
+    }
+  };
+  return canonicalize(parse(a)) === canonicalize(parse(b));
+}
+
+export interface MaterializeYamlOptions {
+  /**
+   * Establish the missing `synced_model` baseline for a team-owned row from the
+   * shared model the row already carries, returning it as JSON (or null to leave
+   * the row unprojected). Only a caller that KNOWS this content is a deliberate
+   * edit may pass this — see the `synced_model` NULL case below.
+   */
+  establishBaseline?: (sharedModelJson: string) => string | null;
+  /** Attribute a real post-load file edit using the tracker item's activity shape. */
+  activity?: {
+    authorIdentity: unknown;
+    action: string;
+    details?: { field?: string; oldValue?: string; newValue?: string };
+  };
+}
+
+/**
+ * A schema model carrying its attribution trail.
+ *
+ * `activity` is deliberately NOT a field on {@link TrackerDataModel}: it is
+ * provenance ABOUT the schema, not part of it. It lives in the DB row's `model`
+ * JSON (and travels to teammates on the schema sync path) exactly the way an
+ * item's activity lives in its row — never in `.nimbalyst/trackers/*.yaml`.
+ * TrackerSchemaService strips it at the one serialization chokepoint, so a user
+ * opening their schema file sees a config file, not a history log.
+ */
+export type TrackerSchemaWithActivity = TrackerDataModel & {
+  activity?: Array<{ authorIdentity?: Record<string, unknown>; timestamp?: number }>;
+};
+
+function schemaWithoutActivity(model: unknown): unknown {
+  let parsed = model;
+  if (typeof model === 'string') {
+    try {
+      parsed = JSON.parse(model);
+    } catch {
+      return model;
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return parsed;
+  const { activity: _activity, ...schema } = parsed as Record<string, unknown>;
+  return schema;
+}
+
+function inheritSchemaActivity(model: TrackerDataModel, storedModel: unknown): TrackerSchemaWithActivity {
+  const target = model as TrackerSchemaWithActivity;
+  if (Array.isArray(target.activity)) return target;
+  try {
+    const stored = typeof storedModel === 'string' ? JSON.parse(storedModel) : storedModel;
+    const activity = (stored as TrackerSchemaWithActivity | null)?.activity;
+    if (Array.isArray(activity)) target.activity = [...activity];
+  } catch {
+    // A malformed old row should not block the schema edit that repairs it.
+  }
+  return target;
+}
+
+/** Carry the existing schema trail forward and append one attributed change. */
+export async function appendTrackerSchemaActivity(
+  workspace: string,
+  model: TrackerDataModel,
+  authorIdentity: unknown,
+  action: string,
+  dbOverride?: TypeDefDb,
+): Promise<TrackerDataModel> {
+  try {
+    const db = dbOverride ?? getDatabase();
+    const attributed = db
+      ? inheritSchemaActivity(model, (await readOwnership(db, workspace, model.type))?.model)
+      : model as TrackerSchemaWithActivity;
+    appendActivity(attributed as unknown as Record<string, any>, authorIdentity, action, { field: 'schema' });
+    return attributed;
+  } catch (err) {
+    logger.main.warn('[trackerTypeDefStore] append schema activity failed for', model.type, err);
+    appendActivity(model as unknown as Record<string, any>, authorIdentity, action, { field: 'schema' });
+    return model;
+  }
+}
+
+/**
+ * Mirror a model loaded from `<workspace>/.nimbalyst/trackers/*.yaml`.
+ *
+ * A personal schema is authoritative for this workspace. If an older build
+ * left a team-owned mirror row behind, clear that ownership before updating the
+ * row so schema bootstrap cannot restore the obsolete team definition after
+ * the sharing-model migration.
+ *
+ * For a team tracker whose row is already TEAM-OWNED, the shared definition wins, and the
+ * only question is whether this file is a deliberate local edit or a leftover:
+ *
+ *  - `synced_model` NULL — the shared definition has never been written to this
+ *    file, so on its own this write cannot tell an edit from a leftover. It is
+ *    ignored unless the caller supplies `establishBaseline`. The initial
+ *    directory load must NOT: a file that predates the team's copy is a
+ *    leftover, and treating it as an edit is what froze `bug` for a whole team
+ *    (#1178). TrackerSchemaService's watcher does, because a change/add event
+ *    is the intent signal this layer lacks.
+ *  - file matches `synced_model` — already in step; nothing to do.
+ *  - file differs from `synced_model` — the user edited the file after we wrote
+ *    the shared definition into it. Take the edit and queue it for push so
+ *    teammates converge on it.
+ *
+ * `sync_id` is deliberately preserved in every branch: it is the bootstrap
+ * cursor, and stranding it on a model the server never saw is what made the
+ * shared definition unrecoverable.
+ */
+export async function materializeYamlTrackerTypeDef(
+  workspace: string,
+  model: TrackerDataModel,
+  dbOverride?: TypeDefDb,
+  options?: MaterializeYamlOptions,
+): Promise<void> {
+  try {
+    const db = dbOverride ?? getDatabase();
+    if (!db) return;
+
+    const row = await readOwnership(db, workspace, model.type);
+    const schemaUnchanged = row != null && sameModel(schemaWithoutActivity(row.model), schemaWithoutActivity(model));
+    const attributedModel = inheritSchemaActivity(model, row?.model);
+    if (options?.activity && schemaUnchanged) return;
+    if (model.sharing === 'personal' && row?.sync_id != null) {
+      if (options?.activity) {
+        appendActivity(
+          attributedModel as unknown as Record<string, any>,
+          options.activity.authorIdentity,
+          options.activity.action,
+          options.activity.details,
+        );
+      }
+      await db.query(
+        `UPDATE tracker_type_defs
+            SET model = $3,
+                source = 'yaml',
+                updated = NOW(),
+                sync_status = 'local',
+                sync_id = NULL,
+                synced_model = NULL,
+                deleted_at = NULL
+          WHERE workspace = $1 AND type = $2`,
+        [workspace, model.type, JSON.stringify(attributedModel)],
+      );
+      return;
+    }
+    if (!row || row.sync_id == null) {
+      if (options?.activity) {
+        appendActivity(
+          attributedModel as unknown as Record<string, any>,
+          options.activity.authorIdentity,
+          options.activity.action,
+          options.activity.details,
+        );
+      }
+      await materializeTrackerTypeDef(workspace, attributedModel, 'yaml', dbOverride);
+      return;
+    }
+
+    let baseline = row.synced_model;
+    if (baseline == null) {
+      // `model` on an unprojected team-owned row IS the shared definition the
+      // schema room delivered, so the baseline needs no extra read.
+      const shared = typeof row.model === 'string' ? row.model : JSON.stringify(row.model);
+      baseline = options?.establishBaseline?.(shared) ?? null;
+      if (baseline == null) return; // no baseline -- the file is a leftover, not an edit
+      await markTrackerTypeDefProjected(workspace, model.type, baseline, db);
+    }
+    if (sameModel(baseline, attributedModel)) return; // in step with the team
+
+    if (options?.activity) {
+      appendActivity(
+        attributedModel as unknown as Record<string, any>,
+        options.activity.authorIdentity,
+        options.activity.action,
+        options.activity.details,
+      );
+    }
+
+    await db.query(
+      `UPDATE tracker_type_defs
+          SET model = $3, updated = NOW(), sync_status = 'pending', deleted_at = NULL
+        WHERE workspace = $1 AND type = $2`,
+      [workspace, model.type, JSON.stringify(attributedModel)],
+    );
+  } catch (err) {
+    logger.main.warn('[trackerTypeDefStore] materializeYaml failed for', model.type, err);
+  }
+}
+
+/** {@link materializeYamlTrackerTypeDef} for a whole YAML directory load. */
+export async function materializeYamlTrackerTypeDefs(
+  workspace: string,
+  models: TrackerDataModel[],
+  dbOverride?: TypeDefDb,
+): Promise<void> {
+  for (const model of models) {
+    await materializeYamlTrackerTypeDef(workspace, model, dbOverride);
+  }
+}
+
+/**
+ * Record that `modelJson` is now what this workspace's YAML file contains for
+ * `type`. Called after the shared definition is written back to disk; it is the
+ * baseline a later YAML edit is diffed against.
+ */
+export async function markTrackerTypeDefProjected(
+  workspace: string,
+  type: string,
+  modelJson: string,
+  dbOverride?: TypeDefDb,
+): Promise<void> {
+  try {
+    const db = dbOverride ?? getDatabase();
+    if (!db) return;
+    await db.query(
+      `UPDATE tracker_type_defs SET synced_model = $3
+        WHERE workspace = $1 AND type = $2`,
+      [workspace, type, modelJson],
+    );
+  } catch (err) {
+    logger.main.warn('[trackerTypeDefStore] markProjected failed for', type, err);
+  }
 }
 
 /** Upsert one type definition for a workspace. */
@@ -84,6 +348,10 @@ export interface MaterializedTypeDef {
 export interface MaterializedTypeDefFull extends MaterializedTypeDef {
   /** The model serialized as JSON TEXT (`JSON.stringify(model)` at materialize time). */
   model: string;
+  /** Non-null once the team's schema room has a version of this type. */
+  sync_id?: number | null;
+  /** Last shared model projected onto this workspace's YAML file, if any. */
+  synced_model?: string | null;
 }
 
 /**
@@ -122,7 +390,7 @@ export async function listMaterializedTrackerTypeDefs(
     const db = dbOverride ?? getDatabase();
     if (!db) return [];
     const result = (await db.query(
-      `SELECT type, source, model FROM tracker_type_defs
+      `SELECT type, source, model, sync_id, synced_model FROM tracker_type_defs
        WHERE workspace = $1 AND deleted_at IS NULL`,
       [workspace],
     )) as { rows?: MaterializedTypeDefFull[] } | undefined;
@@ -154,7 +422,13 @@ export type SchemaDriftStatus =
   /** Only the DB mirror has it, and it was sourced from YAML (orphaned file). */
   | 'db-only-orphan'
   /** Only the DB mirror has it, sourced from CLI/sync (no YAML expected). */
-  | 'db-native';
+  | 'db-native'
+  /**
+   * The team owns this tracker and the local file is not the authority, so the
+   * two differing is not drift and resyncing from files would discard the edit.
+   * Informational: what the file means for a team tracker is W3-B's job.
+   */
+  | 'team-owned';
 
 export interface SchemaDriftEntry {
   type: string;
@@ -186,16 +460,37 @@ function canonicalize(value: unknown): string {
  * A `db-only` row sourced from YAML is an orphan (its file was deleted) and is
  * reported as drift; a `db-only` row sourced from CLI/sync is DB-native and is
  * informational, not a warning.
+ *
+ * Ownership decides whether a difference is drift at all. For a TEAM-OWNED row
+ * (`sync_id` set) the team's definition is the authority, and the two write
+ * paths a resync would take are both no-ops:
+ *
+ *  - with no `synced_model` baseline, {@link materializeYamlTrackerTypeDef}
+ *    treats the file as a leftover and ignores it (#1178);
+ *  - {@link reconcileYamlTrackerTypeDefs} refuses to tombstone a team-owned row
+ *    whose file is missing.
+ *
+ * Reporting either as drift offered "Resync from files" for a change that would
+ * be discarded — a button that lies. They are `team-owned` instead, which
+ * `hasSchemaDrift` does not warn on. A team-owned row that DOES have a baseline
+ * stays `drifted`: there a resync genuinely takes the local edit and queues it
+ * for the team.
  */
 export function classifyTrackerSchemaDrift(
   yamlModels: TrackerDataModel[],
-  dbDefs: Array<{ type: string; source: string | null; model: string }>,
+  dbDefs: Array<{
+    type: string;
+    source: string | null;
+    model: string;
+    sync_id?: number | null;
+    synced_model?: string | null;
+  }>,
 ): SchemaDriftEntry[] {
   const yamlByType = new Map<string, TrackerDataModel>();
   for (const m of yamlModels) yamlByType.set(m.type, m);
 
-  const dbByType = new Map<string, { source: string | null; model: string }>();
-  for (const d of dbDefs) dbByType.set(d.type, { source: d.source, model: d.model });
+  const dbByType = new Map<string, (typeof dbDefs)[number]>();
+  for (const d of dbDefs) dbByType.set(d.type, d);
 
   const entries: SchemaDriftEntry[] = [];
   const types = new Set<string>([...yamlByType.keys(), ...dbByType.keys()]);
@@ -203,6 +498,7 @@ export function classifyTrackerSchemaDrift(
   for (const type of [...types].sort()) {
     const yaml = yamlByType.get(type);
     const db = dbByType.get(type);
+    const teamOwned = db?.sync_id != null;
 
     if (yaml && db) {
       let dbCanon: string;
@@ -211,14 +507,21 @@ export function classifyTrackerSchemaDrift(
       } catch {
         dbCanon = '';
       }
-      const status: SchemaDriftStatus =
-        canonicalize(yaml) === dbCanon ? 'in-sync' : 'drifted';
+      // A resync only reaches a team-owned row when the file differs from the
+      // last projected shared model; anything else materialize returns early on.
+      const resyncWouldApply = !teamOwned || (
+        db.synced_model != null && !sameModel(db.synced_model, yaml)
+      );
+      const status: SchemaDriftStatus = canonicalize(yaml) === dbCanon
+        ? 'in-sync'
+        : resyncWouldApply ? 'drifted' : 'team-owned';
       entries.push({ type, status, source: db.source });
     } else if (yaml && !db) {
       entries.push({ type, status: 'yaml-only', source: null });
     } else if (!yaml && db) {
-      const status: SchemaDriftStatus =
-        db.source === 'yaml' ? 'db-only-orphan' : 'db-native';
+      const status: SchemaDriftStatus = teamOwned
+        ? 'team-owned'
+        : db.source === 'yaml' ? 'db-only-orphan' : 'db-native';
       entries.push({ type, status, source: db.source });
     }
   }
@@ -255,9 +558,82 @@ export async function reconcileYamlTrackerTypeDefs(
   const active = await listMaterializedTrackerTypes(workspace, dbOverride);
   const keep = new Set(loadedTypes);
   for (const row of active) {
-    if (row.source === 'yaml' && !keep.has(row.type)) {
-      await removeTrackerTypeDef(workspace, row.type, dbOverride);
-    }
+    if (row.source !== 'yaml' || keep.has(row.type)) continue;
+    // Never retract a TEAM-OWNED type. A missing file means this machine has no
+    // local copy of a schema the team shares -- deleting your file is not a
+    // mandate to delete everyone's type. Explicit removal goes through
+    // resetWorkspaceTrackerSchemaOverride / tracker_delete_type (#1178).
+    if (await isTeamOwnedTrackerType(workspace, row.type, dbOverride)) continue;
+    await removeTrackerTypeDef(workspace, row.type, dbOverride);
+  }
+}
+
+/**
+ * Team-owned types whose shared definition has never been written to this
+ * workspace's YAML dir. Until a type is projected there is no baseline to diff a
+ * hand edit against, so edits to its file are indistinguishable from a leftover
+ * and get ignored — the projection is what makes a shared type locally editable.
+ */
+export async function listUnprojectedTeamOwnedTrackerTypes(
+  workspace: string,
+  dbOverride?: TypeDefDb,
+): Promise<Array<{ type: string; model: string }>> {
+  try {
+    const db = dbOverride ?? getDatabase();
+    if (!db) return [];
+    const result = (await db.query(
+      `SELECT type, model FROM tracker_type_defs
+        WHERE workspace = $1
+          AND deleted_at IS NULL
+          AND sync_id IS NOT NULL
+          AND synced_model IS NULL`,
+      [workspace],
+    )) as { rows?: Array<{ type: string; model: string }> } | undefined;
+    return result?.rows ?? [];
+  } catch (err) {
+    logger.main.warn('[trackerTypeDefStore] listUnprojected failed for', workspace, err);
+    return [];
+  }
+}
+
+/**
+ * Types the team has RETRACTED (tombstoned upstream) that this workspace may
+ * still hold a YAML file for. A member who keeps that file would silently keep
+ * running the deleted definition, which is how a team-wide schema reset fails to
+ * reach exactly the people who needed it (#1178).
+ */
+export async function listRetractedTeamOwnedTrackerTypes(
+  workspace: string,
+  dbOverride?: TypeDefDb,
+): Promise<string[]> {
+  try {
+    const db = dbOverride ?? getDatabase();
+    if (!db) return [];
+    const result = (await db.query(
+      `SELECT type FROM tracker_type_defs
+        WHERE workspace = $1 AND deleted_at IS NOT NULL AND sync_id IS NOT NULL`,
+      [workspace],
+    )) as { rows?: Array<{ type: string }> } | undefined;
+    return (result?.rows ?? []).map((r) => r.type);
+  } catch (err) {
+    logger.main.warn('[trackerTypeDefStore] listRetracted failed for', workspace, err);
+    return [];
+  }
+}
+
+/** True when the team's schema room has a version of this type. */
+export async function isTeamOwnedTrackerType(
+  workspace: string,
+  type: string,
+  dbOverride?: TypeDefDb,
+): Promise<boolean> {
+  try {
+    const db = dbOverride ?? getDatabase();
+    if (!db) return false;
+    const row = await readOwnership(db, workspace, type);
+    return row?.sync_id != null;
+  } catch {
+    return false;
   }
 }
 
@@ -287,7 +663,7 @@ export interface RemoteTrackerSchemaDef {
 
 export type ApplyRemoteSchemaResult =
   | { applied: true; deleted: boolean }
-  | { applied: false; reason: 'stale' | 'invalid' | 'error' };
+  | { applied: false; reason: 'stale' | 'invalid' | 'error' | 'personal' };
 
 /**
  * Apply a schema definition received from a peer into the local mirror, in the
@@ -322,15 +698,43 @@ export async function applyRemoteTrackerSchemaDef(
     if (!db) return { applied: false, reason: 'error' };
 
     const existing = (await db.query(
-      `SELECT sync_id FROM tracker_type_defs WHERE workspace = $1 AND type = $2`,
+      `SELECT sync_id, model, sync_status, deleted_at FROM tracker_type_defs
+        WHERE workspace = $1 AND type = $2`,
       [workspace, def.type],
-    )) as { rows?: Array<{ sync_id: number | null }> } | undefined;
-    const currentSyncId = existing?.rows?.[0]?.sync_id ?? null;
+    )) as {
+      rows?: Array<{
+        sync_id: number | null;
+        model: string;
+        sync_status: string | null;
+        deleted_at: string | null;
+      }>;
+    } | undefined;
+    const row = existing?.rows?.[0];
+    const currentSyncId = row?.sync_id ?? null;
 
-    // Only newer server versions win. NULL (a local yaml/cli row that was never
+    // Newer server versions always win. NULL (a local yaml/cli row that was never
     // synced) is older than any assigned syncId, so the first delta overwrites it.
-    if (currentSyncId != null && currentSyncId >= def.syncId) {
+    if (currentSyncId != null && currentSyncId > def.syncId) {
       return { applied: false, reason: 'stale' };
+    }
+
+    // Same version: the schema bootstrap re-offers every definition on each
+    // connect, so this is where a diverged row heals. Re-apply only when our
+    // copy actually differs from the server's -- otherwise every reconnect would
+    // rewrite the row and its YAML projection for nothing (#1178).
+    if (currentSyncId != null && currentSyncId === def.syncId) {
+      // A local edit awaiting push is the one thing the server's copy must not
+      // overwrite: it has not been offered to the server yet, and pushPending
+      // runs right after bootstrap.
+      const hasUnpushedEdit = row?.sync_status === 'local' || row?.sync_status === 'pending';
+      if (hasUnpushedEdit) return { applied: false, reason: 'stale' };
+
+      const wantsDelete = def.model === null;
+      const alreadyDeleted = row?.deleted_at != null;
+      const sameContent = wantsDelete
+        ? alreadyDeleted
+        : !alreadyDeleted && sameModel(row?.model, def.model);
+      if (sameContent) return { applied: false, reason: 'stale' };
     }
 
     if (def.model === null) {
@@ -343,6 +747,10 @@ export async function applyRemoteTrackerSchemaDef(
       return { applied: true, deleted: true };
     }
 
+    // `synced_model` resets to NULL: the local YAML file no longer holds this
+    // definition. The caller writes the model back to disk and calls
+    // markTrackerTypeDefProjected; until it does, whatever is on disk is stale
+    // and must not be mistaken for a local edit.
     await db.query(
       `INSERT INTO tracker_type_defs (id, workspace, type, model, source, updated, sync_id, sync_status)
        VALUES ($1, $2, $3, $4, 'sync', NOW(), $5, 'synced')
@@ -352,6 +760,7 @@ export async function applyRemoteTrackerSchemaDef(
              updated = NOW(),
              sync_id = EXCLUDED.sync_id,
              sync_status = 'synced',
+             synced_model = NULL,
              deleted_at = NULL`,
       [typeDefId(workspace, def.type), workspace, def.type, def.model, def.syncId],
     );
@@ -377,11 +786,11 @@ export interface UnsyncedTrackerSchemaDef {
  * emit a tombstone. `source = 'sync'` rows are stamped 'synced' and excluded —
  * they came FROM a peer and must never be echoed back.
  *
- * Sync-mode gate: a type whose model declares `sync.mode: 'local'` never leaves
+ * Sharing gate: a type whose model declares `sharing: 'personal'` never leaves
  * the machine — its override (or override-deletion) is filtered out here, the
  * single push choke point. The `model` column retains the last-known JSON even
- * for a tombstoned row, so the mode is readable for deletions too. Types with no
- * explicit sync policy keep their prior behavior (not filtered) so this never
+ * for a tombstoned row, so sharing is readable for deletions too. Types with no
+ * explicit sharing value keep their prior behavior (not filtered) so this never
  * silently stops an existing custom type from syncing.
  */
 export async function listUnsyncedTrackerSchemaDefs(
@@ -398,7 +807,7 @@ export async function listUnsyncedTrackerSchemaDefs(
     )) as { rows?: Array<{ type: string; model: string; deleted_at: string | null }> } | undefined;
     const out: UnsyncedTrackerSchemaDef[] = [];
     for (const r of result?.rows ?? []) {
-      if (schemaSyncModeIsLocal(r.model)) continue;
+      if (schemaSharingIsPersonal(r.model)) continue;
       out.push({
         type: r.type,
         model: r.deleted_at ? null : r.model,
@@ -413,41 +822,20 @@ export async function listUnsyncedTrackerSchemaDefs(
 }
 
 /**
- * True when a stored model JSON declares `sync.mode: 'local'`. The `model` column
+ * True when a stored model JSON declares `sharing: 'personal'`. The `model` column
  * is JSON TEXT (a string on both backends), but parse defensively per DATABASE.md.
  * Only an EXPLICIT local mode is treated as local — undefined/other modes are not
  * filtered, preserving existing custom-type sync behavior.
  */
-function schemaSyncModeIsLocal(rawModel: unknown): boolean {
+function schemaSharingIsPersonal(rawModel: unknown): boolean {
   try {
     const parsed = typeof rawModel === 'string' ? JSON.parse(rawModel) : rawModel;
-    return (parsed as { sync?: { mode?: string } } | null)?.sync?.mode === 'local';
+    const model = parsed as { sharing?: string; sync?: { mode?: string } } | null;
+    // Legacy JSON rows remain readable during the same compatibility window as
+    // legacy YAML; all new writes carry `sharing`.
+    return model?.sharing === 'personal' || model?.sync?.mode === 'local';
   } catch {
     return false;
-  }
-}
-
-/** Highest schema syncId applied in this workspace, used as the bootstrap cursor. */
-export async function getMaxTrackerSchemaSyncId(
-  workspace: string,
-  dbOverride?: TypeDefDb,
-): Promise<number> {
-  try {
-    const db = dbOverride ?? getDatabase();
-    if (!db) return 0;
-    const result = (await db.query(
-      `SELECT MAX(sync_id) AS max_sync_id
-         FROM tracker_type_defs
-        WHERE workspace = $1
-          AND sync_id IS NOT NULL`,
-      [workspace],
-    )) as { rows?: Array<{ max_sync_id: number | string | null }> } | undefined;
-    const raw = result?.rows?.[0]?.max_sync_id;
-    const value = typeof raw === 'string' ? Number(raw) : raw;
-    return Number.isFinite(value) ? Number(value) : 0;
-  } catch (err) {
-    logger.main.warn('[trackerTypeDefStore] getMaxTrackerSchemaSyncId failed for', workspace, err);
-    return 0;
   }
 }
 

@@ -43,16 +43,19 @@ vi.mock('@nimbalyst/runtime/sync', async (importOriginal) => {
     }
     setLocalAwareness() {}
     setRoomMetadata() {}
-    acceptRemoteChanges() {}
-    rejectRemoteChanges() {}
   }
 
   return { ...actual, DocumentSyncProvider: FakeDocumentSyncProvider };
 });
 
 vi.mock('../../utils/collabDocumentOpener', () => ({
-  resolveCollabConfigForUri: vi.fn(
-    async (_workspacePath: string, _uri: string, documentId: string) => ({
+  resolveDesktopCollabConfigForUri: vi.fn(
+    async (scopeKey: string, _uri: string, documentId: string) => ({
+      scope: {
+        scopeKey,
+        orgId: 'org-1',
+        indexConfig: { serverUrl: 'wss://test.invalid', teamMemberId: 'user-1' },
+      },
       serverUrl: 'wss://test.invalid',
       getJwt: async () => 'jwt',
       orgId: 'org-1',
@@ -68,7 +71,7 @@ vi.mock('../../utils/collabDocumentOpener', () => ({
 }));
 
 vi.mock('../../store/atoms/collabDocuments', () => ({
-  getTeamSyncProvider: () => ({
+  getTeamSyncProviderForScopeKey: () => ({
     getTeamState: () => ({
       members: [
         {
@@ -113,10 +116,9 @@ function TrackerBodyEditor(): React.ReactElement {
     itemId: ITEM_ID,
     title: 'NIM-COMMENT',
     workspacePath: '/workspace',
-    syncMode: 'shared',
-    teamMemberCount: 2,
+    sharing: 'team',
     teamOrgId: 'org-1',
-    itemShared: true,
+    itemPublished: true,
   });
 
   const config = useMemo<EditorConfig | null>(() => {

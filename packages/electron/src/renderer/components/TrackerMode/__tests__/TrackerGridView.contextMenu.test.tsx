@@ -68,7 +68,7 @@ function renderGrid(overrides: Record<string, unknown> = {}) {
     <TrackerGridView
       filterType="bug"
       overrideItems={ITEMS}
-      columnConfig={{ visibleColumns: ['title', 'status'], columnWidths: {}, groupBy: null }}
+      columnConfig={{ visibleColumns: ['title', 'status'], columnWidths: {} }}
       {...overrides}
     />,
   );
@@ -182,7 +182,7 @@ describe('TrackerGridView favorites', () => {
     expect(onToggleFavorite).toHaveBeenCalledWith('bug-1');
   });
 
-  it('omits the star when the surface does not support favorites', async () => {
+  it('omits the star but keeps the title action when favorites are unsupported', async () => {
     renderGrid({});
 
     await waitFor(() => expect(gridElement.columns).toBeTruthy());
@@ -197,6 +197,8 @@ describe('TrackerGridView favorites', () => {
       model: { __trackerItemId: 'bug-1', title: 'Title bug-1' },
     });
 
-    expect(cell.props.class).toBe('tracker-grid-cell-text');
+    expect(cell.props.class).toBe('tracker-grid-cell-title');
+    expect(cell.children[0].props.class).toBe('tracker-grid-cell-text');
+    expect(cell.children[1].props.class).toContain('tracker-grid-cell-menu-title');
   });
 });

@@ -15,25 +15,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dialogRef } from '../../../contexts/DialogContext';
 import { DIALOG_IDS } from '../../../dialogs/registry';
+import {
+  organizationDirectoryAtom,
+  personalAccountsAtom,
+} from '../../../store/atoms/settingsDomains';
 import { teamInboxSnapshotAtom } from '../../../store/atoms/teamInbox';
 import { OrgUserIndicator } from '../OrgUserIndicator';
 
-vi.mock('@nimbalyst/runtime', () => ({
-  MaterialSymbol: ({ icon }: { icon: string }) => <span data-icon={icon} />,
-}));
-
-const ORG = { orgId: 'org-1', name: 'Acme Robotics' };
+const ORG = { orgId: 'org-1', name: 'Acme Robotics', role: 'owner' };
+const ACCOUNT = {
+  personalOrgId: 'account-1',
+  personalUserId: 'user-1',
+  email: 'ada@example.com',
+  isSyncAccount: true,
+  sessionStatus: 'active' as const,
+};
 
 function installApi(overrides: Record<string, unknown> = {}) {
   const api = {
-    stytch: {
-      getAccounts: vi.fn().mockResolvedValue([
-        { personalOrgId: 'account-1', email: 'ada@example.com', isSyncAccount: true, sessionStatus: 'active' },
-      ]),
-    },
-    organization: {
-      list: vi.fn().mockResolvedValue({ success: true, teams: [ORG] }),
-    },
     openAccountSettings: vi.fn().mockResolvedValue({ success: true }),
     team: { openManagementWindow: vi.fn().mockResolvedValue({ success: true }) },
     ...overrides,
@@ -54,6 +53,10 @@ function snapshotWithPresence(status: 'online' | 'away' | 'offline' | null) {
 function renderIndicator(snapshot = snapshotWithPresence('online')) {
   const store = createStore();
   store.set(teamInboxSnapshotAtom, snapshot as never);
+  // Both are hydrated (and emptied on sign-out) by initStytchAuthListeners,
+  // which App runs for the org window too.
+  store.set(personalAccountsAtom, [ACCOUNT]);
+  store.set(organizationDirectoryAtom, [ORG] as never);
   const onOpenWebConsole = vi.fn();
   const onOpenPreferences = vi.fn();
   render(
@@ -67,7 +70,7 @@ function renderIndicator(snapshot = snapshotWithPresence('online')) {
       />
     </Provider>,
   );
-  return { onOpenWebConsole, onOpenPreferences };
+  return { onOpenWebConsole, onOpenPreferences, store };
 }
 
 async function openMenu() {
@@ -102,6 +105,23 @@ describe('OrgUserIndicator profile menu', () => {
     expect(api.openAccountSettings).not.toHaveBeenCalled();
     // The menu closes behind the dialog it just opened.
     await waitFor(() => expect(screen.queryByTestId('org-user-popover')).toBeNull());
+  });
+
+  it('stops naming the organization once the user signs out', async () => {
+    installApi();
+    dialogRef.current = { open: vi.fn() } as unknown as typeof dialogRef.current;
+    const { store } = renderIndicator();
+    await openMenu();
+    expect(screen.getByTestId('org-user-popover-organization-row').textContent)
+      .toContain('Acme Robotics');
+
+    // Sign-out empties both directories. The menu used to hold whatever it had
+    // fetched on mount, so it kept naming an org the window no longer had.
+    store.set(personalAccountsAtom, []);
+    store.set(organizationDirectoryAtom, []);
+
+    await waitFor(() => expect(screen.getByTestId('org-user-popover-organization-row').textContent)
+      .not.toContain('Acme Robotics'));
   });
 
   it('still bounces the account row to the project window', async () => {

@@ -10,6 +10,32 @@
 export const MAX_RICH_COMMENT_TEXT_BYTES = 32 * 1024;
 /** Maximum UTF-8 bytes in the complete JSON-encoded body envelope. */
 export const MAX_RICH_COMMENT_BODY_ENVELOPE_BYTES = 64 * 1024;
+/**
+ * Bounds discussion growth inside a feedback request's encrypted single-row
+ * state, measured in bytes because bytes are what fails.
+ *
+ * The whole request -- asks, responses, discussion -- is one encrypted row in
+ * the request's Durable Object, rewritten on every mutation, so an oversize
+ * discussion does not merely block comments: it makes responding and closing
+ * throw too, for whoever writes next.
+ *
+ * 1 MiB of plaintext discussion is about 1,398,140 stored bytes after the
+ * AES-GCM tag, IV, and base64 expansion. The room's 1.75 MiB total-state guard
+ * therefore leaves about 437 KB of encrypted-envelope space for asks,
+ * responses, and metadata, plus a separate 256 KiB safety margin below the
+ * 2 MiB SQLite-row limit. At ordinary comment sizes the secondary count guard
+ * below is what stops array growth first; this byte budget catches large bodies.
+ */
+export const MAX_FEEDBACK_DISCUSSION_BYTES = 1024 * 1024;
+/**
+ * Secondary guard on the same state, cheap and O(1).
+ *
+ * The byte budget is the real bound; this one keeps a client that loops from
+ * pushing thousands of near-empty comments into an array every peer renders
+ * and every mutation re-serializes. It sits an order of magnitude above any
+ * discussion a handful of recipients could hold before the request's deadline.
+ */
+export const MAX_FEEDBACK_DISCUSSION_COMMENTS = 500;
 export const MAX_RESOURCE_REFS_PER_MESSAGE = 16;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 8;
 /**
@@ -37,12 +63,19 @@ export type Actor = {
 
 export type CommentRef = {
   orgId: string;
+  /**
+   * `feedbackRequest` names a source that is not a conversation: the request
+   * resource itself. A delivery about one is routed through the same Inbox
+   * fanout as every other source, so it needs a spelling here even though the
+   * thing being delivered asks for a typed answer rather than stating something.
+   */
   sourceKind:
     | "roomMessage"
     | "documentDiscussion"
     | "dmMessage"
     | "trackerComment"
-    | "documentInlineComment";
+    | "documentInlineComment"
+    | "feedbackRequest";
   sourceId: string;
   commentId: string;
   threadId?: string;
@@ -147,7 +180,8 @@ export type ResourceRef = {
     | "file"
     | "commit"
     | "pullRequest"
-    | "conversation";
+    | "conversation"
+    | "feedbackRequest";
   sourceId: string;
   projectId?: string;
   messageId?: string;

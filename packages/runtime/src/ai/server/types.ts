@@ -72,6 +72,9 @@ export interface DocumentContext {
 
   /** Durable authorship provenance for prompt search and audit surfaces. */
   promptProvenance?: PromptProvenance;
+
+  /** Durable reciprocal links for work dispatched from a team conversation. */
+  agentWakeOrigin?: AgentWakePromptOrigin;
 }
 
 export type PromptActor = 'human' | 'agent' | 'system';
@@ -88,6 +91,17 @@ export interface PromptProvenance {
   origin: PromptProvenanceOrigin;
   originSessionId?: string;
   queuedPromptId?: string;
+  originOrgId?: string;
+  originConversationId?: string;
+  originMessageId?: string;
+}
+
+export interface AgentWakePromptOrigin {
+  policyKey: string;
+  orgId: string;
+  conversationId: string;
+  messageIds: string[];
+  targets: Array<{ deliveryId: string; sessionId: string }>;
 }
 
 export interface ChatAttachment {

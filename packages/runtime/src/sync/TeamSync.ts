@@ -36,6 +36,7 @@ import type {
   ServerTeamState,
   SharedDocumentTypeMetadataV2,
 } from './teamSyncTypes';
+import { asTeamMemberId } from '../auth/jwtScopes';
 import type { BoundedPreview } from '@nimbalyst/collab-protocol';
 import { appendSyncClientParams } from './syncClientInfo';
 
@@ -73,6 +74,16 @@ export class TeamSyncProvider {
 
   /** Resolvers waiting for the next decrypted folder-index snapshot. */
   private folderResyncWaiters: Array<(folders: FolderNode[] | null) => void> = [];
+
+  /**
+   * Resolvers waiting for a `docIndexRegistered` ack, keyed by document id.
+   *
+   * A document's room 404s until its index row exists, so anything that writes
+   * into a freshly created document has to know when registration landed
+   * (NIM-2472). The index broadcast excludes the registering socket, so this
+   * ack is the only signal available to its author.
+   */
+  private registerAckWaiters = new Map<string, Array<(acked: boolean) => void>>();
 
   /**
    * Messages queued while disconnected. Unlike DocumentSync (which queues CRDT
@@ -159,6 +170,11 @@ export class TeamSyncProvider {
     const folderWaiters = this.folderResyncWaiters;
     this.folderResyncWaiters = [];
     for (const waiter of folderWaiters) waiter(null);
+    const registerWaiters = [...this.registerAckWaiters.values()].flat();
+    this.registerAckWaiters.clear();
+    // Unconfirmed, not confirmed-failed: a destroyed provider says nothing
+    // about whether the row landed.
+    for (const waiter of registerWaiters) waiter(false);
   }
 
   getStatus(): TeamSyncStatus {
@@ -187,14 +203,32 @@ export class TeamSyncProvider {
     return { encryptedTitle: title, titleIv: '' };
   }
 
+  /**
+   * Register a document in the org's index.
+   *
+   * Resolves `true` once the server confirms the row is committed. Callers that
+   * are about to write into the document's room MUST await this: `DocumentRoom`
+   * binds the id through `document_index` and 404s until the row exists
+   * (NIM-2472).
+   *
+   * Resolves `false` — without throwing — when no ack arrives before
+   * `ackTimeoutMs`. That happens against a server predating the ack, and when
+   * the message was queued offline. The registration itself is unaffected
+   * (the mutation is idempotent and the offline queue still carries it); the
+   * caller decides whether to proceed optimistically.
+   */
   async registerDocument(
     documentId: string,
     title: string,
     documentType: string,
     parentFolderId: string | null = null,
     metadata?: SharedDocumentTypeMetadataV2,
-  ): Promise<void> {
+    ackTimeoutMs = 6000,
+  ): Promise<boolean> {
     const { encryptedTitle, titleIv } = await this.encodeTitleForWire(title);
+    // Register the waiter BEFORE sending: the ack can land in the same tick the
+    // socket flushes, and a waiter added afterwards would miss it.
+    const acked = this.waitForRegisterAck(documentId, ackTimeoutMs);
     this.send({
       type: 'docIndexRegister', documentId, encryptedTitle, titleIv, documentType,
       ...metadata,
@@ -203,6 +237,37 @@ export class TeamSyncProvider {
       projectId: this.config.teamProjectId ?? null,
       parentFolderId,
     });
+    return acked;
+  }
+
+  private waitForRegisterAck(documentId: string, timeoutMs: number): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const done = (acked: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const waiters = this.registerAckWaiters.get(documentId);
+        if (waiters) {
+          const remaining = waiters.filter((waiting) => waiting !== waiter);
+          if (remaining.length > 0) this.registerAckWaiters.set(documentId, remaining);
+          else this.registerAckWaiters.delete(documentId);
+        }
+        resolve(acked);
+      };
+      const waiter = (acked: boolean) => done(acked);
+      const timer = setTimeout(() => done(false), timeoutMs);
+      const existing = this.registerAckWaiters.get(documentId);
+      if (existing) existing.push(waiter);
+      else this.registerAckWaiters.set(documentId, [waiter]);
+    });
+  }
+
+  private resolveRegisterAck(documentId: string, acked: boolean): void {
+    const waiters = this.registerAckWaiters.get(documentId);
+    if (!waiters) return;
+    this.registerAckWaiters.delete(documentId);
+    for (const waiter of waiters) waiter(acked);
   }
 
   async updateDocumentTitle(documentId: string, newTitle: string): Promise<void> {
@@ -370,6 +435,12 @@ export class TeamSyncProvider {
         case 'conversationDescriptorUpdated':
           this.config.onConversationDescriptorUpdated?.(message.descriptor);
           break;
+        case 'feedbackIndexSyncResponse':
+          this.config.onFeedbackIndexLoaded?.(message.entries);
+          break;
+        case 'feedbackIndexBroadcast':
+          this.config.onFeedbackIndexChanged?.(message.entry);
+          break;
         case 'memberAdded':
           this.handleMemberAdded(message);
           break;
@@ -381,6 +452,9 @@ export class TeamSyncProvider {
           break;
         case 'docIndexSyncResponse':
           await this.handleDocIndexSyncResponse(message);
+          break;
+        case 'docIndexRegistered':
+          this.resolveRegisterAck(message.documentId, true);
           break;
         case 'docIndexBroadcast':
           await this.handleDocIndexBroadcast(message);
@@ -482,6 +556,7 @@ export class TeamSyncProvider {
     // `folderIndexSync` path too.
     this.send({ type: 'docIndexSync' });
     this.send({ type: 'folderIndexSync' });
+    this.send({ type: 'feedbackIndexSync' });
 
   }
 
@@ -507,7 +582,7 @@ export class TeamSyncProvider {
     if (this.teamState) {
       this.teamState.members = this.teamState.members.filter(m => m.userId !== msg.userId);
     }
-    this.config.onMemberRemoved?.(msg.userId);
+    this.config.onMemberRemoved?.(asTeamMemberId(msg.userId));
   }
 
   private handleMemberRoleChanged(msg: TeamMemberRoleChangedMessage): void {
@@ -515,7 +590,7 @@ export class TeamSyncProvider {
       const member = this.teamState.members.find(m => m.userId === msg.userId);
       if (member) member.role = msg.role;
     }
-    this.config.onMemberRoleChanged?.(msg.userId, msg.role);
+    this.config.onMemberRoleChanged?.(asTeamMemberId(msg.userId), msg.role);
   }
 
   private async handleDocIndexSyncResponse(msg: TeamDocIndexSyncResponseMessage): Promise<void> {
@@ -544,6 +619,7 @@ export class TeamSyncProvider {
       );
       entry = {
         documentId: msg.document.documentId,
+        projectId: msg.document.projectId ?? null,
         title: '',
         documentType: msg.document.documentType,
         metadataVersion: msg.document.metadataVersion,
@@ -571,7 +647,11 @@ export class TeamSyncProvider {
   }
 
   private handleProjectAccessChanged(msg: TeamProjectAccessChangedMessage): void {
-    this.config.onProjectAccessChanged?.(msg.projectId, msg.userId, msg.projectRole);
+    this.config.onProjectAccessChanged?.(
+      msg.projectId,
+      asTeamMemberId(msg.userId),
+      msg.projectRole,
+    );
   }
 
   private handleDocIndexRemoveBroadcast(msg: TeamDocIndexRemoveBroadcastMessage): void {
@@ -700,6 +780,7 @@ export class TeamSyncProvider {
         }
         results.push({
           documentId: e.documentId,
+          projectId: e.projectId ?? null,
           title: '',
           documentType: e.documentType,
           metadataVersion: e.metadataVersion,
@@ -731,6 +812,7 @@ export class TeamSyncProvider {
     );
     return {
       documentId: encrypted.documentId,
+      projectId: encrypted.projectId ?? null,
       title,
       documentType: encrypted.documentType,
       metadataVersion: encrypted.metadataVersion,

@@ -12,7 +12,7 @@ This document explains how to create and maintain walkthrough guides and help co
 | `diff-mode-intro` | Reviewing AI Changes | 2 | files | 15 | Diff approval bar is visible |
 | `git-commit-mode-intro` | Git Commit Modes | 1 | agent | 15 | Commit mode toggle is visible (has changes) |
 | `attach-files-intro` | Attach Files | 1 | agent | 18 | AI input is visible |
-| `ai-sessions-button` | AI Sessions Button | 1 | files | 20 | AI sessions button visible, not in diff mode |
+| `ai-sessions-button` | AI Sessions Button | 1 | files | 20 | Document session control visible, not in diff mode |
 | `model-picker-intro` | Model Selection | 1 | agent | 20 | Model picker is visible |
 | `files-scope-intro` | File Scope Modes | 1 | agent | 20 | Files scope dropdown is visible |
 | `plan-mode-intro` | Plan Mode | 1 | agent | 22 | Mode toggle is visible |

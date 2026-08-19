@@ -22,7 +22,10 @@ import {
   setTrackerModeLayoutAtom,
 } from '../atoms/trackers';
 import { activeWorkspacePathAtom } from '../atoms/openProjects';
+import { orgProjectWalkRefreshAtom } from '../atoms/orgProjectWalk';
+import { openSettingsCommandAtom } from '../atoms/settingsNavigation';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
+import { trackTeamAnalyticsEvent } from '../../utils/teamAnalytics';
 import type { TrackerDeepLinkView } from '../../../shared/trackerDeepLinks';
 
 interface SharedDocPayload {
@@ -54,17 +57,26 @@ function ensureActiveWorkspace(workspacePath: string): void {
 }
 
 function applySharedDocPayload(data: SharedDocPayload): void {
-  if (!data?.documentId || !data?.workspacePath) return;
+  if (!data?.documentId || !data?.orgId || !data?.workspacePath) return;
   ensureActiveWorkspace(data.workspacePath);
   store.set(setWindowModeAtom, 'collab');
-  store.set(pendingCollabDocumentAtom, { documentId: data.documentId, analyticsSource: 'deep_link' });
+  store.set(pendingCollabDocumentAtom, {
+    scopeKey: data.workspacePath,
+    orgId: data.orgId,
+    documentId: data.documentId,
+    analyticsSource: 'deep_link',
+  });
 }
 
 function applySharedFolderPayload(data: SharedFolderPayload): void {
-  if (!data?.folderId || !data?.workspacePath) return;
+  if (!data?.folderId || !data?.orgId || !data?.workspacePath) return;
   ensureActiveWorkspace(data.workspacePath);
   store.set(setWindowModeAtom, 'collab');
-  store.set(pendingCollabFolderAtom, { folderId: data.folderId });
+  store.set(pendingCollabFolderAtom, {
+    scopeKey: data.workspacePath,
+    orgId: data.orgId,
+    folderId: data.folderId,
+  });
 }
 
 function applyTrackerPayload(data: TrackerPayload): void {
@@ -86,6 +98,127 @@ function applyTrackerPayload(data: TrackerPayload): void {
       selectedType: 'all',
       selectedItemId: data.trackerId,
     });
+  }
+}
+
+/**
+ * Ask the project-walk listener to re-resolve. Membership just changed, so the
+ * org may now have nothing bound to it on this machine.
+ */
+function offerProjectWalk(): void {
+  store.set(orgProjectWalkRefreshAtom, (revision) => revision + 1);
+}
+
+async function trackTeamInviteOutcome(outcome: TeamInviteOutcome): Promise<void> {
+  let projectMatched = false;
+  const workspacePath = store.get(activeWorkspacePathAtom);
+  if (workspacePath && (outcome.status === 'accepted' || outcome.status === 'already-member')) {
+    try {
+      const team = await window.electronAPI.invoke('team:find-for-workspace', workspacePath) as { orgId?: string } | null;
+      projectMatched = team?.orgId === outcome.orgId;
+    } catch {
+      // A failed enrichment must not suppress the resolved invitation event.
+    }
+  }
+  trackTeamAnalyticsEvent('team_invitation_accepted', {
+    surface: 'desktop',
+    entryPoint: 'deep_link',
+    projectMatched,
+    status: outcome.status,
+  });
+}
+
+/**
+ * Team-invitation handoff from the web console. The console has already
+ * accepted the invitation in the browser; main has re-derived what that means
+ * for the signed-in accounts here.
+ */
+type TeamInviteOutcome =
+  | { status: 'accepted'; orgId: string; teamName: string }
+  | { status: 'already-member'; orgId: string; teamName: string }
+  | { status: 'sign-in-required'; orgId: string; email?: string }
+  | { status: 'not-found'; orgId: string; email?: string }
+  | { status: 'error'; orgId: string; message: string };
+
+/**
+ * Open the Accounts settings panel, which renders the first-sign-in form while
+ * signed out. `scope` is explicit: a scope-less link is resolved against the
+ * route table, and this must not depend on that lookup to reach the right page.
+ */
+function openAccountSignIn(): void {
+  store.set(openSettingsCommandAtom, {
+    category: 'account',
+    scope: 'account',
+    timestamp: Date.now(),
+  });
+}
+
+function applyTeamInviteOutcome(outcome: TeamInviteOutcome): void {
+  if (!outcome?.status) return;
+  void trackTeamInviteOutcome(outcome);
+
+  switch (outcome.status) {
+    case 'accepted':
+      errorNotificationService.showInfo(
+        `You joined ${outcome.teamName}`,
+        'Shared documents, trackers, and projects for this team are now available.',
+        { duration: 8000 }
+      );
+      // A toast is where this used to stop, and the user was then told they had
+      // no organization. Re-resolve so the project walk can offer the org's
+      // project instead.
+      offerProjectWalk();
+      break;
+    case 'already-member':
+      // Also the normal handoff path: the console accepted the invitation
+      // before the app was reached, so this is a confirmation, not a no-op.
+      errorNotificationService.showInfo(
+        `${outcome.teamName} is ready`,
+        'Shared documents, trackers, and projects for this team are available in Nimbalyst.',
+        { duration: 6000 }
+      );
+      offerProjectWalk();
+      break;
+    case 'sign-in-required':
+      // The common first-run path: they installed Nimbalyst because of the
+      // invitation, so send them straight to the account settings that host
+      // sign-in and the pending-invite list. The toast carries the same
+      // destination as a button — the navigation happens behind it, so without
+      // one the warning reads as a dead end.
+      errorNotificationService.showWarning(
+        'Sign in to accept this invitation',
+        outcome.email
+          ? `Sign in to Nimbalyst as ${outcome.email} to join this team.`
+          : 'Sign in to Nimbalyst with the address the invitation was sent to.',
+        { duration: 10000, action: { label: 'Sign in', onClick: openAccountSignIn } }
+      );
+      openAccountSignIn();
+      break;
+    case 'not-found':
+      errorNotificationService.showWarning(
+        'Invitation not available',
+        'This invitation is no longer pending for your account. Ask the team admin to send a new one.',
+        { duration: 8000 }
+      );
+      break;
+    case 'error':
+      errorNotificationService.showError(
+        'Could not accept the invitation',
+        outcome.message,
+        { duration: 8000 }
+      );
+      break;
+  }
+}
+
+async function drainPendingTeamInvite(): Promise<void> {
+  try {
+    const pending = await window.electronAPI.invoke(
+      'deep-link:consume-pending-team-invite'
+    ) as TeamInviteOutcome | null;
+    if (pending) applyTeamInviteOutcome(pending);
+  } catch (err) {
+    console.error('[DeepLink] Failed to consume pending team invite:', err);
   }
 }
 
@@ -203,9 +336,22 @@ export function initDeepLinkListeners(): () => void {
     })
   );
 
+  // Live: team-invitation handoff from the web console. The event is a bare
+  // nudge — the outcome is always read through the consuming IPC below, so a
+  // nudge racing the mount-time drain still applies the invitation once.
+  cleanups.push(
+    window.electronAPI.on('deep-link:team-invite-available', () => {
+      void drainPendingTeamInvite();
+    })
+  );
+
   // Drain any pending payload queued before this listener mounted (newly
   // created window case).
   void drainPendingFor(store.get(activeWorkspacePathAtom));
+
+  // The invite handoff is not workspace-keyed — a cold launch straight from the
+  // email has no active workspace to drain against.
+  void drainPendingTeamInvite();
 
   // Also drain when the active workspace changes — covers users switching
   // projects in the rail to one that has a queued link.

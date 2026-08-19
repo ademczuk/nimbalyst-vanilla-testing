@@ -60,11 +60,11 @@ function navigateToTrackerItem(itemId: string): void {
 
 async function updateItemFields(record: TrackerRecord, updates: Record<string, unknown>): Promise<void> {
   const tracker = globalRegistry.get(record.primaryType);
-  const syncMode = tracker?.sync?.mode || 'local';
   await window.electronAPI.documentService.updateTrackerItem({
     itemId: record.id,
     updates,
-    syncMode,
+    sharing: tracker?.sharing ?? 'personal',
+    draftByDefault: tracker?.draftByDefault ?? false,
   });
 }
 

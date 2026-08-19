@@ -18,7 +18,7 @@ export async function launchTutorialFromMenu(): Promise<void> {
         context: 'menu',
     });
 
-    const result = await startTutorialProject();
+    const result = await startTutorialProject('help_menu');
     if (!result.success) {
         logger.menu.error('Failed to launch tutorial:', result.error);
         dialog.showErrorBox(

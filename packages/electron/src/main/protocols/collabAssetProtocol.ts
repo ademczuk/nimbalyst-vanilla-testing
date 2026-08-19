@@ -275,7 +275,7 @@ function decodeFileNameHeader(raw: string | null): string | null {
   }
 }
 
-interface AssetHandlerDeps {
+export interface AssetHandlerDeps {
   /** Mints (or returns cached) org-scoped JWT for the given org. */
   getOrgScopedJwt: (orgId: string) => Promise<string>;
   /** Resolves the collab server HTTP base URL (e.g. https://sync.nimbalyst.com). */
@@ -305,6 +305,124 @@ interface AssetHandlerDeps {
       fileName: string;
     }): Promise<void>;
   };
+}
+
+export type CollabAssetReadResult =
+  | {
+      ok: true;
+      bytes: Uint8Array;
+      mimeType: string;
+      fileName: string;
+      plaintextSize: string | null;
+    }
+  | {
+      ok: false;
+      kind: "auth" | "offline" | "not-found" | "unreadable" | "upstream";
+      storedFormat?: string | null;
+    };
+
+/**
+ * Read one shared-document asset through the same cache/auth/format-validation
+ * path used by the custom protocol. Callers must supply the already-authorized
+ * org/document identity; renderer authorization remains the protocol/IPC
+ * layer's responsibility.
+ */
+export async function readCollabAsset(
+  identity: { orgId: string; documentId: string; assetId: string },
+  deps: AssetHandlerDeps,
+): Promise<CollabAssetReadResult> {
+  const accountId = deps.getAccountId?.() ?? null;
+  const cacheIdentity = accountId
+    ? { accountId, ...identity }
+    : null;
+  if (cacheIdentity && deps.assetStore) {
+    try {
+      const cached = await deps.assetStore.loadAsset(cacheIdentity);
+      if (cached) {
+        return {
+          ok: true,
+          bytes: cached.bytes,
+          mimeType: cached.mimeType,
+          fileName: cached.fileName,
+          plaintextSize: null,
+        };
+      }
+    } catch (error) {
+      console.warn("[collab-asset] Cached asset unreadable; falling back to server", error);
+    }
+  }
+
+  let jwt: string;
+  try {
+    jwt = await deps.getOrgScopedJwt(identity.orgId);
+  } catch (err) {
+    console.warn("[collab-asset] Failed to mint org JWT:", err);
+    return { ok: false, kind: "auth" };
+  }
+
+  const assetUrl =
+    `${deps.getCollabHttpUrl()}/api/collab/docs/` +
+    `${encodeURIComponent(identity.documentId)}/assets/${encodeURIComponent(identity.assetId)}`;
+  let upstream: Response;
+  try {
+    upstream = await net.fetch(assetUrl, {
+      headers: { Authorization: `Bearer ${jwt}` },
+    });
+  } catch {
+    return { ok: false, kind: "offline" };
+  }
+
+  if (upstream.status === 404) return { ok: false, kind: "not-found" };
+  if (
+    upstream.headers.get(COLLAB_ASSET_HEADER_ERROR_CODE) ===
+    COLLAB_ASSET_UNREADABLE_FORMAT_CODE
+  ) {
+    return {
+      ok: false,
+      kind: "unreadable",
+      storedFormat: upstream.headers.get(COLLAB_ASSET_HEADER_STORED_FORMAT),
+    };
+  }
+  if (!upstream.ok) {
+    const body = await upstream.text().catch(() => "");
+    console.warn("[collab-asset] Upstream fetch failed", upstream.status, body);
+    return { ok: false, kind: "upstream" };
+  }
+
+  const wireFormat =
+    upstream.headers.get(COLLAB_ASSET_HEADER_WIRE_FORMAT) ??
+    COLLAB_ASSET_WIRE_FORMAT_PLAINTEXT;
+  if (wireFormat !== COLLAB_ASSET_WIRE_FORMAT_PLAINTEXT) {
+    return {
+      ok: false,
+      kind: "unreadable",
+      storedFormat: upstream.headers.get(COLLAB_ASSET_HEADER_STORED_FORMAT) ?? wireFormat,
+    };
+  }
+
+  const mimeType =
+    upstream.headers.get(COLLAB_ASSET_HEADER_MIME) ||
+    "application/octet-stream";
+  const plaintextSize = upstream.headers.get(COLLAB_ASSET_HEADER_PLAINTEXT_SIZE);
+  const fileName =
+    decodeFileNameHeader(upstream.headers.get(COLLAB_ASSET_HEADER_FILE_NAME)) ??
+    `${identity.assetId}.bin`;
+  const bytes = new Uint8Array(await upstream.arrayBuffer());
+
+  if (cacheIdentity && deps.assetStore) {
+    try {
+      await deps.assetStore.cacheAsset({
+        identity: cacheIdentity,
+        bytes,
+        mimeType,
+        fileName,
+      });
+    } catch (error) {
+      console.warn("[collab-asset] Failed to cache viewed asset", error);
+    }
+  }
+
+  return { ok: true, bytes, mimeType, fileName, plaintextSize };
 }
 
 function assetResponse(
@@ -349,136 +467,26 @@ export function createCollabAssetRequestHandler(deps: AssetHandlerDeps) {
         return new Response("Forbidden", { status: 403 });
       }
 
-      const accountId = deps.getAccountId?.() ?? null;
-      const cacheIdentity = accountId
-        ? {
-            accountId,
-            orgId,
-            documentId: parsed.documentId,
-            assetId: parsed.assetId,
-          }
-        : null;
-      if (cacheIdentity && deps.assetStore) {
-        // const cacheStartedAt = Date.now(); // used by the commented-out cache metric below
-        try {
-          const cached = await deps.assetStore.loadAsset(cacheIdentity);
-          if (cached) {
-            // console.info("[CollabOfflineMetric]", {
-            //   metric: "asset_cache",
-            //   hit: true,
-            //   durationMs: Date.now() - cacheStartedAt,
-            //   bytes: cached.bytes.byteLength,
-            // });
-            return assetResponse(
-              cached.bytes,
-              cached.mimeType,
-              cached.fileName
-            );
-          }
-          // console.info("[CollabOfflineMetric]", {
-          //   metric: "asset_cache",
-          //   hit: false,
-          //   durationMs: Date.now() - cacheStartedAt,
-          //   bytes: 0,
-          // });
-        } catch (error) {
-          console.warn(
-            "[collab-asset] Cached asset unreadable; falling back to server",
-            error
-          );
+      const result = await readCollabAsset({
+        orgId,
+        documentId: parsed.documentId,
+        assetId: parsed.assetId,
+      }, deps);
+      if (!result.ok) {
+        switch (result.kind) {
+          case "auth": return new Response("Auth failed", { status: 401 });
+          case "offline": return new Response("Attachment unavailable offline", { status: 503 });
+          case "not-found": return new Response("Not found", { status: 404 });
+          case "unreadable": return unreadableFormatResponse(result.storedFormat ?? null);
+          case "upstream": return new Response("Upstream error", { status: 502 });
         }
       }
-
-      let jwt: string;
-      try {
-        jwt = await deps.getOrgScopedJwt(orgId);
-      } catch (err) {
-        console.warn("[collab-asset] Failed to mint org JWT:", err);
-        return new Response("Auth failed", { status: 401 });
-      }
-
-      const assetUrl =
-        `${deps.getCollabHttpUrl()}/api/collab/docs/` +
-        `${encodeURIComponent(parsed.documentId)}/assets/${encodeURIComponent(
-          parsed.assetId
-        )}`;
-      let upstream: Response;
-      try {
-        upstream = await net.fetch(assetUrl, {
-          headers: { Authorization: `Bearer ${jwt}` },
-        });
-      } catch {
-        // A terminal response lets the editor render its broken-asset
-        // placeholder instead of leaving an image request spinning forever.
-        return new Response("Attachment unavailable offline", { status: 503 });
-      }
-
-      if (upstream.status === 404) {
-        return new Response("Not found", { status: 404 });
-      }
-      // The server decrypts under the team key and refuses anything it cannot
-      // decode -- a blob from the retired client-managed lane, or one written
-      // under a key epoch that no longer applies. That refusal is terminal and
-      // arrives with its own structured code; surface it as such instead of a
-      // generic upstream error the editor would keep retrying.
-      if (
-        upstream.headers.get(COLLAB_ASSET_HEADER_ERROR_CODE) ===
-        COLLAB_ASSET_UNREADABLE_FORMAT_CODE
-      ) {
-        return unreadableFormatResponse(
-          upstream.headers.get(COLLAB_ASSET_HEADER_STORED_FORMAT)
-        );
-      }
-      if (!upstream.ok) {
-        const body = await upstream.text().catch(() => "");
-        console.warn(
-          "[collab-asset] Upstream fetch failed",
-          upstream.status,
-          body
-        );
-        return new Response("Upstream error", { status: 502 });
-      }
-
-      // A 200 whose body is not plaintext would be handed straight to an
-      // `<img>` tag. Only the format this client knows how to render is
-      // served; anything else is a server ahead of this build, not an image.
-      const wireFormat =
-        upstream.headers.get(COLLAB_ASSET_HEADER_WIRE_FORMAT) ??
-        COLLAB_ASSET_WIRE_FORMAT_PLAINTEXT;
-      if (wireFormat !== COLLAB_ASSET_WIRE_FORMAT_PLAINTEXT) {
-        return unreadableFormatResponse(
-          upstream.headers.get(COLLAB_ASSET_HEADER_STORED_FORMAT) ?? wireFormat
-        );
-      }
-
-      const mimeType =
-        upstream.headers.get(COLLAB_ASSET_HEADER_MIME) ||
-        "application/octet-stream";
-      const plaintextSize = upstream.headers.get(
-        COLLAB_ASSET_HEADER_PLAINTEXT_SIZE
+      return assetResponse(
+        result.bytes,
+        result.mimeType,
+        result.fileName,
+        result.plaintextSize,
       );
-      const filename =
-        decodeFileNameHeader(
-          upstream.headers.get(COLLAB_ASSET_HEADER_FILE_NAME)
-        ) ?? `${parsed.assetId}.bin`;
-
-      const bytes = new Uint8Array(await upstream.arrayBuffer());
-
-      if (cacheIdentity && deps.assetStore) {
-        try {
-          await deps.assetStore.cacheAsset({
-            identity: cacheIdentity,
-            bytes,
-            mimeType,
-            fileName: filename,
-          });
-        } catch (error) {
-          // Serving a successfully fetched asset is more important than cache
-          // admission; disk-full/retention failures are surfaced separately.
-          console.warn("[collab-asset] Failed to cache viewed asset", error);
-        }
-      }
-      return assetResponse(bytes, mimeType, filename, plaintextSize);
     } catch (err) {
       console.error("[collab-asset] handler error:", err);
       return new Response("Internal error", { status: 500 });

@@ -1,7 +1,15 @@
 // @vitest-environment jsdom
 import React, { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import type { CollabScope } from '@nimbalyst/collab-client/core';
+import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
+
+const SCOPE: CollabScope = {
+  scopeKey: '/workspace',
+  orgId: 'test-org',
+  indexConfig: { serverUrl: 'wss://example.test', teamMemberId: asTeamMemberId('test-user') },
+};
 
 const persistenceMocks = vi.hoisted(() => ({
   load: vi.fn(),
@@ -30,6 +38,9 @@ vi.mock('../../../store/atoms/collabDocuments', async () => {
   const { atom } = await import('jotai');
   return {
     initSharedDocuments: vi.fn(),
+    getElectronCollabHost: () => ({
+      setOpenArtifactAdapter: vi.fn(() => () => undefined),
+    }),
     pendingCollabDocumentAtom: atom(null),
     sharedDocumentsAtom: atom([]),
     sharedFoldersAtom: atom([]),
@@ -41,6 +52,7 @@ vi.mock('../../../store/atoms/collabDiscovery', async () => {
   return {
     changedDocIdsAtom: atom(new Set<string>()),
     hydrateCollabDiscovery: vi.fn(),
+    hydrateCollabPersonalState: vi.fn(async () => undefined),
   };
 });
 
@@ -60,8 +72,12 @@ vi.mock('../../../stores/editorContextStore', () => ({
   getActiveEditorContextItems: vi.fn(() => []),
 }));
 
-vi.mock('../CollabSidebar', () => ({
+vi.mock('@nimbalyst/collab-client/docs-ui', () => ({
   CollabSidebar: () => <div data-testid="collab-sidebar" />,
+}));
+
+vi.mock('../ElectronCollabDocsUIProvider', () => ({
+  ElectronCollabDocsUIProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 vi.mock('../../TabManager/TabManager', () => ({
@@ -141,7 +157,7 @@ describe('CollabMode pinned tab persistence', () => {
     render(
       <TabsProvider workspacePath="/workspace" disablePersistence>
         <CollabModeInner
-          workspacePath="/workspace"
+          scope={SCOPE}
           isActive
           onFileOpen={() => {}}
         />
@@ -149,13 +165,16 @@ describe('CollabMode pinned tab persistence', () => {
       </TabsProvider>,
     );
 
+    expect(screen.getByTestId('collab-sidebar')).toBeTruthy();
+
     await waitFor(() => expect(openerMocks.open).toHaveBeenCalledTimes(2));
     expect(openerMocks.open.mock.calls.map(([options]) => ({
       documentId: options.documentId,
       isPinned: options.isPinned,
+      scope: options.scope,
     }))).toEqual([
-      { documentId: 'pinned-doc', isPinned: true },
-      { documentId: 'regular-doc', isPinned: false },
+      { documentId: 'pinned-doc', isPinned: true, scope: SCOPE },
+      { documentId: 'regular-doc', isPinned: false, scope: SCOPE },
     ]);
 
     await waitFor(() => {
@@ -170,7 +189,7 @@ describe('CollabMode pinned tab persistence', () => {
     });
 
     await waitFor(() => expect(persistenceMocks.persist).toHaveBeenCalledWith(
-      '/workspace',
+      SCOPE,
       [
         expect.objectContaining({ documentId: 'pinned-doc', isPinned: true }),
         expect.objectContaining({ documentId: 'regular-doc', isPinned: false }),
@@ -186,7 +205,7 @@ describe('CollabMode pinned tab persistence', () => {
       <TabsProvider workspacePath="/workspace" disablePersistence>
         <CollabModeInner
           ref={ref}
-          workspacePath="/workspace"
+          scope={SCOPE}
           isActive
           onFileOpen={() => {}}
           onPanelStateChange={onPanelStateChange}

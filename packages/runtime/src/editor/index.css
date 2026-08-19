@@ -6,7 +6,14 @@
  *
  */
 
-@import 'https://fonts.googleapis.com/css?family=Reenie+Beanie';
+/*
+ * The Lexical playground's Google Fonts import is deliberately absent. It fed
+ * only `.sticky-note`, which no component in this repo renders, and it made
+ * every editor surface -- including the web console's signed-out landing page
+ * -- fetch a stylesheet from a third party. The web console's CSP would have to
+ * name fonts.googleapis.com to allow it back; carry the font locally instead if
+ * a sticky-note surface ever ships.
+ */
 @import './themes/NimbalystTheme.css';
 
 .nimbalyst-editor {

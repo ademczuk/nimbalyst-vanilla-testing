@@ -45,53 +45,51 @@ export function resolveRoleFieldName(type: string, role: TrackerSchemaRole): str
 }
 
 /**
- * Whether a tracker item is shared with the team.
- * - `shared`: item participates in team collaboration.
- * - `local`: item stays on this device / project only.
- * - `n/a`: the tracker type never syncs (sync mode `local`), so sharing
- *   doesn't apply.
+ * Whether a tracker item is published to the team.
+ * - `published`: item participates in team collaboration.
+ * - `draft`: item stays local until it is published.
+ * - `n/a`: the tracker is personal, so publication does not apply.
  */
-export type TrackerItemShareState = 'shared' | 'local' | 'n/a';
+export type TrackerItemPublicationState = 'published' | 'draft' | 'n/a';
 
 /**
- * Determine whether a tracker item is shared with the team.
+ * Determine whether a tracker item is published to the team.
  *
- * - `shared`-mode types: every item is always shared.
- * - `local`-mode types: sharing never applies (returns `n/a`).
- * - `hybrid`-mode types: per-item, driven by the explicit `share` flag
- *   (surfaced under `fields` as `{ status, body }` or the legacy
- *   `fields.shared === true`). Items pushed to a room before the explicit flag
- *   existed (syncStatus `synced`/`pending`) count as shared so they keep
+ * - Personal trackers: publication never applies (returns `n/a`).
+ * - Team trackers: the existing per-item bit is Draft/Published, with
+ *   `draftByDefault` deciding the state of items that do not yet carry an
+ *   explicit value. Items pushed to a room before that flag existed
+ *   (syncStatus `synced`/`pending`) count as published so they keep
  *   collaborating.
  *
  * Pure (no React/host deps) so the table column, the item detail view, and
  * non-React code all agree on one definition.
  */
-export function getItemShareState(record: TrackerRecord): TrackerItemShareState {
-  const mode = globalRegistry.get(record.primaryType ?? '')?.sync?.mode ?? 'local';
-  if (mode === 'shared') return 'shared';
-  if (mode === 'local') return 'n/a';
-  // hybrid: per-item
+export function getItemPublicationState(record: TrackerRecord): TrackerItemPublicationState {
+  const model = globalRegistry.get(record.primaryType ?? '');
+  if (model?.sharing !== 'team') return 'n/a';
   const f = (record.fields ?? {}) as Record<string, any>;
   const share = f.share && typeof f.share === 'object' ? f.share : null;
-  // An EXPLICIT flag is authoritative -- trust it immediately (so an unshare
-  // reads as local even before the room state propagates).
+  // This is the existing per-item bit, expressed as Draft/Published rather than
+  // adding another state alongside it.
   const hasExplicit =
-    f.shared === true ||
+    typeof f.shared === 'boolean' ||
     (share && (share.status === 'team' || share.status === 'private' || share.body === 'team' || share.body === 'private'));
   if (hasExplicit) {
-    return (f.shared === true || share?.status === 'team' || share?.body === 'team') ? 'shared' : 'local';
+    return (f.shared === true || share?.status === 'team' || share?.body === 'team') ? 'published' : 'draft';
   }
-  // No explicit flag: a legacy item already pushed to the room counts as shared.
-  return (record.syncStatus === 'synced' || record.syncStatus === 'pending') ? 'shared' : 'local';
+  // Already-synced legacy items remain published; otherwise the tracker default
+  // determines the initial state.
+  if (record.syncStatus === 'synced' || record.syncStatus === 'pending') return 'published';
+  return model.draftByDefault ? 'draft' : 'published';
 }
 
 /**
  * Convenience boolean: is this item actively shared with the team?
  * `local` and `n/a` both read as not-shared.
  */
-export function isItemSharedWithTeam(record: TrackerRecord): boolean {
-  return getItemShareState(record) === 'shared';
+export function isItemPublished(record: TrackerRecord): boolean {
+  return getItemPublicationState(record) === 'published';
 }
 
 /**

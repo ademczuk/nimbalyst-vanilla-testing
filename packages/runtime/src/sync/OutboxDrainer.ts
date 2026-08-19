@@ -51,6 +51,10 @@ const CONFIRMED_REVOCATION_CODES = new Set([
   "access_revoked",
   "not_a_member",
   "document_access_revoked",
+  // A role that permits reading but not editing is a settled answer, not a
+  // transient one: retrying replays the same refused update on every
+  // reconnect, forever, instead of telling the user the document is read-only.
+  "document_read_only",
 ]);
 
 /** Unknown and write-barrier codes are retryable by design. */

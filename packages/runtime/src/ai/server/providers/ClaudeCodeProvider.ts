@@ -31,6 +31,7 @@ import { parse as parseShellCommand } from 'shell-quote';
 
 import { BaseAgentProvider } from './BaseAgentProvider';
 import {
+  AIProviderType,
   DocumentContext,
   ProviderConfig,
   ProviderCapabilities,
@@ -49,10 +50,12 @@ import {
   CLAUDE_CODE_SAFE_FALLBACK_MODEL,
   baseContextWindowForVariant,
 } from '../../modelConstants';
+import type { InterruptTurnResult } from '../AIProvider';
 import { isBedrockToolSearchError } from '../utils/errorDetection';
 import { AgentMessagesRepository } from '../../../storage/repositories/AgentMessagesRepository';
 import { TranscriptMigrationRepository } from '../../../storage/repositories/TranscriptMigrationRepository';
 import { TeammateManager, type TeammateToLeadMessage } from './TeammateManager';
+import { describeUnusableWorkspacePath } from './workspacePreconditions';
 import path from 'path';
 import os from 'os';
 import { buildClaudeCodeSystemPrompt, buildMetaAgentSystemPrompt, type MetaAgentWorkflowPreset } from '../../prompt';
@@ -102,11 +105,13 @@ import {
   handleToolPermissionWithService as handleToolPermissionWithServiceHelper,
 } from './claudeCode/toolAuthorization';
 import { ClaudeCodeDeps } from './claudeCode/dependencyInjection';
-import { buildSdkOptions, type PromptStreamController } from './claudeCode/sdkOptionsBuilder';
+import { buildSdkOptions, resolvePermissionMode, type PromptStreamController } from './claudeCode/sdkOptionsBuilder';
 import { resolveEffectiveSessionMode } from './claudeCode/resolveEffectiveSessionMode';
 import { resolveClaudeConfigDir } from './claudeCode/claudeConfigDir';
 import {
   hasRunningTasks as computeHasRunningTasks,
+  countRunningTasks,
+  reapRunningTasks,
   shouldDeferTeardownForSubagents,
   shouldExitDrain,
   classifyDrainOutcome,
@@ -199,8 +204,21 @@ export interface ScheduleWakeupRequest {
 
 export class ClaudeCodeProvider extends BaseAgentProvider {
   private currentMode?: 'planning' | 'agent' | 'auto'; // Track session mode for prompt customization and tool filtering
+  // The mode the UI asked for, before the bypass-all -> auto classifier upgrade.
+  // Kept separate from `currentMode` so a mid-turn permission change can redo the
+  // upgrade decision without clobbering an explicitly-picked 'auto'/'planning'.
+  private requestedMode?: 'planning' | 'agent' | 'auto';
+  // Path whose stored project permissions govern this turn (worktrees resolve to
+  // the parent project). Recorded so a permission change can re-evaluate it.
+  private pathForTrust?: string;
   private slashCommands: string[] = []; // Available slash commands from SDK
   private skills: string[] = []; // Available user-invocable skills from SDK
+
+  // Providers with a live `leadQuery`. Registered when a turn starts and removed
+  // in the turn's finally block, so this never accumulates idle instances.
+  // Drives `applyPermissionChange`, which is how a project permission change
+  // reaches a turn that is already in flight (NIM-2403).
+  private static readonly streamingInstances = new Set<ClaudeCodeProvider>();
 
   // Static cache of SDK-reported skills/commands so they survive across provider instances.
   // Once any session receives the init chunk, new sessions can use the cached list as a
@@ -217,6 +235,14 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   // flips false->true when the agent names itself in-band on turn 1, which would
   // flip the appended system prompt on turn 2 and bust the whole prompt cache.
   private outOfBandNamingDecision: boolean | undefined = undefined;
+
+  // Git snapshot stated in the system prompt, resolved ONCE per session and then
+  // frozen — same invariant as outOfBandNamingDecision above, same reason
+  // (#1177). `gitContextFrozen` covers the failure case too: if the first
+  // resolve times out we freeze to "no git context" rather than acquiring one on
+  // turn 2, because adding the section later is the same cache miss.
+  private gitContextFrozen = false;
+  private frozenGitContext: string | undefined = undefined;
 
   private markMessagesAsHidden: boolean = false; // Flag to mark next messages as hidden
   private helperMethod: 'native' | 'custom' = 'native';
@@ -341,6 +367,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   // NIM-1988 regresses. The snapshot itself holds credentials in server env and
   // headers and must not cross the IPC boundary at all.
   private mcpSnapshotServerNames: string[] | null = null;
+  /** Configured servers withheld from this session for failing the OAuth check. */
+  private mcpWithheldServerNames: string[] | null = null;
 
   // ---- Static dependency forwarding ----
   // All static fields and setters live in ClaudeCodeDeps.
@@ -408,6 +436,10 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           // Record names for the absent-server diff. Piggybacking on the
           // existing resolution keeps the accessor free of any await.
           this.mcpSnapshotServerNames = Object.keys(mcpServers ?? {});
+          // Read in the same continuation as the loader that produced them, so
+          // the two always describe one pass (GH #1057).
+          this.mcpWithheldServerNames =
+            ClaudeCodeDeps.mcpWithheldNamesLoader?.(options.workspacePath) ?? null;
           return JSON.stringify(mcpServers);
         });
     }
@@ -416,7 +448,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     return JSON.parse(snapshotJson) as Record<string, any>;
   }
 
-  getProviderName(): string {
+  getProviderName(): AIProviderType {
     return 'claude-code';
   }
 
@@ -505,12 +537,14 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   // Internal MCP-server ports / kill-switches / loaders / auth token are
   // configured once via `configureMcpServers` (shared registry), not per-provider.
   public static setMCPConfigLoader(loader: ((workspacePath?: string) => Promise<Record<string, any>>) | null): void { ClaudeCodeDeps.setMCPConfigLoader(loader); }
+  public static setMcpWithheldNamesLoader(loader: ((workspacePath?: string) => string[]) | null): void { ClaudeCodeDeps.setMcpWithheldNamesLoader(loader); }
   public static setExtensionPluginsLoader(loader: ((workspacePath?: string) => Promise<Array<{ type: 'local'; path: string }>>) | null): void { ClaudeCodeDeps.setExtensionPluginsLoader(loader); }
   public static setClaudeCodeSettingsLoader(loader: (() => Promise<{ projectCommandsEnabled: boolean; userCommandsEnabled: boolean }>) | null): void { ClaudeCodeDeps.setClaudeCodeSettingsLoader(loader); }
   public static setClaudeSettingsEnvLoader(loader: (() => Promise<Record<string, string>>) | null): void { ClaudeCodeDeps.setClaudeSettingsEnvLoader(loader); }
   public static setShellEnvironmentLoader(loader: (() => Record<string, string> | null) | null): void { ClaudeCodeDeps.setShellEnvironmentLoader(loader); }
   public static setEnhancedPathLoader(loader: (() => string) | null): void { ClaudeCodeDeps.setEnhancedPathLoader(loader); }
   public static setAdditionalDirectoriesLoader(loader: ((workspacePath: string) => string[]) | null): void { ClaudeCodeDeps.setAdditionalDirectoriesLoader(loader); }
+  public static setGitContextLoader(loader: ((workspacePath: string) => Promise<string | null>) | null): void { ClaudeCodeDeps.setGitContextLoader(loader); }
   public static setAttachmentStagingLoader(loader: ((workspacePath: string) => { root: string; mode: 'temp' | 'workspace' | 'custom' }) | null): void { ClaudeCodeDeps.setAttachmentStagingLoader(loader); }
   public static setAttachmentDenyRulesLoader(loader: ((workspacePath: string) => Promise<string[]>) | null): void { ClaudeCodeDeps.setAttachmentDenyRulesLoader(loader); }
   public static setSecurityLogger(logger: ((message: string, data?: any) => void) | null): void { BaseAgentProvider.setSecurityLogger(logger); }
@@ -519,6 +553,56 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   public static setClaudeSettingsPatternChecker(checker: ((workspacePath: string, pattern: string) => Promise<boolean>) | null): void { ClaudeCodeDeps.setClaudeSettingsPatternChecker(checker); }
   public static setTrustChecker(checker: ((workspacePath: string) => { trusted: boolean; mode: 'ask' | 'allow-all' | 'bypass-all' | null; allowAllUsesClassifier?: boolean }) | null): void { BaseAgentProvider.setTrustChecker(checker); }
   public static setExtensionFileTypesLoader(loader: (() => Set<string>) | null): void { ClaudeCodeDeps.setExtensionFileTypesLoader(loader); }
+
+  /**
+   * Push a project permission change into every turn that is already in flight.
+   *
+   * A turn snapshots the effective session mode once (see sendMessage) and hands
+   * the derived `permissionMode` to `query()` for the life of that turn, so
+   * without this a user who switches to "Allow everything" mid-turn keeps being
+   * asked until the agent stops. Re-running the bypass-all -> auto upgrade against
+   * the fresh trust status and pushing the result through the SDK's
+   * `Query.setPermissionMode` makes the change land on the very next tool call.
+   *
+   * `requestedMode` (not `currentMode`) is the input, so an explicitly-picked
+   * 'auto' or 'planning' session is never silently downgraded.
+   *
+   * Every in-flight turn re-reads trust for its OWN path rather than the caller
+   * filtering by the changed path: worktrees, the subfolder trust cascade, and
+   * `permissionsPath` all mean the changed path and a session's trust path are
+   * often related but not equal. A turn whose effective mode did not move is a
+   * no-op, so the broad sweep is safe.
+   */
+  public static async applyPermissionChange(): Promise<void> {
+    for (const provider of [...ClaudeCodeProvider.streamingInstances]) {
+      await provider.applyPermissionChange();
+    }
+  }
+
+  private async applyPermissionChange(): Promise<void> {
+    const leadQuery = this.leadQuery;
+    if (!leadQuery || typeof leadQuery.setPermissionMode !== 'function') return;
+    if (this.requestedMode !== 'agent' || !this.pathForTrust || !BaseAgentProvider.trustChecker) return;
+
+    const trustStatus = BaseAgentProvider.trustChecker(this.pathForTrust);
+    // An untrusted workspace is handled by canUseTool's deny path, which already
+    // reads the live trust status. Nothing to re-negotiate with the SDK here.
+    if (!trustStatus.trusted) return;
+
+    const nextMode = resolveEffectiveSessionMode('agent', trustStatus);
+    if (nextMode === this.currentMode) return;
+
+    const previousMode = this.currentMode;
+    this.currentMode = nextMode;
+    try {
+      await leadQuery.setPermissionMode(resolvePermissionMode(nextMode));
+    } catch (error) {
+      // The transport can die between the permission change and this call. Roll
+      // back so canUseTool keeps honouring the mode the turn actually runs under.
+      this.currentMode = previousMode;
+      console.warn('[CLAUDE-CODE] Failed to apply permission change to in-flight turn:', error);
+    }
+  }
 
   private static scheduleWakeupHandler: ((request: ScheduleWakeupRequest) => Promise<void>) | null = null;
   public static setScheduleWakeupHandler(handler: ((request: ScheduleWakeupRequest) => Promise<void>) | null): void {
@@ -576,6 +660,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
     // Track session mode for MCP server configuration and tool filtering
     this.currentMode = (documentContext as any)?.mode || 'agent';
+    this.requestedMode = this.currentMode;
 
     // Trust-level upgrade: when workspace permission is "Allow All" (internal
     // mode 'bypass-all') and session mode is 'agent', the session is upgraded
@@ -585,6 +670,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     // mode is never upgraded — it always uses the SDK's native read-only
     // enforcement.
     const pathForTrustUpgrade = (documentContext as any)?.permissionsPath || workspacePath;
+    this.pathForTrust = pathForTrustUpgrade;
     if (this.currentMode === 'agent' && pathForTrustUpgrade && BaseAgentProvider.trustChecker) {
       const trustStatus = BaseAgentProvider.trustChecker(pathForTrustUpgrade);
       this.currentMode = resolveEffectiveSessionMode(this.currentMode, trustStatus);
@@ -712,6 +798,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       const agentRole = await this.getAgentRole(sessionId);
       const isMetaAgent = agentRole === 'meta-agent';
       const workflowPreset = isMetaAgent ? await this.getWorkflowPreset(sessionId) : 'default';
+      // Resolve-and-freeze the git snapshot before the (synchronous) prompt
+      // build. First turn pays the git call; every later turn reads the frozen
+      // value, which is what keeps the prompt byte-stable (#1177).
+      // workspacePath is the CLI's cwd (see buildSdkOptions), so it is also the
+      // repo the suppressed CLI block would have described.
+      await this.ensureGitContext(workspacePath);
       const systemPrompt = this.buildSystemPrompt(documentContext, enableAgentTeams, isMetaAgent, workflowPreset);
 
       // Note: Attachments (images/documents) are NOT added to the message text.
@@ -740,9 +832,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         });
       }
 
-      // Require workspace path
-      if (!workspacePath) {
-        throw new Error('[CLAUDE-CODE] workspacePath is required but was not provided');
+      // Require a workspace path that still exists on disk. Without this the
+      // Agent SDK spawns into a dead cwd and misreports the ENOENT as a
+      // libc/musl mismatch on the bundled binary.
+      const unusableWorkspace = describeUnusableWorkspacePath(workspacePath);
+      if (unusableWorkspace || !workspacePath) {
+        throw new Error(unusableWorkspace ?? 'No project folder is set for this session.');
       }
 
       // Build SDK options (settings, MCP config, env, session resumption, prompt input)
@@ -875,6 +970,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       });
 
       this.leadQuery = leadQuery as unknown as Query;
+      ClaudeCodeProvider.streamingInstances.add(this);
       this.teammateIdleMessagePending = false;
       // Reset per-turn background-drain state (defensive; also reset in finally).
       this.drainingBackgroundTasks = false;
@@ -1607,7 +1703,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             // Keep draining until every task reports a terminal status (or the
             // loop exits for another reason, handled by finalizeBackgroundDrain).
             if (willDrainSubagents) {
-              console.log(`[CLAUDE-CODE] SUBAGENT_DRAIN: lead turn complete but ${this.activeTasks.size} sub-agent task(s) still running; deferring teardown to drain`);
+              console.log(`[CLAUDE-CODE] SUBAGENT_DRAIN: lead turn complete but ${countRunningTasks(this.activeTasks.values())} sub-agent task(s) still running; deferring teardown to drain`);
               continue;
             }
             break;
@@ -1942,6 +2038,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // against the torn-down control channel and leaks. NIM-1470.
       const queryForDrainCleanup = this.leadQuery;
       this.leadQuery = null;
+      ClaudeCodeProvider.streamingInstances.delete(this);
       this.abortController = null;
       this.wasInterrupted = false;
       this.interruptResolve = null;
@@ -2014,6 +2111,17 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
     // Abort all managed teammates
     this.teammateManager.killAll();
+
+    // Background sub-agent tasks run inside the subprocess we just killed, so
+    // their terminal task_notification can never arrive. Left 'running', they
+    // make the NEXT turn's `result` defer teardown and burn the whole drain
+    // grace on work nobody is waiting for -- the session sits 'running' and
+    // its queued prompts stall behind it. NIM-2458.
+    const orphanedTasks = reapRunningTasks(this.activeTasks.values());
+    if (orphanedTasks.length > 0) {
+      console.warn(`[CLAUDE-CODE] SUBAGENT_TASK: abort orphaned ${orphanedTasks.length} running task(s); marking stopped. tasks=[${orphanedTasks.join(', ')}]`);
+      this.emitTaskUpdate(this.currentSessionId).catch(() => {});
+    }
 
     // Clean up MCP health checks and persistent query reference
     this.stopMcpHealthChecks();
@@ -2107,12 +2215,16 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
    * This is a graceful stop — unlike abort(), it doesn't kill the SDK subprocess.
    *
    * If there is no active lead query, defer to the BaseAIProvider default
-   * (hard abort) so the caller still gets a sensible signal back.
+   * (hard abort) so the caller still gets a sensible signal back, and report
+   * `hadActiveTurn: false` — with no query and (usually) no abortController
+   * that abort is a no-op, so the caller has to clear the session's live state
+   * itself or a stuck-running session strands its queue forever (NIM-2434).
    */
-  async interruptCurrentTurn(): Promise<{ method: 'interrupt' | 'abort' }> {
+  async interruptCurrentTurn(): Promise<InterruptTurnResult> {
     if (!this.leadQuery) {
       console.log('[CLAUDE-CODE] interruptCurrentTurn: no active lead query, falling back to abort');
-      return super.interruptCurrentTurn();
+      const outcome = await super.interruptCurrentTurn();
+      return { ...outcome, hadActiveTurn: false };
     }
 
     console.log('[CLAUDE-CODE] interruptCurrentTurn: interrupting active lead query');
@@ -2582,13 +2694,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     });
 
     if (outcome.markStopped) {
-      const stranded: string[] = [];
-      for (const task of this.activeTasks.values()) {
-        if (task.status === 'running') {
-          task.status = 'stopped';
-          stranded.push(task.description || task.taskId);
-        }
-      }
+      const stranded = reapRunningTasks(this.activeTasks.values());
       console.warn(`[CLAUDE-CODE] SUBAGENT_DRAIN: loop exited (cause=${this.drainExitCause}) with ${stranded.length} unresolved sub-agent task(s); marking stopped. autoContinue=${outcome.autoContinue}. tasks=[${stranded.join(', ')}]`);
       this.emitTaskUpdate(sessionId).catch(() => {});
     }
@@ -2949,6 +3055,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           changes,
           lastCheckedAt: this.mcpStatusesLastCheckedAt,
           configuredNames: this.mcpSnapshotServerNames,
+          withheldNames: this.mcpWithheldServerNames,
         });
       }
     } catch {
@@ -2992,6 +3099,15 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     return this.mcpSnapshotServerNames ? [...this.mcpSnapshotServerNames] : null;
   }
 
+  /**
+   * Servers configured for this session but withheld from the CLI for failing
+   * the OAuth check. Names only, same as above — the config values hold
+   * credentials.
+   */
+  getMcpWithheldServerNames(): string[] | null {
+    return this.mcpWithheldServerNames ? [...this.mcpWithheldServerNames] : null;
+  }
+
   /** Epoch ms of the last poll that returned, or null if never polled. */
   getMcpStatusLastCheckedAt(): number | null {
     return this.mcpStatusesLastCheckedAt;
@@ -3004,11 +3120,13 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   getMcpSessionStatus(): {
     servers: McpServerStatusInfo[];
     configuredNames: string[] | null;
+    withheldNames: string[] | null;
     lastCheckedAt: number | null;
   } {
     return {
       servers: this.getMcpServerStatuses(),
       configuredNames: this.getMcpConfiguredServerNames(),
+      withheldNames: this.getMcpWithheldServerNames(),
       lastCheckedAt: this.mcpStatusesLastCheckedAt,
     };
   }
@@ -3709,6 +3827,31 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   }
 
 
+  /**
+   * Resolve the session's git snapshot on the first turn and freeze it.
+   * `buildSystemPrompt` is synchronous, so this must be awaited before it runs.
+   *
+   * #1177: the frozen-ness is the whole point. We disable the CLI's own
+   * git-status block because it is regenerated from the live working tree by
+   * every resumed turn's process, invalidating the message prefix behind it.
+   * Replacing it with a section that ALSO moves between turns would fix nothing.
+   * The flag is set before the await so a concurrent second turn cannot resolve
+   * a second value, and a rejected loader freezes to no context.
+   */
+  protected async ensureGitContext(workspacePath?: string): Promise<void> {
+    if (this.gitContextFrozen) return;
+    this.gitContextFrozen = true;
+    if (!workspacePath || !ClaudeCodeDeps.gitContextLoader) return;
+    try {
+      this.frozenGitContext = (await ClaudeCodeDeps.gitContextLoader(workspacePath)) || undefined;
+    } catch (error) {
+      // Degrade to no git context for the life of the session. A hung `git
+      // status` froze new agent sessions once already (#929) — never let this
+      // block a turn, and never retry it later.
+      console.warn('[CLAUDE-CODE] Failed to resolve git context:', error);
+    }
+  }
+
   protected buildSystemPrompt(documentContext?: DocumentContext, enableAgentTeams?: boolean, isMetaAgent: boolean = false, workflowPreset: MetaAgentWorkflowPreset = 'default'): string {
     if (isMetaAgent) {
       return buildMetaAgentSystemPrompt('claude', workflowPreset, {
@@ -3759,6 +3902,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       hasSessionNaming,
       hasOutOfBandNaming: alreadyNamedOutOfBand,
       worktreePath,
+      gitContext: this.frozenGitContext,
       isVoiceMode,
       voiceModeCodingAgentPrompt,
       enableAgentTeams,

@@ -46,6 +46,7 @@ describe('resource URN round-trip', () => {
       FIXTURE_REFS.commit,
       FIXTURE_REFS.pullRequest,
       FIXTURE_REFS.conversation,
+      { orgId: ORG, kind: 'feedbackRequest', sourceId: 'feedback/request 1' },
     ];
     for (const ref of refs) {
       const urn = resourceRefToUrn(ref);

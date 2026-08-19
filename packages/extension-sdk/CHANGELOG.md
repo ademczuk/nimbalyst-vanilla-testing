@@ -8,6 +8,8 @@ The SDK is versioned independently of the Nimbalyst app. Each release declares i
 
 | SDK version | Minimum Nimbalyst app version |
 | --- | --- |
+| 0.4.0 | 0.70.0 |
+| 0.3.0 | 0.70.0 |
 | 0.2.2 | 0.58.5 |
 | 0.2.1 | 0.58.5 |
 | 0.2.0 | 0.58.5 |
@@ -15,6 +17,26 @@ The SDK is versioned independently of the Nimbalyst app. Each release declares i
 | 0.1.0 | 0.58.5 |
 
 ## [Unreleased]
+
+## [0.4.0]
+
+### Added
+
+- `applyTextDiff()` and `replaceYText()` reduce a whole-string replacement to one contiguous `Y.Text` edit, so a binding no longer has to hand-write the prefix/suffix diff.
+- `@nimbalyst/extension-sdk/collab` is a React-free entry point for the collaborative-document helpers, for codecs and codec tests that have no React installed.
+- `host.onFindRequested()` routes the app's Find command (Cmd+F) to a custom editor's own find UI.
+
+## [0.3.0]
+
+Requires Nimbalyst 0.70.0 for the new host-provided selection, filesystem, and visibility APIs.
+
+### Added
+
+- `host.setEditorContextItems()` and `EditorContextItem` let node-like editors (diagrams, CAD, electronics) push a list of selected items to the chat as individually removable context chips, instead of a single `setEditorContext` blob.
+- `host.fs` (`EditorHostFileSystem`) reads files with SHA-256 version tokens and applies labeled, compare-and-swap grouped writes recorded in document history.
+- `host.openExternal()` opens a reviewed HTTPS URL in the operating system's browser without navigating the renderer.
+- `host.visible` and `host.onVisibilityChanged()` let editors pause render loops and release GPU resources while mounted but hidden.
+- `ExtensionFileSystemService.writeFile()` accepts a `Uint8Array` so extensions can write binary files without corrupting their contents.
 
 ## [0.2.2]
 

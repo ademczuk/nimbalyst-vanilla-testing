@@ -3,7 +3,8 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-vi.mock('jotai', () => ({
+vi.mock('jotai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('jotai')>()),
   useAtomValue: (target: { __testValue?: unknown }) =>
     target && Object.prototype.hasOwnProperty.call(target, '__testValue') ? target.__testValue : {},
   useSetAtom: () => () => {},

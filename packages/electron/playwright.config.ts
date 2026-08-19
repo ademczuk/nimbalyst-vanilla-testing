@@ -16,7 +16,12 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: 1, // Single worker for Electron tests
-  reporter: [['html', { outputFolder: htmlReportDir }]],
+  // `open: 'never'` -- the HTML reporter defaults to 'on-failure', which hijacks
+  // the developer's browser every time a run goes red. Read the list output instead.
+  reporter: [['list'], ['html', { outputFolder: htmlReportDir, open: 'never' }]],
+  // Stop the run at the first failure locally: these specs open real Electron
+  // windows, so continuing past a failure just steals the machine.
+  maxFailures: process.env.CI ? 0 : 1,
   timeout: 15000, // 15 seconds for each test (increased to allow for autosave waits)
   use: {
     screenshot: 'only-on-failure',

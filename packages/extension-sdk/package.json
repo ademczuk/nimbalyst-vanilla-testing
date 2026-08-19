@@ -1,6 +1,6 @@
 {
   "name": "@nimbalyst/extension-sdk",
-  "version": "0.2.2",
+  "version": "0.4.0",
   "description": "SDK for building Nimbalyst extensions",
   "repository": {
     "type": "git",
@@ -17,7 +17,7 @@
     "./dist/validate.js": "./dist/validate.browser.js"
   },
   "nimbalyst": {
-    "minAppVersion": "0.58.5"
+    "minAppVersion": "0.70.0"
   },
   "publishConfig": {
     "access": "public"
@@ -28,6 +28,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./collab": {
+      "types": "./dist/collab/index.d.ts",
+      "import": "./dist/collab/index.js"
     },
     "./vite": {
       "types": "./dist/vite.d.ts",
@@ -44,6 +48,10 @@
     "./file-tree": {
       "types": "./dist/fileDirectoryTree.d.ts",
       "import": "./dist/fileDirectoryTree.js"
+    },
+    "./file-mask": {
+      "types": "./dist/fileMask.d.ts",
+      "import": "./dist/fileMask.js"
     }
   },
   "files": [

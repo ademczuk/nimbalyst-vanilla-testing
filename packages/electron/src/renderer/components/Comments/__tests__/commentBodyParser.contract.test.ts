@@ -15,7 +15,9 @@ describe('comment body protocol contract', () => {
         const urn = resourceRefToUrn(ref);
         const pill: ResourcePillView = {
           urn,
-          kind: ref.kind,
+          // The renderer's presentation catalog intentionally lags additive
+          // protocol resource kinds until their UI slice supplies a pill.
+          kind: ref.kind as ResourcePillView['kind'],
           availability: 'available',
           icon: 'link',
           label: ref.sourceId,

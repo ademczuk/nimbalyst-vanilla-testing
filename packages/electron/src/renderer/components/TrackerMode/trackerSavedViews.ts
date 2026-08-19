@@ -13,9 +13,15 @@ import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import type { TrackerIdentity } from '@nimbalyst/runtime';
 import {
   applyFilterSet,
+  groupTrackerRecordsByAxis,
+  MANUAL_TRACKER_ORDERING,
+  normalizeTrackerGroupBy,
+  normalizeTrackerOrdering,
   type TrackerFilterEvaluationContext,
   type TrackerFilterSet,
   type TrackerFieldFilter,
+  type TrackerGroupBy,
+  type TrackerOrdering,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import {
   getCellValue,
@@ -24,36 +30,25 @@ import {
   type TypeColumnConfig,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin';
 import {
+  getFieldByRole,
   getRecordPriority,
   getRecordStatus,
-  getFieldByRole,
   isMyRecord,
   isSameIdentity,
   resolveRoleFieldName,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import type { TrackerFilterChip } from '../../store/atoms/trackers';
-import type { ViewMode } from './TrackerMainView';
+import type { TrackerViewMode } from './trackerViewModes';
 import { getTrackerItemTags, filterTrackerItemsByTags } from './trackerTagFilterUtils';
 
-/** How items are grouped in a grouped view. `none` = a single flat group. */
-export type TrackerGroupBy = 'none' | 'status' | 'priority' | 'assignee' | 'type' | 'tag';
+export {
+  normalizeTrackerGroupBy,
+  type TrackerGroupBy,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerGrouping';
+export type { TrackerOrdering } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerOrdering';
 
 export const STATUS_CHANGED_TO_FILTER_FIELD = 'statusChangedTo';
 export const STATUS_CHANGED_FROM_FILTER_FIELD = 'statusChangedFrom';
-
-export function normalizeTrackerGroupBy(value: unknown): TrackerGroupBy {
-  if (value === 'owner') return 'assignee';
-  if (
-    value === 'status'
-    || value === 'priority'
-    || value === 'assignee'
-    || value === 'type'
-    || value === 'tag'
-  ) {
-    return value;
-  }
-  return 'none';
-}
 
 export interface SavedViewDefinition {
   /** Selected type filter: `'all'` or a specific tracker type. */
@@ -61,11 +56,13 @@ export interface SavedViewDefinition {
   /** Active filter chips (intersection). */
   activeFilters: TrackerFilterChip[];
   /** Display mode. */
-  viewMode: ViewMode;
+  viewMode: TrackerViewMode;
   /** Tag filter (OR match); empty = no tag filter. */
   tagFilter: string[];
   /** Grouping for grouped renderings. */
   groupBy: TrackerGroupBy;
+  /** Board/list ordering: manual kanban order, or a sortable field id. */
+  ordering: TrackerOrdering;
   /** Flat list/table sort column. */
   sortBy: SortColumn;
   /** Flat list/table sort direction. */
@@ -105,6 +102,7 @@ export function createDefaultViewDefinition(): SavedViewDefinition {
     viewMode: 'list',
     tagFilter: [],
     groupBy: 'none',
+    ordering: MANUAL_TRACKER_ORDERING,
     sortBy: 'lastIndexed',
     sortDirection: 'desc',
     recentlyViewedDays: 30,
@@ -122,6 +120,7 @@ export function hasSavableViewState(definition: SavedViewDefinition): boolean {
     || definition.tagFilter.length > 0
     || definition.viewMode !== defaults.viewMode
     || definition.groupBy !== defaults.groupBy
+    || definition.ordering !== defaults.ordering
     || definition.sortBy !== defaults.sortBy
     || definition.sortDirection !== defaults.sortDirection
     || definition.recentlyViewedDays !== defaults.recentlyViewedDays
@@ -138,12 +137,13 @@ export function hasSavableViewState(definition: SavedViewDefinition): boolean {
  * Saved views also travel between users on different builds, so an unknown
  * literal falls back rather than leaving the main view with no branch to take.
  */
-export function normalizeViewMode(raw: unknown, fallback: ViewMode): ViewMode {
+export function normalizeViewMode(raw: unknown, fallback: TrackerViewMode): TrackerViewMode {
   if (raw === 'grid') return 'table';
   if (
     raw === 'list'
     || raw === 'table'
     || raw === 'kanban'
+    || raw === 'timeline'
     || raw === 'tag-board'
     || raw === 'inbox'
   ) {
@@ -164,7 +164,8 @@ export function normalizeViewDefinition(raw: Partial<SavedViewDefinition> | unde
     activeFilters: Array.isArray(raw.activeFilters) ? raw.activeFilters : base.activeFilters,
     viewMode: normalizeViewMode(raw.viewMode, base.viewMode),
     tagFilter: Array.isArray(raw.tagFilter) ? raw.tagFilter.filter((t): t is string => typeof t === 'string') : base.tagFilter,
-    groupBy: normalizeTrackerGroupBy(raw.groupBy),
+    groupBy: normalizeTrackerGroupBy(raw.groupBy ?? legacyColumnGroupBy(raw.columnConfig)),
+    ordering: normalizeTrackerOrdering(raw.ordering),
     sortBy: typeof raw.sortBy === 'string' ? raw.sortBy : base.sortBy,
     sortDirection: raw.sortDirection === 'asc' || raw.sortDirection === 'desc'
       ? raw.sortDirection
@@ -190,8 +191,12 @@ function normalizeColumnConfig(raw: unknown): TypeColumnConfig | null {
   return {
     visibleColumns: value.visibleColumns.filter((c): c is string => typeof c === 'string'),
     columnWidths: value.columnWidths && typeof value.columnWidths === 'object' ? value.columnWidths : {},
-    groupBy: typeof value.groupBy === 'string' ? value.groupBy : null,
   };
+}
+
+function legacyColumnGroupBy(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return undefined;
+  return (raw as { groupBy?: unknown }).groupBy;
 }
 
 function normalizeColumnFilters(raw: unknown): TrackerFilterSet | null {
@@ -489,90 +494,15 @@ export function countFilteredTrackerItemsByTypes(
 }
 
 export interface TrackerGroup {
-  /** Group key: the field value, or `''` for the empty/none bucket. */
+  /** Stable, axis-namespaced group key. */
   key: string;
   label: string;
   items: TrackerRecord[];
 }
 
-function titleCase(value: string): string {
-  return value
-    .split('-')
-    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
-    .join(' ');
-}
-
-function singleGroupValue(item: TrackerRecord, groupBy: Exclude<TrackerGroupBy, 'none' | 'tag'>): string {
-  switch (groupBy) {
-    case 'status':
-      return (getRecordStatus(item) || '').toLowerCase();
-    case 'priority':
-      return (getRecordPriority(item) || '').toLowerCase();
-    case 'type':
-      return item.primaryType;
-    case 'assignee':
-      return ((getFieldByRole(item, 'assignee') as string | undefined) || '');
-  }
-}
-
 /**
- * Group items for a grouped rendering. `none` returns a single bucket; `tag`
- * groups by the schema tags role (an item with N tags appears in N groups, with
- * a trailing "Untagged" bucket); the rest group by a single-valued field in
- * first-seen order, collecting empty values into a trailing fallback bucket
- * ("Unassigned" for assignee, "None" otherwise).
+ * Backward-compatible saved-view wrapper around the runtime-owned resolver.
  */
 export function groupTrackerItems(items: TrackerRecord[], groupBy: TrackerGroupBy): TrackerGroup[] {
-  if (groupBy === 'none') {
-    return [{ key: '', label: 'All', items }];
-  }
-
-  if (groupBy === 'tag') {
-    const byTag = new Map<string, TrackerRecord[]>();
-    const order: string[] = [];
-    const untagged: TrackerRecord[] = [];
-    for (const item of items) {
-      const tags = Array.from(new Set(getTrackerItemTags(item)));
-      if (tags.length === 0) {
-        untagged.push(item);
-        continue;
-      }
-      for (const tag of tags) {
-        const bucket = byTag.get(tag);
-        if (bucket) bucket.push(item);
-        else {
-          byTag.set(tag, [item]);
-          order.push(tag);
-        }
-      }
-    }
-    const groups: TrackerGroup[] = order.map((tag) => ({ key: tag, label: `#${tag}`, items: byTag.get(tag)! }));
-    if (untagged.length > 0) groups.push({ key: '', label: 'Untagged', items: untagged });
-    return groups;
-  }
-
-  const buckets = new Map<string, TrackerRecord[]>();
-  const order: string[] = [];
-  for (const item of items) {
-    const value = singleGroupValue(item, groupBy);
-    const bucket = buckets.get(value);
-    if (bucket) bucket.push(item);
-    else {
-      buckets.set(value, [item]);
-      order.push(value);
-    }
-  }
-
-  const emptyLabel = groupBy === 'assignee' ? 'Unassigned' : 'None';
-  // Keep non-empty groups in first-seen order; push the empty bucket last.
-  const nonEmpty = order.filter((v) => v !== '');
-  const groups: TrackerGroup[] = nonEmpty.map((value) => ({
-    key: value,
-    label: groupBy === 'type' || groupBy === 'assignee' ? value : titleCase(value),
-    items: buckets.get(value)!,
-  }));
-  if (buckets.has('')) {
-    groups.push({ key: '', label: emptyLabel, items: buckets.get('')! });
-  }
-  return groups;
+  return groupTrackerRecordsByAxis(items, groupBy);
 }

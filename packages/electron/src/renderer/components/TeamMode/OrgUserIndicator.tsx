@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useAtom, useAtomValue } from 'jotai';
 import {
   FloatingPortal,
@@ -24,16 +24,12 @@ import {
 import { dialogRef } from '../../contexts/DialogContext';
 import { DIALOG_IDS } from '../../dialogs/registry';
 import { settingAtom } from '../../store/atoms/settingAtomFamily';
+import {
+  organizationDirectoryAtom,
+  personalAccountsAtom,
+} from '../../store/atoms/settingsDomains';
 import { teamInboxSnapshotAtom } from '../../store/atoms/teamInbox';
 import { connectionSummary } from './orgWindowRailViewModel';
-
-interface AccountInfo {
-  personalOrgId: string;
-  email: string | null;
-  userName?: string;
-  isSyncAccount: boolean;
-  sessionStatus: 'active' | 'expired';
-}
 
 function initialsForIdentity(name: string | null | undefined, email: string | null | undefined): string {
   const source = name?.trim() || email?.trim() || 'User';
@@ -79,8 +75,12 @@ export function OrgUserIndicator({
   placement?: 'right-end' | 'top-start';
 }) {
   const [open, setOpen] = useState(false);
-  const [accounts, setAccounts] = useState<AccountInfo[]>([]);
-  const [orgName, setOrgName] = useState<string | null>(null);
+  // Both of these used to be fetched into local state on mount, which meant
+  // signing out left the menu naming an account and an organization the window
+  // no longer had. The atoms are reloaded on every auth transition, so they
+  // empty themselves on sign-out.
+  const accounts = useAtomValue(personalAccountsAtom);
+  const organizations = useAtomValue(organizationDirectoryAtom);
   const [error, setError] = useState<string | null>(null);
   const inboxSnapshot = useAtomValue(teamInboxSnapshotAtom);
   const [desiredPresence, setDesiredPresence] = useAtom(
@@ -103,38 +103,13 @@ export function OrgUserIndicator({
   const initials = initialsForIdentity(name, email);
   const expired = account?.sessionStatus === 'expired';
 
-  useEffect(() => {
-    let cancelled = false;
-    void window.electronAPI.stytch.getAccounts()
-      .then((next: AccountInfo[]) => {
-        if (!cancelled) setAccounts(Array.isArray(next) ? next : []);
-      })
-      .catch(() => {
-        if (!cancelled) setAccounts([]);
-      });
-    return () => { cancelled = true; };
-  }, []);
-
-  // The organization row names the org it manages. Resolved here rather than
-  // taken as a prop so the menu stays self-contained in both of its hosts;
-  // `team:list` is cached in main, so this costs one hit per mount.
-  useEffect(() => {
-    if (!selectedOrgId) {
-      setOrgName(null);
-      return;
-    }
-    let cancelled = false;
-    void window.electronAPI.organization.list()
-      .then((result: { success?: boolean; teams?: Array<{ orgId: string; name?: string }> }) => {
-        if (cancelled) return;
-        const match = result?.teams?.find((team) => team.orgId === selectedOrgId);
-        setOrgName(match?.name ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setOrgName(null);
-      });
-    return () => { cancelled = true; };
-  }, [selectedOrgId]);
+  // The organization row names the org it manages. Read from the directory
+  // rather than taken as a prop so the menu stays self-contained in both of its
+  // hosts.
+  const orgName = useMemo(() => {
+    if (!selectedOrgId) return null;
+    return organizations.find((org) => org.orgId === selectedOrgId)?.name ?? null;
+  }, [organizations, selectedOrgId]);
 
   const { refs, floatingStyles, context } = useFloating({
     open,

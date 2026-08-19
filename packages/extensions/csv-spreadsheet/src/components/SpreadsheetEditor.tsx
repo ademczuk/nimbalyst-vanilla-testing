@@ -11,36 +11,134 @@
  * - gridOperations provides centralized cell operations
  */
 
-import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo, type RefObject } from 'react';
 import { RevoGrid, type RevoGridCustomEvent, type ColumnRegular } from '@revolist/react-datagrid';
 import type { RevoGridElement } from '../revogrid-types';
-import type { EditorHostProps, NormalizedSelectionRange, ColumnFormat, DiffState, CellDiff } from '../types';
+import type {
+  EditorHostProps,
+  NormalizedSelectionRange,
+  CellStyle,
+  ColumnFormat,
+  DiffState,
+  CellDiff,
+  SpreadsheetData,
+  FilterScalar,
+} from '../types';
 import {
   useEditorLifecycle,
   useCollaborativeEditor,
+  navigateToTrackerReference,
   readClipboard,
   type DiffConfig,
 } from '@nimbalyst/extension-sdk';
 import { CsvBinding } from '../collab/csvBinding';
+import { CsvMetaBinding, isMetaEmpty, type CsvMetaSnapshot } from '../collab/metaBinding';
 import { isCsvYDocEmpty, seedCsvYDoc, getYCsv } from '../collab/seed';
 import type { RemotePresence } from '../collab/presence';
+import { LocalPresenceTracker } from '../collab/localPresence';
 import { CollabPresenceOverlay } from './CollabPresenceOverlay';
-import { useSpreadsheetMetadata } from '../hooks/useSpreadsheetMetadata';
-import { createGridOperations, type GridOperations } from '../utils/gridOperations';
+import { useSpreadsheetMetadata, type SpreadsheetMetadata } from '../hooks/useSpreadsheetMetadata';
+import {
+  createGridOperations,
+  FormulaViewState,
+  spreadsheetDataToGridSource,
+  type GridOperations,
+  type GridSourceData,
+} from '../utils/gridOperations';
+import { createSpreadsheetEditorAPI } from '../editorAPI';
 import { UndoRedoPlugin } from '../plugins/UndoRedoPlugin';
 import { columnIndexToLetter, columnLetterToIndex, generateColumnHeaders, parseCSV } from '../utils/csvParser';
 import { computeDiff, getCellDiffClass, getCellPreviousValue } from '../utils/diffCompute';
 import { isFormula } from '../utils/formulaEngine';
-import { formatCellValue, getColumnTypeName } from '../utils/formatters';
+import {
+  detectColumnType,
+  formatCellValue,
+  getColumnTypeName,
+  getDefaultAlignmentForType,
+  getDefaultFormatForType,
+  isNegativeFormattedValue,
+  isNumericCellValue,
+  usesRedNegatives,
+} from '../utils/formatters';
+import {
+  renderTrackerCell,
+  renderUrlCell,
+  TRACKER_CELL_ATTRIBUTE,
+  URL_CELL_ATTRIBUTE,
+} from '../cells/cellRendering';
+import { TrackerResolutionStore } from '../cells/trackerResolution';
+import { applyStyleToRange, CellStyleIndex, rangeKeyOf, styleClassNames } from '../cells/cellStyles';
+import { TrackerCellResolvers } from '../cells/TrackerCellResolvers';
 import { FormulaBar, type FormulaBarHandle } from './FormulaBar';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ColumnFormatDialog } from './ColumnFormatDialog';
+import { CellFormatDialog } from './CellFormatDialog';
+import { FindBar } from './FindBar';
+import { ColumnFilterDropdown } from './ColumnFilterDropdown';
+import { useSpreadsheetFind, type FindContext } from '../hooks/useSpreadsheetFind';
+import { useColumnFilters, type ColumnFilters } from '../hooks/useColumnFilters';
+import { createRowIndexMapping, logicalRowForGridRow, logicalRowsForSelection } from '../filter/rowIndexMapping';
+import { snapRowsToVisible } from '../filter/visibleRange';
+import { getAppliedTrimmedRows } from '../filter/filterEngine';
+import { EMPTY_FIND_HIGHLIGHT, type FindHighlight } from '../filter/findHighlight';
 import { SheetsTextEditor } from '../editors/SheetsTextEditor';
 import { buildSpreadsheetSelectionContextItem } from '../selectionContext';
+import {
+  notifySpreadsheetCellFlash,
+  subscribeSpreadsheetCellFlash,
+  type AICellFlashEventDetail,
+} from '../aiCellFlash';
+import { useCellDragSelection } from '../selection/useCellDragSelection';
+import {
+  gridBounds,
+  paintCrossSectionRange,
+  readHeaderColumnTarget,
+  resolveGridSections,
+  resolveHeaderColumnIndex,
+  toAbsoluteColumn,
+  type SectionAwareGrid,
+} from '../selection/crossSectionSelection';
 
 // Buffer of extra empty rows/columns to show beyond actual data
 const DISPLAY_BUFFER_ROWS = 20;
 const DISPLAY_BUFFER_COLS = 20;
+
+/**
+ * Every grid operation that changes a cell value, the row set or the row order.
+ * Each one can invalidate an active filter's hidden rows, the row mapping, or
+ * both, so they are all wrapped to invalidate afterwards -- a new mutating
+ * operation added to `GridOperations` only needs its name here.
+ */
+const MUTATING_GRID_OPERATIONS = [
+  'updateCell',
+  'updateCells',
+  'clearCells',
+  'addRow',
+  'deleteRow',
+  'addColumn',
+  'deleteColumn',
+  'updateHeaderRowCount',
+  'cutSelection',
+  'pasteFromText',
+  'sortByColumn',
+] as const satisfies readonly (keyof GridOperations)[];
+
+/** Wrap the mutating operations so each one refreshes the filtered view. */
+function withRowViewInvalidation(
+  operations: GridOperations,
+  invalidate: () => Promise<void>
+): GridOperations {
+  const wrapped: GridOperations = { ...operations };
+  for (const name of MUTATING_GRID_OPERATIONS) {
+    const original = operations[name] as (...args: unknown[]) => Promise<unknown>;
+    (wrapped as unknown as Record<string, unknown>)[name] = async (...args: unknown[]) => {
+      const result = await original(...args);
+      await invalidate();
+      return result;
+    };
+  }
+  return wrapped;
+}
 
 /**
  * Format a selection range as a cell reference string (e.g., "A1" or "A1:C5")
@@ -58,22 +156,52 @@ function formatSelectionRef(selection: NormalizedSelectionRange | null): string 
   return `${startRef}:${endRef}`;
 }
 
+/** The subset of editor metadata that syncs between collaborators. */
+function metaSnapshotOf(metadata: SpreadsheetMetadata): CsvMetaSnapshot {
+  return {
+    headerRowCount: metadata.headerRowCount,
+    frozenColumnCount: metadata.frozenColumnCount,
+    columnFormats: metadata.columnFormats,
+    columnWidths: metadata.columnWidths,
+    cellStyles: metadata.cellStyles,
+  };
+}
+
 /**
- * Get CSS class for column alignment based on format type
+ * Which columns a format-dialog save applies to: every column in the current
+ * selection when the formatted column is part of it, otherwise just that column.
+ */
+function formatTargetColumns(
+  selection: NormalizedSelectionRange | null,
+  columnIndex: number,
+): number[] {
+  if (!selection || columnIndex < selection.startCol || columnIndex > selection.endCol) {
+    return [columnIndex];
+  }
+  const targets: number[] = [];
+  for (let column = selection.startCol; column <= selection.endCol; column++) {
+    targets.push(column);
+  }
+  return targets;
+}
+
+const ALIGNMENT_CLASSES = {
+  left: 'cell-align-left',
+  center: 'cell-align-center',
+  right: 'cell-align-right',
+} as const;
+
+/**
+ * Get CSS class for column alignment.
+ *
+ * An explicit `align` on the format wins; otherwise the column's type picks the
+ * conventional side (numbers and dates right, checkboxes centered, text left).
  */
 function getColumnAlignmentClass(format: ColumnFormat | undefined): string {
   if (!format) return '';
-  switch (format.type) {
-    case 'number':
-    case 'currency':
-    case 'percentage':
-      return 'cell-align-right';
-    case 'date':
-      return 'cell-align-center';
-    case 'text':
-    default:
-      return '';
-  }
+  if (format.align) return ALIGNMENT_CLASSES[format.align];
+  const fallback = getDefaultAlignmentForType(format.type);
+  return fallback ? ALIGNMENT_CLASSES[fallback] : '';
 }
 
 /**
@@ -81,10 +209,23 @@ function getColumnAlignmentClass(format: ColumnFormat | undefined): string {
  */
 function generateColumns(
   columnCount: number,
+  formulaViewState: FormulaViewState,
   frozenColumnCount: number = 0,
   columnFormats: Record<number, ColumnFormat> = {},
   columnWidths: Record<number, number> = {},
-  diffState: DiffState | null = null
+  diffState: DiffState | null = null,
+  /**
+   * Read through refs, never through props: the columns memo must not be
+   * rebuilt on every keystroke of a find query or every filter change, so both
+   * are mutable state the templates sample at paint time (the same trick
+   * `formulaViewState` uses). Callers repaint with `grid.refresh('all')`.
+   */
+  findHighlightRef: RefObject<FindHighlight> = { current: EMPTY_FIND_HIGHLIGHT },
+  filteredColumnsRef: RefObject<ReadonlySet<number>> = { current: new Set() },
+  aiFlashRef: RefObject<WeakMap<object, ReadonlySet<string>>> = { current: new WeakMap() },
+  trackerStore: TrackerResolutionStore | null = null,
+  cellStyleIndex: CellStyleIndex = new CellStyleIndex({}),
+  headerRowCount: number = 0,
 ): ColumnRegular[] {
   const columnHeaders = generateColumnHeaders(columnCount);
   const DEFAULT_COLUMN_WIDTH = 120;
@@ -94,36 +235,98 @@ function generateColumns(
     const alignClass = getColumnAlignmentClass(format);
     const width = columnWidths[index] ?? DEFAULT_COLUMN_WIDTH;
 
-    const needsDisplayFormat =
-      format && (format.type === 'currency' || format.type === 'percentage' || format.type === 'number');
-
     return {
       prop: letter,
       name: letter,
       size: width,
       editor: 'sheets',
       ...(index < frozenColumnCount ? { pin: 'colPinStart' as const } : {}),
-      ...(needsDisplayFormat
-        ? {
-            // Format display only; edit mode reads the raw source value via editCell.val,
-            // so source data is unchanged and double-click editing shows the unformatted number.
-            cellTemplate: (h, props) => {
-              const raw = props.model?.[props.prop as string];
-              const value = typeof raw === 'string' || typeof raw === 'number' ? raw : null;
-              return h('span', {}, formatCellValue(value, format));
-            },
-          }
-        : {}),
+      // The funnel is a plain marked-up span rather than a React node; the
+      // editor picks its clicks up through the header mousedown delegation it
+      // already runs, and anchors the dropdown to this element.
+      columnTemplate: (h, props) => h('span', { class: 'csv-header-cell' }, [
+        h('span', { class: 'csv-header-label' }, props.name ?? ''),
+        h('span', {
+          class: filteredColumnsRef.current.has(index)
+            ? 'csv-filter-affordance csv-filter-affordance-active'
+            : 'csv-filter-affordance',
+          title: 'Filter column',
+        }, '▼'),
+      ]),
+      // RevoGrid's editor reads the raw model value, while this template can
+      // render the separately-derived formula result. Column formatting is
+      // applied last so formulas and literals follow the same display rules.
+      cellTemplate: (h, props) => {
+        const prop = props.prop as string;
+        const raw = props.model?.[prop];
+        const formulaDisplay = props.model
+          ? formulaViewState.getDisplayValue(props.model, prop)
+          : undefined;
+        const displayValue = formulaDisplay !== undefined ? formulaDisplay : raw;
+        const value = typeof displayValue === 'string' || typeof displayValue === 'number'
+          ? displayValue
+          : null;
+        // Link and tracker cells draw structure, not just formatted text.
+        if (format?.type === 'url') return renderUrlCell(h, value);
+        if (format?.type === 'tracker' && trackerStore) return renderTrackerCell(h, value, trackerStore);
+        return h('span', {}, format ? formatCellValue(value, format) : String(value ?? ''));
+      },
       cellProperties: (cellData: { model: Record<string, unknown>; rowIndex: number }) => {
         const classes: Record<string, boolean> = {};
 
-        // Apply alignment class
-        if (alignClass) {
-          classes[alignClass] = true;
-        }
-
         // Detect if this is a pinned (header) row by checking for header-row class
         const isPinned = cellData.model._rowClass === 'header-row';
+
+        // Alignment. An explicit column format wins; otherwise fall back to what
+        // every spreadsheet does and right-align values that read as numbers,
+        // leaving text against the left edge. Header rows stay left-aligned even
+        // when their label happens to be numeric -- a header is a label, not a
+        // measurement. The value tested is the *displayed* one, so a formula
+        // aligns by its result rather than by the `=SUM(...)` source text.
+        if (alignClass) {
+          classes[alignClass] = true;
+        } else if (!isPinned) {
+          const displayed = formulaViewState.getDisplayValue(cellData.model, letter)
+            ?? cellData.model[letter];
+          if (isNumericCellValue(displayed)) {
+            classes['cell-align-right'] = true;
+          }
+        }
+
+        // Red negatives are a class rather than a decorated string, so the cell
+        // still copies as a plain number.
+        if (format && !isPinned && usesRedNegatives(format.negativeStyle)) {
+          const displayed = formulaViewState.getDisplayValue(cellData.model, letter)
+            ?? cellData.model[letter];
+          const numeric = typeof displayed === 'string' || typeof displayed === 'number'
+            ? displayed
+            : null;
+          if (isNegativeFormattedValue(numeric, format)) {
+            classes['csv-cell-negative'] = true;
+          }
+        }
+
+        // Cell/range styling. Logical rows are what an A1 range key means, so a
+        // pinned header row is its own index rather than the body's row 0.
+        if (!cellStyleIndex.isEmpty) {
+          const logicalRow = isPinned ? cellData.rowIndex : cellData.rowIndex + headerRowCount;
+          const cellStyle = cellStyleIndex.styleAt(logicalRow, index);
+          if (cellStyle) {
+            for (const className of styleClassNames(cellStyle)) classes[className] = true;
+          }
+        }
+
+        // Find-match highlight, keyed by row model rather than row index so it
+        // survives pinned rows and filtered-out rows alike.
+        const findState = findHighlightRef.current.get(cellData.model)?.get(letter);
+        if (findState !== undefined) {
+          classes['csv-find-match'] = true;
+          classes['csv-find-current'] = findState;
+        }
+
+        if (aiFlashRef.current.get(cellData.model)?.has(letter)) {
+          classes['csv-ai-cell-flash'] = true;
+        }
 
         // Apply diff class if in diff mode
         if (diffState?.isActive) {
@@ -197,6 +400,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   const formulaBarRef = useRef<FormulaBarHandle>(null);
   const undoPluginRef = useRef<UndoRedoPlugin | null>(null);
   const gridOpsRef = useRef<GridOperations | null>(null);
+  const formulaViewStateRef = useRef(new FormulaViewState());
 
   // Ref for spreadsheetMeta so callbacks stay current
   const spreadsheetMetaRef = useRef(spreadsheetMeta);
@@ -207,15 +411,98 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   // Selection state (refs to avoid re-renders)
   const selectedCellRef = useRef<{ row: number; col: number } | null>(null);
   const selectionRangeRef = useRef<NormalizedSelectionRange | null>(null);
+  const [hasRangeSelection, setHasRangeSelection] = useState(false);
   const selectionContextPublishVersionRef = useRef(0);
   const lastPublishedSelectionContextRef = useRef<string | null>(null);
   const skipFocusHandlerRef = useRef(false); // Flag to skip focus handler during programmatic selection
+  // Set while our own cross-section drag owns the selection. RevoGrid keeps
+  // emitting setrange with its clamped, single-section range during the drag;
+  // honouring it would snap the selection back at the frozen boundary.
+  const suppressGridRangeRef = useRef(false);
 
   // Grid initialization - render grid immediately, load data imperatively after mount
   // This avoids React props overwriting RevoGrid's internal state on re-renders
-  const pendingDataRef = useRef<{ source: Record<string, string | number>[]; pinnedTop: Record<string, string | number>[] } | null>(null);
+  const pendingDataRef = useRef<GridSourceData | null>(null);
   const dataLoadedRef = useRef(false);
   const loadedCsvContentRef = useRef('');
+
+  /* ----------------------------------------------------------------------- */
+  /* Filtered-view invalidation                                               */
+  /* ----------------------------------------------------------------------- */
+
+  /**
+   * The visible <-> logical row boundary.
+   *
+   * RevoGrid addresses rows by *visible* position: with a filter on, `data-rgrow`,
+   * its focus/range events, its selection stores and `scrollToRow` all skip the
+   * trimmed rows. Selections, formulas and every clipboard consumer are in
+   * *logical* sheet rows. Everything in this component is logical; the only
+   * places that speak visible rows are the DOM/event entry points below and
+   * `paintLogicalRange`, which converts back on the way out.
+   */
+  const rowSpaceRef = useRef(createRowIndexMapping({ rowCount: 0 }));
+
+  // Assigned once `useColumnFilters` runs further down; read through a ref so
+  // the invalidation path below can be defined before it and stay stable.
+  const columnFiltersRef = useRef<ColumnFilters | null>(null);
+
+  /**
+   * Both filtered-view derivations are snapshots of the sheet, so *any* mutation
+   * makes them lie: the trimmed rows a filter derived, and the row mapping built
+   * from them. Rather than refresh at each of the dozen call sites that can
+   * mutate the sheet -- where the next one added silently misses -- every
+   * mutating grid operation and every whole-source load funnels through here.
+   */
+  const rebuildRowSpace = useCallback(async () => {
+    const grid = revoGridRef.current;
+    if (!grid) return;
+    const source = await grid.getSource('rgRow');
+    const headerRows = spreadsheetMetaRef.current.metadata.headerRowCount;
+    rowSpaceRef.current = createRowIndexMapping({
+      rowCount: headerRows + (source?.length ?? 0),
+      headerRowCount: headerRows,
+      trimmedRows: getAppliedTrimmedRows(grid),
+    });
+  }, []);
+
+  const runRowViewInvalidation = useCallback(async () => {
+    await columnFiltersRef.current?.refresh();
+    await rebuildRowSpace();
+  }, [rebuildRowSpace]);
+
+  // Coalesced: a replace-all writes one cell at a time, and re-deriving the
+  // whole filter per cell would be quadratic. Requests made while a pass is
+  // running are folded into one more pass, so the last mutation is always the
+  // one the mapping reflects.
+  const rowViewInvalidationRef = useRef<Promise<void> | null>(null);
+  const rowViewIsStaleRef = useRef(false);
+  const invalidateRowView = useCallback((): Promise<void> => {
+    rowViewIsStaleRef.current = true;
+    if (!rowViewInvalidationRef.current) {
+      rowViewInvalidationRef.current = (async () => {
+        try {
+          while (rowViewIsStaleRef.current) {
+            rowViewIsStaleRef.current = false;
+            await runRowViewInvalidation();
+          }
+        } finally {
+          rowViewInvalidationRef.current = null;
+        }
+      })();
+    }
+    return rowViewInvalidationRef.current;
+  }, [runRowViewInvalidation]);
+
+  /**
+   * Single write path for a whole-sheet source replacement (initial load, diff
+   * clear, remote collab content). The rows underneath every filter and the row
+   * mapping are both replaced wholesale, so neither survives the swap.
+   */
+  const applyGridSource = useCallback((grid: RevoGridElement, gridData: GridSourceData) => {
+    grid.source = gridData.source;
+    grid.pinnedTopSource = gridData.pinnedTop;
+    void invalidateRowView();
+  }, [invalidateRowView]);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -238,6 +525,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
 
   // Column format dialog state
   const [formatDialogColumn, setFormatDialogColumn] = useState<number | null>(null);
+  const [cellFormatOpen, setCellFormatOpen] = useState(false);
 
   // Diff mode state for AI edit review
   const [diffState, setDiffState] = useState<DiffState | null>(null);
@@ -245,6 +533,24 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   // Ref for diffState so callbacks stay current
   const diffStateRef = useRef(diffState);
   diffStateRef.current = diffState;
+
+  /**
+   * Editing lock.
+   *
+   * A diff splices phantom rows (the AI's deletions) into the grid source, so
+   * grid row indices no longer line up with the file's. Every mutation path --
+   * formula bar, paste, clear, replace, insert/delete row -- addresses cells by
+   * index, so an edit made mid-review lands on the wrong row, and `toCSV()`
+   * would write the phantom rows back out as real ones. Whatever survived that
+   * is then thrown away: accept/reject reloads from disk. So review is
+   * read-only, and Keep/Revert is the only way out of it.
+   *
+   * The grid's own cell editor is gated by RevoGrid's `readonly` prop; this
+   * covers everything that writes without going through it.
+   */
+  const isDiffActive = diffState?.isActive ?? false;
+  const editingLockedRef = useRef(false);
+  editingLockedRef.current = readOnly || isDiffActive;
 
   // ---- EditorHost lifecycle (loading, echo detection, file changes, save, theme) ----
   const { isLoading, error: loadError, theme, markDirty: _markDirty } = useEditorLifecycle(host, {
@@ -260,7 +566,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       loadedCsvContentRef.current = content;
       // Parse CSV and set RevoGrid source imperatively
       const { data } = parseCSV(content);
-      const gridData = convertToGridSource(data.rows, data.headerRowCount);
+      const gridData = prepareGridData(data);
 
       // Store data to be loaded imperatively once grid is mounted
       pendingDataRef.current = gridData;
@@ -268,8 +574,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       // If grid already mounted, load immediately
       const grid = revoGridRef.current;
       if (grid) {
-        grid.source = gridData.source;
-        grid.pinnedTopSource = gridData.pinnedTop;
+        applyGridSource(grid, gridData);
         dataLoadedRef.current = true;
       }
 
@@ -285,6 +590,12 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       }
     },
     onSave: async () => {
+      // Mid-review the grid holds the AI's content plus phantom rows for its
+      // deletions. Writing that back would resurrect every deleted row as a
+      // real one -- and there is nothing to save anyway, since the proposed
+      // content is already the file on disk. Keep/Revert owns this.
+      if (diffStateRef.current?.isActive) return;
+
       const gridOps = gridOpsRef.current;
       if (!gridOps) {
         console.warn('[CSV] Grid operations not available for save');
@@ -315,7 +626,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
 
       // Parse the modified content to get the actual data to display
       const { data: modifiedData } = parseCSV(config.modifiedContent);
-      const gridData = convertToGridSource(modifiedData.rows, modifiedData.headerRowCount);
+      const gridData = prepareGridData(modifiedData);
 
       // Update grid with modified content so the new data is visible
       const grid = revoGridRef.current;
@@ -395,11 +706,10 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
           }
 
           const finalDataRows = entries.map(e => e.row);
-          grid.source = [...finalDataRows, ...bufferRows];
+          applyGridSource(grid, { ...gridData, source: [...finalDataRows, ...bufferRows] });
         } else {
-          grid.source = gridData.source;
+          applyGridSource(grid, gridData);
         }
-        grid.pinnedTopSource = gridData.pinnedTop;
       }
 
       spreadsheetMetaRef.current.loadFromCSV(config.modifiedContent);
@@ -413,13 +723,10 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       try {
         const content = await host.loadContent();
         const { data } = parseCSV(content);
-        const gridData = convertToGridSource(data.rows, data.headerRowCount);
+        const gridData = prepareGridData(data);
 
         const grid = revoGridRef.current;
-        if (grid) {
-          grid.source = gridData.source;
-          grid.pinnedTopSource = gridData.pinnedTop;
-        }
+        if (grid) applyGridSource(grid, gridData);
 
         spreadsheetMetaRef.current.loadFromCSV(content);
         spreadsheetMetaRef.current.markClean();
@@ -436,6 +743,9 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   // Y.Text changes flow back through the existing applyContent path so
   // every existing format/header/metadata invariant is preserved.
   const collabBindingRef = useRef<CsvBinding | null>(null);
+  const metaBindingRef = useRef<CsvMetaBinding | null>(null);
+  /** Guards the publish effect against echoing a snapshot we just received. */
+  const lastPublishedMetaRef = useRef<CsvMetaSnapshot | null>(null);
   const collabActiveRef = useRef(false);
   // Remote collaborator presence (selected/editing cells) for the in-grid
   // overlay. `presenceRepaintTick` forces the overlay to re-measure cell rects
@@ -445,6 +755,12 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   const presenceRafRef = useRef<number | null>(null);
   // Trailing throttle for local selection publishes (rapid arrow-key nav).
   const awarenessThrottleRef = useRef<{ timer: ReturnType<typeof setTimeout> | null; last: number }>({ timer: null, last: 0 });
+  // Single writer for the local `selectedCell`/`editingCell` pair. Lazily
+  // constructed rather than `useRef(new ...)` so a hot re-render does not
+  // allocate a tracker it immediately discards.
+  const localPresenceRef = useRef<LocalPresenceTracker | undefined>(undefined);
+  localPresenceRef.current ??= new LocalPresenceTracker();
+  const localPresence = localPresenceRef.current;
   const { isCollaborative: isCollabActive } = useCollaborativeEditor(host, {
     isEmpty: isCsvYDocEmpty,
     initializeFromContent: seedCsvYDoc,
@@ -452,7 +768,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       const applyCsvContent = (content: string) => {
         loadedCsvContentRef.current = content;
         const { data } = parseCSV(content);
-        const gridData = convertToGridSource(data.rows, data.headerRowCount);
+        const gridData = prepareGridData(data);
         // Stash for the deferred ref-callback path. The collab createBinding
         // can fire applyCsvContent before the grid is mounted -- if so, the
         // ref callback's pendingDataRef branch is what populates the grid on
@@ -462,13 +778,31 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
         pendingDataRef.current = gridData;
         const grid = revoGridRef.current;
         if (grid) {
-          grid.source = gridData.source;
-          grid.pinnedTopSource = gridData.pinnedTop;
+          applyGridSource(grid, gridData);
           dataLoadedRef.current = true;
         }
         spreadsheetMetaRef.current.loadFromCSV(content);
         spreadsheetMetaRef.current.markClean();
+        // `loadFromCSV` re-reads metadata from the comment line, which in a
+        // shared sheet is stale derived output. The map is the authority, so
+        // put it back on top of whatever the text happened to carry.
+        const metaBinding = metaBindingRef.current;
+        if (metaBinding && !isMetaEmpty(yDoc)) {
+          const snapshot = metaBinding.snapshot();
+          spreadsheetMetaRef.current.applyRemoteMetadata(snapshot);
+          lastPublishedMetaRef.current = snapshot;
+        }
       };
+
+      // Metadata syncs through its own map rather than the comment line inside
+      // the CSV text, so two people formatting two different columns merge.
+      const metaBinding = new CsvMetaBinding(yDoc, {
+        onRemoteMeta: (snapshot) => {
+          spreadsheetMetaRef.current.applyRemoteMetadata(snapshot);
+          lastPublishedMetaRef.current = snapshot;
+        },
+      });
+      metaBindingRef.current = metaBinding;
 
       // Initial baseline = whatever Y.Text already has (the seed we just
       // wrote OR the content sync'd from another client).
@@ -508,7 +842,21 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       if (initial.length > 0) {
         applyCsvContent(initial);
         binding.noteAppliedRemote(initial);
-      } else if (loadedCsvContentRef.current.length > 0) {
+      }
+
+      // Migration: a sheet shared before metadata had its own key carries it
+      // only in the comment line. Whoever opens it first seeds the map from
+      // what was just parsed; after that the map is the authority. Two clients
+      // racing here write identical values, so the result converges either way.
+      if (isMetaEmpty(yDoc)) {
+        metaBinding.publish(metaSnapshotOf(spreadsheetMetaRef.current.metadata));
+      } else {
+        const snapshot = metaBinding.snapshot();
+        spreadsheetMetaRef.current.applyRemoteMetadata(snapshot);
+        lastPublishedMetaRef.current = snapshot;
+      }
+
+      if (initial.length === 0 && loadedCsvContentRef.current.length > 0) {
         // First-share opens can render from host.loadContent() before the Y.Text
         // has been populated. Push that already-loaded local CSV immediately so a
         // close/reopen does not depend on the poll interval or unmount flush.
@@ -518,12 +866,23 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       }
       collabActiveRef.current = true;
       return {
+        // Drained by the host before it reports a write complete. This matters
+        // more here than anywhere else: local edits reach the Y.Text on a 1s
+        // poll, so without it an AI tool returns a full second before its cells
+        // are in the document.
+        syncNow: () => binding.syncNow(),
         destroy: () => {
-          // Flush any pending sync so a closing tab doesn't drop the last
-          // edit. Fire-and-forget; the binding is about to be destroyed
-          // either way.
-          void binding.syncNow().catch(() => {});
+          // No flush here. `destroy` runs from a passive effect cleanup, which
+          // React schedules after it has already detached the grid's ref, so
+          // this could only ever call `toCSV()` against a grid that is gone --
+          // it threw "Grid not available" on every close and, until `syncNow`
+          // started reporting failure, hid that behind a resolved promise.
+          // The drain that can still read the grid is the one the host runs
+          // through `registerContentFlush` before it destroys the mount.
           binding.destroy();
+          metaBindingRef.current?.destroy();
+          metaBindingRef.current = null;
+          lastPublishedMetaRef.current = null;
           collabBindingRef.current = null;
           collabActiveRef.current = false;
           setRemotePresences([]);
@@ -539,6 +898,10 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   useEffect(() => {
     if (!isCollabActive) return;
     const id = setInterval(() => {
+      // Same reason the save path bails: the grid is showing phantom rows, and
+      // syncing them would broadcast the AI's deleted rows to collaborators as
+      // live content.
+      if (diffStateRef.current?.isActive) return;
       collabBindingRef.current?.scheduleSync();
     }, 1000);
     return () => clearInterval(id);
@@ -556,8 +919,10 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   }, []);
 
   // Publish the local selected cell to awareness, trailing-throttled so rapid
-  // arrow-key navigation doesn't churn the awareness channel. Selecting a cell
-  // is not editing it, so editingCell is cleared here; it is set on edit start.
+  // arrow-key navigation doesn't churn the awareness channel. The editing cell
+  // rides along unchanged: RevoGrid emits focus and range events while a cell
+  // editor is open, and a selection publish that asserted "not editing" there
+  // retracted the flag mid-edit (see localPresence.ts).
   const AWARENESS_THROTTLE_MS = 100;
   const publishLocalSelection = useCallback((cell: { row: number; col: number } | null) => {
     if (!collabActiveRef.current) return;
@@ -565,7 +930,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
     const flush = () => {
       state.last = Date.now();
       state.timer = null;
-      collabBindingRef.current?.setLocalAwareness({ selectedCell: cell, editingCell: null });
+      collabBindingRef.current?.setLocalAwareness(localPresence.select(cell));
     };
     const elapsed = Date.now() - state.last;
     if (state.timer) clearTimeout(state.timer);
@@ -574,7 +939,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
     } else {
       state.timer = setTimeout(flush, AWARENESS_THROTTLE_MS - elapsed);
     }
-  }, []);
+  }, [localPresence]);
 
   // Clean up the throttle timer / pending rAF on unmount.
   useEffect(() => {
@@ -595,8 +960,23 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
     return () => ro.disconnect();
   }, [isCollabActive, schedulePresenceRepaint]);
 
-  // Stable editors object
-  const editors = useMemo(() => ({ sheets: SheetsTextEditor }), []);
+  // Stable editors object.
+  //
+  // The subclass exists so the open-editor lifetime -- not a later focus event
+  // -- is what ends the published `editingCell`. `disconnectedCallback` covers
+  // every close RevoGrid has: commit, Escape, and unmount. Each instance
+  // captures the session it opened under so an outgoing editor disconnecting
+  // after the next one opened cannot clear the incoming flag.
+  const editors = useMemo(() => ({
+    sheets: class PresenceAwareSheetsTextEditor extends SheetsTextEditor {
+      private readonly presenceSession = localPresence.currentSession();
+
+      disconnectedCallback(): void {
+        const patch = localPresence.endEdit(this.presenceSession);
+        if (patch) collabBindingRef.current?.setLocalAwareness(patch);
+      }
+    },
+  }), [localPresence]);
 
   // Display dimensions
   const displayColumnCount = spreadsheetMeta.metadata.columnCount + DISPLAY_BUFFER_COLS;
@@ -605,10 +985,48 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   const columnWidths = spreadsheetMeta.metadata.columnWidths;
   const headerRowCount = spreadsheetMeta.metadata.headerRowCount;
 
+  // Find/filter view state the column templates sample at paint time. Kept in
+  // refs so neither a search keystroke nor a filter rebuilds `columns`.
+  const findHighlightRef = useRef<FindHighlight>(EMPTY_FIND_HIGHLIGHT);
+  const filteredColumnsRef = useRef<ReadonlySet<number>>(new Set());
+  const aiFlashRef = useRef<WeakMap<object, ReadonlySet<string>>>(new WeakMap());
+  const aiFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aiFlashPaintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aiFlashCellsRef = useRef<((cells: readonly { row: number; column: number }[]) => Promise<void>) | null>(null);
+
+  // Tracker chips resolve through the same sample-at-paint-time contract as the
+  // refs above: templates read the store, the store asks for a repaint when a
+  // key resolves. `trackerKeys` only exists to mount one resolver hook per key.
+  const trackerStoreRef = useRef<TrackerResolutionStore | null>(null);
+  if (trackerStoreRef.current === null) trackerStoreRef.current = new TrackerResolutionStore();
+  const trackerStore = trackerStoreRef.current;
+  const [trackerKeys, setTrackerKeys] = useState<readonly string[]>([]);
+
+  // Rebuilt only when the styles themselves change; the index memoizes lookups
+  // internally so a repaint does not rescan every range for every cell.
+  const cellStyleIndex = useMemo(
+    () => new CellStyleIndex(spreadsheetMeta.metadata.cellStyles),
+    [spreadsheetMeta.metadata.cellStyles],
+  );
+
   // Memoized column definitions
   const columns = useMemo(
-    () => generateColumns(displayColumnCount, frozenColumnCount, columnFormats, columnWidths, diffState),
-    [displayColumnCount, frozenColumnCount, columnFormats, columnWidths, diffState]
+    () => generateColumns(
+      displayColumnCount,
+      formulaViewStateRef.current,
+      frozenColumnCount,
+      columnFormats,
+      columnWidths,
+      diffState,
+      findHighlightRef,
+      filteredColumnsRef,
+      aiFlashRef,
+      trackerStore,
+      cellStyleIndex,
+      headerRowCount,
+    ),
+    [displayColumnCount, frozenColumnCount, columnFormats, columnWidths, diffState, trackerStore,
+     cellStyleIndex, headerRowCount]
   );
 
   // Note: We don't use RevoGrid's built-in themes (default/darkCompact) because
@@ -633,6 +1051,11 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
           onStateChange: () => {
             // Could update UI here if needed
           },
+          onDataChange: () => {
+            void gridOpsRef.current?.recalculateFormulas().catch((error) => {
+              console.error('[CSV] Failed to recalculate formulas after undo/redo:', error);
+            });
+          },
         });
         undoPluginRef.current = plugin;
       })
@@ -643,21 +1066,136 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       });
 
     // Create grid operations - use getter to access undoPlugin dynamically
-    const gridOps = createGridOperations(revoGridRef, {
+    const rawGridOps = createGridOperations(revoGridRef, {
       getHeaderRowCount: () => spreadsheetMetaRef.current.metadata.headerRowCount,
       getColumnCount: () => spreadsheetMetaRef.current.metadata.columnCount,
       setColumnCount: (count) => spreadsheetMetaRef.current.setColumnCount(count),
       getDelimiter: () => spreadsheetMetaRef.current.delimiter,
       getColumnFormats: () => spreadsheetMetaRef.current.metadata.columnFormats,
       getColumnWidths: () => spreadsheetMetaRef.current.metadata.columnWidths,
+      getCellStyles: () => spreadsheetMetaRef.current.metadata.cellStyles,
       getFrozenColumnCount: () => spreadsheetMetaRef.current.metadata.frozenColumnCount,
-      onDirty: () => hostRef.current.setDirty(true),
+      onDirty: () => {
+        hostRef.current.setDirty(true);
+        // Every mutation path funnels through here, so this is the one place
+        // that knows an edit happened. Without it the only push is the 1s
+        // poll, which leaves up to a second of edits sitting outside the Y.Doc
+        // -- and the teardown flush cannot read the grid to recover them.
+        collabBindingRef.current?.scheduleSync();
+      },
       getUndoPlugin: () => undoPluginRef.current,
+      getTrimmedRows: () => getAppliedTrimmedRows(grid),
+      formulaViewState: formulaViewStateRef.current,
     });
+    // Nothing downstream sees the unwrapped operations, so no mutation path can
+    // skip the filtered-view refresh.
+    const gridOps = withRowViewInvalidation(rawGridOps, invalidateRowView);
     gridOpsRef.current = gridOps;
+    const ownEditor = editorRef.current;
+
+    const flashCells = async (cells: readonly { row: number; column: number }[]) => {
+      const { source, pinnedTop } = await gridOps.getData();
+      const headerRows = spreadsheetMetaRef.current.metadata.headerRowCount;
+      const frozenColumns = spreadsheetMetaRef.current.metadata.frozenColumnCount;
+      const mapping = createRowIndexMapping({
+        rowCount: headerRows + source.length,
+        headerRowCount: headerRows,
+        trimmedRows: getAppliedTrimmedRows(grid),
+      });
+      const flashRenderedCells = () => {
+        if (!ownEditor) return;
+        for (const cell of cells) {
+          const visibleRow = mapping.logicalToVisible(cell.row);
+          if (visibleRow === undefined) continue;
+          const rowType = cell.row < headerRows ? 'rowPinStart' : 'rgRow';
+          const renderedRow = cell.row < headerRows ? cell.row : visibleRow - headerRows;
+          const columnType = cell.column < frozenColumns ? 'colPinStart' : 'rgCol';
+          const renderedColumn = cell.column < frozenColumns ? cell.column : cell.column - frozenColumns;
+          const selector = `revogr-data[type="${rowType}"] [data-rgrow="${renderedRow}"][data-rgcol="${renderedColumn}"]`;
+          for (const candidate of ownEditor.querySelectorAll(selector)) {
+            const viewport = candidate.closest('revogr-viewport-scroll');
+            if (viewport?.classList.contains(columnType)) {
+              candidate.classList.add('csv-ai-cell-flash');
+            }
+          }
+        }
+      };
+      for (const cell of cells) {
+        const model = cell.row < headerRows
+          ? pinnedTop[cell.row]
+          : source[cell.row - headerRows];
+        if (!model) continue;
+        const flashed = new Set(aiFlashRef.current.get(model) ?? []);
+        flashed.add(columnIndexToLetter(cell.column));
+        aiFlashRef.current.set(model, flashed);
+
+        // RevoGrid does not always re-run cellProperties for an already-painted
+        // viewport cell. Add the same transient class to the live DOM so a user
+        // watching the edit sees it immediately; the model-backed class above
+        // covers cells painted while the flash is active.
+      }
+      flashRenderedCells();
+      // The editor-write bridge flushes the file immediately after the handler
+      // returns. Repaint once after that save-driven render so the visible flash
+      // survives model replacement instead of disappearing with the old cells.
+      if (aiFlashPaintTimerRef.current) clearTimeout(aiFlashPaintTimerRef.current);
+      aiFlashPaintTimerRef.current = setTimeout(() => {
+        flashRenderedCells();
+        aiFlashPaintTimerRef.current = null;
+      }, 250);
+      if (aiFlashTimerRef.current) clearTimeout(aiFlashTimerRef.current);
+      aiFlashTimerRef.current = setTimeout(() => {
+        aiFlashRef.current = new WeakMap();
+        ownEditor?.querySelectorAll('.csv-ai-cell-flash').forEach((cell) => {
+          cell.classList.remove('csv-ai-cell-flash');
+        });
+        void grid.refresh('all');
+        aiFlashTimerRef.current = null;
+      }, 1400);
+    };
+    aiFlashCellsRef.current = flashCells;
+
+    hostRef.current.registerEditorAPI(createSpreadsheetEditorAPI({
+      operations: gridOps,
+      getMetadata: () => {
+        const current = spreadsheetMetaRef.current;
+        return {
+          ...current.metadata,
+          delimiter: current.delimiter,
+        };
+      },
+      getSelection: async () => {
+        const range = selectionRangeRef.current;
+        if (!range) return null;
+        const { source } = await gridOps.getData();
+        const headerRows = spreadsheetMetaRef.current.metadata.headerRowCount;
+        const mapping = createRowIndexMapping({
+          rowCount: headerRows + source.length,
+          headerRowCount: headerRows,
+          trimmedRows: getAppliedTrimmedRows(grid),
+        });
+        return {
+          range: { ...range },
+          logicalRows: logicalRowsForSelection(mapping, range).logicalRows,
+        };
+      },
+      getDisplayValue: (model, prop) => formulaViewStateRef.current.getDisplayValue(model, prop),
+      flashCells: (cells) => notifySpreadsheetCellFlash(filePath, cells),
+    }));
 
     return () => {
       cancelled = true;
+      hostRef.current.registerEditorAPI(null);
+      if (aiFlashTimerRef.current) {
+        clearTimeout(aiFlashTimerRef.current);
+        aiFlashTimerRef.current = null;
+      }
+      if (aiFlashPaintTimerRef.current) {
+        clearTimeout(aiFlashPaintTimerRef.current);
+        aiFlashPaintTimerRef.current = null;
+      }
+      aiFlashRef.current = new WeakMap();
+      if (aiFlashCellsRef.current === flashCells) aiFlashCellsRef.current = null;
       if (plugin) {
         plugin.destroy();
       }
@@ -668,94 +1206,42 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
         gridOpsRef.current = null;
       }
     };
-  }, [isLoading]);
+  }, [isLoading, filePath]);
+
+  useEffect(() => {
+    const flashDetail = (detail: AICellFlashEventDetail | undefined) => {
+      if (detail?.filePath === filePath) void aiFlashCellsRef.current?.(detail.cells);
+    };
+    return subscribeSpreadsheetCellFlash(flashDetail);
+  }, [filePath]);
 
   // (Loading, saving, file changes, echo detection, diff mode are all handled by useEditorLifecycle above)
 
-  // Register for AI tool access
-  useEffect(() => {
-    // Create a compatibility layer for AI tools
-    const compatStore = {
-      data: {
-        rows: [], // Would need to read from grid
-        columnCount: spreadsheetMeta.metadata.columnCount,
-        headerRowCount: spreadsheetMeta.metadata.headerRowCount,
-        hasHeaders: spreadsheetMeta.metadata.hasHeaders,
-        frozenColumnCount: spreadsheetMeta.metadata.frozenColumnCount,
-        columnFormats: spreadsheetMeta.metadata.columnFormats,
-      },
-      isDirty: spreadsheetMeta.isDirty,
-      delimiter: spreadsheetMeta.delimiter,
-      // Note: AI tools integration would need updates to work with new architecture
-    };
-    host.registerEditorAPI(compatStore);
-    return () => {
-      host.registerEditorAPI(null);
-    };
-  }, [filePath, spreadsheetMeta]);
-
-  /**
-   * Convert parsed CSV rows to RevoGrid source format
-   */
-  function convertToGridSource(
-    rows: { raw: string; computed: string | number | null; error?: string }[][],
-    headerRowCount: number
-  ): { source: Record<string, string | number>[]; pinnedTop: Record<string, string | number>[] } {
-    const columnCount = rows[0]?.length ?? 0;
-
-    // Pinned (header) rows
-    const pinnedTop: Record<string, string | number>[] = [];
-    for (let rowIndex = 0; rowIndex < headerRowCount && rowIndex < rows.length; rowIndex++) {
-      const rowData: Record<string, string | number> = {};
-      const row = rows[rowIndex];
-      for (let c = 0; c < columnCount + DISPLAY_BUFFER_COLS; c++) {
-        const colKey = columnIndexToLetter(c);
-        const cell = row?.[c];
-        if (cell?.error) {
-          rowData[colKey] = cell.error;
-        } else if (cell?.computed !== null && cell?.computed !== undefined) {
-          rowData[colKey] = cell.computed;
-        } else {
-          rowData[colKey] = cell?.raw || '';
-        }
-      }
-      rowData._rowClass = 'header-row';
-      pinnedTop.push(rowData);
-    }
-
-    // Regular (data) rows
-    const dataRows = rows.slice(headerRowCount);
-    const source: Record<string, string | number>[] = [];
-
-    for (let rowIndex = 0; rowIndex < dataRows.length + DISPLAY_BUFFER_ROWS; rowIndex++) {
-      const rowData: Record<string, string | number> = {};
-      const row = dataRows[rowIndex];
-      for (let c = 0; c < columnCount + DISPLAY_BUFFER_COLS; c++) {
-        const colKey = columnIndexToLetter(c);
-        const cell = row?.[c];
-        if (cell?.error) {
-          rowData[colKey] = cell.error;
-        } else if (cell?.computed !== null && cell?.computed !== undefined) {
-          rowData[colKey] = cell.computed;
-        } else {
-          rowData[colKey] = cell?.raw || '';
-        }
-      }
-      source.push(rowData);
-    }
-
-    return { source, pinnedTop };
+  /** Build raw RevoGrid source rows and the derived formula display state. */
+  function prepareGridData(data: SpreadsheetData): GridSourceData {
+    const gridData = spreadsheetDataToGridSource(
+      data,
+      DISPLAY_BUFFER_ROWS,
+      DISPLAY_BUFFER_COLS,
+    );
+    formulaViewStateRef.current.recalculate(data, gridData);
+    return gridData;
   }
 
-  /**
-   * Translate row index from RevoGrid to logical row index
-   */
-  const translateRowIndex = useCallback((gridRowIndex: number, isPinned: boolean): number => {
-    if (isPinned) {
-      return gridRowIndex;
-    }
-    return gridRowIndex + headerRowCount;
-  }, [headerRowCount]);
+  // The visible <-> logical row conversions every DOM/event entry point goes
+  // through. See `rowSpaceRef` above for the boundary they enforce.
+  const toLogicalRow = useCallback(
+    (visibleRow: number) => rowSpaceRef.current.visibleToLogical(visibleRow) ?? visibleRow,
+    [],
+  );
+  const toVisibleRow = useCallback(
+    (logicalRow: number) => rowSpaceRef.current.logicalToVisible(logicalRow) ?? logicalRow,
+    [],
+  );
+
+  const translateRowIndex = useCallback((gridRowIndex: number, isPinned: boolean): number => (
+    logicalRowForGridRow(rowSpaceRef.current, gridRowIndex, isPinned, headerRowCount)
+  ), [headerRowCount]);
 
   const publishSelectionContext = useCallback(async (range: NormalizedSelectionRange | null) => {
     const publishVersion = ++selectionContextPublishVersionRef.current;
@@ -804,6 +1290,11 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   ) => {
     selectedCellRef.current = cell;
     selectionRangeRef.current = range;
+    // Only the find bar's "In selection" needs this as state; React bails out
+    // when the boolean is unchanged, so a drag doesn't re-render per cell.
+    setHasRangeSelection(
+      !!range && (range.startRow !== range.endRow || range.startCol !== range.endCol)
+    );
     void publishSelectionContext(range);
     publishLocalSelection(cell);
 
@@ -820,17 +1311,29 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
     }
   }, [publishSelectionContext, publishLocalSelection]);
 
-  // Handle after edit - just mark dirty, RevoGrid owns the data
+  // Handle direct RevoGrid edits. The source already contains the committed
+  // raw value when this event fires, so recalculate every dependent display.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleAfterEdit = useCallback(
-    (event: RevoGridCustomEvent<any>) => {
+    async (event: RevoGridCustomEvent<any>) => {
       if (!event.detail) return;
+      // The grid already contains the committed value. Push it to Y.Text
+      // before awaiting any follow-up work so a teammate's remote update
+      // cannot repaint this still-local edit during the polling interval.
+      await collabBindingRef.current?.syncNow();
+      try {
+        await gridOpsRef.current?.recalculateFormulas();
+      } catch (error) {
+        console.error('[CSV] Failed to recalculate formulas after edit:', error);
+      }
       host.setDirty(true);
-      void publishSelectionContext(selectionRangeRef.current);
-      // Edit committed/closed: keep the selection box, drop the editing flag.
-      collabBindingRef.current?.setLocalAwareness({ editingCell: null });
+      await updateSelection(selectedCellRef.current, selectionRangeRef.current);
+      // Edit committed: keep the selection box, drop the editing flag. The
+      // editor's own disconnect covers the closes that never commit.
+      const patch = localPresence.endEdit();
+      if (patch) collabBindingRef.current?.setLocalAwareness(patch);
     },
-    [host, publishSelectionContext]
+    [host, updateSelection, localPresence]
   );
 
   // Handle edit start - flag the currently-selected cell as actively editing so
@@ -838,8 +1341,9 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   // already-translated selectedCellRef rather than re-parsing event coords.
   const handleBeforeEditStart = useCallback(() => {
     if (!collabActiveRef.current) return;
-    collabBindingRef.current?.setLocalAwareness({ editingCell: selectedCellRef.current ?? null });
-  }, []);
+    const { patch } = localPresence.beginEdit(selectedCellRef.current ?? null);
+    collabBindingRef.current?.setLocalAwareness(patch);
+  }, [localPresence]);
 
   // Handle column resize - persist the new width
   const handleColumnResize = useCallback(
@@ -865,35 +1369,30 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleFocusCell = useCallback(
     (event: RevoGridCustomEvent<any>) => {
-      // Skip if we're doing programmatic selection (e.g., select-all)
-      if (skipFocusHandlerRef.current) return;
+      // Skip if we're doing programmatic selection (e.g., select-all) or if our
+      // own drag is mid-flight and owns the range.
+      if (skipFocusHandlerRef.current || suppressGridRangeRef.current) return;
       if (!event.detail) return;
-      const { rowIndex, colIndex, type } = event.detail;
+      const { rowIndex, colIndex, type, rowType, column } = event.detail;
 
-      const isPinned = type === 'rowPinStart';
+      // `afterfocus` names the row section `rowType`; only the earlier
+      // `beforecellfocus` calls it `type`. Reading the wrong one leaves
+      // `isPinned` undefined, which shifts every pinned-row click down a row.
+      const isPinned = (rowType ?? type) === 'rowPinStart';
       const actualRowIndex = translateRowIndex(rowIndex, isPinned);
+      // `column.prop` is the sheet-wide column letter, so it survives the frozen
+      // boundary that `colIndex` (section-local) does not.
+      const actualColIndex = column?.prop
+        ? columnLetterToIndex(String(column.prop))
+        : toAbsoluteColumn(event.target as Element | null, colIndex, frozenColumnCount);
 
-      const newCell = { row: actualRowIndex, col: colIndex };
-      const newRange = normalizeRange(actualRowIndex, colIndex, actualRowIndex, colIndex);
-
-      updateSelection(newCell, newRange);
+      const newCell = { row: actualRowIndex, col: actualColIndex };
+      updateSelection(
+        newCell,
+        normalizeRange(actualRowIndex, actualColIndex, actualRowIndex, actualColIndex)
+      );
     },
-    [translateRowIndex, updateSelection]
-  );
-
-  // Handle cell click as backup for selection
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleCellClick = useCallback(
-    (event: RevoGridCustomEvent<any>) => {
-      if (!event.detail) return;
-      const { row, col, type } = event.detail;
-
-      const isPinned = type === 'rowPinStart';
-      const actualRow = translateRowIndex(row, isPinned);
-
-      updateSelection({ row: actualRow, col }, normalizeRange(actualRow, col, actualRow, col));
-    },
-    [translateRowIndex, updateSelection]
+    [translateRowIndex, updateSelection, frozenColumnCount]
   );
 
   // Handle range selection
@@ -904,6 +1403,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       x?: number; y?: number; x1?: number; y1?: number;
     } | null>) => {
       if (!event.detail) return;
+      if (suppressGridRangeRef.current) return;
 
       const x = event.detail.area?.x ?? event.detail.x;
       const y = event.detail.area?.y ?? event.detail.y;
@@ -915,16 +1415,39 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       const isPinned = event.detail.type === 'rowPinStart';
       const actualY = translateRowIndex(y, isPinned);
       const actualY1 = translateRowIndex(y1, isPinned);
+      // The payload carries no column section, but the overlay that emitted it
+      // is the event target and knows which one it is.
+      const section = event.target as Element | null;
+      const actualX = toAbsoluteColumn(section, x, frozenColumnCount);
+      const actualX1 = toAbsoluteColumn(section, x1, frozenColumnCount);
 
-      const newRange = normalizeRange(actualY, x, actualY1, x1);
-      updateSelection({ row: actualY, col: x }, newRange);
+      const newRange = normalizeRange(actualY, actualX, actualY1, actualX1);
+      updateSelection({ row: actualY, col: actualX }, newRange);
     },
-    [translateRowIndex, updateSelection]
+    [translateRowIndex, updateSelection, frozenColumnCount]
   );
+
+  // Own cell drag-selection so ranges can cross the frozen/pinned boundaries
+  // that RevoGrid's built-in drag is clamped to.
+  useCellDragSelection({
+    containerRef: gridContainerRef,
+    gridRef: revoGridRef as RefObject<SectionAwareGrid | null>,
+    // Gate on the grid actually being rendered, not just on the tab being
+    // active -- the loading tree has no container to bind to.
+    enabled: isActive && !isLoading && !loadError,
+    // The drag hit-tests and paints in visible rows; the selection it reports
+    // has to cross back into logical space.
+    onSelectionChange: useCallback((cell, range) => updateSelection(
+      cell && { ...cell, row: toLogicalRow(cell.row) },
+      range && { ...range, startRow: toLogicalRow(range.startRow), endRow: toLogicalRow(range.endRow) },
+    ), [updateSelection, toLogicalRow]),
+    suppressGridRangeRef,
+  });
 
   // Handle formula bar input
   const handleFormulaChange = useCallback(
     async (value: string) => {
+      if (editingLockedRef.current) return;
       const cell = selectedCellRef.current;
       const gridOps = gridOpsRef.current;
       if (cell && gridOps) {
@@ -934,6 +1457,225 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
     },
     [publishSelectionContext]
   );
+
+  /**
+   * Paint a logical range across every viewport section it touches and adopt it
+   * as the selection. Replaces per-section `setCellsFocus` calls, which could
+   * only ever address one section and silently painted nothing when a range
+   * straddled a boundary.
+   */
+  const paintLogicalRange = useCallback(
+    async (range: NormalizedSelectionRange, focus?: { row: number; col: number }) => {
+      const grid = revoGridRef.current as SectionAwareGrid | null;
+      if (!grid) return;
+      const sections = await resolveGridSections(grid);
+      if (!sections) return;
+      // Endpoints can name a filtered-out row (select-all, a column header, a
+      // find hit); narrow onto visible rows before either space sees them.
+      const snapped = snapRowsToVisible(rowSpaceRef.current, range.startRow, range.endRow);
+      if (!snapped) return;
+      const logicalRange = { ...range, ...snapped };
+      // The stores address visible rows; the range here is logical.
+      await paintCrossSectionRange(grid, sections, {
+        ...logicalRange,
+        startRow: toVisibleRow(logicalRange.startRow),
+        endRow: toVisibleRow(logicalRange.endRow),
+      });
+      void updateSelection(
+        focus ?? { row: logicalRange.startRow, col: logicalRange.startCol },
+        logicalRange,
+      );
+    },
+    [updateSelection, toVisibleRow]
+  );
+
+  /* ----------------------------------------------------------------------- */
+  /* Find and column filters                                                  */
+  /* ----------------------------------------------------------------------- */
+
+  const [filterDropdown, setFilterDropdown] = useState<{ columnIndex: number; anchor: HTMLElement } | null>(null);
+  const [filterValues, setFilterValues] = useState<readonly FilterScalar[]>([]);
+
+  /**
+   * Repaint the grid after any view state the column templates read changes.
+   * Guarded because this can fire before the custom element has hydrated.
+   */
+  const repaintGrid = useCallback(() => {
+    const grid = revoGridRef.current;
+    if (typeof grid?.refresh === 'function') void grid.refresh('all');
+  }, []);
+
+  const columnFilters = useColumnFilters(revoGridRef, repaintGrid);
+  columnFiltersRef.current = columnFilters;
+
+  // Tracker chips: newly-painted keys mount a resolver, and a resolution
+  // repaints the cells already on screen.
+  useEffect(() => {
+    trackerStore.onKeysChanged((keys) => setTrackerKeys(keys));
+    trackerStore.onRepaintNeeded(repaintGrid);
+    return () => {
+      trackerStore.onKeysChanged(null);
+      trackerStore.onRepaintNeeded(null);
+    };
+  }, [trackerStore, repaintGrid]);
+
+  useEffect(() => () => trackerStore.destroy(), [trackerStore]);
+
+  // Push local metadata edits into the shared map. Keyed on the metadata object
+  // rather than on each setter so every path that changes it — the format
+  // dialog, a column resize, the header toggle — publishes the same way.
+  useEffect(() => {
+    const metaBinding = metaBindingRef.current;
+    if (!metaBinding) return;
+    metaBinding.publish(metaSnapshotOf(spreadsheetMeta.metadata));
+  }, [spreadsheetMeta.metadata]);
+
+  /**
+   * One delegated listener for link and tracker cells. Attaching handlers in the
+   * hyperscript templates would fight RevoGrid's own cell mousedown handling;
+   * this runs after selection has been applied, so a click both selects the cell
+   * and follows the target.
+   *
+   * The deps matter: this component returns early while `isLoading`, and again
+   * on `loadError`, so on the first commit the root div does not exist and the
+   * ref is null. With an empty dep array the listener attached to nothing and
+   * never retried — links and chips were inert. Re-running when either gate
+   * clears is what actually binds it.
+   */
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+
+      const link = target.closest(`[${URL_CELL_ATTRIBUTE}]`);
+      if (link) {
+        const href = link.getAttribute(URL_CELL_ATTRIBUTE);
+        if (href) {
+          event.preventDefault();
+          void hostRef.current.openExternal?.(href);
+        }
+        return;
+      }
+
+      const chip = target.closest(`[${TRACKER_CELL_ATTRIBUTE}]`);
+      if (chip) {
+        const itemId = chip.getAttribute(TRACKER_CELL_ATTRIBUTE);
+        if (itemId) {
+          event.preventDefault();
+          // Through the SDK seam rather than dispatching the event ourselves, so
+          // the navigation contract stays in one place.
+          navigateToTrackerReference({ id: itemId, title: '' });
+        }
+      }
+    };
+
+    editor.addEventListener('click', handleClick);
+    return () => editor.removeEventListener('click', handleClick);
+  }, [isLoading, loadError]);
+
+  useEffect(() => {
+    filteredColumnsRef.current = new Set(columnFilters.filters.keys());
+    repaintGrid();
+    // The engine has already derived the hidden rows for this filter change, so
+    // only the mapping needs rebuilding. Every *other* way the row spaces
+    // diverge (edits, sorts, row mutations, reloads) goes through
+    // `invalidateRowView`, which re-derives the filter first.
+    void rebuildRowSpace();
+  }, [columnFilters.filters, headerRowCount, repaintGrid, rebuildRowSpace]);
+
+  const setFindHighlight = useCallback((highlight: FindHighlight) => {
+    findHighlightRef.current = highlight;
+    repaintGrid();
+  }, [repaintGrid]);
+
+  /**
+   * Snapshot the sheet in the shape the find engines expect: row models indexed
+   * by logical row (headers first), plus the mapping that keeps filtered-out
+   * rows out of the search.
+   */
+  const readFindContext = useCallback(async (): Promise<FindContext | null> => {
+    const grid = revoGridRef.current;
+    if (!grid) return null;
+    const [source, pinnedTop] = await Promise.all([grid.getSource('rgRow'), grid.getSource('rowPinStart')]);
+    const headerRows = (pinnedTop ?? []).slice(0, headerRowCount);
+    return {
+      rows: [...headerRows, ...(source ?? [])] as FindContext['rows'],
+      columnCount: displayColumnCount,
+      mapping: createRowIndexMapping({
+        rowCount: headerRows.length + (source?.length ?? 0),
+        headerRowCount: headerRows.length,
+        trimmedRows: getAppliedTrimmedRows(grid),
+      }),
+    };
+    // `columnFilters.filters` is not read here, but a filter change must re-run
+    // the search -- the hook keys its refresh off this callback's identity.
+  }, [headerRowCount, displayColumnCount, columnFilters.filters]);
+
+  const find = useSpreadsheetFind({
+    readContext: readFindContext,
+    // Stable, so `find.open` is stable and the host subscription below does not
+    // re-register on every render.
+    getSelection: useCallback(() => selectionRangeRef.current, []),
+    hasSelection: hasRangeSelection,
+    setHighlight: setFindHighlight,
+    applyReplacements: useCallback(async (replacements) => {
+      const gridOps = gridOpsRef.current;
+      if (!gridOps) return;
+      for (const replacement of replacements) {
+        await gridOps.updateCell(replacement.logicalRow, replacement.columnIndex, replacement.value);
+      }
+    }, []),
+    reveal: useCallback((match) => {
+      void (async () => {
+        const grid = revoGridRef.current;
+        if (!grid) return;
+        await paintLogicalRange({
+          startRow: match.logicalRow,
+          endRow: match.logicalRow,
+          startCol: match.columnIndex,
+          endCol: match.columnIndex,
+        });
+        // `scrollToCoordinate` addresses the scrollable body, so the target is
+        // the match's *visible* position minus the pinned header rows.
+        const mapping = createRowIndexMapping({
+          rowCount: headerRowCount + ((await grid.getSource('rgRow'))?.length ?? 0),
+          headerRowCount,
+          trimmedRows: getAppliedTrimmedRows(grid),
+        });
+        const visibleRow = mapping.logicalToVisible(match.logicalRow);
+        if (visibleRow === undefined) return;
+        await grid.scrollToCoordinate({
+          x: Math.max(0, match.columnIndex - frozenColumnCount),
+          y: Math.max(0, visibleRow - headerRowCount),
+        });
+      })();
+    }, [paintLogicalRange, headerRowCount, frozenColumnCount]),
+  });
+
+  // Cmd+F is a native menu accelerator, so the keystroke never reaches this
+  // renderer -- the host routes the command to us instead.
+  useEffect(() => host.onFindRequested?.(() => find.open()), [host, find.open]);
+
+  const openFilterDropdown = useCallback((columnIndex: number, anchor: HTMLElement) => {
+    void (async () => {
+      setFilterValues(await columnFilters.distinctValues(columnIndex));
+      setFilterDropdown({ columnIndex, anchor });
+    })();
+  }, [columnFilters]);
+
+  /** Full row/column extent of the grid, for header-click selections. */
+  const getGridExtent = useCallback(async () => {
+    const grid = revoGridRef.current as SectionAwareGrid | null;
+    if (!grid) return null;
+    const sections = await resolveGridSections(grid);
+    if (!sections) return null;
+    // `gridBounds` counts the rows the sections hold, i.e. visible ones.
+    const { lastRow, lastCol } = gridBounds(sections);
+    return { lastRow: toLogicalRow(lastRow), lastCol };
+  }, [toLogicalRow]);
 
   // Select all cells (from 0,0 to last cell with data)
   const selectAll = useCallback(() => {
@@ -995,24 +1737,10 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
         const lastRow = Math.max(0, pinnedRowCount + lastDataRowIndex);
 
         const selection = normalizeRange(0, 0, lastRow, lastColWithData);
-        void updateSelection({ row: 0, col: 0 }, selection);
 
-        // Set RevoGrid visual focus
-        // Note: RevoGrid can't visually select across pinned/data boundary,
-        // so we focus on data rows if present, otherwise pinned rows.
-        if (lastDataRowIndex >= 0) {
-          grid.setCellsFocus(
-            { x: 0, y: 0 },
-            { x: lastColWithData, y: lastDataRowIndex }
-          );
-        } else if (pinnedRowCount > 0) {
-          grid.setCellsFocus(
-            { x: 0, y: 0 },
-            { x: lastColWithData, y: pinnedRowCount - 1 },
-            undefined,
-            'rowPinStart'
-          );
-        }
+        // Paint across every section so the highlight covers pinned header rows
+        // and frozen columns as well as the body.
+        await paintLogicalRange(selection, { row: 0, col: 0 });
       } finally {
         // Re-enable focus handler after a short delay to allow RevoGrid events to settle
         setTimeout(() => {
@@ -1020,7 +1748,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
         }, 100);
       }
     })();
-  }, [updateSelection]);
+  }, [paintLogicalRange]);
 
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback(
@@ -1034,10 +1762,14 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       const cmdOrCtrl = isMac ? event.metaKey : event.ctrlKey;
       const gridOps = gridOpsRef.current;
       const undoPlugin = undoPluginRef.current;
+      // Selection, copy and find stay live while locked; anything that writes
+      // does not. See the `editingLockedRef` declaration for why.
+      const locked = editingLockedRef.current;
 
       if (cmdOrCtrl && !event.altKey) {
         switch (event.key.toLowerCase()) {
           case 'z':
+            if (locked) return;
             event.preventDefault();
             if (event.shiftKey) {
               undoPlugin?.redo();
@@ -1047,73 +1779,42 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
             return;
           case 'y':
             if (!isMac) {
+              if (locked) return;
               event.preventDefault();
               undoPlugin?.redo();
               return;
             }
             break;
+          // Clipboard operates on our own logical selection, never on
+          // `grid.getSelectedRange()`: that returns the *focused section's*
+          // clipped range in section-local coordinates, so for a selection
+          // spanning the frozen boundary it would copy the wrong cells without
+          // any sign that it had. Our refs are kept in sheet coordinates by
+          // every selection path.
           case 'c':
             if (!event.shiftKey && gridOps) {
               event.preventDefault();
-              // Get selection from RevoGrid or fall back to our ref
-              const grid = revoGridRef.current;
-              let range = selectionRangeRef.current;
-              if (grid) {
-                const gridRange = await grid.getSelectedRange();
-                if (gridRange) {
-                  const isPinned = gridRange.rowType === 'rowPinStart';
-                  range = normalizeRange(
-                    translateRowIndex(gridRange.y, isPinned),
-                    gridRange.x,
-                    translateRowIndex(gridRange.y1, isPinned),
-                    gridRange.x1
-                  );
-                }
-              }
+              const range = selectionRangeRef.current;
               if (range) {
                 await gridOps.copySelection(range);
               }
             }
             return;
           case 'x':
+            if (locked) return;
             if (!event.shiftKey && gridOps) {
               event.preventDefault();
-              const grid = revoGridRef.current;
-              let range = selectionRangeRef.current;
-              if (grid) {
-                const gridRange = await grid.getSelectedRange();
-                if (gridRange) {
-                  const isPinned = gridRange.rowType === 'rowPinStart';
-                  range = normalizeRange(
-                    translateRowIndex(gridRange.y, isPinned),
-                    gridRange.x,
-                    translateRowIndex(gridRange.y1, isPinned),
-                    gridRange.x1
-                  );
-                }
-              }
+              const range = selectionRangeRef.current;
               if (range) {
                 await gridOps.cutSelection(range);
               }
             }
             return;
           case 'v':
+            if (locked) return;
             if (!event.shiftKey && gridOps) {
               event.preventDefault();
-              // Get focused cell from RevoGrid or fall back to our ref
-              const grid = revoGridRef.current;
-              let cell = selectedCellRef.current;
-              if (grid) {
-                const focused = await grid.getFocused();
-                // getFocused returns { model, cell: { x, y }, colType, rowType }
-                if (focused?.cell) {
-                  const isPinned = focused.rowType === 'rowPinStart';
-                  cell = {
-                    row: translateRowIndex(focused.cell.y, isPinned),
-                    col: focused.cell.x
-                  };
-                }
-              }
+              const cell = selectedCellRef.current;
               if (cell) {
                 try {
                   const text = await readClipboard();
@@ -1136,7 +1837,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       }
 
       // Delete/Backspace clears selection
-      if (event.key === 'Delete' || event.key === 'Backspace') {
+      if (!locked && (event.key === 'Delete' || event.key === 'Backspace')) {
         const activeElement = document.activeElement;
         const isEditing = activeElement?.tagName === 'INPUT' ||
                           activeElement?.getAttribute('contenteditable') === 'true';
@@ -1157,10 +1858,10 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
 
   // Context menu handler
   const handleContextMenu = useCallback((event: React.MouseEvent) => {
-    // In read-only mode the editing context menu (insert / delete row,
-    // format column, etc.) is meaningless -- let the browser's default
-    // selection / copy menu through instead.
-    if (readOnly) return;
+    // While locked the editing context menu (insert / delete row, format
+    // column, etc.) is meaningless -- let the browser's default selection /
+    // copy menu through instead.
+    if (editingLockedRef.current) return;
     event.preventDefault();
     const container = gridContainerRef.current;
     if (!container) return;
@@ -1174,9 +1875,10 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       const isRowHeaderArea = columnHeader.closest('.rowHeaders');
       if (isRowHeaderArea) return;
 
-      const headerText = columnHeader.textContent?.trim() || '';
-      const colIndex = columnLetterToIndex(headerText);
-      if (colIndex >= 0) {
+      // Never parse the header's text: the column template decorates it with a
+      // filter funnel, so `A` renders as `A▼` and reads back as column 9621.
+      const colIndex = resolveHeaderColumnIndex(readHeaderColumnTarget(columnHeader), frozenColumnCount);
+      if (colIndex !== null) {
         setContextMenu({
           x: event.clientX - rect.left,
           y: event.clientY - rect.top,
@@ -1202,7 +1904,9 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
           const dataContainer = rowHeader.closest('revogr-data');
           const dataType = dataContainer?.getAttribute('type');
           const isPinned = slot?.includes('rowPinStart') || dataType === 'rowPinStart';
-          const logicalRowIndex = isPinned ? gridRowIndex : gridRowIndex + headerRowCount;
+          // Through the mapping, not `gridRowIndex + headerRowCount`: with a
+          // filter on, visible row 0 is whichever logical row survived it.
+          const logicalRowIndex = translateRowIndex(gridRowIndex, isPinned);
 
           updateSelection({ row: logicalRowIndex, col: 0 }, normalizeRange(logicalRowIndex, 0, logicalRowIndex, spreadsheetMeta.metadata.columnCount - 1));
           setContextMenu({
@@ -1221,8 +1925,13 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
     // Cell click
     const cell = target.closest('[data-rgrow][data-rgcol]') as HTMLElement | null;
     if (cell) {
-      const rowIndex = parseInt(cell.dataset.rgrow || '', 10);
-      const colIndex = parseInt(cell.dataset.rgcol || '', 10);
+      // Both attributes are section-local; a right-click in the scrollable body
+      // must not address the frozen columns or the pinned header rows.
+      const isPinnedRow = cell.closest('revogr-data')?.getAttribute('type') === 'rowPinStart';
+      const rawRow = parseInt(cell.dataset.rgrow || '', 10);
+      const rawCol = parseInt(cell.dataset.rgcol || '', 10);
+      const rowIndex = translateRowIndex(rawRow, isPinnedRow);
+      const colIndex = toAbsoluteColumn(cell, rawCol, frozenColumnCount);
 
       if (!isNaN(rowIndex) && !isNaN(colIndex)) {
         const range = selectionRangeRef.current;
@@ -1244,7 +1953,12 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       isColumnHeader: false,
       colIndex: null,
     });
-  }, [spreadsheetMeta.metadata.columnCount, updateSelection, readOnly]);
+  }, [
+    spreadsheetMeta.metadata.columnCount,
+    updateSelection,
+    translateRowIndex,
+    frozenColumnCount,
+  ]);
 
   const handleCloseContextMenu = useCallback(() => {
     setContextMenu(null);
@@ -1254,11 +1968,10 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
   const getColumnIndexFromHeader = useCallback((target: HTMLElement): number | null => {
     const headerCell = target.closest('[data-rgcol]') as HTMLElement | null;
     if (headerCell && headerCell.closest('revogr-header')) {
-      const colIndex = parseInt(headerCell.dataset.rgcol || '', 10);
-      if (!isNaN(colIndex)) return colIndex;
+      return resolveHeaderColumnIndex(readHeaderColumnTarget(headerCell), frozenColumnCount);
     }
     return null;
-  }, []);
+  }, [frozenColumnCount]);
 
   // Helper to get row index from header element
   const getRowIndexFromHeader = useCallback((target: HTMLElement): number | null => {
@@ -1277,76 +1990,62 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
     const dataType = dataContainer?.getAttribute('type');
     const isPinned = slot?.includes('rowPinStart') || dataType === 'rowPinStart';
 
-    return isPinned ? gridRowIndex : gridRowIndex + headerRowCount;
-  }, [headerRowCount]);
+    return translateRowIndex(gridRowIndex, isPinned);
+  }, [translateRowIndex]);
 
   // Selection helpers
   const selectColumn = useCallback((colIndex: number) => {
-    const totalRows = 100; // Would need to get from grid
-    updateSelection({ row: 0, col: colIndex }, normalizeRange(0, colIndex, totalRows - 1, colIndex));
-    revoGridRef.current?.setCellsFocus(
-      { x: colIndex, y: 0 },
-      { x: colIndex, y: totalRows - 1 - headerRowCount }
-    );
-  }, [headerRowCount, updateSelection]);
+    void (async () => {
+      const extent = await getGridExtent();
+      if (!extent) return;
+      await paintLogicalRange(normalizeRange(0, colIndex, extent.lastRow, colIndex));
+    })();
+  }, [getGridExtent, paintLogicalRange]);
 
   const selectColumnRange = useCallback((startCol: number, endCol: number) => {
-    const totalRows = 100;
-    const minCol = Math.min(startCol, endCol);
-    const maxCol = Math.max(startCol, endCol);
-    updateSelection({ row: 0, col: minCol }, normalizeRange(0, minCol, totalRows - 1, maxCol));
-    revoGridRef.current?.setCellsFocus(
-      { x: minCol, y: 0 },
-      { x: maxCol, y: totalRows - 1 - headerRowCount }
-    );
-  }, [headerRowCount, updateSelection]);
+    void (async () => {
+      const extent = await getGridExtent();
+      if (!extent) return;
+      const minCol = Math.min(startCol, endCol);
+      const maxCol = Math.max(startCol, endCol);
+      await paintLogicalRange(normalizeRange(0, minCol, extent.lastRow, maxCol));
+    })();
+  }, [getGridExtent, paintLogicalRange]);
 
   const selectRow = useCallback((rowIndex: number) => {
-    const totalCols = spreadsheetMeta.metadata.columnCount;
-    updateSelection({ row: rowIndex, col: 0 }, normalizeRange(rowIndex, 0, rowIndex, totalCols - 1));
-
-    if (rowIndex < headerRowCount) {
-      revoGridRef.current?.setCellsFocus(
-        { x: 0, y: rowIndex },
-        { x: totalCols - 1, y: rowIndex },
-        undefined,
-        'rowPinStart'
-      );
-    } else {
-      const gridRowIndex = rowIndex - headerRowCount;
-      revoGridRef.current?.setCellsFocus(
-        { x: 0, y: gridRowIndex },
-        { x: totalCols - 1, y: gridRowIndex }
-      );
-    }
-  }, [spreadsheetMeta.metadata.columnCount, headerRowCount, updateSelection]);
+    void (async () => {
+      const extent = await getGridExtent();
+      if (!extent) return;
+      await paintLogicalRange(normalizeRange(rowIndex, 0, rowIndex, extent.lastCol));
+    })();
+  }, [getGridExtent, paintLogicalRange]);
 
   const selectRowRange = useCallback((startRow: number, endRow: number) => {
-    const totalCols = spreadsheetMeta.metadata.columnCount;
-    const minRow = Math.min(startRow, endRow);
-    const maxRow = Math.max(startRow, endRow);
-    updateSelection({ row: minRow, col: 0 }, normalizeRange(minRow, 0, maxRow, totalCols - 1));
-
-    if (maxRow < headerRowCount) {
-      revoGridRef.current?.setCellsFocus(
-        { x: 0, y: minRow },
-        { x: totalCols - 1, y: maxRow },
-        undefined,
-        'rowPinStart'
-      );
-    } else if (minRow >= headerRowCount) {
-      const gridMinRow = minRow - headerRowCount;
-      const gridMaxRow = maxRow - headerRowCount;
-      revoGridRef.current?.setCellsFocus(
-        { x: 0, y: gridMinRow },
-        { x: totalCols - 1, y: gridMaxRow }
-      );
-    }
-  }, [spreadsheetMeta.metadata.columnCount, headerRowCount, updateSelection]);
+    void (async () => {
+      const extent = await getGridExtent();
+      if (!extent) return;
+      const minRow = Math.min(startRow, endRow);
+      const maxRow = Math.max(startRow, endRow);
+      await paintLogicalRange(normalizeRange(minRow, 0, maxRow, extent.lastCol));
+    })();
+  }, [getGridExtent, paintLogicalRange]);
 
   // Header mouse handlers
   const handleHeaderMouseDown = useCallback((event: React.MouseEvent) => {
     const target = event.target as HTMLElement;
+
+    // The filter funnel sits inside the header cell, so it has to be checked
+    // before the header click turns into a whole-column selection.
+    const affordance = target.closest('.csv-filter-affordance') as HTMLElement | null;
+    if (affordance) {
+      const affordanceColumn = getColumnIndexFromHeader(target);
+      if (affordanceColumn !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        openFilterDropdown(affordanceColumn, affordance);
+        return;
+      }
+    }
 
     // Check for corner cell click (the cell in the row header area within the column header)
     // This is the intersection of the row headers and column headers
@@ -1373,7 +2072,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       setHeaderDrag({ type: 'row', startIndex: rowIndex, currentIndex: rowIndex });
       return;
     }
-  }, [getColumnIndexFromHeader, getRowIndexFromHeader, selectColumn, selectRow, selectAll]);
+  }, [getColumnIndexFromHeader, getRowIndexFromHeader, selectColumn, selectRow, selectAll, openFilterDropdown]);
 
   // Header drag effect
   useEffect(() => {
@@ -1417,45 +2116,43 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
     const items: ContextMenuItem[] = [];
     const gridOps = gridOpsRef.current;
 
-    // TODO: Header row pinning is disabled because users can't select across the pinned/unpinned boundary
-    // which creates a confusing UX. Re-enable once RevoGrid supports cross-boundary selection.
-    // const isCurrentlyHeader = rowIndex < headerRowCount;
-    // const isTopRowOrAdjacentToHeader = rowIndex === 0 || rowIndex === headerRowCount;
+    // Header pinning is available again now that selection spans the pinned
+    // boundary (see selection/crossSectionSelection.ts).
+    const isCurrentlyHeader = rowIndex < headerRowCount;
+    const isTopRowOrAdjacentToHeader = rowIndex === 0 || rowIndex === headerRowCount;
 
-    // // Helper to update both grid data and metadata
-    // const setHeaderCount = async (count: number) => {
-    //   await gridOps?.updateHeaderRowCount(count);
-    //   spreadsheetMeta.setHeaderRowCount(count);
-    // };
+    // Helper to update both grid data and metadata
+    const setHeaderCount = async (count: number) => {
+      await gridOps?.updateHeaderRowCount(count);
+      spreadsheetMeta.setHeaderRowCount(count);
+    };
 
-    // if (isCurrentlyHeader) {
-    //   if (rowIndex === headerRowCount - 1) {
-    //     items.push({
-    //       label: 'Remove Header Row',
-    //       action: () => setHeaderCount(headerRowCount - 1),
-    //     });
-    //   }
-    //   if (headerRowCount > 1) {
-    //     items.push({
-    //       label: 'Remove All Header Rows',
-    //       action: () => setHeaderCount(0),
-    //     });
-    //   }
-    // } else {
-    //   if (isTopRowOrAdjacentToHeader) {
-    //     items.push({
-    //       label: 'Set as Header Row',
-    //       action: () => setHeaderCount(rowIndex + 1),
-    //     });
-    //   } else {
-    //     items.push({
-    //       label: `Set Rows 1-${rowIndex + 1} as Headers`,
-    //       action: () => setHeaderCount(rowIndex + 1),
-    //     });
-    //   }
-    // }
+    if (isCurrentlyHeader) {
+      if (rowIndex === headerRowCount - 1) {
+        items.push({
+          label: 'Remove Header Row',
+          action: () => setHeaderCount(headerRowCount - 1),
+        });
+      }
+      if (headerRowCount > 1) {
+        items.push({
+          label: 'Remove All Header Rows',
+          action: () => setHeaderCount(0),
+        });
+      }
+    } else if (isTopRowOrAdjacentToHeader) {
+      items.push({
+        label: 'Set as Header Row',
+        action: () => setHeaderCount(rowIndex + 1),
+      });
+    } else {
+      items.push({
+        label: `Set Rows 1-${rowIndex + 1} as Headers`,
+        action: () => setHeaderCount(rowIndex + 1),
+      });
+    }
 
-    // items.push({ label: '', action: () => {}, separator: true });
+    items.push({ label: '', action: () => {}, separator: true });
 
     items.push({
       label: 'Insert Row Above',
@@ -1486,6 +2183,45 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
     return items;
   }, [spreadsheetMeta, headerRowCount, updateSelection]);
 
+  /**
+   * Infer a column's type from its data and apply the matching default format.
+   *
+   * Deliberately an explicit action rather than something that runs on open: a
+   * wrong auto-format applied to someone's data without asking is worse than no
+   * format at all. Mixed columns come back as text and leave the column alone.
+   */
+  const applyDetectedColumnType = useCallback(async (colIndex: number): Promise<void> => {
+    const gridOps = gridOpsRef.current;
+    if (!gridOps) return;
+
+    const { source } = await gridOps.getData();
+    const prop = columnIndexToLetter(colIndex);
+    const samples: (string | number | null)[] = [];
+    for (const row of source) {
+      const value = row[prop];
+      if (value === null || value === undefined || value === '') continue;
+      samples.push(typeof value === 'number' ? value : String(value));
+      // A few hundred rows is plenty to characterize a column, and keeps the
+      // scan bounded on large sheets.
+      if (samples.length >= 200) break;
+    }
+
+    const detected = detectColumnType(samples);
+    spreadsheetMeta.setColumnFormat(colIndex, detected === 'text' ? null : getDefaultFormatForType(detected));
+  }, [spreadsheetMeta]);
+
+  /**
+   * Apply a styling change to the current selection. Styling is presentation
+   * only: it never touches cell values, so it is safe on a formula or a date.
+   */
+  const applyCellStyle = useCallback((change: CellStyle) => {
+    const selection = selectionRangeRef.current;
+    if (!selection) return;
+    spreadsheetMeta.setCellStyles(
+      applyStyleToRange(spreadsheetMeta.metadata.cellStyles, selection, change),
+    );
+  }, [spreadsheetMeta]);
+
   const getColumnHeaderContextMenuItems = useCallback((colIndex: number): ContextMenuItem[] => {
     const colLetter = columnIndexToLetter(colIndex);
     const currentFrozenCount = frozenColumnCount;
@@ -1499,6 +2235,13 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
         action: () => {
           setContextMenu(null);
           setFormatDialogColumn(colIndex);
+        },
+      },
+      {
+        label: 'Detect Column Type',
+        action: () => {
+          setContextMenu(null);
+          void applyDetectedColumnType(colIndex);
         },
       },
       { label: '', action: () => {}, separator: true },
@@ -1519,36 +2262,37 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
       { label: '', action: () => {}, separator: true },
     ];
 
-    // TODO: Column freeze is disabled because users can't select across the frozen/unfrozen boundary
-    // which creates a confusing UX. Re-enable once RevoGrid supports cross-boundary selection.
-    // if (isCurrentlyFrozen) {
-    //   if (colIndex === currentFrozenCount - 1) {
-    //     items.push({
-    //       label: 'Unfreeze Column',
-    //       action: () => spreadsheetMeta.setFrozenColumnCount(currentFrozenCount - 1),
-    //     });
-    //   }
-    //   if (currentFrozenCount > 1) {
-    //     items.push({
-    //       label: 'Unfreeze All Columns',
-    //       action: () => spreadsheetMeta.setFrozenColumnCount(0),
-    //     });
-    //   }
-    // } else {
-    //   if (isAtFrozenBoundary) {
-    //     items.push({
-    //       label: 'Freeze Column',
-    //       action: () => spreadsheetMeta.setFrozenColumnCount(colIndex + 1),
-    //     });
-    //   } else {
-    //     items.push({
-    //       label: `Freeze Columns A-${colLetter}`,
-    //       action: () => spreadsheetMeta.setFrozenColumnCount(colIndex + 1),
-    //     });
-    //   }
-    // }
+    // Freeze is available again now that selection spans the frozen boundary
+    // (see selection/crossSectionSelection.ts).
+    const isCurrentlyFrozen = colIndex < currentFrozenCount;
+    const isAtFrozenBoundary = colIndex === currentFrozenCount;
 
-    // items.push({ label: '', action: () => {}, separator: true });
+    if (isCurrentlyFrozen) {
+      if (colIndex === currentFrozenCount - 1) {
+        items.push({
+          label: 'Unfreeze Column',
+          action: () => spreadsheetMeta.setFrozenColumnCount(currentFrozenCount - 1),
+        });
+      }
+      if (currentFrozenCount > 1) {
+        items.push({
+          label: 'Unfreeze All Columns',
+          action: () => spreadsheetMeta.setFrozenColumnCount(0),
+        });
+      }
+    } else if (isAtFrozenBoundary) {
+      items.push({
+        label: 'Freeze Column',
+        action: () => spreadsheetMeta.setFrozenColumnCount(colIndex + 1),
+      });
+    } else {
+      items.push({
+        label: `Freeze Columns A-${colLetter}`,
+        action: () => spreadsheetMeta.setFrozenColumnCount(colIndex + 1),
+      });
+    }
+
+    items.push({ label: '', action: () => {}, separator: true });
 
     items.push({
       label: 'Insert Column Left',
@@ -1575,7 +2319,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
     });
 
     return items;
-  }, [spreadsheetMeta, frozenColumnCount, columnFormats, updateSelection]);
+  }, [spreadsheetMeta, frozenColumnCount, columnFormats, updateSelection, applyDetectedColumnType]);
 
   const getContextMenuItems = useCallback((): ContextMenuItem[] => {
     const cell = selectedCellRef.current;
@@ -1620,6 +2364,25 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
         action: () => {
           if (range && gridOps) gridOps.clearCells(range);
         },
+        disabled: !hasSelection,
+      },
+      { label: '', action: () => {}, separator: true },
+      // Styling is presentation only, so it is safe on a formula or a date --
+      // neither of these touches the cell's value.
+      {
+        label: hasMultipleSelected ? `Format Cells (${cellCount})...` : 'Format Cells...',
+        action: () => {
+          setContextMenu(null);
+          setCellFormatOpen(true);
+        },
+        disabled: !hasSelection,
+      },
+      {
+        label: 'Clear formatting',
+        action: () => applyCellStyle({
+          bold: false, italic: false, underline: false, strikethrough: false,
+          textColor: 'default', fillColor: 'default',
+        }),
         disabled: !hasSelection,
       },
       { label: '', action: () => {}, separator: true },
@@ -1722,6 +2485,7 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
           <FormulaBar
             ref={formulaBarRef}
             onChange={handleFormulaChange}
+            readOnly={isDiffActive}
           />
           {host.supportsSourceMode && (
             <button
@@ -1734,6 +2498,8 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
           )}
         </div>
       )}
+      {!readOnly && find.isOpen && <FindBar find={find} readOnly={isDiffActive} />}
+      <TrackerCellResolvers keys={trackerKeys} store={trackerStore} />
       <div
         ref={gridContainerRef}
         className="flex-1 overflow-hidden relative"
@@ -1748,13 +2514,15 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
             (revoGridRef as React.MutableRefObject<RevoGridElement | null>).current = el;
             // Load pending data imperatively when grid mounts
             if (el && !dataLoadedRef.current && pendingDataRef.current) {
-              el.source = pendingDataRef.current.source;
-              el.pinnedTopSource = pendingDataRef.current.pinnedTop;
+              applyGridSource(el, pendingDataRef.current);
               dataLoadedRef.current = true;
             }
           }}
           columns={columns}
           rowHeaders={true}
+          // Denser than RevoGrid's 27px default. Its theme hardcodes the
+          // matching `line-height`, so revogrid-theme.css restates this value.
+          rowSize={24}
           resize={true}
           autoSizeColumn={false}
           range={true}
@@ -1766,7 +2534,6 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
           onAfterfocus={handleFocusCell}
           // @ts-expect-error onSetrange exists but not in React type defs
           onSetrange={handleSetRange}
-          onBeforecellfocus={handleCellClick}
           onAftercolumnresize={handleColumnResize}
           onBeforeeditstart={handleBeforeEditStart}
           onViewportscroll={schedulePresenceRepaint}
@@ -1787,7 +2554,29 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
             onClose={handleCloseContextMenu}
           />
         )}
+        {filterDropdown && (
+          <ColumnFilterDropdown
+            key={filterDropdown.columnIndex}
+            columnIndex={filterDropdown.columnIndex}
+            anchor={filterDropdown.anchor}
+            distinctValues={filterValues}
+            currentFilter={columnFilters.filters.get(filterDropdown.columnIndex)}
+            columnFormat={columnFormats[filterDropdown.columnIndex]}
+            onApply={(filter) => { void columnFilters.setColumnFilter(filterDropdown.columnIndex, filter); }}
+            onClose={() => setFilterDropdown(null)}
+          />
+        )}
       </div>
+
+      <CellFormatDialog
+        isOpen={cellFormatOpen}
+        rangeLabel={selectionRangeRef.current ? rangeKeyOf(selectionRangeRef.current) : ''}
+        currentStyle={selectionRangeRef.current
+          ? cellStyleIndex.styleAt(selectionRangeRef.current.startRow, selectionRangeRef.current.startCol)
+          : null}
+        onSave={(style) => applyCellStyle(style)}
+        onClose={() => setCellFormatOpen(false)}
+      />
 
       <ColumnFormatDialog
         isOpen={formatDialogColumn !== null}
@@ -1795,8 +2584,12 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
         columnLetter={formatDialogColumn !== null ? columnIndexToLetter(formatDialogColumn) : ''}
         currentFormat={formatDialogColumn !== null ? columnFormats[formatDialogColumn] : undefined}
         onSave={(format) => {
-          if (formatDialogColumn !== null) {
-            spreadsheetMeta.setColumnFormat(formatDialogColumn, format);
+          if (formatDialogColumn === null) return;
+          // Formatting one column at a time is tedious for a wide sheet, so when
+          // the click landed inside a multi-column selection the format applies
+          // to all of them.
+          for (const columnIndex of formatTargetColumns(selectionRangeRef.current, formatDialogColumn)) {
+            spreadsheetMeta.setColumnFormat(columnIndex, format);
           }
         }}
         onClose={() => setFormatDialogColumn(null)}

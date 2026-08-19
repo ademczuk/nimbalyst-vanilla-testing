@@ -100,6 +100,33 @@ describe('trackerItemToRecord', () => {
     expect(record.system.documentId).toBe('doc-1');
   });
 
+  it('exposes plan status drift as a derived, read-only system signal', () => {
+    const item = makeTrackerItem({
+      id: 'fm:plan:nimbalyst-local/plans/example.md',
+      type: 'plan',
+      typeTags: ['plan'],
+      status: 'draft',
+      linkedSessions: ['session-1'],
+      linkedCommits: [{
+        sha: 'abc123',
+        message: 'feat: ship plan work',
+        sessionId: 'session-1',
+        timestamp: '2026-08-10T12:00:00.000Z',
+      }],
+    });
+
+    const record = trackerItemToRecord(item);
+
+    expect(record.system.derivedSignals).toEqual([{
+      kind: 'plan-status-drift',
+      reason: 'linked-session-committed',
+      status: 'draft',
+      committedSessionIds: ['session-1'],
+      commitShas: ['abc123'],
+    }]);
+    expect(JSON.parse(recordToDbParams(record).data).derivedSignals).toBeUndefined();
+  });
+
   it('does not fabricate now for missing created/updated (NIM-1559)', () => {
     // A frontmatter plan with no dates but a stable file mtime in lastIndexed.
     const mtime = new Date('2026-06-19T18:29:37.000Z');
@@ -524,5 +551,42 @@ describe('trackerItemToRecord comments/activity via customFields', () => {
     expect(record.system.comments![0].body).toBe('hi');
     expect(record.system.activity).toHaveLength(1);
     expect(record.system.activity![0].action).toBe('created');
+  });
+});
+
+describe('localKey stays off the wire', () => {
+  /**
+   * `trackerItemToRecord` sweeps every unrecognised property into `fields`, and
+   * `trackerItemToPayload` ships `fields` wholesale to the tracker room. So the
+   * only thing keeping a machine-private number off the wire is `localKey`
+   * being in NON_FIELD_KEYS. Drop it from that list and every local number
+   * silently syncs to teammates, where the same value means a different item.
+   */
+  it('is a top-level record prop, never a field', () => {
+    const record = trackerItemToRecord(makeTrackerItem({ localKey: 'NIM.12' }));
+
+    expect(record.localKey).toBe('NIM.12');
+    expect(record.fields).not.toHaveProperty('localKey');
+  });
+
+  it('survives the record -> item round trip', () => {
+    const item = trackerRecordToItem(trackerItemToRecord(makeTrackerItem({ localKey: 'NIM.12' })));
+
+    expect(item.localKey).toBe('NIM.12');
+  });
+
+  it('reads back from the local_key column', () => {
+    const record = dbRowToRecord({
+      id: 'bug_1',
+      type: 'bug',
+      data: { title: 'x' },
+      workspace: '/ws',
+      local_key: 'NIM.12',
+      issue_key: 'NIM-212',
+    });
+
+    // An item can hold both at once: the team's key and this machine's number.
+    expect(record.localKey).toBe('NIM.12');
+    expect(record.issueKey).toBe('NIM-212');
   });
 });

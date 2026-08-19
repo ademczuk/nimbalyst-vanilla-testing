@@ -66,35 +66,35 @@ describe('isFileBackedRecord', () => {
 });
 
 describe('resolveTrackerContentMode', () => {
-  const team = { syncMode: 'hybrid', teamOrgId: 'organization-live-abc' };
+  const team = { sharing: 'team' as const, teamOrgId: 'organization-live-abc' };
 
   it('puts a SHARED file-backed plan in the collaborative editor after promotion', () => {
-    expect(resolveTrackerContentMode({ item: promoted, isItemShared: true, ...team })).toBe('collaborative');
+    expect(resolveTrackerContentMode({ item: promoted, isItemPublished: true, ...team })).toBe('collaborative');
   });
 
   it('leaves an unshared plan on its file', () => {
-    expect(resolveTrackerContentMode({ item: fileBacked, isItemShared: false, ...team })).toBe('file-backed');
+    expect(resolveTrackerContentMode({ item: fileBacked, isItemPublished: false, ...team })).toBe('file-backed');
   });
 
-  it('keeps an unshared hybrid item local even once it is native', () => {
-    expect(resolveTrackerContentMode({ item: native, isItemShared: false, ...team })).toBe('local-pglite');
+  it('keeps a draft team item local even once it is native', () => {
+    expect(resolveTrackerContentMode({ item: native, isItemPublished: false, ...team })).toBe('local-pglite');
   });
 
   it('falls back to local editing when the workspace has no team', () => {
     expect(resolveTrackerContentMode({
-      item: promoted, isItemShared: true, syncMode: 'hybrid', teamOrgId: null,
+      item: promoted, isItemPublished: true, sharing: 'team', teamOrgId: null,
     })).toBe('local-pglite');
   });
 
   it('stays collaborative while the team lookup is still pending', () => {
     expect(resolveTrackerContentMode({
-      item: promoted, isItemShared: true, syncMode: 'hybrid', teamOrgId: undefined,
+      item: promoted, isItemPublished: true, sharing: 'team', teamOrgId: undefined,
     })).toBe('collaborative');
   });
 
-  it('never collaborates for a local-mode tracker type', () => {
+  it('never collaborates for a personal tracker', () => {
     expect(resolveTrackerContentMode({
-      item: promoted, isItemShared: true, syncMode: 'local', teamOrgId: 'organization-live-abc',
+      item: promoted, isItemPublished: true, sharing: 'personal', teamOrgId: 'organization-live-abc',
     })).toBe('local-pglite');
   });
 });

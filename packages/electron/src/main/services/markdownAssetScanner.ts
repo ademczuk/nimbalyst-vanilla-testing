@@ -89,6 +89,13 @@ export function scanMarkdownImageRefs(markdown: string): string[] {
   return refs;
 }
 
+/** Shared-document image refs that must be materialized for a local pull. */
+export function scanCollabAssetImageRefs(markdown: string): string[] {
+  return scanMarkdownImageRefs(markdown).filter((ref) =>
+    ref.toLowerCase().startsWith('collab-asset://'),
+  );
+}
+
 function getExtension(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase().replace(/^\./, '');
   return ext;

@@ -281,12 +281,12 @@ export const WorkspaceManager: React.FC = () => {
     }
   };
 
-  const handleTutorial = async () => {
+  const handleTutorial = async (entryPoint: 'welcome_pane' | 'project_manager_sidebar') => {
     setOperationError(null);
     setOperationLabel(tutorialExists ? 'Opening tutorial...' : 'Starting tutorial...');
     setOperationInProgress(true);
     try {
-      const result = await window.electronAPI.tutorial.start();
+      const result = await window.electronAPI.tutorial.start(entryPoint);
       if (!result.success) {
         setOperationError(result.error);
         return;
@@ -615,7 +615,7 @@ export const WorkspaceManager: React.FC = () => {
             <button
               className="workspace-manager-sidebar-tutorial-button inline-flex h-8 items-center justify-center rounded-md border border-[var(--nim-border)] bg-[var(--nim-bg)] px-2.5 text-[12px] font-medium text-[var(--nim-text-muted)] transition-colors hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)] disabled:cursor-not-allowed disabled:opacity-60"
               data-testid="workspace-manager-sidebar-tutorial-button"
-              onClick={handleTutorial}
+              onClick={() => handleTutorial('project_manager_sidebar')}
               disabled={operationInProgress}
             >
               {tutorialExists ? 'Open tutorial' : 'Start tutorial'}
@@ -833,7 +833,7 @@ export const WorkspaceManager: React.FC = () => {
                   type="button"
                   className="workspace-manager-welcome-tutorial-cta relative inline-flex items-center justify-center gap-2.5 rounded-[10px] border-0 bg-[var(--nim-primary)] px-[30px] py-[13px] text-[15px] font-semibold text-white shadow-[0_8px_20px_color-mix(in_srgb,var(--nim-primary)_28%,transparent)] transition-all duration-200 hover:-translate-y-px hover:bg-[var(--nim-primary-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--nim-border-focus)] disabled:cursor-not-allowed disabled:opacity-60"
                   data-testid="workspace-manager-welcome-tutorial-cta"
-                  onClick={handleTutorial}
+                  onClick={() => handleTutorial('welcome_pane')}
                   disabled={operationInProgress}
                 >
                   <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 0, 'wght' 500, 'GRAD' 0, 'opsz' 20" }}>play_arrow</span>

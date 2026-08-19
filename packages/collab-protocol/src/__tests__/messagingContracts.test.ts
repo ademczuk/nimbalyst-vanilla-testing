@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -37,6 +39,19 @@ import type {
   PresenceRosterMessage,
   PresenceStatusSetMessage,
 } from "../teamInbox.js";
+import {
+  applyFeedbackResponse,
+  getFeedbackRequestProgress,
+  getFeedbackResponsesForViewer,
+  MAX_FEEDBACK_TEXT_ANSWER_LENGTH,
+  transitionFeedbackRequestLifecycle,
+  validateFeedbackRequest,
+  validateFeedbackResponse,
+  type FeedbackAnswer,
+  type FeedbackAsk,
+  type FeedbackRequest,
+  type FeedbackResponse,
+} from "../feedbackRequest.js";
 import { COMMENT_BODY_CONTRACT_CORPUS } from "./commentBodyContractCorpus.js";
 
 const actor = {
@@ -175,9 +190,12 @@ describe("Teams messaging protocol validation", () => {
     expect(wireRoundTrip.append.event.deliveryHints).toEqual(
       canonical.deliveryHints
     );
-    expect(wireRoundTrip.history.events[0].deliveryHints).toEqual(
-      canonical.deliveryHints
-    );
+    expect(wireRoundTrip.history.events).toHaveLength(1);
+    const [historyEvent] = wireRoundTrip.history.events;
+    if (!historyEvent) {
+      throw new Error("Expected exactly one history event");
+    }
+    expect(historyEvent.deliveryHints).toEqual(canonical.deliveryHints);
   });
 
   it.each(COMMENT_BODY_CONTRACT_CORPUS)(
@@ -286,6 +304,7 @@ describe("Teams messaging protocol validation", () => {
     ["commit", true],
     ["pullRequest", true],
     ["conversation", false],
+    ["feedbackRequest", false],
   ] as const)(
     "enforces projectId for the %s resource kind",
     (kind, projectIdRequired) => {
@@ -672,5 +691,462 @@ describe("Teams messaging protocol validation", () => {
         },
       ],
     });
+  });
+});
+
+const feedbackAsks: FeedbackAsk[] = [
+  {
+    type: "multiSelect",
+    id: "multi",
+    label: "Pick several",
+    description: "Choose every applicable item.",
+    items: [{ id: "one", title: "One" }],
+  },
+  {
+    type: "singleSelect",
+    id: "single",
+    label: "Pick one",
+    description: "Choose the best option.",
+    options: [{ id: "one", label: "One" }],
+  },
+  {
+    type: "reorder",
+    id: "order",
+    label: "Prioritize",
+    description: "Put these in priority order.",
+    items: [{ id: "one", title: "One" }],
+  },
+  {
+    type: "editText",
+    id: "edit",
+    label: "Revise",
+    description: "Edit the proposed copy.",
+    initialText: "Draft",
+  },
+  {
+    type: "confirm",
+    id: "confirm",
+    label: "Approve",
+    description: "Confirm whether this is ready.",
+  },
+  {
+    type: "rating",
+    id: "rating",
+    label: "Score",
+    description: "Rate the result.",
+    min: 1,
+    max: 5,
+  },
+];
+
+const feedbackAnswers: FeedbackAnswer[] = [
+  { type: "multiSelect", selectedIds: ["one"] },
+  { type: "singleSelect", selectedId: "one" },
+  { type: "reorder", orderedIds: ["one"], removedIds: [] },
+  { type: "editText", text: "Revised", edited: true },
+  { type: "confirm", value: true },
+  { type: "rating", value: 4 },
+];
+
+function feedbackRequest(
+  overrides: Partial<FeedbackRequest> = {}
+): FeedbackRequest {
+  return {
+    id: "feedback-1",
+    urn: "nimbalyst://feedback-request/feedback-1",
+    orgId: "org-1",
+    author: {
+      kind: "user",
+      userId: "author-user",
+      onBehalfOfUserId: "author-user",
+    },
+    subjects: [],
+    asks: feedbackAsks,
+    recipients: [
+      { userId: "user-1", name: "One" },
+      { userId: "user-2", name: "Two" },
+    ],
+    // Every recipient must hold an assignment or the request can never reach
+    // quorum, so user-2 carries the shorter sign-off set. That also keeps the
+    // canonical example exercising recipients whose ask sets differ, which is
+    // the point of per-recipient assignment.
+    assignments: [
+      ...feedbackAsks.map((ask) => ({
+        askId: ask.id,
+        target: { kind: "user" as const, userId: "user-1" },
+      })),
+      { askId: "confirm", target: { kind: "user" as const, userId: "user-2" } },
+      { askId: "rating", target: { kind: "user" as const, userId: "user-2" } },
+    ],
+    responses: [],
+    discussion: [],
+    lifecycle: { status: "open", changedAt: 1 },
+    visibility: "hiddenUntilAnswered",
+    wakePolicy: "quorumOrClose",
+    quorum: { requiredRecipientCount: 1 },
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+function feedbackResponse(
+  askId: string,
+  answer: FeedbackAnswer,
+  recipientUserId = "user-1",
+  updatedAt = 2
+): FeedbackResponse {
+  return {
+    id: `response-${recipientUserId}-${askId}`,
+    requestId: "feedback-1",
+    askId,
+    recipientUserId,
+    answer,
+    createdAt: updatedAt,
+    updatedAt,
+  } as FeedbackResponse;
+}
+
+describe("Feedback Request protocol", () => {
+  it("accepts only the answer discriminator corresponding to each ask", () => {
+    const request = feedbackRequest();
+
+    feedbackAsks.forEach((ask, index) => {
+      const matching = feedbackResponse(ask.id, feedbackAnswers[index]!);
+      expect(validateFeedbackResponse(request, matching)).toEqual({
+        valid: true,
+        errors: [],
+      });
+
+      const mismatched = feedbackResponse(
+        ask.id,
+        feedbackAnswers[(index + 1) % feedbackAnswers.length]!
+      );
+      expect(
+        validateFeedbackResponse(request, mismatched).errors.map(
+          (error) => error.code
+        )
+      ).toContain("answerTypeMismatch");
+    });
+
+    expect(
+      validateFeedbackResponse(
+        request,
+        feedbackResponse("single", {
+          type: "singleSelect",
+          selectedId: "not-an-option",
+        })
+      ).errors.map((error) => error.code)
+    ).toContain("invalidAnswer");
+  });
+
+  it("caps incoming text answers by default without invalidating stored history", () => {
+    const oversizedText = "x".repeat(MAX_FEEDBACK_TEXT_ANSWER_LENGTH + 1);
+    const oversizedResponse = feedbackResponse("edit", {
+      type: "editText",
+      text: oversizedText,
+      edited: true,
+    });
+    expect(
+      validateFeedbackResponse(
+        feedbackRequest(),
+        oversizedResponse
+      ).errors.map((error) => error.code)
+    ).toContain("invalidAnswer");
+
+    const request = feedbackRequest({
+      asks: feedbackAsks.map((ask) =>
+        ask.id === "edit"
+          ? { ...ask, maxLength: MAX_FEEDBACK_TEXT_ANSWER_LENGTH * 2 }
+          : ask
+      ),
+    });
+
+    expect(
+      validateFeedbackResponse(request, oversizedResponse).errors.map(
+        (error) => error.code
+      )
+    ).toContain("invalidAnswer");
+
+    const smallerRequest = feedbackRequest({
+      asks: feedbackAsks.map((ask) =>
+        ask.id === "edit" ? { ...ask, maxLength: 3 } : ask
+      ),
+    });
+    expect(
+      validateFeedbackResponse(
+        smallerRequest,
+        feedbackResponse("edit", {
+          type: "editText",
+          text: "four",
+          edited: true,
+        })
+      ).errors.map((error) => error.code)
+    ).toContain("invalidAnswer");
+
+    const stored = feedbackRequest({ responses: [oversizedResponse] });
+    expect(
+      getFeedbackResponsesForViewer(stored, "author-user")[0]?.answer
+    ).toMatchObject({ text: oversizedText });
+  });
+
+  it("computes quorum from each recipient's full assigned ask set and seals terminal lifecycles", () => {
+    const request = feedbackRequest({
+      asks: feedbackAsks.slice(0, 3),
+      assignments: [
+        { askId: "multi", target: { kind: "user", userId: "user-1" } },
+        { askId: "single", target: { kind: "user", userId: "user-1" } },
+        { askId: "order", target: { kind: "user", userId: "user-2" } },
+      ],
+      quorum: { requiredRecipientCount: 2 },
+    });
+    const partial = applyFeedbackResponse(
+      request,
+      feedbackResponse("multi", feedbackAnswers[0]!)
+    );
+    const oneRecipientComplete = applyFeedbackResponse(
+      partial,
+      feedbackResponse("order", feedbackAnswers[2]!, "user-2", 3)
+    );
+    expect(getFeedbackRequestProgress(oneRecipientComplete)).toMatchObject({
+      answeredAskCount: 2,
+      totalAssignedAskCount: 3,
+      answeredRecipientCount: 1,
+      totalRecipientCount: 2,
+      quorumReached: false,
+    });
+
+    const quorumReached = applyFeedbackResponse(
+      oneRecipientComplete,
+      feedbackResponse("single", feedbackAnswers[1]!, "user-1", 4)
+    );
+    expect(getFeedbackRequestProgress(quorumReached)).toMatchObject({
+      answeredRecipientCount: 2,
+      quorumReached: true,
+    });
+
+    for (const status of ["closed", "expired", "cancelled"] as const) {
+      const terminal = transitionFeedbackRequestLifecycle(
+        quorumReached,
+        status,
+        5
+      );
+      expect(terminal.lifecycle).toEqual({ status, changedAt: 5 });
+      expect(() =>
+        applyFeedbackResponse(
+          terminal,
+          feedbackResponse("single", feedbackAnswers[1]!, "user-1", 6)
+        )
+      ).toThrow("requestNotOpen");
+      expect(() =>
+        transitionFeedbackRequestLifecycle(terminal, "closed", 7)
+      ).toThrow(`Cannot transition feedback request from ${status}`);
+    }
+  });
+
+  it("hides other recipients until the viewer finishes and derives attribution from visibility", () => {
+    const base = feedbackRequest({
+      asks: feedbackAsks.slice(0, 2),
+      assignments: [
+        { askId: "multi", target: { kind: "user", userId: "user-1" } },
+        { askId: "single", target: { kind: "user", userId: "user-1" } },
+        { askId: "single", target: { kind: "user", userId: "user-2" } },
+      ],
+    });
+    const partialViewer = applyFeedbackResponse(
+      applyFeedbackResponse(
+        base,
+        feedbackResponse("single", feedbackAnswers[1]!, "user-2", 2)
+      ),
+      feedbackResponse("multi", feedbackAnswers[0]!, "user-1", 3)
+    );
+
+    const beforeAnsweringAll = getFeedbackResponsesForViewer(
+      partialViewer,
+      "user-1"
+    );
+    expect(beforeAnsweringAll).toHaveLength(1);
+    expect(beforeAnsweringAll[0]).not.toHaveProperty("recipientUserId");
+
+    const completeViewer = applyFeedbackResponse(
+      partialViewer,
+      feedbackResponse("single", feedbackAnswers[1]!, "user-1", 4)
+    );
+    const anonymousResults = getFeedbackResponsesForViewer(
+      completeViewer,
+      "user-1"
+    );
+    expect(anonymousResults).toHaveLength(3);
+    expect(
+      anonymousResults.every((response) => !("recipientUserId" in response))
+    ).toBe(true);
+    expect(
+      getFeedbackResponsesForViewer(
+        completeViewer,
+        completeViewer.author.onBehalfOfUserId
+      ).every((response) => !("recipientUserId" in response))
+    ).toBe(true);
+
+    const openResults = getFeedbackResponsesForViewer(
+      { ...completeViewer, visibility: "open" },
+      "user-1"
+    );
+    expect(openResults.map((response) => response.recipientUserId)).toEqual([
+      "user-2",
+      "user-1",
+      "user-1",
+    ]);
+  });
+
+  const requestErrorCodes = (request: FeedbackRequest) =>
+    validateFeedbackRequest(request).errors.map((error) => error.code);
+
+  it("rejects requests whose quorum count can never mean what it says", () => {
+    const silentRecipient = feedbackRequest({
+      asks: feedbackAsks.slice(0, 1),
+      assignments: [
+        { askId: "multi", target: { kind: "user", userId: "user-1" } },
+      ],
+      quorum: { requiredRecipientCount: 2 },
+    });
+    // user-2 is assigned nothing, so every answerable ask being answered still
+    // leaves the request one recipient short forever.
+    const fullyAnswered = applyFeedbackResponse(
+      silentRecipient,
+      feedbackResponse("multi", feedbackAnswers[0]!)
+    );
+    expect(getFeedbackRequestProgress(fullyAnswered)).toMatchObject({
+      answeredAskCount: 1,
+      totalAssignedAskCount: 1,
+      answeredRecipientCount: 1,
+      quorumReached: false,
+    });
+    expect(requestErrorCodes(silentRecipient)).toEqual(["recipientWithoutAsks"]);
+
+    const bothAssigned = feedbackRequest({
+      asks: feedbackAsks.slice(0, 1),
+      assignments: [
+        { askId: "multi", target: { kind: "user", userId: "user-1" } },
+        { askId: "multi", target: { kind: "user", userId: "user-2" } },
+      ],
+      quorum: { requiredRecipientCount: 2 },
+    });
+    expect(validateFeedbackRequest(bothAssigned)).toEqual({
+      valid: true,
+      errors: [],
+    });
+    expect(requestErrorCodes({
+      ...bothAssigned,
+      asks: [...bothAssigned.asks, bothAssigned.asks[0]!],
+      assignments: [...bothAssigned.assignments, bothAssigned.assignments[0]!],
+    })).toEqual(expect.arrayContaining(["duplicateAsk", "duplicateAssignment"]));
+    expect(
+      requestErrorCodes({
+        ...bothAssigned,
+        quorum: { requiredRecipientCount: 3 },
+      })
+    ).toEqual(["quorumExceedsRecipients"]);
+    // A duplicated recipient is what makes a quorum of two look satisfiable by
+    // one person; collapsing it exposes the unreachable count underneath.
+    expect(
+      requestErrorCodes({
+        ...bothAssigned,
+        recipients: [
+          { userId: "user-1", name: "One" },
+          { userId: "user-1", name: "One again" },
+        ],
+        assignments: [
+          { askId: "multi", target: { kind: "user", userId: "user-1" } },
+        ],
+      })
+    ).toEqual(["duplicateRecipient", "quorumExceedsRecipients"]);
+  });
+
+  it("rejects an artifact bound to an entry its ask does not define", () => {
+    // A misbound artifact is invisible rather than wrong-looking: the option
+    // card renders exactly as it does with no artifact at all, so nothing on
+    // screen tells the author the binding missed. Hence a validation error
+    // instead of a silent drop.
+    const artifact = (entryId: string) => ({
+      entryId,
+      ref: { orgId: "org-1", kind: "document" as const, sourceId: "doc-1" },
+      label: "Direction A",
+    });
+    const withArtifacts = (
+      askId: "single" | "order",
+      artifacts: ReturnType<typeof artifact>[]
+    ) =>
+      requestErrorCodes(
+        feedbackRequest({
+          asks: feedbackAsks.map((ask) =>
+            ask.id === askId ? { ...ask, artifacts } : ask
+          ),
+        })
+      );
+
+    expect(withArtifacts("single", [artifact("one")])).toEqual([]);
+    expect(withArtifacts("order", [artifact("one")])).toEqual([]);
+    expect(withArtifacts("single", [artifact("nonexistent")])).toEqual([
+      "unknownArtifactEntry",
+    ]);
+    expect(withArtifacts("order", [artifact("nonexistent")])).toEqual([
+      "unknownArtifactEntry",
+    ]);
+    // Two artifacts on one entry means one of them can never render, and which
+    // one survives would come down to iteration order.
+    expect(withArtifacts("single", [artifact("one"), artifact("one")])).toEqual([
+      "duplicateArtifactEntry",
+    ]);
+  });
+
+  it("rejects a quorum of zero, which is reached before anyone answers", () => {
+    const request = feedbackRequest({
+      asks: feedbackAsks.slice(0, 1),
+      recipients: [{ userId: "user-1", name: "One" }],
+      assignments: [
+        { askId: "multi", target: { kind: "user", userId: "user-1" } },
+      ],
+      quorum: { requiredRecipientCount: 0 },
+    });
+    expect(getFeedbackRequestProgress(request)).toMatchObject({
+      answeredRecipientCount: 0,
+      quorumReached: true,
+    });
+    expect(requestErrorCodes(request)).toEqual(["quorumBelowOne"]);
+  });
+
+  it("rejects assignments that no recipient can ever answer", () => {
+    const request = feedbackRequest({
+      asks: feedbackAsks.slice(0, 1),
+      recipients: [{ userId: "user-1", name: "One" }],
+      assignments: [
+        { askId: "multi", target: { kind: "user", userId: "user-1" } },
+        { askId: "undefined-ask", target: { kind: "user", userId: "user-1" } },
+        { askId: "multi", target: { kind: "user", userId: "not-a-recipient" } },
+      ],
+      quorum: { requiredRecipientCount: 1 },
+    });
+    // The undefined ask still lands in user-1's assigned set while
+    // validateFeedbackResponse refuses any answer to it, so the sole recipient
+    // stalls at incomplete no matter what they submit.
+    const answered = applyFeedbackResponse(
+      request,
+      feedbackResponse("multi", feedbackAnswers[0]!)
+    );
+    expect(getFeedbackRequestProgress(answered)).toMatchObject({
+      totalAssignedAskCount: 3,
+      answeredRecipientCount: 0,
+      quorumReached: false,
+    });
+    expect(
+      validateFeedbackResponse(
+        request,
+        feedbackResponse("undefined-ask", feedbackAnswers[0]!)
+      ).errors.map((error) => error.code)
+    ).toContain("unknownAsk");
+    expect(requestErrorCodes(request)).toEqual([
+      "unknownAssignedAsk",
+      "orphanedAssignment",
+    ]);
   });
 });

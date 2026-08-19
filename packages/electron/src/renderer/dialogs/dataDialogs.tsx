@@ -10,10 +10,10 @@ import { registerDialog } from '../contexts/DialogContext';
 import type { DialogConfig } from '../contexts/DialogContext.types';
 import { ProjectSelectionDialog } from '../components/ProjectSelectionDialog/ProjectSelectionDialog';
 import { ErrorDialog } from '../components/ErrorDialog/ErrorDialog';
-import { ConfirmDialog } from '../components/ConfirmDialog/ConfirmDialog';
 import { SessionImportDialog } from '../components/AgenticCoding/SessionImportDialog';
 import { BlitzDialog } from '../components/BlitzDialog/BlitzDialog';
 import { DIALOG_IDS } from './registry';
+import { registerConfirmDialog } from './confirmDialogRegistration';
 import { store } from '@nimbalyst/runtime/store';
 import { refreshSessionListAtom } from '../store/atoms/sessions';
 
@@ -40,16 +40,6 @@ export interface SessionImportData {
 export interface BlitzDialogData {
   workspacePath: string;
   onCreated: (result: any) => void;
-}
-
-export interface ConfirmDialogData {
-  title: string;
-  message: string;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  destructive?: boolean;
-  onConfirm: () => void;
-  onCancel: () => void;
 }
 
 // Wrapper components that bridge DialogComponentProps to the original component props
@@ -96,29 +86,6 @@ function ErrorDialogWrapper({
       title={data.title}
       message={data.message}
       details={data.details}
-    />
-  );
-}
-
-function ConfirmDialogWrapper({
-  isOpen,
-  onClose,
-  data,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  data: ConfirmDialogData;
-}) {
-  return (
-    <ConfirmDialog
-      isOpen={isOpen}
-      title={data.title}
-      message={data.message}
-      confirmLabel={data.confirmLabel}
-      cancelLabel={data.cancelLabel}
-      destructive={data.destructive}
-      onConfirm={data.onConfirm}
-      onCancel={data.onCancel}
     />
   );
 }
@@ -195,12 +162,7 @@ export function registerDataDialogs() {
     priority: 400, // Errors have highest priority
   });
 
-  registerDialog<ConfirmDialogData>({
-    id: DIALOG_IDS.CONFIRM,
-    group: 'alert',
-    component: ConfirmDialogWrapper as DialogConfig<ConfirmDialogData>['component'],
-    priority: 350, // Confirmations are high priority but below errors
-  });
+  registerConfirmDialog();
 
   registerDialog<SessionImportData>({
     id: DIALOG_IDS.SESSION_IMPORT,

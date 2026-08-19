@@ -15,7 +15,7 @@ import {
   type CollaborativeEmbedProviderAcquisition,
   type CollaborativeEmbedProviderRequest,
 } from '../../services/CollaborativeEmbedProviderCache';
-import { buildCollabUri } from '../../utils/collabUri';
+import { buildCollabUri } from '@nimbalyst/collab-protocol';
 import { createCollabExtensionHost } from '../TabEditor/collabExtensionHost';
 
 interface CollaborativeEmbedEditorProps {

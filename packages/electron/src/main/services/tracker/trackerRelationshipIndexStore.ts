@@ -34,6 +34,14 @@ export interface RelationshipIndexRow {
   metadata: Record<string, unknown>;
 }
 
+export interface RelationshipReindexItem {
+  workspace: string;
+  sourceItemId: string;
+  fields: Record<string, unknown> | undefined;
+  fieldDefs: FieldDefinition[];
+  sourceUpdatedAt: string | null;
+}
+
 function rowsOf(result: unknown): any[] {
   const r = result as { rows?: unknown[] } | undefined;
   return Array.isArray(r?.rows) ? (r!.rows as any[]) : [];
@@ -46,6 +54,39 @@ function parseMeta(value: unknown): Record<string, unknown> {
     try { return JSON.parse(value); } catch { return {}; }
   }
   return {};
+}
+
+async function upsertRelationshipEdges(
+  workspace: string,
+  sourceItemId: string,
+  edges: RelationshipEdge[],
+  sourceUpdatedAt: string | null,
+  db: RelationshipIndexDb,
+): Promise<void> {
+  for (const e of edges) {
+    await db.query(
+      `INSERT INTO tracker_relationship_index
+         (id, workspace, source_item_id, source_field_id, relationship_type_key,
+          target_item_id, target_tracker_type, source_updated_at, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (workspace, source_item_id, source_field_id, target_item_id) DO UPDATE
+         SET relationship_type_key = EXCLUDED.relationship_type_key,
+             target_tracker_type   = EXCLUDED.target_tracker_type,
+             source_updated_at     = EXCLUDED.source_updated_at,
+             metadata              = EXCLUDED.metadata`,
+      [
+        edgeId(workspace, sourceItemId, e.sourceFieldId, e.targetItemId),
+        workspace,
+        sourceItemId,
+        e.sourceFieldId,
+        e.relationshipTypeKey ?? null,
+        e.targetItemId,
+        e.targetTrackerType ?? null,
+        sourceUpdatedAt,
+        JSON.stringify(e.metadata ?? {}),
+      ],
+    );
+  }
 }
 
 /**
@@ -66,30 +107,7 @@ export async function rebuildItemRelationships(
       `DELETE FROM tracker_relationship_index WHERE workspace = $1 AND source_item_id = $2`,
       [workspace, sourceItemId],
     );
-    for (const e of edges) {
-      await db.query(
-        `INSERT INTO tracker_relationship_index
-           (id, workspace, source_item_id, source_field_id, relationship_type_key,
-            target_item_id, target_tracker_type, source_updated_at, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (workspace, source_item_id, source_field_id, target_item_id) DO UPDATE
-           SET relationship_type_key = EXCLUDED.relationship_type_key,
-               target_tracker_type   = EXCLUDED.target_tracker_type,
-               source_updated_at     = EXCLUDED.source_updated_at,
-               metadata              = EXCLUDED.metadata`,
-        [
-          edgeId(workspace, sourceItemId, e.sourceFieldId, e.targetItemId),
-          workspace,
-          sourceItemId,
-          e.sourceFieldId,
-          e.relationshipTypeKey ?? null,
-          e.targetItemId,
-          e.targetTrackerType ?? null,
-          sourceUpdatedAt,
-          JSON.stringify(e.metadata ?? {}),
-        ],
-      );
-    }
+    await upsertRelationshipEdges(workspace, sourceItemId, edges, sourceUpdatedAt, db);
   } catch (err) {
     logger.main.warn('[trackerRelationshipIndexStore] rebuild failed for', sourceItemId, err);
   }
@@ -162,6 +180,54 @@ export async function reindexItemRelationships(
 ): Promise<void> {
   const edges = deriveRelationshipEdges(sourceItemId, flattenDataForRead(fields), fieldDefs);
   await rebuildItemRelationships(workspace, sourceItemId, edges, sourceUpdatedAt, dbOverride);
+}
+
+/**
+ * Reindex multiple source items after one bounded IPC request. Items are grouped
+ * by workspace so each group pays one delete instead of one delete per item;
+ * edge upserts remain per edge because both supported backends share that safe
+ * parameter shape.
+ */
+export async function reindexItemsRelationships(
+  items: RelationshipReindexItem[],
+  dbOverride?: RelationshipIndexDb,
+): Promise<void> {
+  try {
+    const db = dbOverride ?? (getDatabase() as RelationshipIndexDb | null);
+    if (!db || items.length === 0) return;
+
+    const byWorkspace = new Map<string, RelationshipReindexItem[]>();
+    for (const item of items) {
+      const group = byWorkspace.get(item.workspace) ?? [];
+      group.push(item);
+      byWorkspace.set(item.workspace, group);
+    }
+
+    for (const [workspace, group] of byWorkspace) {
+      const placeholders = group.map((_, index) => `$${index + 2}`).join(', ');
+      await db.query(
+        `DELETE FROM tracker_relationship_index
+         WHERE workspace = $1 AND source_item_id IN (${placeholders})`,
+        [workspace, ...group.map(item => item.sourceItemId)],
+      );
+      for (const item of group) {
+        const edges = deriveRelationshipEdges(
+          item.sourceItemId,
+          flattenDataForRead(item.fields),
+          item.fieldDefs,
+        );
+        await upsertRelationshipEdges(
+          workspace,
+          item.sourceItemId,
+          edges,
+          item.sourceUpdatedAt,
+          db,
+        );
+      }
+    }
+  } catch (err) {
+    logger.main.warn('[trackerRelationshipIndexStore] batch rebuild failed', err);
+  }
 }
 
 /**

@@ -20,8 +20,34 @@ import {
   type PersonalAccountSummary,
 } from '../atoms/settingsDomains';
 import { createPerKeyDebouncer } from '../listeners/perKeyDebounce';
+import { bucketOrganizationCount } from '../../../shared/analytics/teamAnalytics';
+import { trackTeamAnalyticsEvent } from '../../utils/teamAnalytics';
 
 let initialized = false;
+
+async function trackMembershipSignInCompleted(userId: string | null): Promise<void> {
+  // The auth broadcast reaches every project window, so the sign-in has to be
+  // attributed once. Main arbitrates (see SignInAttribution): sign-in completes
+  // in an external browser, so gating on this window's focus dropped the event
+  // whenever the app was still in the background -- and `document.hasFocus()`
+  // is true in every window at once anyway, so it never deduplicated either.
+  const claim = window.electronAPI?.team?.claimSignInAttribution;
+  if (claim && await claim(userId ?? 'unknown-user') === false) return;
+  const result = await window.electronAPI?.team?.list?.({ forceRefresh: true });
+  if (!result?.success || !result.teams?.length) return;
+
+  const hasActive = result.teams.some((team: { membershipType?: string }) => (
+    !team.membershipType || team.membershipType === 'active_member'
+  ));
+  const hasPending = result.teams.some((team: { membershipType?: string }) => (
+    !!team.membershipType && team.membershipType !== 'active_member'
+  ));
+  trackTeamAnalyticsEvent('team_sign_in_completed', {
+    surface: 'desktop',
+    membershipState: hasActive && hasPending ? 'mixed' : hasActive ? 'active' : 'pending',
+    organizationCountBucket: bucketOrganizationCount(result.teams.length),
+  });
+}
 
 export async function refreshPersonalAccountsDirectory(): Promise<PersonalAccountSummary[]> {
   const stytch = window.electronAPI?.stytch;
@@ -94,10 +120,15 @@ export function initStytchAuthListeners(): () => void {
     });
 
   const unsubscribe = stytch.onAuthStateChange?.((state: { isAuthenticated?: boolean; user?: StytchAuthSnapshot['user'] }) => {
+    const wasAuthenticated = store.get(stytchAuthAtom)?.isAuthenticated ?? false;
+    const isAuthenticated = !!state?.isAuthenticated;
     store.set(stytchAuthAtom, {
-      isAuthenticated: !!state?.isAuthenticated,
+      isAuthenticated,
       user: state?.user ?? null,
     });
+    if (isAuthenticated && !wasAuthenticated) {
+      void trackMembershipSignInCompleted(state?.user?.user_id ?? null).catch(() => {});
+    }
     scheduleIdentityDirectoryReload();
   });
 

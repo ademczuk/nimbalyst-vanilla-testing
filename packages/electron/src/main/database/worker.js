@@ -1232,6 +1232,31 @@ class PGLiteWorker {
       console.error('[PGLite Worker] Failed to add issue identity columns:', error);
     }
 
+    // Migration: Add local_key for machine-private tracker numbers (`NIM.12`).
+    // Separate from issue_key because the room owns that column and rejects an
+    // item that already carries a different key. Never leaves this machine.
+    try {
+      const localKeyCheck = await this.db.query(`
+        SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'tracker_items' AND column_name = 'local_key'
+        ) as has_local_key
+      `);
+      const { has_local_key } = localKeyCheck.rows[0] || {};
+      if (!has_local_key) {
+        await this.db.exec(`
+          ALTER TABLE tracker_items ADD COLUMN local_key TEXT;
+        `);
+      }
+      // The unique index is what stops a number being handed out twice, which
+      // is the failure that rolled back both previous attempts.
+      await this.db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tracker_workspace_local_key ON tracker_items(workspace, local_key) WHERE local_key IS NOT NULL;
+      `);
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to add tracker local_key column:', error);
+    }
+
     // Migration: Add content, archived, source columns for unified tracker system
     try {
       const unifiedCheck = await this.db.query(`
@@ -2400,6 +2425,13 @@ class PGLiteWorker {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_tracker_type_defs_ws_type
           ON tracker_type_defs (workspace, type);
       `);
+      // Last shared definition projected onto this workspace's YAML file
+      // (schema version 30). Mirror of SQLite
+      // 0030_tracker_type_defs_synced_model.sql. Added separately so databases
+      // created before team schema sync pick the column up on the next launch.
+      await this.db.exec(`
+        ALTER TABLE tracker_type_defs ADD COLUMN IF NOT EXISTS synced_model TEXT;
+      `);
       console.log('[PGLite Worker] tracker_type_defs table created successfully');
     } catch (error) {
       console.error('[PGLite Worker] Failed to create tracker_type_defs table:', error);
@@ -3037,6 +3069,95 @@ class PGLiteWorker {
       console.log('[PGLite Worker] tool usage backfill state created successfully');
     } catch (error) {
       console.error('[PGLite Worker] Failed to create tool usage backfill state:', error);
+      throw error;
+    }
+
+    // Migration: commit sha -> AI session ledger (schema version 31).
+    // Mirror of SQLite 0031_session_commits.sql.
+    try {
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS session_commits (
+          commit_sha   TEXT NOT NULL,
+          session_id   TEXT NOT NULL,
+          workspace_id TEXT,
+          attribution  TEXT NOT NULL DEFAULT 'exact',
+          committed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (commit_sha, session_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_commits_session ON session_commits (session_id);
+
+        CREATE TABLE IF NOT EXISTS session_commit_backfill_meta (
+          singleton    INTEGER PRIMARY KEY CHECK (singleton = 1),
+          cutoff_at    TIMESTAMPTZ NOT NULL,
+          cursor_at    TIMESTAMPTZ,
+          completed_at TIMESTAMPTZ
+        );
+        INSERT INTO session_commit_backfill_meta (singleton, cutoff_at)
+        VALUES (1, NOW())
+        ON CONFLICT (singleton) DO NOTHING;
+      `);
+      console.log('[PGLite Worker] session_commits table created successfully');
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to create session_commits table:', error);
+      throw error;
+    }
+
+    // Migration: workspace-scoped Feedback Request projection (schema version 32).
+    // Mirror of SQLite 0032_feedback_request_cache.sql.
+    try {
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS feedback_request_cache (
+          workspace_path TEXT NOT NULL,
+          org_id         TEXT NOT NULL,
+          viewer_user_id TEXT NOT NULL,
+          request_id     TEXT NOT NULL,
+          data           JSONB NOT NULL,
+          updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (workspace_path, org_id, viewer_user_id, request_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_feedback_request_cache_org
+          ON feedback_request_cache (workspace_path, org_id, viewer_user_id, updated_at);
+      `);
+      console.log('[PGLite Worker] feedback_request_cache table created successfully');
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to create feedback_request_cache table:', error);
+      throw error;
+    }
+
+    // Migration: participant-filtered Feedback Request index (schema version 34).
+    // Mirror of SQLite 0034_feedback_request_index.sql.
+    try {
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS feedback_request_index (
+          workspace_path TEXT NOT NULL,
+          org_id         TEXT NOT NULL,
+          viewer_user_id TEXT NOT NULL,
+          request_id     TEXT NOT NULL,
+          data           JSONB NOT NULL,
+          created_at     TIMESTAMPTZ NOT NULL,
+          updated_at     TIMESTAMPTZ NOT NULL,
+          closed_at      TIMESTAMPTZ,
+          snapshot_id    TEXT,
+          PRIMARY KEY (workspace_path, org_id, viewer_user_id, request_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_feedback_request_index_org
+          ON feedback_request_index
+            (workspace_path, org_id, viewer_user_id, updated_at);
+
+        CREATE TABLE IF NOT EXISTS feedback_request_index_backfill (
+          workspace_path    TEXT NOT NULL,
+          org_id            TEXT NOT NULL,
+          viewer_user_id    TEXT NOT NULL,
+          cutoff_at         TIMESTAMPTZ NOT NULL,
+          cursor_request_id TEXT,
+          completed_at      TIMESTAMPTZ,
+          PRIMARY KEY (workspace_path, org_id, viewer_user_id)
+        );
+      `);
+      console.log('[PGLite Worker] feedback_request_index tables created successfully');
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to create feedback_request_index tables:', error);
       throw error;
     }
   }

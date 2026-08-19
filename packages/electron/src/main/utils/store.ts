@@ -11,6 +11,10 @@ import { AlphaFeatureTag, getDefaultAlphaFeatures, ALPHA_FEATURES } from '../../
 import { DeveloperFeatureTag, getDefaultDeveloperFeatures, DEVELOPER_FEATURES } from '../../shared/developerFeatures';
 import { BetaFeatureTag, getDefaultBetaFeatures, enableAllBetaFeatures as enableAllBetaFeaturesUtil, BETA_FEATURES } from '../../shared/betaFeatures';
 import { deriveIssueKeyPrefix } from '../../shared/trackerIssueKeyPrefix';
+import {
+  LAST_SELECTED_ORG_SETTING_KEY,
+  ORG_PROJECT_WALK_DISMISSED_SETTING_KEY,
+} from '../../shared/orgProjectWalk';
 import { normalizeCodexProviderConfig, omitModelsField } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 
 // Theme can be a built-in theme or an extension theme ID (format: "extensionId:themeId")
@@ -21,17 +25,11 @@ export type CompletionSoundType = 'chime' | 'bell' | 'pop' | 'alert' | 'custom' 
 export type ReleaseChannel = 'stable' | 'alpha';
 export type PreferredTerminalShell = 'auto' | 'pwsh' | 'powershell' | 'git-bash' | 'wsl' | 'cmd';
 export type WorkspaceFileTreeFilter = 'all' | 'markdown' | 'known' | 'git-uncommitted' | 'git-worktree' | 'ai-read' | 'ai-written';
-export type TrackerSyncModeSetting = 'local' | 'shared' | 'hybrid';
 export type AttachmentStagingMode = 'temp' | 'workspace' | 'custom';
 export interface AttachmentStagingConfig {
   mode: AttachmentStagingMode;
   customPath?: string;
 }
-export interface TrackerSyncPolicySetting {
-  mode: TrackerSyncModeSetting;
-  scope?: 'project' | 'workspace';
-}
-
 export interface TeamManagementWindowState {
   bounds: { x: number; y: number; width: number; height: number };
   maximized: boolean;
@@ -92,6 +90,9 @@ interface AppStoreSchema {
   lastSelectedOrgId?: string;
   // Bounds for the single global organization-management window.
   teamManagementWindowState?: TeamManagementWindowState;
+  // Width of the tray sessions panel. Height is fixed (the list scrolls), and
+  // the position is always recomputed from the tray icon, so only width persists.
+  trayPanelWidth?: number;
   // Default AI model for new sessions (format: "provider:model" e.g., "claude-code:sonnet")
   defaultAIModel?: string;
   // Defaults for the composer's effort / extended-thinking selectors. Both are
@@ -506,7 +507,33 @@ export interface WorkspaceState {
     mergedUpdateBase64: string;
     updatedAt: number;
   }>;
-  trackerSyncPolicies?: Record<string, TrackerSyncModeSetting | TrackerSyncPolicySetting>;
+  /** Structured one-time summary consumed by the post-migration UI in a later slice. */
+  trackerSharingMigration?: {
+    version: 1;
+    migratedAt: number;
+    entries: Array<{
+      trackerType: string;
+      legacySchemaMode: 'local' | 'shared' | 'hybrid';
+      legacyItemMode: 'local' | 'shared' | 'hybrid' | null;
+      sharing: 'personal' | 'team';
+      draftByDefault: boolean;
+      diverged: boolean;
+    }>;
+    divergences: Array<{
+      trackerType: string;
+      legacySchemaMode: 'local' | 'shared' | 'hybrid';
+      legacyItemMode: 'local' | 'shared' | 'hybrid' | null;
+      sharing: 'personal' | 'team';
+      draftByDefault: boolean;
+      diverged: boolean;
+    }>;
+  };
+  /**
+   * When the user acknowledged the post-migration summary, compared against
+   * `trackerSharingMigration.migratedAt`. Kept outside the report because the
+   * report is rewritten until the legacy per-machine policies are finalized.
+   */
+  trackerSharingMigrationSeenAt?: number;
   // Per-project opt-out for agent tracker tools. When false, McpConfigService
   // omits the `nimbalyst-trackers` MCP server so the agent gets no tracker_*
   // tools in this project. Defaults to enabled (undefined === true).
@@ -514,10 +541,30 @@ export interface WorkspaceState {
   // Issue key prefix for tracker items (e.g., "NIM", "APP"). Used for local-only trackers.
   // For synced trackers, the prefix is stored server-side in TrackerRoom metadata.
   issueKeyPrefix?: string;
+  // Prefix for this project's machine-private tracker numbers (`NIM.12`).
+  // Pinned on first use and never recomputed: a number already handed out
+  // cannot change meaning, so a later project routes around this one rather
+  // than this one moving. Distinct from `issueKeyPrefix` because the room may
+  // assign the team a different prefix long after local numbers exist.
+  localKeyPrefix?: string;
+  // High-water mark for this project's local numbers. Only ever counts up, and
+  // is NEVER recomputed from existing rows -- deriving it from the rows is the
+  // exact mistake that made `LC-###` reissue numbers after items were acked or
+  // deleted. A deleted item's number stays spent.
+  localKeyCounter?: number;
   // Account identity bound to this workspace (personalOrgId).
   // Set once when the workspace is first synced. Different workspaces can use different accounts.
   // Defaults to the account selected for personal sync if not set.
   accountId?: string;
+  // Organization this project belongs to when its git remote cannot say so.
+  // A project normally resolves to its org by git-remote hash, which every
+  // machine computes identically; a folder with no remote has no such hash, so
+  // the org it was created from is recorded here instead. Local-only by
+  // definition -- without a remote there is nothing for a teammate to match.
+  // Read by TeamService.findTeamForWorkspace. `teamProjectId` names the project
+  // within the org when the workspace was added to one that already existed;
+  // absent means the org's primary project.
+  localOrgBinding?: { orgId: string; teamProjectId?: string };
   // Hidden gutter buttons (navigation sidebar)
   hiddenGutterButtons?: string[];
   // Tracker automation override for this project (undefined fields inherit from global)
@@ -698,7 +745,12 @@ function createDefaultWorkspaceState(workspacePath: string): WorkspaceState {
       customFolders: [],
     },
     collabPendingUpdates: {},
+    trackerSharingMigration: undefined,
+    trackerSharingMigrationSeenAt: undefined,
+    localOrgBinding: undefined,
     issueKeyPrefix: deriveIssueKeyPrefix(workspacePath),
+    localKeyPrefix: undefined,
+    localKeyCounter: undefined,
     lastUpdated: Date.now(),
   };
 }
@@ -865,6 +917,14 @@ export function saveTeamManagementWindowState(state: TeamManagementWindowState):
   });
 }
 
+export function getTrayPanelWidth(): number | undefined {
+  return getAppStore().get('trayPanelWidth');
+}
+
+export function setTrayPanelWidth(width: number): void {
+  getAppStore().set('trayPanelWidth', width);
+}
+
 export function getTheme(): AppTheme {
   return getAppStore().get('theme');
 }
@@ -958,6 +1018,24 @@ export function updateWorkspaceState(
   const draft = cloneWorkspaceState(current);
   const result = updater(draft) || draft;
   return cloneWorkspaceState(persistWorkspaceState(workspacePath, result));
+}
+
+/**
+ * Local-number prefixes already pinned by other projects on this machine.
+ *
+ * A local number carries no hint of which project it came from, so two
+ * projects sharing a prefix means `NIM.4` has more than one answer on one
+ * machine -- and agents read trackers across projects in a single session.
+ * Team prefixes have the room's registry to arbitrate; local ones have only
+ * this comparison.
+ */
+export function getTakenLocalKeyPrefixes(excludeWorkspacePath?: string): string[] {
+  const excludeKey = excludeWorkspacePath ? workspaceKey(excludeWorkspacePath) : null;
+  const all = getWorkspaceStore().store ?? {};
+  return Object.entries(all)
+    .filter(([key]) => key.startsWith('ws:') && key !== excludeKey)
+    .map(([, state]) => state?.localKeyPrefix)
+    .filter((prefix): prefix is string => typeof prefix === 'string' && prefix.length > 0);
 }
 
 export function getWorkspaceRecentFiles(workspacePath: string): string[] {
@@ -2305,6 +2383,19 @@ export function getAppSetting<T>(key: string): T | undefined {
  */
 export function setAppSetting<T>(key: string, value: T): void {
   getAppStore().set(key as keyof AppStoreSchema, value as any);
+}
+
+/**
+ * Forget the signed-out user's organization preferences: which org's project
+ * walk they closed, and which org the org window last opened.
+ *
+ * These are statements about one person's current session, not properties of
+ * the machine. Leaving them behind meant a single "Not now" silenced the walk
+ * for good -- including for the next person to sign in on this computer.
+ */
+export function clearOrgWalkPreferences(): void {
+  getAppStore().delete(ORG_PROJECT_WALK_DISMISSED_SETTING_KEY as keyof AppStoreSchema);
+  getAppStore().delete(LAST_SELECTED_ORG_SETTING_KEY as keyof AppStoreSchema);
 }
 
 // Preferred Agent Language

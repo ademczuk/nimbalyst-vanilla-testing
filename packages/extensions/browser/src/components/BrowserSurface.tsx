@@ -96,10 +96,13 @@ export function BrowserSurface({ sessionId, visible }: BrowserSurfaceProps): JSX
       // covers the remaining cases. Either means "not on screen" -> no bounds.
       if (el.offsetParent === null) return null;
       const rect = el.getBoundingClientRect();
-      // Bounds are CSS pixels relative to the host window's content area.
-      // The renderer's <body> origin lines up with the content area origin in
-      // a normal Electron window, so getBoundingClientRect (which is relative
-      // to the viewport) is the correct frame of reference.
+      // Bounds are reported in *our* CSS pixels: the renderer's <body> origin
+      // lines up with the window content area origin in a normal Electron
+      // window, so getBoundingClientRect (relative to the viewport) is the
+      // right frame of reference. It is not the same grid the native view is
+      // positioned on once the window is zoomed -- BrowserSessionService
+      // converts CSS pixels to device-independent pixels using the host
+      // window's zoom factor.
       const x = Math.round(rect.left);
       const y = Math.round(rect.top);
       const width = Math.max(0, Math.round(rect.width));

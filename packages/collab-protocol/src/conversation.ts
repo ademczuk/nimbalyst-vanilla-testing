@@ -108,6 +108,14 @@ export type BoundedPreview = {
   actorLabel?: string;
   sourceTitle?: string;
   snippet?: string;
+  /**
+   * Tracker item type (`bug`, `task`, a registry-defined custom type…) for a
+   * `trackerComment` source. Display-only, like everything else here: the
+   * recipient's client cannot read the item to derive it, because the item may
+   * live in a project it has never synced. Absent means "unknown", and the
+   * surface falls back to a generic tracker identity rather than guessing.
+   */
+  itemType?: string;
 };
 
 export type InboxDelivery = {
@@ -116,6 +124,20 @@ export type InboxDelivery = {
   orgId: string;
   source: CommentRef | ActivityRef;
   reason: "mention" | "agentMention" | "assignment" | "reply" | "follow" | "dm";
+  /**
+   * Server-validated attached sessions targeted by this delivery. Present only
+   * when the source message named one or more dispatchable agent handles owned
+   * by the recipient.
+   */
+  agentSessionIds?: string[];
+  /** Sessions in `agentSessionIds` whose queued prompt has been claimed. */
+  agentDispatchedSessionIds?: string[];
+  /** Aggregate presentation state for agent dispatch on this delivery. */
+  agentDispatch?: "pending" | "dispatched";
+  /** Local-client policy key; future delivery families register their evaluator. */
+  agentWakePolicy?: string;
+  /** Encrypted policy inputs such as quorum/closed/nudge state. */
+  agentWakeMetadata?: Record<string, unknown>;
   /**
    * Structured author of the source event. Optional: the server does not
    * populate it yet, so clients must fall back to display-only attribution
@@ -130,7 +152,7 @@ export type InboxDelivery = {
 
 export type ActivityRef = {
   orgId: string;
-  resourceKind: "tracker" | "document";
+  resourceKind: "tracker" | "document" | "feedbackRequest";
   resourceId: string;
   sourceEventId: string;
   eventClass: string;

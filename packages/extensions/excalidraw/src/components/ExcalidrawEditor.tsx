@@ -258,12 +258,45 @@ export const ExcalidrawEditor = forwardRef<any, EditorHostProps>(function Excali
   // theme filter, NOT by the stored color, so defaultBgRef stays light-space.
   const theme = (hostTheme === 'dark' || hostTheme === 'crystal-dark') ? 'dark' : 'light';
 
+  // The imperative API ref is published before Excalidraw finishes applying
+  // initialData. Mounting a collaborative binding at that earlier boundary
+  // lets the library's subsequent empty initialization clear a hydrated
+  // offline canvas. Wait for the first editor onChange, which is the first
+  // point at which both the API and Excalidraw's internal scene are ready.
+  const excalidrawDomRef = useRef<HTMLDivElement | null>(null);
+  const bindingRef = useRef<ExcalidrawBinding | null>(null);
+  const initialSceneObservedRef = useRef(false);
+  const apiReadyResolversRef = useRef<Array<(api: ExcalidrawImperativeAPI) => void>>([]);
+  const resolveApiReady = useCallback(() => {
+    const api = excalidrawAPIRef.current;
+    if (!api || !initialSceneObservedRef.current) return;
+    const resolvers = apiReadyResolversRef.current;
+    apiReadyResolversRef.current = [];
+    for (const resolve of resolvers) resolve(api);
+  }, []);
+  const awaitExcalidrawApi = useCallback((): Promise<ExcalidrawImperativeAPI> => {
+    if (excalidrawAPIRef.current && initialSceneObservedRef.current) {
+      return Promise.resolve(excalidrawAPIRef.current);
+    }
+    return new Promise((resolve) => {
+      apiReadyResolversRef.current.push(resolve);
+    });
+  }, []);
+
   // Mark as dirty only when elements actually change (not just view state)
   const onChange = useCallback((
     elements: readonly ExcalidrawElement[],
     appState: AppState,
     files: BinaryFiles,
   ) => {
+    if (!initialSceneObservedRef.current) {
+      initialSceneObservedRef.current = true;
+      const api = excalidrawAPIRef.current;
+      if (api && bindingRef.current && bindingRef.current.api !== api) {
+        bindingRef.current.replaceApi(api);
+      }
+      resolveApiReady();
+    }
     if (isUpdatingFromExternalRef.current) return;
 
     // Check if elements actually changed (version-based comparison)
@@ -339,31 +372,18 @@ export const ExcalidrawEditor = forwardRef<any, EditorHostProps>(function Excali
         host.setEditorContextItems(items.length > 0 ? items : null);
       }
     }
-  }, [markDirty, host]);
+  }, [markDirty, host, resolveApiReady]);
 
   // ---- Collaborative wiring (no-op when host.collaboration is undefined) ---
   // The binding wraps the imperative Excalidraw API and routes local edits
   // into the shared Y.Doc + remote Y.Doc changes back onto the canvas. The
   // hook runs createBinding ONCE per host, after sync completes and after
   // first-time seeding (if needed).
-  const excalidrawDomRef = useRef<HTMLDivElement | null>(null);
-  const bindingRef = useRef<ExcalidrawBinding | null>(null);
-  // Resolvers waiting for excalidrawAPIRef.current to become non-null.
-  // On reopen the SDK hook's seed branch is skipped, which means
-  // createBinding may run before Excalidraw's internal init has fired the
-  // excalidrawAPI ref-callback. Without this gate the binding would
-  // no-op silently and the canvas would stay blank (see root-cause doc
-  // shared-doc-key-and-share-roundtrip-root-cause.md).
-  const apiReadyResolversRef = useRef<Array<(api: ExcalidrawImperativeAPI) => void>>([]);
-  const awaitExcalidrawApi = useCallback((): Promise<ExcalidrawImperativeAPI> => {
-    if (excalidrawAPIRef.current) {
-      return Promise.resolve(excalidrawAPIRef.current);
-    }
-    return new Promise((resolve) => {
-      apiReadyResolversRef.current.push(resolve);
-    });
-  }, []);
-  const { isCollaborative, status: collabStatus } = useCollaborativeEditor(host, {
+  const {
+    isCollaborative,
+    status: collabStatus,
+    binding: collabBinding,
+  } = useCollaborativeEditor(host, {
     isEmpty: isExcalidrawYDocEmpty,
     initializeFromContent: seedExcalidrawYDoc,
     createBinding: async ({ yDoc, awareness }) => {
@@ -380,6 +400,9 @@ export const ExcalidrawEditor = forwardRef<any, EditorHostProps>(function Excali
       );
       bindingRef.current = binding;
       return {
+        // Drained by the host before it reports a write complete, so an AI tool
+        // cannot return success on a scene still inside the 50ms debounce.
+        syncNow: () => binding.syncNow(),
         destroy: () => {
           binding.destroy();
           undoManager.destroy();
@@ -461,25 +484,29 @@ export const ExcalidrawEditor = forwardRef<any, EditorHostProps>(function Excali
       data-theme={theme}
       ref={excalidrawDomRef}
       data-collab-status={isCollaborative ? collabStatus : undefined}
+      data-collab-binding-ready={isCollaborative ? String(!!collabBinding) : undefined}
     >
       <Excalidraw
         key={theme}
         onChange={onChange}
         onPointerUpdate={isCollaborative ? onPointerUpdate : undefined}
         excalidrawAPI={(api: any) => {
+          if (api && api !== excalidrawAPIRef.current) {
+            initialSceneObservedRef.current = false;
+          }
           excalidrawAPIRef.current = api;
           if (api) {
             host.registerEditorAPI(createWrappedAPI(api));
-            // Unblock any pending createBinding awaiters now that the
-            // imperative API is live.
-            const resolvers = apiReadyResolversRef.current;
-            apiReadyResolversRef.current = [];
-            for (const resolve of resolvers) resolve(api);
+            resolveApiReady();
           }
         }}
         initialData={initialData ?? undefined}
         theme={theme}
-        viewModeEnabled={readOnly}
+        // The host's hydration overlay clears as soon as transport/replica
+        // hydration completes, a little before this extension's async binding
+        // factory necessarily finishes. Keep the canvas non-editable during
+        // that gap so no user gesture can occur without a Y.Doc listener.
+        viewModeEnabled={readOnly || (isCollaborative && !collabBinding)}
       />
     </div>
   );

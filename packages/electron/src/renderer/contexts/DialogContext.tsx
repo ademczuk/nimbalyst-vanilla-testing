@@ -83,6 +83,31 @@ export function DialogProvider({
   activeDialogsRef.current = activeDialogs;
 
   /**
+   * Tell a dialog's opener that its dialog went away.
+   *
+   * A caller that awaits an answer ("share this file, then send the request")
+   * has to be able to tell "cancelled" from "still waiting", and the component's
+   * `onClose` prop does not see every exit: ESC closes through the provider, and
+   * opening another exclusive dialog displaces this one. Removal from this map
+   * is the one event that covers them all.
+   *
+   * Called outside the state updater on purpose -- updaters must stay pure or
+   * StrictMode's double-invocation fires the callback twice.
+   */
+  const dismissDialogs = useCallback((dialogIds: string[]) => {
+    for (const dialogId of dialogIds) {
+      const onDismiss = (activeDialogsRef.current.get(dialogId)?.data as
+        { onDismiss?: () => void } | undefined)?.onDismiss;
+      if (typeof onDismiss !== 'function') continue;
+      try {
+        onDismiss();
+      } catch (error) {
+        console.error(`[DialogProvider] onDismiss for "${dialogId}" threw:`, error);
+      }
+    }
+  }, []);
+
+  /**
    * Open a dialog by ID. If the dialog's group is mutually exclusive,
    * close any other open dialogs in that group first.
    */
@@ -92,6 +117,15 @@ export function DialogProvider({
       console.error(`Dialog "${dialogId}" is not registered`);
       return;
     }
+
+    const displaced: string[] = [];
+    for (const [id] of activeDialogsRef.current) {
+      const otherConfig = dialogRegistry.get(id);
+      const isDisplaced = id === dialogId
+        || (!STACKABLE_GROUPS.has(config.group) && otherConfig && !STACKABLE_GROUPS.has(otherConfig.group));
+      if (isDisplaced) displaced.push(id);
+    }
+    dismissDialogs(displaced);
 
     setActiveDialogs((prev) => {
       const next = new Map(prev);
@@ -117,36 +151,36 @@ export function DialogProvider({
 
       return next;
     });
-  }, []);
+  }, [dismissDialogs]);
 
   /**
    * Close a specific dialog by ID, or close the topmost dialog if no ID provided.
    */
   const close = useCallback((dialogId?: string) => {
-    setActiveDialogs((prev) => {
-      if (prev.size === 0) return prev;
+    const current = activeDialogsRef.current;
+    if (current.size === 0) return;
 
-      const next = new Map(prev);
-
-      if (dialogId) {
-        // Close specific dialog
-        next.delete(dialogId);
-      } else {
-        // Close topmost dialog (most recently opened)
-        let topmost: ActiveDialog | undefined;
-        for (const dialog of prev.values()) {
-          if (!topmost || dialog.openedAt > topmost.openedAt) {
-            topmost = dialog;
-          }
-        }
-        if (topmost) {
-          next.delete(topmost.id);
-        }
+    // Resolve "topmost" once, up here, so the dialog we tell about the close is
+    // the same one the state updater removes.
+    let closing = dialogId;
+    if (!closing) {
+      let topmost: ActiveDialog | undefined;
+      for (const dialog of current.values()) {
+        if (!topmost || dialog.openedAt > topmost.openedAt) topmost = dialog;
       }
+      closing = topmost?.id;
+    }
+    if (!closing || !current.has(closing)) return;
+    const closingId = closing;
+    dismissDialogs([closingId]);
 
+    setActiveDialogs((prev) => {
+      if (!prev.has(closingId)) return prev;
+      const next = new Map(prev);
+      next.delete(closingId);
       return next;
     });
-  }, []);
+  }, [dismissDialogs]);
 
   /**
    * Check if a specific dialog is currently open.

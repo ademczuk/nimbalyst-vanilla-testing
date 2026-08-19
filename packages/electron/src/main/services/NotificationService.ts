@@ -14,6 +14,7 @@ import {
 } from '../window/WindowManager';
 import type { SessionNotificationNavigationTarget } from '../../shared/sessionNotificationNavigation';
 import { composeNotificationTitle } from '../../shared/notificationTitle';
+import { resolveNotificationIcon, type NotificationKind } from './notificationIcons';
 
 const NOTIFICATION_OUTCOME_TIMEOUT_MS = 2_000;
 
@@ -34,7 +35,10 @@ interface PendingNavigation {
 export interface NotificationOptions {
   title: string;
   body: string;
+  /** Explicit artwork. Overrides whatever `kind` would have resolved to. */
   icon?: string;
+  /** What this notification is about; selects the per-kind artwork. */
+  kind?: NotificationKind;
   sessionId?: string;
   workspacePath: string;  // REQUIRED: stable identifier for routing
   sourceLabel?: string;
@@ -193,7 +197,7 @@ class NotificationService {
       const notification = new Notification({
         title: options.title,
         body: options.body,
-        icon: options.icon || this.getAppIcon(),
+        icon: options.icon || resolveNotificationIcon(options.kind) || this.getAppIcon(),
         silent: options.silent === true ? true : false,
         urgency: options.urgency || 'normal', // macOS notification urgency
         timeoutType: options.timeoutType || 'default', // Use system default timeout
@@ -570,6 +574,15 @@ class NotificationService {
   }
 
   /**
+   * A question the agent asked reads differently from an approval it is waiting
+   * on: one wants an answer only the user has, the other wants a yes/no on work
+   * already drafted. They get their own artwork.
+   */
+  private getBlockedIconKind(blockingType: BlockingType): NotificationKind {
+    return blockingType === 'question' ? 'agent-question' : 'needs-input';
+  }
+
+  /**
    * Get notification body for a blocking type.
    */
   private getBlockedBody(blockingType: BlockingType, sessionName: string): string {
@@ -606,6 +619,7 @@ class NotificationService {
     await this.showNotification({
       title: composeNotificationTitle(sessionName, this.getBlockedTitle(blockingType)),
       body: this.getBlockedBody(blockingType, sessionName),
+      kind: this.getBlockedIconKind(blockingType),
       sessionId,
       workspacePath,
       sourceLabel: sessionName,

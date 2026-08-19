@@ -301,7 +301,7 @@ function validateMentions(
   return requested;
 }
 
-function collectMarkIds(editor: LexicalEditor | undefined): Set<string> {
+export function collectMarkIds(editor: LexicalEditor | undefined): Set<string> {
   const ids = new Set<string>();
   if (!editor) return ids;
   editor.getEditorState().read(() => {
@@ -369,7 +369,7 @@ function resolvePoint(
   return null;
 }
 
-function resolveAnchor(
+export function resolveAnchor(
   selector: CommentAnchorSelector,
 ): {
   end: { key: string; offset: number };

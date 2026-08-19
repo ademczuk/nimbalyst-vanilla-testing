@@ -33,6 +33,12 @@ vi.mock('../atoms/trackers', () => ({
   initTrackerPanelLayout: async () => {},
   loadSharedTrackerViewsAtom: atom(null, async () => {}),
 }));
+// Keeps the collab/sync graph (and the extension SDK behind it) out of a test
+// that only exercises rejection routing; that graph re-enters the mocked
+// runtime barrel and fails on exports this test has no reason to stub.
+vi.mock('../../services/BodyDocCache', () => ({
+  getBodyDocCache: () => ({ applyMarkdownToWarmEntry: async () => 'acknowledged' as const }),
+}));
 
 import { trackerSyncRejectionAtom } from '../atoms/trackerSync';
 

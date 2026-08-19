@@ -4,8 +4,10 @@ import { Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { store } from '@nimbalyst/runtime/store';
+import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 import { activeWorkspacePathAtom } from '../../../store/atoms/openProjects';
 import {
+  activeCollabScopeAtom,
   refreshSharedFolders,
   sharedFoldersAtom,
   type SharedFolder,
@@ -25,6 +27,11 @@ vi.mock('../../../store/atoms/collabDocuments', async (importOriginal) => {
 });
 
 const workspacePath = '/workspace/share-picker-refresh';
+const collabScope = {
+  scopeKey: workspacePath,
+  orgId: 'team-1',
+  indexConfig: { serverUrl: 'ws://sync', teamMemberId: asTeamMemberId('user-1') },
+};
 const markdownDescriptor = {
   documentType: 'markdown',
   displayName: 'Markdown',
@@ -40,7 +47,6 @@ const markdownDescriptor = {
     sharedCreate: true,
     history: true,
     export: true,
-    embed: false,
   },
 };
 
@@ -60,6 +66,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   store.set(sharedFoldersAtom, []);
+  store.set(activeCollabScopeAtom, null);
   store.set(activeWorkspacePathAtom, null);
 });
 
@@ -73,6 +80,7 @@ describe('ShareToTeamDialog folder refresh', () => {
       },
     });
     store.set(activeWorkspacePathAtom, workspacePath);
+    store.set(activeCollabScopeAtom, collabScope);
 
     render(
       <Provider store={store}>
@@ -154,6 +162,7 @@ describe('ShareToTeamDialog folder refresh', () => {
       },
     });
     store.set(activeWorkspacePathAtom, workspacePath);
+    store.set(activeCollabScopeAtom, collabScope);
     store.set(sharedFoldersAtom, [
       folder('engineering', 'Engineering', null),
       folder('specs', 'Specs', 'engineering'),

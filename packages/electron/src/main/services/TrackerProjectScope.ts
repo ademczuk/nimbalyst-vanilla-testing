@@ -2,7 +2,8 @@
 
 import { createHash } from 'crypto';
 import { findTeamForWorkspace } from './TeamService';
-import { getNormalizedGitRemote } from '../utils/gitUtils';
+import { getGitRemoteIdentities } from '../utils/gitUtils';
+import type { GitRemoteIdentities } from '../utils/gitUtils';
 import { resolveProjectPath } from '../utils/workspaceDetection';
 
 export interface TrackerProjectScope {
@@ -14,16 +15,16 @@ export interface TrackerProjectScope {
 interface TrackerProjectScopeDependencies {
   findTeamForWorkspace: (
     workspacePath: string,
-    precomputedRemote?: string,
+    precomputedRemote?: GitRemoteIdentities,
   ) => Promise<{ orgId: string; teamProjectId?: string | null } | null>;
-  getNormalizedGitRemote: typeof getNormalizedGitRemote;
+  getGitRemoteIdentities: typeof getGitRemoteIdentities;
   resolveProjectPath: typeof resolveProjectPath;
 }
 
 export function createTrackerProjectScopeResolver(deps: TrackerProjectScopeDependencies) {
   return async (workspacePath: string): Promise<TrackerProjectScope> => {
-    const normalizedRemote = await deps.getNormalizedGitRemote(workspacePath);
-    const team = await deps.findTeamForWorkspace(workspacePath, normalizedRemote ?? undefined);
+    const remote = await deps.getGitRemoteIdentities(workspacePath);
+    const team = await deps.findTeamForWorkspace(workspacePath, remote ?? undefined);
     if (team?.orgId && team.teamProjectId) {
       return {
         scope: `org:${team.orgId}:tracker:${team.teamProjectId}`,
@@ -33,9 +34,14 @@ export function createTrackerProjectScopeResolver(deps: TrackerProjectScopeDepen
 
     // The normalized-remote hash is already the personal project-index and D1
     // discovery identity. It remains stable across paths, worktrees, and devices.
-    if (normalizedRemote) {
+    //
+    // Deliberately the LEGACY form: this scope keys tracker read receipts and
+    // personal state that are already stored under it. Re-keying would reset a
+    // user's read state on every device, for no benefit -- the scope is personal,
+    // so it never has to agree with a teammate's.
+    if (remote) {
       return {
-        scope: `git:${createHash('sha256').update(normalizedRemote).digest('hex')}`,
+        scope: `git:${createHash('sha256').update(remote.legacy).digest('hex')}`,
         syncable: true,
       };
     }
@@ -51,6 +57,6 @@ export function createTrackerProjectScopeResolver(deps: TrackerProjectScopeDepen
 
 export const resolveTrackerProjectScope = createTrackerProjectScopeResolver({
   findTeamForWorkspace,
-  getNormalizedGitRemote,
+  getGitRemoteIdentities,
   resolveProjectPath,
 });

@@ -18,7 +18,8 @@ const model: TrackerDataModel = {
   modes: { inline: true, fullDocument: true },
   idPrefix: 'FLS',
   idFormat: 'ulid',
-  sync: { mode: 'local', scope: 'workspace' },
+  sharing: 'personal',
+  draftByDefault: false,
   fields: [
     { name: 'title', type: 'string', required: true },
     { name: 'estimate', type: 'number' },

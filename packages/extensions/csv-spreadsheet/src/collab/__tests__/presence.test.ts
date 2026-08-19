@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { extractRemotePresences, resolveCellSection } from '../presence';
+import { LocalPresenceTracker } from '../localPresence';
 
 type RawState = {
   user?: { id?: unknown; name?: unknown; color?: unknown };
@@ -90,5 +91,52 @@ describe('resolveCellSection', () => {
 
   it('with no header rows, all rows are in the scrolling section', () => {
     expect(resolveCellSection(0, 0)).toEqual({ rowType: 'rgRow', gridRow: 0 });
+  });
+});
+
+describe('LocalPresenceTracker', () => {
+  it('keeps the editing cell when a selection event lands mid-edit', () => {
+    // The cross-host defect: RevoGrid emitted a focus event 56ms after
+    // `beforeeditstart`, the selection publish asserted `editingCell: null`,
+    // and DocumentSync's 2Hz coalescing meant the editing frame in between
+    // never reached the wire -- so a peer saw a selection box with no label.
+    const tracker = new LocalPresenceTracker();
+    const { patch } = tracker.beginEdit({ row: 3, col: 1 });
+    expect(patch).toEqual({ editingCell: { row: 3, col: 1 } });
+
+    expect(tracker.select({ row: 2, col: 1 })).toEqual({
+      selectedCell: { row: 2, col: 1 },
+      editingCell: { row: 3, col: 1 },
+    });
+  });
+
+  it('reports no editing cell on a selection while nothing is being edited', () => {
+    const tracker = new LocalPresenceTracker();
+    expect(tracker.select({ row: 1, col: 0 })).toEqual({
+      selectedCell: { row: 1, col: 0 },
+      editingCell: null,
+    });
+  });
+
+  it('clears on close and then has nothing left to publish', () => {
+    const tracker = new LocalPresenceTracker();
+    tracker.beginEdit({ row: 3, col: 1 });
+    expect(tracker.endEdit()).toEqual({ editingCell: null });
+    expect(tracker.isEditing()).toBe(false);
+    // A commit followed by the editor's own disconnect must not double-publish.
+    expect(tracker.endEdit()).toBeNull();
+  });
+
+  it('ignores a stale editor disconnecting after the next one opened', () => {
+    const tracker = new LocalPresenceTracker();
+    const first = tracker.beginEdit({ row: 3, col: 1 }).session;
+    const second = tracker.beginEdit({ row: 4, col: 2 }).session;
+
+    expect(tracker.endEdit(first)).toBeNull();
+    expect(tracker.select(null)).toEqual({
+      selectedCell: null,
+      editingCell: { row: 4, col: 2 },
+    });
+    expect(tracker.endEdit(second)).toEqual({ editingCell: null });
   });
 });

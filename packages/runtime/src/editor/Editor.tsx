@@ -18,9 +18,11 @@ import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';
 import { TablePlugin } from '@lexical/react/LexicalTablePlugin';
 import { useLexicalEditable } from '@lexical/react/useLexicalEditable';
 import { CAN_USE_DOM } from '@lexical/utils';
+import type { LexicalEditor } from 'lexical';
 
 import { $convertToEnhancedMarkdownString } from './markdown';
 
+import { EXTERNAL_CONTENT_UPDATE_TAG } from './applyExternalMarkdown';
 import { DEFAULT_EDITOR_CONFIG, type EditorConfig } from './EditorConfig';
 import { getEditorTransformers } from './markdown';
 import AutoEmbedPlugin from './plugins/AutoEmbedPlugin';
@@ -42,6 +44,9 @@ import ToolbarPlugin from './plugins/ToolbarPlugin';
 import TreeViewPlugin from './plugins/TreeViewPlugin';
 import CommentsPlugin from './plugins/CommentPlugin';
 import { getCommentToolbarActions } from './plugins/CommentPlugin/toolbarAction';
+import { canAuthorComments } from './commenting/capabilities';
+import type { CommentsConfig } from './commenting/types';
+import type { FloatingTextToolbarAction } from './plugins/FloatingTextFormatToolbarPlugin/types';
 import { SelectionAlwaysOnDisplay } from './plugins/SelectionAlwaysOnDisplayPlugin';
 import ListEnterFormatClearPlugin from './plugins/ListEnterFormatClearPlugin';
 import ContentEditable from './ui/ContentEditable';
@@ -55,6 +60,32 @@ import { CollaborationPlugin } from '@lexical/react/LexicalCollaborationPlugin';
 
 interface EditorProps {
   config?: EditorConfig;
+}
+
+/**
+ * The floating toolbar's comment action, memoized so the toolbar does not see a
+ * new array every render.
+ *
+ * The capability is deliberately *not* part of the memoized computation's
+ * inputs by identity alone: hosts build `comments` once and keep it, so a
+ * mid-session revocation (`serverAccess: 'revoked'` in the browser) changes what
+ * `getCapabilities` answers while the config object stays the same. Memoizing on
+ * that identity alone leaves "Add comment" on screen after commenting is gone --
+ * the dispatch path refuses it, so the affordance is merely decorative, which is
+ * worse than absent. Resolving the capability on every render and keying the
+ * memo on the resulting boolean invalidates exactly when the answer flips and
+ * never otherwise. Every host's resolver is a field read plus a small object
+ * literal, so the per-render call is free.
+ */
+export function useCommentToolbarActions(
+  comments: CommentsConfig | undefined,
+  editor: Pick<LexicalEditor, 'dispatchCommand'>,
+): FloatingTextToolbarAction[] {
+  const canComment = canAuthorComments(comments);
+  return useMemo(
+    () => getCommentToolbarActions(comments, editor),
+    [comments, editor, canComment],
+  );
 }
 
 /**
@@ -138,8 +169,12 @@ export default function Editor({ config = DEFAULT_EDITOR_CONFIG }: EditorProps):
   const hasCompletedInitialLoadRef = useRef(false);
 
   useEffect(() => {
-    const removeUpdateListener = editor.registerUpdateListener(({ dirtyElements, dirtyLeaves }) => {
+    const removeUpdateListener = editor.registerUpdateListener(({ dirtyElements, dirtyLeaves, tags }) => {
       if (dirtyElements.size === 0 && dirtyLeaves.size === 0) return;
+      // Content that arrived from outside the editor (collaborator, file
+      // watcher, agent) is not unsaved local work -- flagging it dirty would
+      // schedule an autosave that writes the document straight back.
+      if (tags.has(EXTERNAL_CONTENT_UPDATE_TAG)) return;
       if (!hasCompletedInitialLoadRef.current) {
         hasCompletedInitialLoadRef.current = true;
         return;
@@ -199,10 +234,7 @@ export default function Editor({ config = DEFAULT_EDITOR_CONFIG }: EditorProps):
   // AIChatIntegrationPlugin, TrackerPlugin, etc.). Each is registered via
   // `registerExtensionEditorComponent` at app startup.
   const extensionEditorComponents = useExtensionEditorComponents();
-  const floatingTextToolbarActions = useMemo(
-    () => getCommentToolbarActions(config.comments, editor),
-    [config.comments, editor],
-  );
+  const floatingTextToolbarActions = useCommentToolbarActions(config.comments, editor);
 
   return (
     <>

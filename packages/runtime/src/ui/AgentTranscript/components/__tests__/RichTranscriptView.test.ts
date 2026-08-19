@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TranscriptViewMessage } from '../../../../ai/server/transcript/TranscriptProjector';
 import {
+  extractCodexFileChanges,
   extractEditsFromToolMessage,
   isInteractiveWidgetTool,
   isTranscriptAtBottom,
@@ -165,11 +166,10 @@ describe('extractEditsFromToolMessage', () => {
   });
 
   describe('Codex file_change shape (legacy synchronous adapter, removed)', () => {
-    // The synchronous extractFileChangeEdits adapter was removed because the raw
-    // canonical event for Codex file_change carries no diff content. Diff rendering
-    // is now handled by the main-process transcript enrichment path. The mapping
-    // from resolved file diffs into EditToolResultCard input stays in
-    // `toolCallDiffsToEdits` -- see the dedicated describe block below.
+    // Codex file_change never goes through extractEditsFromToolMessage: its
+    // `changes` array uses {path, kind, diff}, not the {old_string,new_string}/
+    // {content} shapes this extractor understands. renderToolCard routes it to
+    // `extractCodexFileChanges` instead -- see the dedicated describe block below.
     it('extractEditsFromToolMessage returns [] for a file_change tool', () => {
       const message = makeTestMessage({
         toolCall: {
@@ -194,6 +194,71 @@ describe('extractEditsFromToolMessage', () => {
       // No diff content on the canonical event => the synchronous extractor must
       // not synthesize a fake edit. The async dispatch path takes over.
       expect(extractEditsFromToolMessage(message)).toEqual([]);
+    });
+  });
+
+  describe('extractCodexFileChanges', () => {
+    // Codex app-server persists the patch text in the tool arguments, so these
+    // rows render red/green with no history-snapshot lookup. `diff` means a
+    // different thing per kind (providers/codex/patchReverse.ts).
+
+    it('treats an add diff as the raw new-file body', () => {
+      const edits = extractCodexFileChanges([
+        { path: '/repo/src/new.ts', kind: 'add', move_path: null, diff: "export const x = 1;\nexport const y = 2;\n" },
+      ]);
+
+      expect(edits).toEqual([
+        {
+          filePath: '/repo/src/new.ts',
+          type: 'add',
+          operation: 'create',
+          content: "export const x = 1;\nexport const y = 2;\n",
+        },
+      ]);
+    });
+
+    it('splits an update diff into per-hunk replacements', () => {
+      const edits = extractCodexFileChanges([
+        {
+          path: '/repo/src/app.ts',
+          kind: 'update',
+          move_path: null,
+          diff: '@@ -1,2 +1,2 @@\n context\n-export const x = 1;\n+export const x = 2;\n',
+        },
+      ]);
+
+      expect(edits).toHaveLength(1);
+      expect(edits[0]).toEqual({
+        filePath: '/repo/src/app.ts',
+        type: 'update',
+        operation: 'edit',
+        replacements: [
+          { oldText: 'context\nexport const x = 1;', newText: 'context\nexport const x = 2;' },
+        ],
+      });
+    });
+
+    it('recovers the removed body from a delete diff as red-only', () => {
+      const edits = extractCodexFileChanges([
+        { path: '/repo/src/gone.ts', kind: 'delete', move_path: null, diff: '-const a = 1;\n-const b = 2;' },
+      ]);
+
+      expect(edits).toEqual([
+        {
+          filePath: '/repo/src/gone.ts',
+          type: 'delete',
+          operation: 'delete',
+          old_string: 'const a = 1;\nconst b = 2;',
+          new_string: '',
+        },
+      ]);
+    });
+
+    it('yields nothing for the legacy SDK shape, which carries no diff', () => {
+      // Those rows must fall through to the generic tool card rather than
+      // render an empty diff.
+      expect(extractCodexFileChanges([{ path: '/repo/x.ts', kind: 'update' }])).toEqual([]);
+      expect(extractCodexFileChanges(undefined)).toEqual([]);
     });
   });
 
@@ -414,6 +479,16 @@ describe('transcript auto-scroll thresholds', () => {
 
   it('still auto-scrolls when the transcript was sticky before the new content arrived', () => {
     expect(shouldAutoScrollTranscript(true, 200)).toBe(true);
+  });
+
+  it('suppresses auto-scroll while a transcript selection is active, even when sticky at the bottom', () => {
+    // The user is dragging a highlight in the transcript; a jump to the bottom
+    // would collapse it. Selection wins over the sticky-bottom pull.
+    expect(shouldAutoScrollTranscript(true, 0, true)).toBe(false);
+  });
+
+  it('resumes auto-scroll once the selection is released', () => {
+    expect(shouldAutoScrollTranscript(true, 0, false)).toBe(true);
   });
 });
 

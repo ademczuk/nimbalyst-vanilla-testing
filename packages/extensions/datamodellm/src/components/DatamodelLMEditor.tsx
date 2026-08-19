@@ -20,6 +20,7 @@ import {
   type EditorHostProps,
 } from '@nimbalyst/extension-sdk';
 import { DataModelBinding } from '../collab/datamodelBinding';
+import type { RemotePresence } from '../collab/presence';
 import { isDataModelYDocEmpty, seedDataModelYDoc } from '../collab/seed';
 import { buildEntitySelectionContextItem, buildRelationshipSelectionContextItem } from '../selectionContext';
 
@@ -49,6 +50,10 @@ export function DatamodelLMEditor({ host }: EditorHostProps) {
     storeRef.current = createDataModelStore();
   }
   const store = storeRef.current;
+
+  // Remote collaborators' selections, rendered as chrome on the matching
+  // entity / relationship. Always empty outside collab mode.
+  const [presences, setPresences] = useState<RemotePresence[]>([]);
 
   // useEditorLifecycle handles: loading, saving, echo detection, file changes, theme
   const { markDirty, isLoading, error, theme } = useEditorLifecycle<DataModelFile>(host, {
@@ -151,8 +156,18 @@ export function DatamodelLMEditor({ host }: EditorHostProps) {
     createBinding: ({ yDoc, awareness }) => {
       const binding = new DataModelBinding(yDoc, store, awareness, {
         rootEl: rootElRef.current,
+        onRemoteAwareness: () => setPresences(binding.getRemotePresences()),
       });
-      return { destroy: () => binding.destroy() };
+      // Seed from whoever is already in the room -- `change` only fires on
+      // subsequent updates, so a collaborator who selected before we mounted
+      // would otherwise stay invisible until they moved.
+      setPresences(binding.getRemotePresences());
+      return {
+        destroy: () => {
+          setPresences([]);
+          binding.destroy();
+        },
+      };
     },
   });
 
@@ -200,7 +215,13 @@ export function DatamodelLMEditor({ host }: EditorHostProps) {
         <DataModelToolbar store={store} onScreenshot={handleScreenshot} host={host} />
       )}
       <ReactFlowProvider>
-        <DataModelCanvas ref={canvasRef} store={store} theme={theme} readOnly={readOnly} />
+        <DataModelCanvas
+          ref={canvasRef}
+          store={store}
+          theme={theme}
+          readOnly={readOnly}
+          presences={presences}
+        />
       </ReactFlowProvider>
     </div>
   );

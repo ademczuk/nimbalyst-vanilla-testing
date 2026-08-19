@@ -279,7 +279,7 @@ export const aiTools: ExtensionAITool[] = [
     access: { kind: 'editor-read' } as const,
     editorFilePatterns: EDITOR_PATTERNS,
     description:
-      'Read the current page: url, title, visible text (truncated), and an indexed list of interactive elements (links, buttons, inputs). Use the returned `index` values with browser.click / browser.type.',
+      'Read the current page: url, title, visible text (truncated), and an indexed list of interactive elements (links, buttons, inputs). Use the returned `index` values with browser.click / browser.type. Form-field contents are never returned; each field reports `filled` (or `checked`) so you can confirm your input landed.',
     inputSchema: { type: 'object', properties: { ...SESSION_ID_PROP } },
     handler: async (params, context) => {
       try {

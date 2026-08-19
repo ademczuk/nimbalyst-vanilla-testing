@@ -37,6 +37,14 @@ export interface EncryptedTrackerItemEnvelope {
 /** Tracker-room-scoped config. */
 export interface TrackerRoomConfig {
   issueKeyPrefix: string;
+  /** Additive W3-E diagnostic; older peers safely ignore it. */
+  issueKeyPrefixAssignment?: {
+    status: 'disambiguated' | 'conflict';
+    message: string;
+    requestedPrefix?: string;
+    conflictingProjectName?: string;
+    suggestedPrefix?: string;
+  };
 }
 
 /**
@@ -153,6 +161,8 @@ export interface TrackerSyncRequestMessage {
   sinceSyncId: SyncId;
   /** Reserved for a future server-aware variant; ignored today. */
   onlyPrimaryTypes?: string[];
+  /** Additive hint used only when a fresh room auto-claims its first prefix. */
+  initializeIssueKeyPrefix?: string;
 }
 
 export interface TrackerMutationRequestMessage {
@@ -169,6 +179,10 @@ export interface TrackerSetConfigMessage {
   type: 'trackerSetConfig';
   key: 'issueKeyPrefix';
   value: string;
+  /** Optional correlation for a config request; absent on older clients. */
+  clientMutationId?: string;
+  /** Bootstrap requests may be disambiguated; explicit requests must reject. */
+  assignmentMode?: 'auto' | 'explicit';
 }
 
 export interface TrackerPingMessage {
@@ -291,6 +305,19 @@ export type TrackerMutationRejectCode =
   | 'custodyUnavailable'
   /** The payload carried a client iv — the retired client-encrypted lane. */
   | 'legacy_encryption_retired'
+  /** A new key cannot be minted until the project's org-wide prefix conflict is resolved. */
+  | 'issueKeyPrefixConflict'
+  /**
+   * D3: the actor may add to this team tracker's schema but not remove from it.
+   * A permanent refusal, not a transient one — retrying the same payload will be
+   * refused again until an admin makes the change.
+   *
+   * Wire skew: a client built before this code existed sees an unrecognized
+   * string in `error.code` and falls back to `error.message`, which carries the
+   * full explanation. No client has ever been able to assume the union is
+   * closed, so adding a member cannot break one.
+   */
+  | 'adminRequired'
   | 'malformed';
 
 export interface TrackerMutationAckMessage {
@@ -334,4 +361,8 @@ export interface TrackerErrorMessage {
   type: 'trackerError';
   code: string;
   message: string;
+  /** Present when the error rejects a correlated config request. */
+  clientMutationId?: string;
+  conflictingProjectName?: string;
+  suggestedPrefix?: string;
 }

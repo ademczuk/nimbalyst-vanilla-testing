@@ -41,7 +41,6 @@
 
 import * as Y from 'yjs';
 import type * as awarenessProtocol from 'y-protocols/awareness';
-import { COLLAB_INIT_ORIGIN } from '@nimbalyst/extension-sdk';
 import type {
   Connection,
   MockupProjectFile,
@@ -141,9 +140,6 @@ export class MockupProjectBinding {
       if (this.destroyed) return;
       // Ignore echoes of our own writes (transaction origin === this binding).
       if (txn.origin === this) return;
-      // Ignore SDK seed transactions -- the store was loaded from the file
-      // earlier in the lifecycle path; reapplying would just thrash.
-      if (txn.origin === COLLAB_INIT_ORIGIN) return;
       this.applyingRemote = true;
       try {
         this.projectYDocToStore();

@@ -7,7 +7,11 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { store } from '@nimbalyst/runtime/store';
-import { initTrackerPanelLayout, trackerModeLayoutAtom } from '../trackers';
+import {
+  initTrackerPanelLayout,
+  trackerModeLayoutAtom,
+  type TrackerModeLayout,
+} from '../trackers';
 
 const invoke = vi.fn();
 
@@ -23,6 +27,11 @@ async function loadWith(trackerModeLayout: Record<string, unknown>): Promise<str
   });
   await initTrackerPanelLayout('/ws/migration');
   return store.get(trackerModeLayoutAtom).viewMode;
+}
+
+async function loadLayoutWith(trackerModeLayout: Record<string, unknown>): Promise<TrackerModeLayout> {
+  await loadWith(trackerModeLayout);
+  return store.get(trackerModeLayoutAtom);
 }
 
 describe('tracker viewMode migration', () => {
@@ -47,5 +56,39 @@ describe('tracker viewMode migration', () => {
 
   it('falls back to the default for an unknown literal', async () => {
     expect(await loadWith({ viewMode: 'spreadsheet', viewModeMigrated: true })).toBe('list');
+  });
+});
+
+describe('tracker view state migration', () => {
+  it('promotes legacy per-column grouping and fills new defaults while stripping the parallel field', async () => {
+    const layout = await loadLayoutWith({
+      selectedType: 'bug',
+      typeColumnConfigs: {
+        bug: {
+          visibleColumns: ['type', 'title', 'status'],
+          columnWidths: { title: 320 },
+          groupBy: 'owner',
+        },
+      },
+    });
+
+    expect(layout.groupBy).toBe('assignee');
+    expect(layout.ordering).toBe('manual');
+    expect(layout.typeColumnConfigs.bug).toEqual({
+      visibleColumns: ['type', 'title', 'status'],
+      columnWidths: { title: 320 },
+    });
+  });
+
+  it('prefers current saved-view-owned values over the legacy column field', async () => {
+    const layout = await loadLayoutWith({
+      selectedType: 'bug',
+      groupBy: 'goal',
+      ordering: 'priority',
+      typeColumnConfigs: {
+        bug: { visibleColumns: ['title'], columnWidths: {}, groupBy: 'status' },
+      },
+    });
+    expect(layout).toMatchObject({ groupBy: 'goal', ordering: 'priority' });
   });
 });

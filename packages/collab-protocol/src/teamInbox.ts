@@ -56,6 +56,8 @@ export type TeamInboxClientMessage =
   | InboxSyncRequestMessage
   | MarkInboxReadMessage
   | DismissInboxMessage
+  | ClaimAgentDeliveryMessage
+  | CompleteAgentDeliveryMessage
   | PresenceHeartbeatMessage
   | PresenceStatusSetMessage;
 
@@ -78,6 +80,24 @@ export interface MarkInboxReadMessage {
 export interface DismissInboxMessage {
   type: "dismissInbox";
   deliveryIds: string[];
+}
+
+/** Lease one attached-session target before creating its local queued prompt. */
+export interface ClaimAgentDeliveryMessage {
+  type: "claimAgentDelivery";
+  requestId: string;
+  deliveryId: string;
+  sessionId: string;
+  clientId: string;
+}
+
+/** Mark the target dispatched once the durable queued prompt is claimed. */
+export interface CompleteAgentDeliveryMessage {
+  type: "completeAgentDelivery";
+  requestId: string;
+  deliveryId: string;
+  sessionId: string;
+  clientId: string;
 }
 
 /** Periodic team-presence liveness signal over the org inbox socket. */
@@ -105,9 +125,35 @@ export type TeamInboxServerMessage =
   | ConversationSubscriptionBroadcastMessage
   | MarkInboxReadResponseMessage
   | DismissInboxResponseMessage
+  | AgentDeliveryClaimResponseMessage
+  | AgentDeliveryCompleteResponseMessage
+  | AgentDeliveryDispatchBroadcastMessage
   | PresenceRosterMessage
   | PresenceDeltaMessage
   | InboxErrorMessage;
+
+export interface AgentDeliveryClaimResponseMessage {
+  type: "agentDeliveryClaimResponse";
+  requestId: string;
+  deliveryId: string;
+  sessionId: string;
+  claimed: boolean;
+}
+
+export interface AgentDeliveryCompleteResponseMessage {
+  type: "agentDeliveryCompleteResponse";
+  requestId: string;
+  deliveryId: string;
+  sessionId: string;
+  dispatched: boolean;
+}
+
+export interface AgentDeliveryDispatchBroadcastMessage {
+  type: "agentDeliveryDispatchBroadcast";
+  deliveryId: string;
+  sessionId: string;
+  dispatchedAt: number;
+}
 
 /** Full hydrated state: undismissed deliveries (newest first, capped server-side). */
 export interface InboxSyncResponseMessage {

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as path from 'path';
 import {
   scanMarkdownImageRefs,
+  scanCollabAssetImageRefs,
   resolveAssetRef,
   rewriteMarkdownImageRefs,
 } from '../markdownAssetScanner';
@@ -10,6 +11,22 @@ const WORKSPACE = '/workspace';
 const DOC_PATH = '/workspace/docs/spec.md';
 
 describe('markdownAssetScanner', () => {
+  describe('scanCollabAssetImageRefs', () => {
+    it('returns unique shared image refs and ignores ordinary links', () => {
+      const first = 'collab-asset://doc/doc-1/asset/asset-a';
+      const second = 'collab-asset://doc/doc-1/asset/asset-b';
+      const markdown = [
+        `![one](${first})`,
+        `[download](${second})`,
+        `![again](${first})`,
+        `![two](${second})`,
+        '![local](assets/local.png)',
+      ].join('\n');
+
+      expect(scanCollabAssetImageRefs(markdown)).toEqual([first, second]);
+    });
+  });
+
   describe('scanMarkdownImageRefs', () => {
     it('extracts a single image ref from markdown', () => {
       const md = 'before\n\n![alt](assets/abc.png)\n\nafter';

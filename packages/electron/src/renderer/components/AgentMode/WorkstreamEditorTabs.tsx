@@ -28,6 +28,12 @@ import {
   type WorkstreamResource,
 } from '../../store/atoms/workstreamState';
 import { fileDeletedAtomFamily } from '../../store/atoms/fileWatch';
+import {
+  FEEDBACK_REQUEST_OPEN_EVENT,
+  feedbackRequestResourceForTab,
+  feedbackRequestTabUri,
+  isFeedbackRequestTab,
+} from '../FeedbackRequest/feedbackRequestTab';
 import { shouldSkipResourceMirror } from './workstreamTabsMirror';
 
 export interface WorkstreamEditorTabsRef {
@@ -103,8 +109,8 @@ const WorkstreamEditorTabsInner = forwardRef<WorkstreamEditorTabsRef, Workstream
       // console.log('[WorkstreamEditorTabs] Starting restore for workstream:', workstreamId);
 
       // Restore from workstream state (unified source of truth). Project ALL
-      // typed resources into the live TabsContext: files use their path as the
-      // tab key, trackers use their `tracker://<id>` resource id. The active
+      // typed resources into the live TabsContext keyed by resource id: a file
+      // path, a `tracker://<id>`, or a feedback request's tab uri. The active
       // resource id maps directly to the restored tab's path (resource id).
       const { openResources, activeResourceId } = workstreamState;
       // console.log('[WorkstreamEditorTabs] Restoring resources:', openResources.length, 'active:', activeResourceId);
@@ -112,9 +118,7 @@ const WorkstreamEditorTabsInner = forwardRef<WorkstreamEditorTabsRef, Workstream
       if (openResources.length > 0) {
         pendingSeedCountRef.current = openResources.length;
         for (const tab of openResources) {
-          const r = tab.resource;
-          const tabKey = r.kind === 'tracker' ? trackerResourceId(r.trackerItemId) : r.filePath;
-          tabsActions.addTab(tabKey);
+          tabsActions.addTab(tab.resource.resourceId);
         }
 
         // Switch to the active resource (resource id == tab filePath key).
@@ -154,14 +158,16 @@ const WorkstreamEditorTabsInner = forwardRef<WorkstreamEditorTabsRef, Workstream
       }
 
       // Always sync to workstream state atom (even during restore). This
-      // component projects BOTH file and tracker tabs into TabsContext, so it
-      // owns the whole ordered resource set. Map each live tab back to a typed
-      // resource, preserving order; the active resource id is the active tab's
-      // key (file path or tracker://<id>).
+      // component projects every kind of tab into TabsContext, so it owns the
+      // whole ordered resource set. Map each live tab back to a typed resource,
+      // preserving order; the active resource id is the active tab's key (file
+      // path, tracker://<id>, or a feedback request's tab uri). Typing the
+      // feedback request rather than letting it fall through as a file is what
+      // keeps the tab uri out of the workstream's "current file".
       const resources: WorkstreamResource[] = tabs.map((t) =>
         t.kind === 'tracker' && t.trackerItemId
           ? trackerResource(t.trackerItemId)
-          : fileResource(t.filePath)
+          : (feedbackRequestResourceForTab(t.filePath) ?? fileResource(t.filePath))
       );
       const activeResourceId = activeTabId
         ? tabs.find((t) => t.id === activeTabId)?.filePath || null
@@ -197,6 +203,28 @@ const WorkstreamEditorTabsInner = forwardRef<WorkstreamEditorTabsRef, Workstream
       return () => window.removeEventListener('nimbalyst:workstream-open-tracker', handler);
     }, [workstreamId, tabsActions]);
 
+    // Same imperative open for a feedback request's results, and for the same
+    // reason: the author comes back to a request long after the turn that sent
+    // it, so it is a tab rather than a message. An open that arrives while this
+    // strip is unmounted takes the other path — it seeds the workstream's
+    // resources and the restore above projects it.
+    useEffect(() => {
+      const handler = (e: Event) => {
+        const detail = (e as CustomEvent).detail;
+        if (!detail || detail.workstreamId !== workstreamId) return;
+        if (typeof detail.orgId !== 'string' || typeof detail.requestId !== 'string') return;
+        const key = feedbackRequestTabUri({
+          orgId: detail.orgId,
+          requestId: detail.requestId,
+        });
+        const existing = tabsActions.findTabByPath(key);
+        if (existing) tabsActions.switchTab(existing.id);
+        else tabsActions.addTab(key);
+      };
+      window.addEventListener(FEEDBACK_REQUEST_OPEN_EVENT, handler);
+      return () => window.removeEventListener(FEEDBACK_REQUEST_OPEN_EVENT, handler);
+    }, [workstreamId, tabsActions]);
+
 
     // Subscribe to file-deletion atoms for every currently-open tab path so
     // the workstream tab is closed when a file is deleted on disk. Without
@@ -208,8 +236,9 @@ const WorkstreamEditorTabsInner = forwardRef<WorkstreamEditorTabsRef, Workstream
       for (const tab of tabs) {
         const filePath = tab.filePath;
         if (!filePath) continue;
-        // Tracker tabs are not files on disk — no deletion watch.
+        // Tracker and feedback-request tabs are not files on disk — no deletion watch.
         if (tab.kind === 'tracker' || isTrackerResourceId(filePath)) continue;
+        if (isFeedbackRequestTab(filePath)) continue;
         const deletedAtom = fileDeletedAtomFamily(filePath);
         const initial = store.get(deletedAtom);
         const unsub = store.sub(deletedAtom, () => {
@@ -232,8 +261,13 @@ const WorkstreamEditorTabsInner = forwardRef<WorkstreamEditorTabsRef, Workstream
     // basePath can be either workspacePath (main project) or worktreePath (for worktree sessions)
     useEffect(() => {
       const activeTab = activeTabId ? tabs.find(t => t.id === activeTabId) : undefined;
-      // Only expose a real file path to plugins; tracker tabs have none.
-      const activeFilePath = activeTab && activeTab.kind !== 'tracker' ? (activeTab.filePath || null) : null;
+      // Only expose a real file path to plugins; tracker and feedback-request
+      // tabs have none.
+      const activeFilePath = activeTab
+        && activeTab.kind !== 'tracker'
+        && !isFeedbackRequestTab(activeTab.filePath)
+        ? (activeTab.filePath || null)
+        : null;
       (window as any).__currentDocumentPath = activeFilePath;
       (window as any).__workspacePath = basePath;
       // Also set the legacy property for compatibility
@@ -271,8 +305,10 @@ const WorkstreamEditorTabsInner = forwardRef<WorkstreamEditorTabsRef, Workstream
         getActiveFilePath: () => {
           if (!activeTabId) return null;
           const activeTab = tabs.find((t) => t.id === activeTabId);
-          // Tracker tabs are not files; file consumers should see null.
+          // Tracker and feedback-request tabs are not files; file consumers
+          // should see null.
           if (!activeTab || activeTab.kind === 'tracker') return null;
+          if (isFeedbackRequestTab(activeTab.filePath)) return null;
           return activeTab.filePath || null;
         },
         closeActiveTab: () => {

@@ -14,7 +14,8 @@ const model: TrackerDataModel = {
   modes: { inline: true, fullDocument: true },
   idPrefix: 'SBP',
   idFormat: 'ulid',
-  sync: { mode: 'local', scope: 'project' },
+  sharing: 'personal',
+  draftByDefault: false,
   fields: [
     { name: 'title', type: 'string', required: true },
     {

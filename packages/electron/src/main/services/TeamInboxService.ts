@@ -12,6 +12,7 @@ import { asTeamMemberId, type TeamJwt } from '@nimbalyst/runtime';
 import { getCollabSyncHttpUrl } from '../utils/collabSyncUrl';
 import { getSettingsService } from './SettingsService';
 import { getSubFromJwt } from './jwtOrg';
+import { isAuthenticated, onAuthStateChange } from './StytchAuthService';
 import {
   getOrgScopedJwt,
   listTeams,
@@ -31,6 +32,15 @@ export interface TeamInboxServiceDependencies {
     getTeamJwtForOrg: () => Promise<TeamJwt>,
   ) => TeamInboxOrgClientLike;
   connectConcurrency?: number;
+  /**
+   * Auth readiness. Session restore runs before Stytch finishes initializing,
+   * so the inbox can be asked to start while `listOrganizations` still answers
+   * with an empty list — see `deferUntilAuthenticated`.
+   */
+  isAuthenticated?: () => boolean;
+  onAuthStateChange?: (
+    listener: (state: { isAuthenticated: boolean }) => void,
+  ) => () => void;
 }
 
 type ResolvedInboxOrganization =
@@ -95,6 +105,7 @@ export class TeamInboxService {
   private fanInCleanup: (() => void) | null = null;
   private snapshot: TeamInboxSnapshot = DEFAULT_SNAPSHOT;
   private startPromise: Promise<TeamInboxSnapshot> | null = null;
+  private cancelAuthRetry: (() => void) | null = null;
 
   constructor(dependencies: TeamInboxServiceDependencies) {
     this.dependencies = dependencies;
@@ -140,11 +151,23 @@ export class TeamInboxService {
     await this.fanIn.dismiss(deliveryId);
   }
 
+  async claimAgentDelivery(deliveryId: string, sessionId: string): Promise<boolean> {
+    if (!this.fanIn) throw new Error('Team inbox has not started');
+    return this.fanIn.claimAgentDelivery(deliveryId, sessionId);
+  }
+
+  async completeAgentDelivery(deliveryId: string, sessionId: string): Promise<boolean> {
+    if (!this.fanIn) throw new Error('Team inbox has not started');
+    return this.fanIn.completeAgentDelivery(deliveryId, sessionId);
+  }
+
   setPresenceStatus(status: PresenceDesiredStatus): void {
     this.fanIn?.setPresenceStatus(status);
   }
 
   destroy(): void {
+    this.cancelAuthRetry?.();
+    this.cancelAuthRetry = null;
     this.destroyFanIn();
     this.snapshot = DEFAULT_SNAPSHOT;
   }
@@ -156,7 +179,38 @@ export class TeamInboxService {
     this.fanIn = null;
   }
 
+  /**
+   * True when the caller is too early and a retry has been armed instead.
+   *
+   * Starting unauthenticated is not merely a slow start — it is a permanent
+   * one. `listOrganizations` returns `[]` before Stytch initializes, the fan-in
+   * comes up with no rooms, and `start()` then short-circuits on the fan-in it
+   * already has, so the inbox stays empty for the rest of the run: no
+   * notifications, no agent mention wakes, no feedback-request quorum wakes.
+   * It reports `status: 'ready'` throughout, which is indistinguishable from a
+   * healthy inbox with nothing waiting, so nothing surfaces the failure.
+   */
+  private deferUntilAuthenticated(): boolean {
+    const isAuthenticated = this.dependencies.isAuthenticated;
+    const onAuthStateChange = this.dependencies.onAuthStateChange;
+    if (!isAuthenticated || !onAuthStateChange || isAuthenticated()) return false;
+    // An earlier deferral is still armed; a second caller must not add another.
+    if (this.cancelAuthRetry) return true;
+    // Safe to assign after subscribing: `onAuthStateChange` notifies
+    // synchronously with the current state, and that state is unauthenticated —
+    // we just checked — so the listener cannot have run before this returns.
+    this.cancelAuthRetry = onAuthStateChange((state) => {
+      if (!state.isAuthenticated) return;
+      const unsubscribe = this.cancelAuthRetry;
+      this.cancelAuthRetry = null;
+      unsubscribe?.();
+      void this.start().catch(() => {});
+    });
+    return true;
+  }
+
   private async startInternal(): Promise<TeamInboxSnapshot> {
+    if (this.deferUntilAuthenticated()) return this.snapshot;
     const teams = (await this.dependencies.listOrganizations())
       .filter(activeOrganization);
     const concurrency = this.dependencies.connectConcurrency
@@ -256,6 +310,8 @@ export function getTeamInboxService(): TeamInboxService {
       getTeamJwt: getOrgScopedJwt,
       getServerUrl: getCollabSyncHttpUrl,
       getTeamMemberId: getSubFromJwt,
+      isAuthenticated,
+      onAuthStateChange,
     });
   }
   return service;
@@ -288,6 +344,12 @@ function createFailedOrgClient(
       throw new Error(message);
     },
     async dismiss() {
+      throw new Error(message);
+    },
+    async claimAgentDelivery() {
+      throw new Error(message);
+    },
+    async completeAgentDelivery() {
       throw new Error(message);
     },
     subscribe(listener) {

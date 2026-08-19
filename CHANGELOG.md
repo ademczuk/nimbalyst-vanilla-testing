@@ -10,12 +10,293 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Shared spreadsheets, mockups, and Excalidraw diagrams now open and edit in the web console, with live presence for spreadsheets and diagrams between the desktop app and the browser.
+- Entities and relationships a teammate has selected in a shared data model now show their name and color.
+- Ask a teammate for structured feedback: your agent drafts the question, you approve it, and it arrives in their inbox to answer, with results and outstanding replies in their own tab. A request can carry the mockups, documents, or tracker items it is about, so "which of these do you prefer" shows the real thing to look at and open instead of a list of names. Every request you sent or were asked stays findable afterwards in Shared Docs, filtered by what still needs your response, and a document or tracker item shows the feedback that was gathered about it. Copy a link to send anyone who does not have Nimbalyst installed, and they can answer and discuss the request in a browser.
+- Tracker items that have not been shared yet now show a number of their own, like NIM.12, so you can refer to one before it is published.
+- Desktop notifications now carry their own icon, so you can tell a finished agent, a question, an approval request, and a teammate's message apart at a glance.
+- Spreadsheet columns can now hold dates with times, times, checkboxes, links, and tracker items, alongside accounting and scientific number styles, custom date patterns, red or parenthesized negatives, and your own alignment. A tracker cell shows the item's live title and status and opens it when clicked, columns can detect their own type, and sorting and filtering now follow the column's type instead of its text. You can also style any range of cells — bold, italic, underline, strikethrough, text and fill color, alignment — and date formulas now do arithmetic, so `=A1+7` and `=B1-A1` work.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Mockup project files can no longer be shared to a team, since their screens do not yet sync between people.
+- Opening an editor no longer fetches a font from a third-party server.
+- Codex no longer offers slash commands it cannot actually run.
+- The Compact action is now hidden for agents that cannot compact, instead of offering a button that quietly does nothing.
+- The inbox's message pane can now be dragged to the width you want, and it stays on screen at far more window sizes instead of disappearing.
+- The tracker's All view now shows Owner and Due Date across every type, so you can sort and filter one list by who is responsible and what is overdue.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Starting an agent after moving, renaming, or deleting the project folder now says the folder is gone and names it, instead of reporting a broken agent binary and then hanging for minutes.
+- Feedback requests now validate attached artifacts before publishing, keep artifact links in their originating team project, and reliably hand live-preview capacity to the next waiting preview.
+- Push notifications now reach your phone when you walk away from your desk, and a session blocked on your answer or one that hit an error will reach you even while you are at your computer.
+- Shared spreadsheets, diagrams, mockups, and data models no longer drop edits when two people work in them at once.
+- Opening a shared document whose editor you do not have now names the extension you need and offers to install it, instead of showing only the document type.
+- Shared mockup files now have a source pane, so their content can be edited collaboratively.
+- The results column in a shared calc sheet no longer goes blank until you type again.
+- Picking a grouping or ordering in the tracker's Display Settings now works instead of closing the panel without changing anything.
+- Grouping by milestone or goal names each lane, row, and card chip after the milestone itself, instead of showing a raw id or an out-of-date name.
+- Tracker date, link, and people chips now carry their field name, so an item with two dates or several links no longer needs a hover to tell them apart.
+- Collaborator avatars and the sync indicator no longer flicker on every character you type in a shared document.
+- Collaborators in a shared spreadsheet, diagram, or mockup come back after a network blip, instead of the list emptying and staying empty.
+- Codex file edits show a red/green diff in the transcript again, instead of a raw tool call.
+- Codex sessions now show context usage, and Compact actually compacts instead of quietly doing nothing.
+- Your skills now reach Codex, so a plan made with the planning tools can be carried out.
+- A Codex session that cannot resume now says so, instead of starting over with an empty history while still showing the old conversation.
+- A Codex tool server that fails to start now shows as failed, instead of the agent quietly losing its tools.
+- Team messages, mentions, and notifications now arrive when the app finishes starting before you are signed in, instead of going quiet for the rest of the session.
+- The inbox's organization filter no longer opens onto an empty menu when there is nothing to narrow by.
+- The effort level you select now applies to Claude Code CLI sessions instead of being ignored. (#996, contributed by @Derazien)
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.73.2] - 2026-08-11
+
+
+### Added
+<!-- New features go here -->
 
 ### Changed
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Repositories with more than a page of open pull requests no longer show only the first page, and accented characters in PR titles no longer come through garbled.
+- Nimbalyst comes to the front once when launch finishes, instead of sometimes staying hidden behind other apps after a slow start.
+- Opening the menu bar sessions panel no longer drops Nimbalyst out of the Dock and the app switcher.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.73.1] - 2026-08-11
+
+
+### Added
+<!-- New features go here -->
+- Group the tracker board into lanes by milestone, goal, or any other field, placing work by dragging a card, using the chip on it, or selecting several at once.
+- A Timeline view lays tracker work out over time, grouped the same way the board is.
+- Plans still marked draft after a linked session committed now carry a chip naming the commits that disagree.
+- Clicking the menu bar icon on macOS opens a sessions panel with the same rows as the in-app popover, showing each session's provider, model, elapsed time, and project instead of a list that ran off the screen.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- View mode, grouping, and ordering now live together in the tracker's Display Settings panel.
+- The tracker sidebar's personal and team groups collapse under compact one-line headers, team first, and both the groups and folders remember their state across restarts.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Sessions waiting on a question or a permission prompt now show as awaiting your input in the sidebar and on mobile, instead of looking like they are still running.
+- Confirmation dialogs now close when you answer them, so removing a member no longer leaves the prompt stuck on screen.
+- Organization Messages opens on an organization you can actually use instead of stranding you on a screen waiting for a membership that never loads.
+- The slash-command palette shows each command and skill's own description again, along with its correct icon and grouping, instead of a generic placeholder.
+- Browser tabs now line up with their tab when the window is zoomed in or out, instead of painting the page in the wrong place and at the wrong size.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.73.0] - 2026-08-11
+
+
+### Added
+<!-- New features go here -->
+- Git Log shows which AI session produced each commit, with a click-through to open it.
+- The editor header shows the last AI session that worked on the open file, with a dropdown to jump to other sessions or start a new one.
+- Linked local files can pull the latest Shared Document content from the editor header.
+- Shared document version history previews the contents of each earlier version before you restore it.
+- Trackers are now plainly personal or your team's, and items in a team tracker stay private until you publish them.
+- Read, write, and reply to shared document comments in the browser, with `@`-mentions reaching the person's inbox.
+- Signing in to a team walks you into your organization's project, and Account settings can open a project in any organization you belong to.
+- Organization owners and admins can remove a member or revoke a pending invitation from Members & Roles.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- Agents reading a web page no longer receive what you typed into its form fields.
+- A shared document you may only read now says so, instead of silently retrying the refused save.
+- Restoring an earlier version of a shared document now actually rolls the document back.
+- Keeping or reverting an AI change in a shared document now clears its highlight for good.
+- An AI edit near an embedded file in a shared document no longer duplicates the embed.
+- AI agents no longer present provisional tracker keys as final references in shared projects.
+- Editing a shared tracker's config file no longer silently discards the change.
+- A Quick Open file mask that filters by name, such as `Ch0*.md`, now matches on Windows.
+- Comment highlights in a shared document reappear after the document reloads.
+- Teammates appear by name rather than by email address in `@`-mentions and notifications.
+- Edits you make to a shared document on one of your devices now appear live on your others.
+- A failed sign-in on iPhone and iPad now explains what went wrong.
+- The profile menu updates as soon as you sign in or out.
+- Opening a team invitation while signed out now takes you to the sign-in page.
+- Prompts sent from your phone appear in the queue while they are still pending.
+- Viewing history diffs no longer freezes a restored session.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.72.8] - 2026-08-07
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- Claude Agent sessions no longer re-write the prompt cache on most turns, cutting token cost and rate-limit usage on long sessions.
+- A file that repeatedly fails to save now shows a Retry banner instead of autosave looping on it forever.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.72.7] - 2026-08-07
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- Windows release builds sign and publish again.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.72.6] - 2026-08-07
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- Tracker items shared with a team now get the same issue key for everyone, instead of each member's app assigning its own number to the same item.
+- Simply opening a tracker item no longer bumps its "Updated" time or adds a phantom edit to its history.
+
+### Removed
+<!-- Removed features go here -->
+- The accept/reject bar on shared tracker content — edits from teammates now just appear, the same as in shared documents.
+
+## [0.72.5] - 2026-08-06
+
+
+### Added
+<!-- New features go here -->
+- Open a shared project that is not a git repository by choosing a folder for it in your organization's project list.
+- A Renders tab in the Developer Dashboard that reports which components re-render, how often, and why.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- The CSV Spreadsheet extension now computes formulas live and keeps them after a save, and adds find and replace, per-column filters, and AI tools for analyzing data and applying formulas.
+- The Git panel's Changes tab is now one compact, collapsible list with no staging step: tick the files you want and commit them, or hand the selection to AI to write the message.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Codex sessions using parallel sub-agents now wait for the lead agent's final response instead of ending when the first child finishes.
+- Sending a queued prompt immediately no longer leaves the session stuck as running with the prompt never delivered.
+- Committing from the Git panel works again, renamed files show up, and discarding also undoes staged changes without touching files you did not select.
+- The Git panel's file mask is remembered per project again, instead of resetting every time you reopen the panel.
+- A spawned session's completion notification no longer repeats its entire original prompt back to the session that started it.
+- Reloading an extension now rebuilds it first, so your latest changes actually load.
+- Signing in or creating an organization now turns on Shared Docs right away, instead of staying hidden until you restart or reopen the window.
+- The voice agent no longer sounds like it switches to a different voice partway through an answer.
+- Accepting a team invitation now opens Nimbalyst instead of leaving you in the browser, and tells you how to sign in if you do not have the app yet.
+- When a session edits the same file several times, the red/green diff shows the whole set of changes again instead of only the last one.
+- Everyone on a team now sees the same tracker fields: a schema your team shares wins over an old copy on your machine, instead of silently freezing that type and hiding fields like Collections from you.
+- Customizing a shared tracker type now reaches your teammates, and a second open project no longer swaps another window's tracker types for the built-in ones.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.72.4] - 2026-08-05
+
+
+### Added
+<!-- New features go here -->
+- Undo and redo in the tracker table with Cmd+Z and Cmd+Shift+Z, covering cell edits, paste, bulk status and priority changes, and archiving.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- A newly created organization now appears in the profile menu of every open window right away.
+- A project with no git remote can now be added to an organization you already administer.
+
+### Removed
+<!-- Removed features go here -->
+- The tracker table's drag-to-clone handle, which was easy to hit by accident and silently rewrote a whole column.
+
+## [0.72.3] - 2026-08-05
+
+
+### Added
+<!-- New features go here -->
+- Spreadsheets support find, replace, and per-column filters, opened with Cmd+F.
+- The AI can analyze a spreadsheet's columns for data-quality problems and apply a formula across a range.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Setting up an organization no longer asks you to pick starter chat rooms, going straight from invites to finished.
+- Dragging a spreadsheet selection past the edge of the view now scrolls the grid.
+- Spreadsheets are read-only while you review AI changes, and the review bar says so.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Spreadsheet formulas now calculate on open and stay formulas on save, instead of showing as raw text and saving as plain numbers.
+- Arrow keys and Home/End move the cursor within a spreadsheet cell you are editing instead of jumping to another cell.
+- Spreadsheets use the app font, right-align numbers, have a more compact header, and no longer show a white gutter block in dark themes.
+- Sharing a file to your team works again; a share that does fail no longer leaves an empty document behind.
+- Referencing a shared mockup or diagram with `@` inside a shared document now inserts a live embed instead of a plain link.
+- Unsent team-message drafts now return when you revisit a conversation and stay cleared after sending.
+- Setting up an organization no longer leaves the account menu showing "No organization" and AI requests failing to authenticate.
+- HTTP MCP servers you authorized with OAuth now connect in Claude Code sessions instead of reporting that they need authorization.
+- Tracker date columns read as "Today", "Tomorrow", or "in 5 days", with the full date on hover.
+- Git command output no longer shows raw terminal color codes around messages from hooks and failed commands.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.72.2] - 2026-08-04
+
+
+### Added
+<!-- New features go here -->
+- Organizations can now be created from a released build, not only in development builds.
+- The organization inbox is reachable from any project: a title-bar button badges unread messages, and the account menu gains a Messages entry.
+- Spreadsheets can freeze columns and header rows again, and a selection now spans the frozen edge whether you drag it, select all, or copy it.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Double-clicking a cell in the tracker table now edits it in place; the key, type and date columns still open the item.
+- Inbox rows are shorter and lead with what each delivery points at, with unread and source-type filters and a click that previews instead of navigating away.
+- The sessions popover in the gutter is wider, drag-resizable, and gives each session title a full row so long titles are readable.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Yes/no questions from the agent now show both answers as pickable buttons and wait for you to choose, instead of a single control that submitted "no" untouched.
+- Team conversations open on the newest message and follow the one you send, while holding your place if you have scrolled up to read.
+- Shared documents and team collaboration connect again after the sync server started rejecting the desktop app's connections.
+- Shared documents retry sync after a sign-in token refresh fails, instead of sitting on a connection that never comes back.
+- Team messages raise a desktop notification, and a direct message is titled after the other person, when more than one account is signed in.
+- Sessions no longer show as running after their work finished, so prompts queued behind an interrupted or background-task session send.
+- SSE-transport MCP servers that use OAuth reach your sessions again, and a server left out because it needs authorizing is now listed as such.
+- MCP servers whose provider refuses dynamic client registration can be authorized with a client ID you enter, and the error names that cause.
+- Tracker items in list and table views now expose their action menu without requiring a right-click.
+- Tracker date fields now show the day you entered, instead of the day before if your time zone is behind UTC.
+- Committing an agent's work now closes the tracker item it fixed and marks the session complete.
+- Changing a project's permission mode now applies to agent sessions that are already running.
+- Prompts you queue from the phone leave the queued list once the agent picks them up.
+- Tables exported to PDF now span the full page width with content-sized columns, instead of collapsing into a narrow strip.
 
 ### Removed
 <!-- Removed features go here -->
@@ -31,6 +312,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A new install now starts on the onboarding screen and can open a ready-made tutorial project — documents, data, designs, plans, and finished AI sessions to explore — reachable any time from the project manager or Help > Launch Tutorial.
 - Agent sessions can show an MCP status chip in the header listing which servers the session has, which are connected, and which never reached it at all — off by default, enable it under Settings > Agent Features.
 - Quick Open prompt search now distinguishes prompts you wrote from ones an agent sent, with filter controls to narrow to either.
+- The Agent mode header gains a pin toggle, and worktrees now show the worktree icon and their worktree name.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -41,6 +323,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Checking for updates no longer fails outright when the newest release tag has no published downloads behind it; the app falls back to the most recent version that does.
+- Cancelling a Codex session now stops it for good, instead of the session sliding back into a running state seconds later after its turn had already failed.
+- Find-in-document now highlights matches inside inline code, and comment highlights are visible on commented inline code.
 - Source files containing NUL separators now render as text in GitHub reviews instead of appearing as binary changes.
 - Queued prompts now run on their own: a prompt sent from your phone opens the project and runs it, prompts left over from a quit resume once the project is open again, and a prompt that arrives mid-turn runs when the turn ends — no more pressing Escape or restarting to release the queue. (#962)
 - Web search and web fetch no longer fail in Claude Code CLI sessions running at max effort.
@@ -96,6 +381,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Menus and popups that open over the title bar respond to clicks again on Windows and Linux, including "Open folder…" in the project switcher (#1052).
 - Tracker types defined in one project no longer overwrite another open project's identically-named types (#1035).
 - Codex sessions now reach for Nimbalyst's browser tools instead of dead-ending on the ChatGPT desktop app's in-app browser plugin.
+- An active content search no longer gets silently reset to zero results by unrelated session activity elsewhere in the workspace.
 
 ### Removed
 <!-- Removed features go here -->
@@ -189,6 +475,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared tracker saved views survive the view migration again.
 - Git actions are hidden in projects that are not git repositories.
 - iOS pairing links now open the in-app scanner instead of being ignored.
+- Persistent file-save failures now pause autosave after bounded retries, preserve unsaved edits, and show a Retry banner instead of looping indefinitely.
 
 ### Removed
 <!-- Removed features go here -->

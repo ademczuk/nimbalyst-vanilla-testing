@@ -3,8 +3,14 @@ import { describe, it, expect } from 'vitest';
 import {
   resolveTrackerSchemaPatch,
   diffTrackerSchema,
+  parseTrackerSchemaPatchYAML,
+  serializeTrackerSchemaPatchYAML,
   type TrackerSchemaPatch,
 } from '../schemaPatch';
+import {
+  decodeTrackerSchemaPayload,
+  encodeTrackerSchemaPatchPayload,
+} from '../schemaSyncPayload';
 import type { TrackerDataModel } from '../TrackerDataModel';
 
 function featureSeed(): TrackerDataModel {
@@ -15,7 +21,8 @@ function featureSeed(): TrackerDataModel {
     icon: 'rocket_launch',
     color: '#10b981',
     modes: { inline: true, fullDocument: false },
-    sync: { mode: 'shared', scope: 'project' },
+    sharing: 'team',
+    draftByDefault: false,
     idPrefix: 'feat',
     idFormat: 'ulid',
     fields: [
@@ -85,14 +92,86 @@ describe('resolveTrackerSchemaPatch', () => {
       type: 'feature',
       displayName: 'Capability',
       color: '#123456',
-      sync: { mode: 'hybrid' },
+      draftByDefault: true,
       roles: { priority: 'priority' },
     };
     const resolved = resolveTrackerSchemaPatch(featureSeed(), patch);
     expect(resolved.displayName).toBe('Capability');
     expect(resolved.color).toBe('#123456');
-    expect(resolved.sync).toEqual({ mode: 'hybrid', scope: 'project' }); // scope preserved
+    expect(resolved.sharing).toBe('team');
+    expect(resolved.draftByDefault).toBe(true);
     expect(resolved.roles).toEqual({ title: 'title', workflowStatus: 'status', priority: 'priority' });
+  });
+
+  // Builtin projection and team transport both run through this exact chain:
+  // model diff -> wire envelope -> peer decode -> patch resolution. A test that
+  // starts with a hand-written patch misses scalar omissions in the diff.
+  it('carries sharing and lifecycle scalars through the builtin wire payload both ways', () => {
+    const roundTrip = (seed: TrackerDataModel, target: TrackerDataModel) => {
+      const patch = diffTrackerSchema(seed, target);
+      const projected = resolveTrackerSchemaPatch(
+        seed,
+        parseTrackerSchemaPatchYAML(serializeTrackerSchemaPatchYAML(patch)),
+      );
+      const payload = encodeTrackerSchemaPatchPayload(patch);
+      const decoded = decodeTrackerSchemaPayload(target.type, payload);
+      expect(decoded?.kind).toBe('patch');
+      return {
+        payload: JSON.parse(payload),
+        projected,
+        resolved: resolveTrackerSchemaPatch(
+          seed,
+          (decoded as { kind: 'patch'; patch: TrackerSchemaPatch }).patch,
+        ),
+      };
+    };
+
+    const personal = {
+      ...featureSeed(),
+      sharing: 'personal' as const,
+      draftByDefault: false,
+      archived: false,
+    };
+    const archivedTeam = {
+      ...featureSeed(),
+      sharing: 'team' as const,
+      draftByDefault: true,
+      archived: true,
+    };
+
+    const promoted = roundTrip(personal, archivedTeam);
+    expect(promoted.payload.patch).toMatchObject({
+      sharing: 'team',
+      draftByDefault: true,
+      archived: true,
+    });
+    expect(promoted.resolved).toMatchObject({
+      sharing: 'team',
+      draftByDefault: true,
+      archived: true,
+    });
+    expect(promoted.projected).toMatchObject({
+      sharing: 'team',
+      draftByDefault: true,
+      archived: true,
+    });
+
+    const restored = roundTrip(archivedTeam, personal);
+    expect(restored.payload.patch).toMatchObject({
+      sharing: 'personal',
+      draftByDefault: false,
+      archived: false,
+    });
+    expect(restored.resolved).toMatchObject({
+      sharing: 'personal',
+      draftByDefault: false,
+      archived: false,
+    });
+    expect(restored.projected).toMatchObject({
+      sharing: 'personal',
+      draftByDefault: false,
+      archived: false,
+    });
   });
 
   it('adds and removes fields by name, preserving order', () => {

@@ -2,6 +2,7 @@ import { app, Notification } from 'electron';
 
 import { createTeamManagementWindow, isTeamManagementWindowFocusedOn } from '../window/TeamManagementWindow';
 import { logger } from '../utils/logger';
+import { resolveNotificationIcon } from './notificationIcons';
 import { isOSNotificationsEnabled } from '../utils/store';
 import { listConversations, listMembers } from './TeamService';
 import {
@@ -35,16 +36,24 @@ function cached<T>(
 function showNativeNotification(
   options: TeamInboxNativeNotification,
 ): void {
+  // logger.main.info('[TeamInboxNotification] showNativeNotification:', {
+  //   title: options.title,
+  //   body: options.body,
+  // });
   const notification = new Notification({
     title: options.title,
     body: options.body,
-    icon: process.platform === 'darwin' || process.platform === 'win32'
-      ? app.getPath('exe')
-      : '',
+    icon: resolveNotificationIcon('teams-message')
+      ?? (process.platform === 'darwin' || process.platform === 'win32'
+        ? app.getPath('exe')
+        : ''),
     urgency: 'normal',
     timeoutType: 'default',
   });
   notification.on('click', options.onClick);
+  // notification.on('show', () => {
+  //   logger.main.info('[TeamInboxNotification] Native notification shown');
+  // });
   notification.on('failed', (_event, error) => {
     logger.main.warn('[TeamInboxNotification] Native notification failed:', error);
   });
@@ -68,6 +77,9 @@ export function createTeamInboxNotificationService(
     showNativeNotification,
     openConversation: (orgId, conversationId) => {
       createTeamManagementWindow({ orgId, conversationId });
+    },
+    openInbox: (orgId) => {
+      createTeamManagementWindow({ orgId });
     },
     openInboxSource,
     resolveConversationTitle: async (orgId, conversationId) => {

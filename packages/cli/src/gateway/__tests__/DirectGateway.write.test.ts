@@ -13,6 +13,7 @@ import { openDatabase } from '../../db/openDatabase.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { renderList, renderRecord } from '../../cli/output.js';
 import { DirectGateway } from '../DirectGateway.js';
 
 const WORKSPACE = '/tmp/fixture-write-workspace';
@@ -127,7 +128,7 @@ afterEach(() => {
 });
 
 describe('DirectGateway offline writes', () => {
-  it('create allocates an issue key + row + body cache + activity', async () => {
+  it('creates a solo-workspace item without a key or number and explains the unassigned key', async () => {
     const gw = new DirectGateway(dbPath);
     const rec = await gw.createTracker(WORKSPACE, {
       type: 'bug',
@@ -140,14 +141,15 @@ describe('DirectGateway offline writes', () => {
     });
     gw.close();
 
-    expect(rec.issueKey).toBe('FIX-1');
+    expect(rec.issueKey).toBeUndefined();
+    expect(rec.issueNumber).toBeUndefined();
     expect(rec.primaryType).toBe('bug');
     expect(rec.fields.title).toBe('Login times out');
     expect(rec.fields.severity).toBe('critical');
 
     const row = rawRow(rec.id);
-    expect(row.issue_key).toBe('FIX-1');
-    expect(row.issue_number).toBe(1);
+    expect(row.issue_key).toBeNull();
+    expect(row.issue_number).toBeNull();
     expect(row.title).toBe('Login times out'); // generated column derived from data
     expect(row.status).toBe('to-do');
     expect(row.body_version).toBe(1);
@@ -159,14 +161,47 @@ describe('DirectGateway offline writes', () => {
     const cache = bodyCache(rec.id);
     expect(cache).toHaveLength(1);
     expect(JSON.parse(cache[0].content)).toBe('Steps to repro');
+
+    const json = JSON.parse(renderRecord(rec, undefined, { json: true }));
+    expect(json.issueKey).toBeUndefined();
+    expect(json.issueKeyStatus).toBe('unassigned');
+    expect(json.issueKeyMessage).toBe('This item has no key until it is published.');
+    expect(renderRecord(rec, undefined, {})).toContain('This item has no key until it is published.');
+    expect(renderList([rec], {})).toContain('This item has no key until it is published.');
   });
 
-  it('create increments the issue number from existing items', async () => {
-    seed({ id: 'old', issueKey: 'NIM-7', issueNumber: 7, type: 'task', data: { title: 'Old', status: 'done' } });
+  it('creates a room-owned workspace item without a provisional key or number', async () => {
+    seed({
+      id: 'shared', issueKey: 'NIM-7', issueNumber: 7, type: 'task',
+      data: { title: 'Shared', status: 'done' }, syncStatus: 'synced', syncId: 7,
+    });
     const gw = new DirectGateway(dbPath);
     const rec = await gw.createTracker(WORKSPACE, { type: 'bug', title: 'New' });
     gw.close();
-    expect(rec.issueKey).toBe('NIM-8'); // prefix derived from NIM-7, number = max+1
+
+    expect(rec.issueKey).toBeUndefined();
+    expect(rec.issueNumber).toBeUndefined();
+    expect(rawRow(rec.id).issue_key).toBeNull();
+    expect(rawRow(rec.id).issue_number).toBeNull();
+    expect(rawRow('shared').issue_key).toBe('NIM-7');
+    expect(rawRow('shared').issue_number).toBe(7);
+  });
+
+  it('preserves an existing legacy LC key during update without presenting it as assigned', async () => {
+    seed({ id: 'legacy', issueKey: 'LC-4', type: 'bug', data: { title: 'Legacy', status: 'to-do' } });
+    const gw = new DirectGateway(dbPath);
+    const updated = await gw.updateTracker(WORKSPACE, 'legacy', { priority: 'high' });
+    gw.close();
+
+    expect(updated.issueKey).toBe('LC-4');
+    expect(rawRow('legacy').issue_key).toBe('LC-4');
+    expect(rawRow('legacy').issue_number).toBeNull();
+    expect(JSON.parse(renderRecord(updated, undefined, { json: true }))).toMatchObject({
+      id: 'legacy',
+      issueKeyStatus: 'unassigned',
+      issueKeyMessage: 'This item has no key until it is published.',
+    });
+    expect(JSON.parse(renderRecord(updated, undefined, { json: true })).issueKey).toBeUndefined();
   });
 
   it('update merges fields, bumps updated, appends activity, and round-trips', async () => {
@@ -187,8 +222,12 @@ describe('DirectGateway offline writes', () => {
     expect(rec.fields.status).toBe('in-review');
     expect(rec.fields.priority).toBe('high');
     expect(rec.fields.severity).toBe('critical');
+    expect(rec.issueKey).toBe('NIM-1');
+    expect(rec.issueNumber).toBe(1);
 
     const row = rawRow('u1');
+    expect(row.issue_key).toBe('NIM-1');
+    expect(row.issue_number).toBe(1);
     expect(row.status).toBe('in-review'); // generated column reflects the merge
     expect(row.updated).not.toBe(before); // updated stamp advanced
     const data = JSON.parse(row.data);

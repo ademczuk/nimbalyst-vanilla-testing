@@ -10,15 +10,20 @@ import type {
   TrackerItemType,
 } from '../../../core/DocumentService';
 import type { TrackerRecord } from '../../../core/TrackerRecord';
-import { trackerItemsByTypeAtom, trackerDataLoadedAtom } from '../trackerDataAtoms';
+import {
+  trackerItemsByTypeAtom,
+  trackerDataLoadedAtom,
+  trackerRelationshipLabelAtom,
+} from '../trackerDataAtoms';
 import { TrackerRowContextMenu } from './TrackerRowContextMenu';
 import {
   EXTENSION_OWNED_KEYS,
   LEGACY_KEY_TO_TYPE,
   buildFullDocumentTrackerId,
 } from '../documentHeader/frontmatterUtils';
-import { getRecordTitle, getRecordStatus, getRecordPriority, getFieldByRole, resolveRoleFieldName, getItemShareState } from '../trackerRecordAccessors';
-import { globalRegistry, parseDate, normalizeRelationshipValue } from '../models';
+import { getRecordTitle, getRecordStatus, getRecordPriority, getFieldByRole, resolveRoleFieldName, getItemPublicationState } from '../trackerRecordAccessors';
+import { globalRegistry, parseDate, normalizeRelationshipValue, type TrackerGroupBy } from '../models';
+import { resolveDisplayIssueKey } from '../models/localIssueKey';
 import {usePostHog} from "posthog-js/react";
 import {
   resolveColumnsForType,
@@ -28,17 +33,20 @@ import {
   getTypeColor as getTypeColorFromRegistry,
   getTypeIcon as getTypeIconFromRegistry,
   formatRelativeDate,
+  formatTrackerDateCell,
   getCellValue,
   getEffectiveUpdatedDate,
+  resolveColumnFieldName,
   type TrackerColumnDef,
   type TypeColumnConfig,
 } from './trackerColumns';
 import { UserAvatar } from './UserAvatar';
+import { TrackerPublicationChip } from './TrackerPublicationChip';
 import { TrackerUnreadDot } from '../../../readReceipts/TrackerUnreadDot';
 import { DisplayOptionsPanel } from './DisplayOptionsPanel';
 import { useTrackerRows } from './useTrackerRows';
 import { TrackerFavoriteStar } from './TrackerFavoriteStar';
-import { groupTrackerRecords, searchMatchesRecord } from './trackerRowData';
+import { compareRecords, groupTrackerRecords, searchMatchesRecord } from './trackerRowData';
 
 export type SortColumn = 'title' | 'type' | 'status' | 'priority' | 'progress' | 'module' | 'lastIndexed' | (string & {});
 export type SortDirection = 'asc' | 'desc';
@@ -55,6 +63,7 @@ interface TrackerTableProps {
   filterType?: TrackerItemType | 'all';
   sortBy?: SortColumn;
   sortDirection?: SortDirection;
+  groupBy?: TrackerGroupBy;
   onSortChange?: (column: SortColumn, direction: SortDirection) => void;
   hideTypeTabs?: boolean;
   onSwitchToFilesMode?: () => void;
@@ -309,27 +318,6 @@ function getTypeIcon(type: TrackerItemType): string {
   return icons[type];
 }
 
-function formatDate(date: Date): string {
-  // If date is invalid or epoch (our placeholder for missing dates), show nothing
-  if (!date || date.getTime() === 0 || isNaN(date.getTime())) {
-    return '';
-  }
-
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const minutes = Math.floor(diff / (1000 * 60));
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days === 1) return 'Yesterday';
-  if (days < 7) return `${days}d ago`;
-  if (days < 30) return `${Math.floor(days / 7)}w ago`;
-  return date.toLocaleDateString();
-}
-
 /**
  * Convert full-document tracker items (from frontmatter) to TrackerRecord format
  * Works for any tracker type that supports fullDocument mode (plan, decision, etc.)
@@ -539,13 +527,15 @@ export function renderCell(
         <div className="title-text text-[13px] font-medium text-[var(--nim-text)] truncate min-w-0">{title}</div>
       );
 
-    case 'key':
-      if (!item.issueKey) return null;
+    case 'key': {
+      const displayKey = resolveDisplayIssueKey(item);
+      if (!displayKey) return null;
       return (
         <span className="text-[11px] font-mono font-medium uppercase tracking-[0.04em] text-[var(--nim-text-faint)] truncate">
-          {item.issueKey}
+          {displayKey}
         </span>
       );
+    }
 
     case 'status': {
       if (isItemEditable(item) && editingCell?.itemId === item.id && editingCell?.field === 'status') {
@@ -633,24 +623,8 @@ export function renderCell(
       }
       return <span className="text-[var(--nim-text-faint)] text-xs">{formatRelativeDate(value as Date)}</span>;
 
-    case 'shared': {
-      // Read-only share indicator. `n/a` (sync mode `local`) renders nothing.
-      const shareState = getItemShareState(item);
-      if (shareState === 'n/a') return null;
-      const shared = shareState === 'shared';
-      const shareColor = shared ? '#22c55e' : '#6b7280';
-      return (
-        <span
-          className="shared-badge inline-flex items-center gap-1 py-0.5 px-2 rounded-[10px] text-[11px] font-medium border"
-          style={{ backgroundColor: `${shareColor}20`, color: shareColor, borderColor: shareColor }}
-          data-testid="tracker-shared-badge"
-          title={shared ? 'Shared with the team' : 'Local to this device'}
-        >
-          <span className="material-symbols-outlined text-[13px]">{shared ? 'group' : 'person'}</span>
-          {shared ? 'Shared' : 'Local'}
-        </span>
-      );
-    }
+    case 'shared':
+      return <TrackerPublicationChip state={getItemPublicationState(item)} />;
 
     default: {
       // Generic field rendering -- dispatch by col.render type
@@ -682,13 +656,14 @@ export function renderCell(
             </div>
           );
 
-        case 'date':
-          if (value instanceof Date) return <span className="text-[var(--nim-text-faint)] text-xs">{formatRelativeDate(value)}</span>;
-          if (typeof value === 'string') {
-            const d = new Date(value);
-            return <span className="text-[var(--nim-text-faint)] text-xs">{isNaN(d.getTime()) ? value : formatRelativeDate(d)}</span>;
-          }
-          return null;
+        case 'date': {
+          // formatTrackerDateCell, not `new Date`: a calendar-day string is
+          // local midnight, not UTC midnight, and reads by day rather than by
+          // elapsed time (nimbalyst#1135, #1156).
+          const { display, title } = formatTrackerDateCell(value);
+          if (!display) return null;
+          return <span className="text-[var(--nim-text-faint)] text-xs" title={title || undefined}>{display}</span>;
+        }
 
         case 'badge': {
           const strVal = String(value);
@@ -762,6 +737,7 @@ export function TrackerTable({
   filterType = 'all',
   sortBy = 'lastIndexed',
   sortDirection = 'desc',
+  groupBy = 'none',
   onSortChange,
   hideTypeTabs = false,
   onSwitchToFilesMode,
@@ -787,8 +763,10 @@ export function TrackerTable({
   const [internalTypeFilter, setInternalTypeFilter] = useState<TrackerItemType | 'all'>('all');
   const activeTypeFilter = hideTypeTabs ? filterType : internalTypeFilter;
 
-  // Display options panel state
+  // Display options panel state. The panel is portaled and positions against the
+  // toolbar button, so the button's element is what anchors it.
   const [showDisplayOptions, setShowDisplayOptions] = useState(false);
+  const displayOptionsButtonRef = useRef<HTMLButtonElement>(null);
 
   // Column configuration: use external config or derive from type
   const effectiveColumnConfig = useMemo(() => {
@@ -811,6 +789,7 @@ export function TrackerTable({
   // Read tracker items from cross-platform atoms (populated by host adapter)
   const atomItems = useAtomValue(trackerItemsByTypeAtom(activeTypeFilter));
   const dataLoaded = useAtomValue(trackerDataLoadedAtom);
+  const relationshipLabel = useAtomValue(trackerRelationshipLabelAtom);
 
   // Use override items if provided (e.g., for archived view), otherwise atom items
   const sourceItems = overrideItems ?? atomItems;
@@ -875,48 +854,25 @@ export function TrackerTable({
 
   const sortItems = useCallback((itemsToSort: TrackerRecord[], sortColumn: SortColumn, sortDir: SortDirection) => {
     const sorted = [...itemsToSort].sort((a, b) => {
-      let compareValue = 0;
-
-      switch (sortColumn) {
-        case 'manual': {
+      // `manual` is list-only (kanban drag order); everything else goes through the
+      // shared comparator so this surface and the grid order identical rows
+      // identically -- including role columns, which resolve per record and would
+      // otherwise read the wrong field in the cross-tracker "All" view.
+      const compareValue = sortColumn === 'manual'
+        // Raw string comparison, not localeCompare -- fractional indexing
+        // keys sort by character code order (0-9, A-Z, a-z).
+        ? (() => {
           const aKey = (a.fields.kanbanSortOrder as string) ?? '';
           const bKey = (b.fields.kanbanSortOrder as string) ?? '';
-          // Raw string comparison, not localeCompare -- fractional indexing
-          // keys sort by character code order (0-9, A-Z, a-z).
-          compareValue = aKey < bKey ? -1 : aKey > bKey ? 1 : 0;
-          break;
-        }
-        case 'type':
-          compareValue = a.primaryType.localeCompare(b.primaryType);
-          break;
-        case 'module':
-          compareValue = (a.system.documentPath ?? '').localeCompare(b.system.documentPath ?? '');
-          break;
-        case 'lastIndexed': {
-          const aTime = a.system.lastIndexed ? new Date(a.system.lastIndexed).getTime() : 0;
-          const bTime = b.system.lastIndexed ? new Date(b.system.lastIndexed).getTime() : 0;
-          compareValue = aTime - bTime;
-          break;
-        }
-        default: {
-          // Generic field sort via getCellValue (handles all schema fields + builtins)
-          const aVal = getCellValue(a, sortColumn);
-          const bVal = getCellValue(b, sortColumn);
-          if (aVal == null && bVal == null) { compareValue = 0; break; }
-          if (aVal == null) { compareValue = 1; break; }
-          if (bVal == null) { compareValue = -1; break; }
-          if (aVal instanceof Date && bVal instanceof Date) { compareValue = aVal.getTime() - bVal.getTime(); break; }
-          if (typeof aVal === 'number' && typeof bVal === 'number') { compareValue = aVal - bVal; break; }
-          compareValue = String(aVal).localeCompare(String(bVal));
-          break;
-        }
-      }
+          return aKey < bKey ? -1 : aKey > bKey ? 1 : 0;
+        })()
+        : compareRecords(a, b, sortColumn, allColumns);
 
       return sortDir === 'asc' ? compareValue : -compareValue;
     });
 
     return sorted;
-  }, []);
+  }, [allColumns]);
 
   const filteredItems = items
     .filter(item => {
@@ -957,8 +913,8 @@ export function TrackerTable({
   // console.log('[TrackerTable] Render - items:', items.length, 'filtered:', filteredItems.length, 'typeFilter:', typeFilter);
   const sortedItems = preserveItemOrder ? filteredItems : sortItems(filteredItems, currentSortBy, currentSortDirection);
   const groupedRecords = useMemo(
-    () => groupTrackerRecords(sortedItems, effectiveColumnConfig.groupBy),
-    [effectiveColumnConfig.groupBy, sortedItems],
+    () => groupTrackerRecords(sortedItems, groupBy, relationshipLabel),
+    [groupBy, sortedItems, relationshipLabel],
   );
   const displayItems = useMemo(
     () => groupedRecords.flatMap(group => group.items),
@@ -1002,6 +958,7 @@ export function TrackerTable({
     contextRefs,
     contextFloatingStyles,
     handleContextMenu,
+    openContextMenuForIds,
     closeContextMenu,
     handleBulkStatusUpdate,
     handleBulkPriorityUpdate,
@@ -1145,14 +1102,13 @@ export function TrackerTable({
     <div className="tracker-table-wrapper flex flex-col h-full w-full bg-[var(--nim-bg)]" data-testid="tracker-table">
       {/* Display options panel (positioned relative to wrapper) */}
       {!hideToolbar && showDisplayOptions && onColumnConfigChange && (
-        <div className="relative">
-          <DisplayOptionsPanel
-            availableColumns={allColumns}
-            config={effectiveColumnConfig}
-            onConfigChange={(config) => onColumnConfigChange(config)}
-            onClose={() => setShowDisplayOptions(false)}
-          />
-        </div>
+        <DisplayOptionsPanel
+          availableColumns={allColumns}
+          config={effectiveColumnConfig}
+          onConfigChange={(config) => onColumnConfigChange(config)}
+          onClose={() => setShowDisplayOptions(false)}
+          anchorElement={displayOptionsButtonRef.current}
+        />
       )}
 
       {/* Type filter tabs */}
@@ -1259,6 +1215,7 @@ export function TrackerTable({
           {/* Display options */}
           {onColumnConfigChange && (
             <button
+              ref={displayOptionsButtonRef}
               className="inline-flex items-center justify-center w-6 h-6 rounded hover:bg-[var(--nim-bg-tertiary)] text-[var(--nim-text-faint)] hover:text-[var(--nim-text)] transition-colors"
               onClick={() => setShowDisplayOptions(!showDisplayOptions)}
               title="Display options"
@@ -1364,7 +1321,7 @@ export function TrackerTable({
                   </div>
                 )}
                 <div
-                  className={`tracker-table-row flex items-center gap-3 px-3 py-[7px] border-b border-[var(--nim-border)] cursor-pointer transition-colors duration-100 hover:bg-[var(--nim-bg-secondary)] select-none ${
+                  className={`tracker-table-row group flex items-center gap-3 px-3 py-[7px] border-b border-[var(--nim-border)] cursor-pointer transition-colors duration-100 hover:bg-[var(--nim-bg-secondary)] select-none ${
                     selectedIds.has(item.id) ? 'bg-[var(--nim-bg-secondary)]' : ''
                   } ${
                     selectedItemId && item.id === selectedItemId ? 'bg-[var(--nim-bg-secondary)]' : ''
@@ -1421,8 +1378,8 @@ export function TrackerTable({
                     />
                   ) : (
                     <div className="flex items-baseline gap-2 min-w-0">
-                      {item.issueKey && (
-                        <span className="shrink-0 text-[10px] font-mono font-medium uppercase tracking-[0.08em] text-[var(--nim-text-faint)]">{item.issueKey}</span>
+                      {resolveDisplayIssueKey(item) && (
+                        <span className="shrink-0 text-[10px] font-mono font-medium uppercase tracking-[0.08em] text-[var(--nim-text-faint)]">{resolveDisplayIssueKey(item)}</span>
                       )}
                       <span className="text-[13px] font-medium text-[var(--nim-text)] truncate">{title}</span>
                     </div>
@@ -1430,9 +1387,9 @@ export function TrackerTable({
                 </div>
 
                 {/* Right-side metadata: render visible columns (except type/title which are already shown) */}
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="tracker-table-row-meta flex items-center gap-2 shrink-0">
                   {visibleColumnDefs.filter(col => col.id !== 'type' && col.id !== 'title').map(col => {
-                    const value = getCellValue(item, col.id);
+                    const value = getCellValue(item, resolveColumnFieldName(item.primaryType, col));
                     return (
                       <div
                         key={col.id}
@@ -1444,6 +1401,28 @@ export function TrackerTable({
                     );
                   })}
                 </div>
+                <button
+                  type="button"
+                  aria-label={`Actions for ${item.issueKey ?? title}`}
+                  title="Item actions"
+                  data-testid="tracker-row-more-actions"
+                  className="tracker-row-more-actions shrink-0 inline-flex h-6 w-6 items-center justify-center rounded border-none bg-transparent p-0 text-[var(--nim-text-faint)] opacity-0 transition-opacity hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)] focus-visible:opacity-100 focus-visible:outline focus-visible:outline-1 focus-visible:outline-[var(--nim-border-focus)] group-hover:opacity-100"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onDoubleClick={(event) => event.stopPropagation()}
+                  onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    openContextMenuForIds(
+                      selectedIds.has(item.id) ? Array.from(selectedIds) : [item.id],
+                      { x: rect.right, y: rect.bottom },
+                    );
+                  }}
+                >
+                  <span className="material-symbols-outlined text-[17px] leading-none">more_horiz</span>
+                </button>
                 </div>
               </React.Fragment>
             );

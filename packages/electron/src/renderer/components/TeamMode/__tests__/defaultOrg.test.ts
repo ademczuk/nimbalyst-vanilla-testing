@@ -1,7 +1,12 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import { activeOrganizations, resolveDefaultOrgId, type OrgChoice } from '../defaultOrg';
+import {
+  activeOrganizations,
+  resolveDefaultOrgId,
+  resolveOrgWindowTargetId,
+  type OrgChoice,
+} from '../defaultOrg';
 
 const orgs: OrgChoice[] = [
   { orgId: 'org-first', name: 'First', role: 'owner' },
@@ -31,6 +36,33 @@ describe('resolveDefaultOrgId', () => {
     expect(resolveDefaultOrgId('org-second', [])).toBeNull();
     expect(resolveDefaultOrgId(null, [{ orgId: 'org-invited', name: 'Invited', membershipType: 'invited_member' }]))
       .toBeNull();
+  });
+});
+
+describe('resolveOrgWindowTargetId', () => {
+  it('opens the queued destination when it is an active membership', () => {
+    expect(resolveOrgWindowTargetId('org-second', 'org-first', orgs)).toBe('org-second');
+  });
+
+  it('keeps the queued destination while the directory cannot say', () => {
+    // A failed or not-yet-hydrated team:list must not route a new member into
+    // whichever tenant happens to be remembered.
+    expect(resolveOrgWindowTargetId('org-just-joined', 'org-first', [])).toBe('org-just-joined');
+  });
+
+  it('drops a queued destination the directory lists without an active membership', () => {
+    // The hand-off is only consumed once its room hydrates, which never happens
+    // for a non-member, so honouring it would strand the window on the unbound
+    // surface for good.
+    expect(resolveOrgWindowTargetId('org-invited', 'org-second', orgs)).toBe('org-second');
+  });
+
+  it('drops a queued destination the directory does not know at all', () => {
+    expect(resolveOrgWindowTargetId('org-i-left', null, orgs)).toBe('org-first');
+  });
+
+  it('resolves the remembered organization when nothing is queued', () => {
+    expect(resolveOrgWindowTargetId(null, 'org-second', orgs)).toBe('org-second');
   });
 });
 

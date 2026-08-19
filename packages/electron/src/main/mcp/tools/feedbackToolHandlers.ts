@@ -1,3 +1,8 @@
+/**
+ * Product feedback and GitHub bug-report tools (`feedback_*`). Cross-user
+ * structured questions live in `requestFeedbackToolHandler.ts` instead.
+ */
+
 import os from 'os';
 import { app, shell } from 'electron';
 import { anonymize } from '../../services/feedback/LogAnonymizer';

@@ -34,11 +34,6 @@ const FILTER_EMPTY: Record<InboxFilterId, EmptyCopy> = {
     body: 'Tracker assignments and equivalent actionable deliveries collect here.',
     actionLabel: 'Open trackers',
   },
-  unread: {
-    icon: 'mark_email_read',
-    title: 'Nothing unread',
-    body: 'You are caught up on deliveries and on the conversations you follow.',
-  },
   follows: {
     icon: 'visibility',
     title: 'You are not following anything',
@@ -47,8 +42,20 @@ const FILTER_EMPTY: Record<InboxFilterId, EmptyCopy> = {
   },
 };
 
+/**
+ * Read state is its own axis, so it gets its own empty copy — and it wins over
+ * the reason's, because "nothing unread" is the more useful thing to hear when
+ * the reason itself does have rows sitting in it.
+ */
+const UNREAD_EMPTY: EmptyCopy = {
+  icon: 'mark_email_read',
+  title: 'Nothing unread',
+  body: 'You are caught up on deliveries and on the conversations you follow.',
+};
+
 export function InboxEmptyState({
   filter,
+  unreadOnly = false,
   query,
   scopeActive,
   onClearFilters,
@@ -56,6 +63,7 @@ export function InboxEmptyState({
   children,
 }: {
   filter: InboxFilterId;
+  unreadOnly?: boolean;
   query: string;
   scopeActive: boolean;
   onClearFilters: () => void;
@@ -64,8 +72,8 @@ export function InboxEmptyState({
   /** Slot for the `Search all messages` escalation when a query is active. */
   children?: React.ReactNode;
 }) {
-  const copy = FILTER_EMPTY[filter];
-  const narrowed = !!query || scopeActive || filter !== 'all';
+  const copy = unreadOnly ? UNREAD_EMPTY : FILTER_EMPTY[filter];
+  const narrowed = !!query || scopeActive || unreadOnly || filter !== 'all';
 
   return (
     <div

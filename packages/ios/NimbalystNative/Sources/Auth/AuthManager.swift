@@ -25,6 +25,38 @@ public final class AuthManager: ObservableObject {
     private var authSession: ASWebAuthenticationSession?
     #endif
     private var authenticationAccountId: String?
+    /// When the current web auth sheet was opened, used to tell a deliberate
+    /// cancel apart from a sheet abandoned after the OAuth state expired.
+    private var authStartedAt: Date?
+
+    /// Lifetime of the `oauth_state` cookie Stytch sets on `api.stytch.com`
+    /// when it hands off to Google (`Max-Age=600`). Once it lapses, Google's
+    /// redirect back to Stytch fails with `oauth_invalid_state` and Stytch
+    /// renders raw JSON in the sheet -- upstream of our own /auth/callback,
+    /// so the server cannot report the failure for us.
+    nonisolated static let oauthStateLifetime: TimeInterval = 600
+
+    /// Error text for a `nimbalyst://auth/callback` deep link, or nil when the
+    /// callback is not an error. The collab worker bridges failures here as
+    /// `error` / `error_description` rather than failing silently.
+    nonisolated static func authErrorMessage(fromCallbackParams params: [String: String]) -> String? {
+        let description = params["error_description"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let description, !description.isEmpty { return description }
+
+        let code = params["error"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let code, !code.isEmpty else { return nil }
+        // A bare code is not a sentence; wrap it so the UI reads as a message.
+        return "Sign-in failed (\(code))."
+    }
+
+    /// Error text for a web auth sheet that closed without ever reaching our
+    /// callback, or nil to stay silent. A dismissal within the OAuth state
+    /// window is an ordinary cancel; past it, the sheet was almost certainly
+    /// showing Stytch's `oauth_invalid_state` page instead of a login form.
+    nonisolated static func abandonedSessionMessage(elapsed: TimeInterval) -> String? {
+        guard elapsed >= oauthStateLifetime else { return nil }
+        return "Sign-in timed out and was not completed. Please try again, and finish the Google sign-in screen without leaving the app."
+    }
 
     /// The JWT for sync server authentication.
     public var sessionJwt: String? {
@@ -82,6 +114,7 @@ public final class AuthManager: ObservableObject {
 
         isAuthenticating = true
         authError = nil
+        authStartedAt = Date()
 
         // ASWebAuthenticationSession handles the full browser flow and captures
         // the callback URL with our custom scheme.
@@ -93,9 +126,19 @@ public final class AuthManager: ObservableObject {
             Task { @MainActor in
                 self?.isAuthenticating = false
                 self?.authSession = nil
+                let elapsed = self?.authStartedAt.map { Date().timeIntervalSince($0) }
+                self?.authStartedAt = nil
 
                 if let error {
                     if (error as NSError).code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                        // Dismissing Stytch's oauth_invalid_state page looks
+                        // identical to tapping Cancel, so fall back to how long
+                        // the sheet was open to decide whether to report it.
+                        if let elapsed, let message = AuthManager.abandonedSessionMessage(elapsed: elapsed) {
+                            self?.logger.error("Login sheet dismissed after \(Int(elapsed))s without a callback")
+                            self?.authError = message
+                            return
+                        }
                         self?.logger.info("Login cancelled by user")
                         return
                     }
@@ -211,6 +254,15 @@ public final class AuthManager: ObservableObject {
             return (item.name, value)
         })
         NSLog("[AuthManager] handleCallback params: \(params.keys.sorted().joined(separator: ", "))")
+
+        // The collab worker redirects here with error/error_description when
+        // sign-in fails server-side. Report its reason instead of the generic
+        // missing-parameters message below.
+        if let serverError = AuthManager.authErrorMessage(fromCallbackParams: params) {
+            authError = serverError
+            NSLog("[AuthManager] handleCallback SERVER ERROR: \(serverError)")
+            return
+        }
 
         guard let sessionToken = params["session_token"],
               let sessionJwt = params["session_jwt"],

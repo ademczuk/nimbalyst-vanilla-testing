@@ -21,6 +21,7 @@ import { useAtomValue } from 'jotai';
 import type { DocRevisionMetadata } from '@nimbalyst/collab-protocol';
 import {
   CollabHistoryError,
+  previewRevisionSnapshot,
   type CollabHistoryClient,
 } from '@nimbalyst/runtime/sync';
 import { collabHistoryControllerAtom } from '../../store/atoms/collabHistoryControllers';
@@ -68,6 +69,9 @@ export const CollabHistoryDialog: React.FC<CollabHistoryDialogProps> = ({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [restoreSafe, setRestoreSafe] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   // Brief grace period before declaring the document not open. This covers
   // the sidebar "View History" entry point where the document tab is
   // mounting concurrently with the dialog open.
@@ -108,6 +112,45 @@ export const CollabHistoryDialog: React.FC<CollabHistoryDialogProps> = ({
     () => revisions.find(r => r.revisionId === selectedId) ?? null,
     [revisions, selectedId]
   );
+
+  // Load the selected revision's content so the user can see what a version
+  // holds before restoring it. The stored bytes are opaque, so this goes
+  // through the adapter projection rather than being displayed directly.
+  useEffect(() => {
+    if (!controller || !selectedRevision) {
+      setPreview(null);
+      setPreviewError(null);
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    setPreview(null);
+    setPreviewError(null);
+    void (async () => {
+      try {
+        const loaded = await controller.client.loadRevision(selectedRevision.revisionId);
+        if (cancelled) return;
+        // Prefer the revision's own recorded format -- an old revision can
+        // predate a change in editor type, and the live controller's format
+        // would then decode it as the wrong document type.
+        const text = previewRevisionSnapshot(
+          selectedRevision.contentFormat || controller.contentFormat,
+          loaded.plaintext,
+        );
+        if (cancelled) return;
+        setPreview(text);
+      } catch (err) {
+        if (cancelled) return;
+        const message = err instanceof CollabHistoryError
+          ? `${err.code}: ${err.message}`
+          : err instanceof Error ? err.message : String(err);
+        setPreviewError(message);
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [controller, selectedRevision]);
 
   const handleRestore = useCallback(async () => {
     if (!controller || !selectedRevision || !controller.exportSnapshot || !controller.applySnapshot) return;
@@ -295,6 +338,29 @@ export const CollabHistoryDialog: React.FC<CollabHistoryDialogProps> = ({
                     {supportsRestore
                       ? 'Restoring creates a new current version. Earlier history is preserved.'
                       : 'Snapshot content is not available for preview or restore until this editor registers a revision adapter.'}
+                  </div>
+
+                  <div className="collab-history-preview pt-3">
+                    <div className="text-xs font-semibold text-[var(--nim-text-muted)] uppercase tracking-wider pb-1.5">
+                      Contents
+                    </div>
+                    {previewLoading ? (
+                      <div className="text-xs text-[var(--nim-text-muted)]">Loading contents...</div>
+                    ) : previewError ? (
+                      <div className="text-xs text-[var(--nim-error)]">
+                        Could not load this version's contents: {previewError}
+                      </div>
+                    ) : preview === null ? (
+                      <div className="text-xs text-[var(--nim-text-muted)]">
+                        This document type cannot render a text preview.
+                      </div>
+                    ) : preview === '' ? (
+                      <div className="text-xs text-[var(--nim-text-muted)]">This version is empty.</div>
+                    ) : (
+                      <pre className="collab-history-preview-body select-text whitespace-pre-wrap break-words m-0 p-2 rounded border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)] text-xs font-mono max-h-80 overflow-auto">
+                        {preview}
+                      </pre>
+                    )}
                   </div>
                 </div>
               ) : (

@@ -5,19 +5,39 @@ import {
   globalRegistry,
   parseTrackerYAML,
   type TrackerDataModel,
-  type TrackerSyncMode,
+  type TrackerSharing,
 } from '@nimbalyst/runtime';
 import { trackerItemCountByTypeAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin';
+import {
+  describeTrackerArchive,
+  describeTrackerPromotion,
+  describeTrackerUnarchive,
+  isTrackerArchived,
+  resolveTrackerPromotionEligibility,
+  type TrackerConfirmationCopy,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerLifecycle';
+import { ConfirmDialog } from '../../ConfirmDialog/ConfirmDialog';
+import { errorNotificationService } from '../../../services/ErrorNotificationService';
 import { trackerSyncConfigChangeAtom } from '../../../store/atoms/trackerSync';
 import { deriveIssueKeyPrefix, LEGACY_ISSUE_KEY_PREFIX } from '../../../../shared/trackerIssueKeyPrefix';
 import { AlphaBadge, SETTINGS_ALPHA_TOOLTIP } from '../../common/AlphaBadge';
 import { useDialog } from '../../../contexts/DialogContext';
 import {
-  buildTrackerUpgradeConfirmOptions,
-  canUpgradeTrackerMode,
   getTrackerStorageCopy,
-  requiresTrackerUpgradeConfirmation,
 } from './trackerConfigUpgrade';
+import { TrackerSchemaDriftWarning } from './TrackerSchemaDriftWarning';
+import {
+  TrackerSchemaChangeConfirm,
+  type TrackerSchemaChangePreview,
+} from './TrackerSchemaChangeConfirm';
+import { LocalKeyPrefixInput, type LocalKeyPrefixConfig } from './LocalKeyPrefixInput';
+import {
+  TrackerOwnershipChip,
+  trackerOwnershipIcon,
+  trackerOwnershipLabel,
+} from '../../common/TrackerOwnershipChip';
+import type { TrackerOwnership } from '../../TrackerMode/trackerNavigationTree';
+import { useTrackerTeamOwnership, type TrackerTeam } from '../../TrackerMode/useTrackerTeamMembers';
 
 // ============================================================================
 // Types
@@ -29,47 +49,13 @@ interface TrackerConfigPanelProps {
 
 interface TrackerTypeConfig {
   model: TrackerDataModel;
-  syncMode: TrackerSyncMode;
+  sharing: TrackerSharing;
+  draftByDefault: boolean;
 }
 
 interface TrackerSchemaOverrideState {
   overridden: boolean;
   filePath?: string;
-}
-
-/** Mirror of SchemaDriftEntry from the main-process trackerTypeDefStore. */
-type SchemaDriftStatus =
-  | 'in-sync'
-  | 'drifted'
-  | 'yaml-only'
-  | 'db-only-orphan'
-  | 'db-native';
-
-interface SchemaDriftEntry {
-  type: string;
-  status: SchemaDriftStatus;
-  source: string | null;
-}
-
-interface WorkspaceSchemaDrift {
-  entries: SchemaDriftEntry[];
-  hasDrift: boolean;
-}
-
-/** Statuses that represent an actionable mirror inconsistency (vs. informational). */
-const DRIFT_WARNING_STATUSES: ReadonlySet<SchemaDriftStatus> = new Set([
-  'drifted',
-  'yaml-only',
-  'db-only-orphan',
-]);
-
-function describeDriftStatus(status: SchemaDriftStatus): string {
-  switch (status) {
-    case 'drifted': return 'definition differs from file';
-    case 'yaml-only': return 'in file, not yet in database';
-    case 'db-only-orphan': return 'in database, file missing';
-    default: return '';
-  }
 }
 
 const ISSUE_KEY_PREFIX_REGEX = /^[A-Z]{2,5}$/;
@@ -208,68 +194,6 @@ function SchemaOverrideActions({
   );
 }
 
-function SyncModeToggle({ mode, onChange }: {
-  mode: TrackerSyncMode;
-  onChange: (mode: TrackerSyncMode) => void;
-}) {
-  const options: { value: TrackerSyncMode; label: string }[] = [
-    { value: 'local', label: 'Local' },
-    { value: 'shared', label: 'Shared' },
-    { value: 'hybrid', label: 'Hybrid' },
-  ];
-
-  return (
-    <div className="flex bg-[var(--nim-bg)] border border-[var(--nim-bg-tertiary)] rounded-md overflow-hidden">
-      {options.map((opt) => {
-        const isActive = mode === opt.value;
-        let activeClass = '';
-        if (isActive) {
-          if (opt.value === 'local') activeClass = 'bg-[var(--nim-bg-tertiary)] text-[var(--nim-text-muted)]';
-          else if (opt.value === 'shared') activeClass = 'bg-[rgba(96,165,250,0.2)] text-[var(--nim-primary)]';
-          else activeClass = 'bg-[rgba(167,139,250,0.2)] text-[#a78bfa]';
-        }
-
-        return (
-          <button
-            key={opt.value}
-            onClick={() => onChange(opt.value)}
-            className={`px-2.5 py-1 text-[11px] font-medium cursor-pointer border-none whitespace-nowrap transition-all duration-150 ${
-              isActive
-                ? activeClass
-                : 'bg-transparent text-[var(--nim-text-disabled)]'
-            }`}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function SyncBadge({ mode }: { mode: TrackerSyncMode }) {
-  if (mode === 'shared') {
-    return (
-      <span className="inline-flex items-center gap-1 px-[7px] py-[2px] rounded-[10px] text-[10px] font-semibold bg-[rgba(96,165,250,0.15)] text-[var(--nim-primary)]">
-        <MaterialSymbol icon="share" size={8} />
-        Shared
-      </span>
-    );
-  }
-  if (mode === 'hybrid') {
-    return (
-      <span className="inline-flex items-center gap-1 px-[7px] py-[2px] rounded-[10px] text-[10px] font-semibold bg-[rgba(167,139,250,0.15)] text-[#a78bfa]">
-        Hybrid
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 px-[7px] py-[2px] rounded-[10px] text-[10px] font-semibold bg-[rgba(180,180,180,0.1)] text-[var(--nim-text-faint)]">
-      Local
-    </span>
-  );
-}
-
 function TrackerIcon({ color, icon }: { color: string; icon: string }) {
   return (
     <div
@@ -294,21 +218,249 @@ function TrackerStorageInfoBanner() {
   );
 }
 
-function getSyncMetaText(mode: TrackerSyncMode): string {
-  switch (mode) {
-    case 'shared': return 'Visible to all team members';
-    case 'local': return 'Only visible to you';
-    case 'hybrid': return 'Per-item sharing choice';
-  }
+function getSharingMetaText(tracker: TrackerTypeConfig): string {
+  const base = tracker.sharing === 'personal'
+    ? 'Only on this machine'
+    : tracker.draftByDefault
+      ? 'Shared with the team; new items start as drafts'
+      : 'Shared with the team';
+  // Archived leads, because it is the fact that changes what you can do here.
+  // Phrased as retention, never as removal.
+  return isTrackerArchived(tracker.model)
+    ? `Archived — items kept and searchable, read-only. ${base}`
+    : base;
 }
+
+/**
+ * Promote to team, and archive. Both are confirmed, and both confirmations say
+ * plainly what happens — promotion because it is irreversible, archive because
+ * "archive" is a word people read as "delete" unless told otherwise.
+ */
+function TrackerLifecycleActions({
+  tracker,
+  workspacePath,
+  hasTeam,
+}: {
+  tracker: TrackerTypeConfig;
+  workspacePath?: string;
+  hasTeam: boolean;
+}) {
+  const [confirmation, setConfirmation] = useState<
+    { kind: 'promote' | 'archive' | 'unarchive'; copy: TrackerConfirmationCopy } | null
+  >(null);
+  const [pending, setPending] = useState(false);
+  const itemCount = useAtomValue(trackerItemCountByTypeAtom(tracker.model.type));
+  const archived = isTrackerArchived(tracker.model);
+  const promotion = resolveTrackerPromotionEligibility(tracker.model);
+
+  const run = useCallback(async () => {
+    if (!workspacePath || !confirmation) return;
+    setPending(true);
+    try {
+      const api = window.electronAPI;
+      if (confirmation.kind === 'promote') {
+        const result = await api.trackerLifecycle.promoteToTeam({ workspacePath, type: tracker.model.type });
+        if (!result?.success) throw new Error(result?.error || 'Could not share this tracker with your team.');
+        const { publishedCount = 0, pendingKeyCount = 0 } = result.promotion ?? {};
+        errorNotificationService.showInfo(
+          `${tracker.model.displayNamePlural} is now your team's`,
+          pendingKeyCount > 0
+            ? `${publishedCount} item(s) published. ${pendingKeyCount} are waiting on the server for their keys.`
+            : `${publishedCount} item(s) published, each with its issue key.`,
+          { duration: 4000 },
+        );
+      } else {
+        const archiving = confirmation.kind === 'archive';
+        const result = await api.trackerLifecycle.setArchived({
+          workspacePath,
+          type: tracker.model.type,
+          archived: archiving,
+        });
+        if (!result?.success) throw new Error(result?.error || 'Could not update this tracker.');
+        errorNotificationService.showInfo(
+          archiving ? `${tracker.model.displayNamePlural} archived` : `${tracker.model.displayNamePlural} unarchived`,
+          archiving
+            ? 'Every item is kept and stays searchable. They are read-only from now on.'
+            : 'Its items can be edited again.',
+          { duration: 4000 },
+        );
+      }
+      setConfirmation(null);
+    } catch (error) {
+      errorNotificationService.showError(
+        'Tracker update failed',
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      setPending(false);
+    }
+  }, [confirmation, tracker.model, workspacePath]);
+
+  return (
+    <>
+      {hasTeam && promotion.canPromote && (
+        <button
+          type="button"
+          className="tracker-promote-button p-1 rounded hover:bg-[var(--nim-bg-tertiary)] text-[var(--nim-text-muted)]"
+          title="Share this tracker with your team"
+          data-testid="tracker-promote-to-team"
+          onClick={() => setConfirmation({
+            kind: 'promote',
+            copy: describeTrackerPromotion(tracker.model, itemCount),
+          })}
+        >
+          <MaterialSymbol icon="group_add" size={16} />
+        </button>
+      )}
+      <button
+        type="button"
+        className="tracker-archive-button p-1 rounded hover:bg-[var(--nim-bg-tertiary)] text-[var(--nim-text-muted)]"
+        title={archived ? 'Unarchive this tracker' : 'Archive this tracker — items are kept'}
+        data-testid="tracker-archive-toggle"
+        onClick={() => setConfirmation(
+          archived
+            ? { kind: 'unarchive', copy: describeTrackerUnarchive(tracker.model) }
+            : { kind: 'archive', copy: describeTrackerArchive(tracker.model, itemCount) },
+        )}
+      >
+        <MaterialSymbol icon={archived ? 'unarchive' : 'inventory_2'} size={16} />
+      </button>
+      <ConfirmDialog
+        isOpen={confirmation !== null}
+        title={confirmation?.copy.title ?? ''}
+        message={confirmation?.copy.message ?? ''}
+        confirmLabel={pending ? 'Working…' : confirmation?.copy.confirmLabel ?? 'Confirm'}
+        cancelLabel="Cancel"
+        // Nothing here removes data, so nothing here is styled as danger --
+        // archive in particular must not borrow delete's red.
+        destructive={false}
+        onConfirm={run}
+        onCancel={() => setConfirmation(null)}
+      />
+    </>
+  );
+}
+
+/**
+ * One ownership group of trackers. The same split, headers and chip the tracker
+ * sidebar uses, so settings and navigation describe ownership identically —
+ * partitioned on `sharing`, the tracker's one ownership axis, which now covers
+ * its schema and its items together.
+ *
+ * `ownership: null` is the solo case: one plain list, with none of the
+ * ownership vocabulary a user without a team has no use for.
+ */
+function TrackerOwnershipGroup({
+  ownership,
+  teamName,
+  trackers,
+  description,
+  renderActions,
+}: {
+  ownership: TrackerOwnership | null;
+  teamName?: string | null;
+  trackers: TrackerTypeConfig[];
+  description: string;
+  renderActions?: (tracker: TrackerTypeConfig) => React.ReactNode;
+}) {
+  if (trackers.length === 0) return null;
+  const title = ownership === null
+    ? 'Trackers'
+    : ownership === 'team' ? trackerOwnershipLabel(ownership, teamName) : 'My trackers';
+
+  return (
+    <div
+      className="tracker-ownership-group provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0"
+      data-testid="tracker-ownership-group"
+      data-ownership={ownership ?? 'none'}
+    >
+      <h4 className="provider-panel-section-title text-[15px] font-semibold mb-2 text-[var(--nim-text)] flex items-center gap-2">
+        {ownership !== null && (
+          <MaterialSymbol
+            icon={trackerOwnershipIcon(ownership)}
+            size={15}
+            className={ownership === 'team' ? 'text-[var(--nim-primary)]' : 'text-[var(--nim-text-faint)]'}
+          />
+        )}
+        {title}
+      </h4>
+      <p className="text-[13px] leading-relaxed text-[var(--nim-text-muted)] mb-3">
+        {description}
+      </p>
+
+      <div className="bg-[var(--nim-bg-secondary)] rounded-lg overflow-hidden">
+        {trackers.map((tracker) => (
+          <div
+            key={tracker.model.type}
+            className="flex items-center gap-2.5 px-3.5 py-2.5 border-b border-[var(--nim-bg)] last:border-b-0"
+          >
+            <TrackerIcon color={tracker.model.color} icon={tracker.model.icon} />
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-medium text-[var(--nim-text)] flex items-center gap-1.5">
+                {tracker.model.displayNamePlural}
+                <span className="px-1.5 py-[1px] rounded bg-[var(--nim-bg-tertiary)] text-[var(--nim-text-muted)] text-[10px] font-semibold">
+                  <TrackerTypeCount type={tracker.model.type} />
+                </span>
+              </div>
+              {ownership !== null && (
+                <div className="text-[11px] text-[var(--nim-text-faint)]">
+                  {getSharingMetaText(tracker)}
+                </div>
+              )}
+            </div>
+            <div className="shrink-0 flex items-center gap-1">
+              {renderActions?.(tracker)}
+              {ownership !== null && (
+                <TrackerOwnershipChip
+                  ownership={ownership}
+                  teamName={teamName}
+                  draftByDefault={tracker.draftByDefault}
+                />
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function partitionTrackersByOwnership(trackers: TrackerTypeConfig[]) {
+  return {
+    personal: trackers.filter((tracker) => tracker.sharing !== 'team'),
+    team: trackers.filter((tracker) => tracker.sharing === 'team'),
+  };
+}
+
+/**
+ * What editing a team tracker's fields actually does — the question that
+ * started this work, answered without opening a config file.
+ */
+const TEAM_GROUP_DESCRIPTION =
+  'Everyone on the team sees the same fields, items, and numbers. Changing this tracker\'s fields changes them for the whole team; the YAML file in .nimbalyst/trackers is a local copy of the team\'s definition.';
+
+const PERSONAL_GROUP_DESCRIPTION =
+  'These trackers stay on this machine. They never sync, and nobody on your team can see them.';
+
+/** Solo workspaces get no ownership vocabulary at all — there is nothing to contrast with. */
+const SOLO_GROUP_DESCRIPTION =
+  'Each tracker keeps its own fields and items, defined in .nimbalyst/trackers and stored on this machine.';
 
 // ============================================================================
 // Issue Key Prefix Input
 // ============================================================================
 
-function IssueKeyPrefixInput({ value, onChange }: {
+/**
+ * The prefix is one per project and renaming it changes every future issue key,
+ * so it sits on D3's admin side of the line. `readOnly` shows a non-admin what
+ * the prefix is without offering the rename. That is presentation only — the
+ * TrackerRoom refuses a non-admin's `trackerSetConfig` regardless of what this
+ * renders.
+ */
+function IssueKeyPrefixInput({ value, onChange, readOnly = false }: {
   value: string;
   onChange: (prefix: string) => void;
+  readOnly?: boolean;
 }) {
   const [draft, setDraft] = useState(value);
   const [error, setError] = useState('');
@@ -338,32 +490,40 @@ function IssueKeyPrefixInput({ value, onChange }: {
   return (
     <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
       <h4 className="provider-panel-section-title text-[15px] font-semibold mb-2 text-[var(--nim-text)]">
-        Issue Key Prefix
+        Team Issue Key Prefix
       </h4>
       <p className="text-[13px] leading-relaxed text-[var(--nim-text-muted)] mb-3">
-        New tracker items will use this prefix (e.g., <code className="text-[11px] text-[var(--nim-code-text)] bg-[var(--nim-code-bg)] px-1 py-[1px] rounded">{draft || 'NIM'}-42</code>).
+        Published tracker items use this shared prefix (e.g., <code className="text-[11px] text-[var(--nim-code-text)] bg-[var(--nim-code-bg)] px-1 py-[1px] rounded">{draft || 'NIM'}-42</code>).
       </p>
       <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value.toUpperCase());
-            setError('');
-          }}
-          onBlur={handleBlur}
-          onKeyDown={handleKeyDown}
-          maxLength={5}
-          placeholder="NIM"
-          className="w-24 px-2.5 py-1.5 text-[13px] font-mono bg-[var(--nim-bg)] border border-[var(--nim-border)] rounded-md text-[var(--nim-text)] outline-none focus:border-[var(--nim-primary)] transition-colors"
-        />
+        {readOnly ? (
+          <span className="issue-key-prefix-readonly w-24 px-2.5 py-1.5 text-[13px] font-mono text-[var(--nim-text)]">
+            {draft || 'NIM'}
+          </span>
+        ) : (
+          <input
+            type="text"
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value.toUpperCase());
+              setError('');
+            }}
+            onBlur={handleBlur}
+            onKeyDown={handleKeyDown}
+            maxLength={5}
+            placeholder="NIM"
+            className="w-24 px-2.5 py-1.5 text-[13px] font-mono bg-[var(--nim-bg)] border border-[var(--nim-border)] rounded-md text-[var(--nim-text)] outline-none focus:border-[var(--nim-primary)] transition-colors"
+          />
+        )}
         <span className="text-[13px] text-[var(--nim-text-faint)]">-123</span>
       </div>
-      {error && (
+      {error && !readOnly && (
         <p className="text-[11px] text-[var(--nim-error)] mt-1.5">{error}</p>
       )}
       <p className="text-[11px] text-[var(--nim-text-faint)] mt-2">
-        Changing the prefix only affects new items. Existing items keep their current keys.
+        {readOnly
+          ? 'Only a team admin can change this project\'s prefix.'
+          : 'Changing the prefix only affects new items. Existing items keep their current keys.'}
       </p>
     </div>
   );
@@ -425,89 +585,73 @@ function AgentAccessSection({ enabled, onChange }: {
 
 function AdminView({
   trackers,
-  onSyncModeChange,
+  team,
   workspacePath,
   overrides,
   onCustomizeSchema,
   onResetSchema,
 }: {
   trackers: TrackerTypeConfig[];
-  onSyncModeChange: (type: string, mode: TrackerSyncMode) => void;
+  team: TrackerTeam | null;
   workspacePath?: string;
   overrides: Record<string, TrackerSchemaOverrideState>;
   onCustomizeSchema: (model: TrackerDataModel) => void;
   onResetSchema: (model: TrackerDataModel) => void;
 }) {
+  const groups = partitionTrackersByOwnership(trackers);
+  const rowActions = (tracker: TrackerTypeConfig) => (
+    <>
+      <TrackerLifecycleActions
+        tracker={tracker}
+        workspacePath={workspacePath}
+        hasTeam={team !== null}
+      />
+      <SchemaOverrideActions
+        model={tracker.model}
+        workspacePath={workspacePath}
+        override={overrides[tracker.model.type]}
+        onCustomize={onCustomizeSchema}
+        onReset={onResetSchema}
+      />
+      {!globalRegistry.isBuiltin(tracker.model.type) && (
+        <DeleteTrackerTypeButton model={tracker.model} workspacePath={workspacePath} />
+      )}
+    </>
+  );
+
   return (
     <>
-      {/* Team Sync Policy Section */}
-      <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
-        <h4 className="provider-panel-section-title text-[15px] font-semibold mb-2 text-[var(--nim-text)] flex items-center gap-2">
-          Team Sync Policy
-          <span className="px-[7px] py-[2px] rounded-[10px] text-[10px] font-semibold bg-[rgba(96,165,250,0.15)] text-[var(--nim-primary)]">
-            Admin
-          </span>
-        </h4>
-        <p className="text-[13px] leading-relaxed text-[var(--nim-text-muted)] mb-3">
-          Control how each tracker type syncs with the team. Changes apply to all members.
-        </p>
-
-        {/* Info Banner */}
-        <div className="flex items-start gap-2.5 p-3 bg-[rgba(96,165,250,0.08)] border border-[rgba(96,165,250,0.2)] rounded-lg mb-3">
-          <MaterialSymbol icon="info" size={14} className="text-[var(--nim-primary)] shrink-0 mt-0.5" />
-          <div className="text-[12px] text-[var(--nim-text-muted)] leading-relaxed">
-            <strong className="text-[var(--nim-primary)] font-semibold">Shared</strong> items sync to all team members in real time.{' '}
-            <strong className="text-[var(--nim-text-muted)] font-semibold">Local</strong> items stay on your machine only.{' '}
-            <strong className="text-[#a78bfa] font-semibold">Hybrid</strong> lets each item be shared or local individually.
-          </div>
-        </div>
-
-        {/* Tracker Type List */}
-        <div className="bg-[var(--nim-bg-secondary)] rounded-lg overflow-hidden">
-          {trackers.map((tracker) => (
-            <div
-              key={tracker.model.type}
-              className="flex items-center gap-2.5 px-3.5 py-2.5 border-b border-[var(--nim-bg)] last:border-b-0"
-            >
-              <TrackerIcon color={tracker.model.color} icon={tracker.model.icon} />
-              <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-medium text-[var(--nim-text)] flex items-center gap-1.5">
-                  {tracker.model.displayNamePlural}
-                  <span className="px-1.5 py-[1px] rounded bg-[var(--nim-bg-tertiary)] text-[var(--nim-text-muted)] text-[10px] font-semibold">
-                    <TrackerTypeCount type={tracker.model.type} />
-                  </span>
-                </div>
-                <div className="text-[11px] text-[var(--nim-text-faint)]">
-                  {getSyncMetaText(tracker.syncMode)}
-                </div>
-              </div>
-              <div className="shrink-0 flex items-center gap-1">
-                <SchemaOverrideActions
-                  model={tracker.model}
-                  workspacePath={workspacePath}
-                  override={overrides[tracker.model.type]}
-                  onCustomize={onCustomizeSchema}
-                  onReset={onResetSchema}
-                />
-                <SyncModeToggle
-                  mode={tracker.syncMode}
-                  onChange={(mode) => onSyncModeChange(tracker.model.type, mode)}
-                />
-                {!globalRegistry.isBuiltin(tracker.model.type) && (
-                  <DeleteTrackerTypeButton model={tracker.model} workspacePath={workspacePath} />
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      {team === null ? (
+        <TrackerOwnershipGroup
+          ownership={null}
+          trackers={trackers}
+          description={SOLO_GROUP_DESCRIPTION}
+          renderActions={rowActions}
+        />
+      ) : (
+        <>
+          <TrackerOwnershipGroup
+            ownership="team"
+            teamName={team.name}
+            trackers={groups.team}
+            description={TEAM_GROUP_DESCRIPTION}
+            renderActions={rowActions}
+          />
+          <TrackerOwnershipGroup
+            ownership="personal"
+            trackers={groups.personal}
+            description={PERSONAL_GROUP_DESCRIPTION}
+            renderActions={rowActions}
+          />
+        </>
+      )}
 
       {/* Inline Note */}
       <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
         <div className="flex items-start gap-1.5 p-2.5 bg-[var(--nim-bg-secondary)] rounded-md text-[11px] text-[var(--nim-text-faint)] leading-relaxed">
           <MaterialSymbol icon="info" size={14} className="shrink-0 mt-0.5" />
           <span>
-            Inline trackers (<code className="text-[11px] text-[var(--nim-code-text)] bg-[var(--nim-code-bg)] px-1 py-[1px] rounded">#bug[...]</code>) are always local, regardless of sync policy. Only tracked items created from the panel participate in sync.
+            Inline trackers (<code className="text-[11px] text-[var(--nim-code-text)] bg-[var(--nim-code-bg)] px-1 py-[1px] rounded">#bug[...]</code>) are always local, regardless of tracker sharing. Only tracked items created from the panel participate in team sync.
           </span>
         </div>
       </div>
@@ -529,89 +673,35 @@ function AdminView({
 // Member View
 // ============================================================================
 
-function MemberView({ trackers, workspacePath }: { trackers: TrackerTypeConfig[]; workspacePath?: string }) {
-  const sharedTrackers = trackers.filter((t) => t.syncMode !== 'local');
-  const localTrackers = trackers.filter((t) => t.syncMode === 'local');
+function MemberView({
+  trackers,
+  team,
+  workspacePath,
+}: {
+  trackers: TrackerTypeConfig[];
+  team: TrackerTeam | null;
+  workspacePath?: string;
+}) {
+  const groups = partitionTrackersByOwnership(trackers);
 
   return (
     <>
-      {/* Team Trackers (read-only) */}
-      <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
-        <h4 className="provider-panel-section-title text-[15px] font-semibold mb-2 text-[var(--nim-text)] flex items-center gap-2">
-          Team Trackers
-          <span className="text-[11px] font-normal text-[var(--nim-text-faint)]">Managed by admin</span>
-        </h4>
-        <p className="text-[13px] leading-relaxed text-[var(--nim-text-muted)] mb-3">
-          These tracker types are configured by your team admin. Shared items sync in real time.
-        </p>
-
-        <div className="bg-[var(--nim-bg-secondary)] rounded-lg overflow-hidden">
-          {sharedTrackers.map((tracker) => (
-            <div
-              key={tracker.model.type}
-              className="flex items-center gap-2.5 px-3.5 py-2.5 border-b border-[var(--nim-bg)] last:border-b-0"
-            >
-              <TrackerIcon color={tracker.model.color} icon={tracker.model.icon} />
-              <div className="flex-1 min-w-0">
-                <div className="text-[13px] font-medium text-[var(--nim-text)]">
-                  {tracker.model.displayNamePlural}
-                </div>
-                <div className="text-[11px] text-[var(--nim-text-faint)]">
-                  <TrackerTypeCount type={tracker.model.type} /> items synced with team
-                </div>
-              </div>
-              <div className="shrink-0">
-                <SyncBadge mode={tracker.syncMode} />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Local Trackers */}
-      {localTrackers.length > 0 && (
-        <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
-          <h4 className="provider-panel-section-title text-[15px] font-semibold mb-2 text-[var(--nim-text)] flex items-center gap-2">
-            Your Local Trackers
-            <span className="text-[11px] font-normal text-[var(--nim-text-faint)]">Only on this machine</span>
-          </h4>
-          <p className="text-[13px] leading-relaxed text-[var(--nim-text-muted)] mb-3">
-            These tracker types are local to your workspace. They never sync and are not visible to your team.
-          </p>
-
-          <div className="bg-[var(--nim-bg-secondary)] rounded-lg overflow-hidden">
-            {localTrackers.map((tracker) => (
-              <div
-                key={tracker.model.type}
-                className="flex items-center gap-2.5 px-3.5 py-2.5 border-b border-[var(--nim-bg)] last:border-b-0"
-              >
-                <TrackerIcon color={tracker.model.color} icon={tracker.model.icon} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-medium text-[var(--nim-text)]">
-                    {tracker.model.displayNamePlural}
-                  </div>
-                  <div className="text-[11px] text-[var(--nim-text-faint)]">
-                    <TrackerTypeCount type={tracker.model.type} /> items, local only
-                  </div>
-                </div>
-                <div className="shrink-0 flex items-center gap-1">
-                  <SyncBadge mode="local" />
-                  {!globalRegistry.isBuiltin(tracker.model.type) && (
-                    <DeleteTrackerTypeButton model={tracker.model} workspacePath={workspacePath} />
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-3">
-            <button className="inline-flex items-center gap-1 px-2.5 py-1 bg-transparent border border-[var(--nim-border)] rounded text-[var(--nim-text-muted)] text-[11px] cursor-pointer hover:bg-[var(--nim-bg-hover)]">
-              <MaterialSymbol icon="add" size={12} />
-              Add Custom Tracker
-            </button>
-          </div>
-        </div>
-      )}
+      <TrackerOwnershipGroup
+        ownership="team"
+        teamName={team?.name}
+        trackers={groups.team}
+        description={TEAM_GROUP_DESCRIPTION}
+      />
+      <TrackerOwnershipGroup
+        ownership="personal"
+        trackers={groups.personal}
+        description={PERSONAL_GROUP_DESCRIPTION}
+        renderActions={(tracker) => (
+          !globalRegistry.isBuiltin(tracker.model.type)
+            ? <DeleteTrackerTypeButton model={tracker.model} workspacePath={workspacePath} />
+            : null
+        )}
+      />
 
       {/* Inline Note */}
       <div className="provider-panel-section py-4">
@@ -627,97 +717,6 @@ function MemberView({ trackers, workspacePath }: { trackers: TrackerTypeConfig[]
 }
 
 // ============================================================================
-// Schema Drift Warning
-// ============================================================================
-
-/**
- * Warns when the on-disk YAML schemas (the git-tracked init/import format) have
- * fallen out of step with the DB-materialized mirror (the local source of truth
- * read by the `nim` CLI). Offers a non-destructive "Resync from files" reset.
- */
-function SchemaDriftWarning({ workspacePath }: { workspacePath?: string }) {
-  const [drift, setDrift] = useState<WorkspaceSchemaDrift | null>(null);
-  const [resyncing, setResyncing] = useState(false);
-
-  const refresh = useCallback(async () => {
-    if (!workspacePath) {
-      setDrift(null);
-      return;
-    }
-    try {
-      const result: WorkspaceSchemaDrift = await (window as any).electronAPI.invoke(
-        'tracker-schema:get-drift',
-        workspacePath
-      );
-      setDrift(result ?? null);
-    } catch {
-      setDrift(null);
-    }
-  }, [workspacePath]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const handleResync = useCallback(async () => {
-    if (!workspacePath || resyncing) return;
-    setResyncing(true);
-    try {
-      const result: WorkspaceSchemaDrift = await (window as any).electronAPI.invoke(
-        'tracker-schema:resync-mirror',
-        workspacePath
-      );
-      setDrift(result ?? null);
-    } catch {
-      // Leave the existing warning in place on failure.
-    } finally {
-      setResyncing(false);
-    }
-  }, [workspacePath, resyncing]);
-
-  if (!drift?.hasDrift) return null;
-
-  const warnings = drift.entries.filter((e) => DRIFT_WARNING_STATUSES.has(e.status));
-  if (warnings.length === 0) return null;
-
-  return (
-    <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0">
-      <div
-        className="tracker-schema-drift-warning flex items-start gap-2.5 p-3 bg-[rgba(245,158,11,0.08)] border border-[rgba(245,158,11,0.25)] rounded-lg"
-        data-testid="tracker-schema-drift-warning"
-      >
-        <MaterialSymbol icon="sync_problem" size={14} className="text-[#f59e0b] shrink-0 mt-0.5" />
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-medium text-[var(--nim-text)] mb-1">
-            Schema files are out of sync
-          </div>
-          <p className="text-[12px] text-[var(--nim-text-muted)] leading-relaxed mb-2">
-            The tracker schema files in <code className="text-[11px] text-[var(--nim-code-text)] bg-[var(--nim-code-bg)] px-1 py-[1px] rounded">.nimbalyst/trackers</code> differ from the local database mirror.
-          </p>
-          <ul className="text-[12px] text-[var(--nim-text-muted)] leading-relaxed mb-3 space-y-0.5">
-            {warnings.map((e) => (
-              <li key={e.type} className="flex items-center gap-1.5">
-                <span className="font-mono text-[11px] text-[var(--nim-text)]">{e.type}</span>
-                <span className="text-[var(--nim-text-faint)]">- {describeDriftStatus(e.status)}</span>
-              </li>
-            ))}
-          </ul>
-          <button
-            onClick={handleResync}
-            disabled={resyncing}
-            className="inline-flex items-center gap-1 px-2.5 py-1 bg-transparent border border-[rgba(245,158,11,0.4)] rounded text-[#f59e0b] text-[11px] cursor-pointer hover:bg-[rgba(245,158,11,0.12)] disabled:opacity-50 disabled:cursor-default"
-            data-testid="tracker-schema-resync-button"
-          >
-            <MaterialSymbol icon="sync" size={12} />
-            {resyncing ? 'Resyncing...' : 'Resync from files'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
 // TrackerConfigPanel
 // ============================================================================
 
@@ -726,9 +725,20 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
   const [schemaOverrides, setSchemaOverrides] = useState<Record<string, TrackerSchemaOverrideState>>({});
   const [isAdmin, setIsAdmin] = useState(false);
   const [issueKeyPrefix, setIssueKeyPrefix] = useState(() => deriveIssueKeyPrefix(workspacePath ?? ''));
+  const [localKeyPrefixConfig, setLocalKeyPrefixConfig] = useState<LocalKeyPrefixConfig>(() => ({
+    prefix: deriveIssueKeyPrefix(workspacePath ?? ''),
+    hasIssuedNumbers: false,
+    matchesTeamPrefix: true,
+  }));
   const [isSyncConnected, setIsSyncConnected] = useState(false);
   const [agentAccessEnabled, setAgentAccessEnabled] = useState(true);
+  const [schemaChangeConfirm, setSchemaChangeConfirm] = useState<
+    { model: TrackerDataModel; preview: TrackerSchemaChangePreview } | null
+  >(null);
+  const [schemaChangePending, setSchemaChangePending] = useState(false);
   const { confirm } = useDialog();
+  // Same lookup the sidebar sections use, so both name the team identically.
+  const { team } = useTrackerTeamOwnership(workspacePath);
 
   const refreshSchemaOverrides = useCallback(async (models: TrackerDataModel[]) => {
     if (!workspacePath) {
@@ -751,13 +761,11 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
   }, [workspacePath]);
 
   useEffect(() => {
-    // Load saved sync policies from workspace state, then merge with registry
-    const loadPolicies = async () => {
-      let savedPolicies: Record<string, TrackerSyncMode> = {};
+    // Sharing is schema-owned; there is no per-machine item policy to merge.
+    const loadTrackerConfig = async () => {
       if (workspacePath) {
         try {
           const state = await (window as any).electronAPI.invoke('workspace:get-state', workspacePath);
-          savedPolicies = state?.trackerSyncPolicies ?? {};
           setIssueKeyPrefix(state?.issueKeyPrefix || LEGACY_ISSUE_KEY_PREFIX);
           setAgentAccessEnabled(state?.trackersEnabled ?? true);
         } catch {
@@ -769,9 +777,12 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
           const teamResult = await (window as any).electronAPI.team.findForWorkspace(workspacePath);
           if (teamResult.success) {
             if (teamResult.team) {
-              setIsAdmin(teamResult.team.role === 'admin');
+              // Owners are super-admins; the server's gate accepts them, so a
+              // check that only matched 'admin' showed an owner the read-only
+              // view for a change the room would have taken.
+              setIsAdmin(teamResult.team.role === 'admin' || teamResult.team.role === 'owner');
             } else {
-              // No team matched this workspace, so keep local tracker policy management available.
+              // No team matched this workspace, so keep local tracker schema management available.
               setIsAdmin(true);
             }
           }
@@ -791,22 +802,23 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
       const models = globalRegistry.getAll();
       const configs: TrackerTypeConfig[] = models.map((model) => ({
         model,
-        syncMode: savedPolicies[model.type] ?? model.sync?.mode ?? 'local',
+        sharing: model.sharing ?? 'personal',
+        draftByDefault: model.draftByDefault ?? false,
       }));
       setTrackers(configs);
       void refreshSchemaOverrides(models);
     };
 
-    loadPolicies();
+    loadTrackerConfig();
 
     // Subscribe to registry changes (e.g., custom trackers loaded later)
     const unsubscribe = globalRegistry.onChange(() => {
       const updatedModels = globalRegistry.getAll();
       setTrackers((prev) => {
-        const existingModes = new Map(prev.map((t) => [t.model.type, t.syncMode]));
         const updatedTrackers = updatedModels.map((model) => ({
           model,
-          syncMode: existingModes.get(model.type) ?? model.sync?.mode ?? 'local',
+          sharing: model.sharing ?? 'personal',
+          draftByDefault: model.draftByDefault ?? false,
         }));
         void refreshSchemaOverrides(updatedModels);
         return updatedTrackers;
@@ -817,6 +829,21 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
       unsubscribe();
     };
   }, [refreshSchemaOverrides, workspacePath]);
+
+  useEffect(() => {
+    if (!workspacePath) return;
+    let cancelled = false;
+    void (window as any).electronAPI.invoke('tracker-local-key:get-prefix-config', workspacePath)
+      .then((config: LocalKeyPrefixConfig) => {
+        if (!cancelled) setLocalKeyPrefixConfig(config);
+      })
+      .catch(() => {
+        // Keep the derived fallback visible if the main-process settings read fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [issueKeyPrefix, workspacePath]);
 
   // React to `tracker-sync:config-changed` events broadcast by main. The IPC
   // event is handled centrally in store/listeners/trackerSyncListeners.ts
@@ -852,6 +879,16 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
     }
   }, [workspacePath, isSyncConnected]);
 
+  const handleLocalPrefixChange = useCallback(async (prefix: string): Promise<LocalKeyPrefixConfig> => {
+    if (!workspacePath) throw new Error('Open a project before changing its local tracker prefix.');
+    const config = await (window as any).electronAPI.invoke('tracker-local-key:set-prefix', {
+      workspacePath,
+      prefix,
+    }) as LocalKeyPrefixConfig;
+    setLocalKeyPrefixConfig(config);
+    return config;
+  }, [workspacePath]);
+
   const handleAgentAccessChange = useCallback((enabled: boolean) => {
     setAgentAccessEnabled(enabled);
     if (workspacePath) {
@@ -860,39 +897,6 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
       });
     }
   }, [workspacePath]);
-
-  const handleSyncModeChange = useCallback(async (type: string, mode: TrackerSyncMode) => {
-    const tracker = trackers.find((entry) => entry.model.type === type);
-    if (!tracker || tracker.syncMode === mode) {
-      return;
-    }
-
-    if (!canUpgradeTrackerMode(tracker.syncMode, mode, isAdmin)) {
-      return;
-    }
-
-    if (requiresTrackerUpgradeConfirmation(tracker.syncMode, mode)) {
-      const approved = await confirm(
-        buildTrackerUpgradeConfirmOptions(tracker.model.displayNamePlural, mode)
-      );
-      if (!approved) {
-        return;
-      }
-    }
-
-    setTrackers((prev) =>
-      prev.map((t) =>
-        t.model.type === type ? { ...t, syncMode: mode } : t
-      )
-    );
-
-    // Persist to workspace state
-    if (workspacePath) {
-      (window as any).electronAPI.invoke('workspace:update-state', workspacePath, {
-        trackerSyncPolicies: { [type]: mode },
-      });
-    }
-  }, [confirm, isAdmin, trackers, workspacePath]);
 
   const handleCustomizeSchema = useCallback(async (model: TrackerDataModel) => {
     if (!workspacePath) return;
@@ -914,8 +918,45 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
     }
   }, [refreshSchemaOverrides, workspacePath]);
 
+  const applyResetSchema = useCallback(async (model: TrackerDataModel, confirmDestructive: boolean) => {
+    try {
+      await (window as any).electronAPI.invoke(
+        'tracker-schema:reset-override',
+        workspacePath,
+        model.type,
+        { confirmDestructive },
+      );
+      await refreshSchemaOverrides(globalRegistry.getAll());
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : `Could not reset ${model.displayNamePlural}.`);
+    }
+  }, [refreshSchemaOverrides, workspacePath]);
+
+  /**
+   * Resetting an override removes whatever it added, so it is priced by the same
+   * guard rail as any other removal — and on a team tracker it resets the type
+   * for everyone. An override that only changed presentation classifies as
+   * non-destructive and keeps the plain confirm.
+   */
   const handleResetSchema = useCallback(async (model: TrackerDataModel) => {
     if (!workspacePath) return;
+    let preview: TrackerSchemaChangePreview | null = null;
+    try {
+      preview = await (window as any).electronAPI.invoke(
+        'tracker-schema:preview-change',
+        workspacePath,
+        model.type,
+      ) as TrackerSchemaChangePreview;
+    } catch {
+      // Pricing is best-effort; fall through to the plain confirm rather than
+      // blocking a reset because the item count could not be read.
+    }
+
+    if (preview?.classification === 'destructive' && preview.copy) {
+      setSchemaChangeConfirm({ model, preview });
+      return;
+    }
+
     const approved = await confirm({
       title: `Reset ${model.displayNamePlural}?`,
       message: `Delete the workspace schema override for "${model.displayNamePlural}" and return to the built-in default?`,
@@ -924,17 +965,8 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
       destructive: true,
     });
     if (!approved) return;
-    try {
-      await (window as any).electronAPI.invoke(
-        'tracker-schema:reset-override',
-        workspacePath,
-        model.type,
-      );
-      await refreshSchemaOverrides(globalRegistry.getAll());
-    } catch (err) {
-      window.alert(err instanceof Error ? err.message : `Could not reset ${model.displayNamePlural}.`);
-    }
-  }, [confirm, refreshSchemaOverrides, workspacePath]);
+    await applyResetSchema(model, false);
+  }, [applyResetSchema, confirm, workspacePath]);
 
   return (
     <div className="tracker-config-panel provider-panel flex flex-col">
@@ -945,9 +977,9 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
           <AlphaBadge size="sm" tooltip={SETTINGS_ALPHA_TOOLTIP} />
         </h3>
         <p className="provider-panel-description text-[13px] leading-relaxed text-[var(--nim-text-muted)]">
-          {isAdmin
-            ? 'Configure which tracker types are shared with the team and manage local-only trackers.'
-            : 'View team-shared tracker types and manage your local trackers.'}
+          {team
+            ? 'Each tracker owns its fields, its items and its numbering, and is either yours or your team\'s.'
+            : 'Each tracker owns its fields and its items. Everything here stays on this machine.'}
         </p>
       </div>
 
@@ -958,25 +990,48 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
         onChange={handleAgentAccessChange}
       />
 
-      <SchemaDriftWarning workspacePath={workspacePath} />
+      <TrackerSchemaDriftWarning workspacePath={workspacePath} />
+
+      <LocalKeyPrefixInput
+        config={localKeyPrefixConfig}
+        teamPrefix={issueKeyPrefix}
+        onChange={handleLocalPrefixChange}
+      />
 
       <IssueKeyPrefixInput
         value={issueKeyPrefix}
         onChange={handlePrefixChange}
+        readOnly={!isAdmin}
       />
 
       {isAdmin ? (
         <AdminView
           trackers={trackers}
-          onSyncModeChange={handleSyncModeChange}
+          team={team}
           workspacePath={workspacePath}
           overrides={schemaOverrides}
           onCustomizeSchema={handleCustomizeSchema}
           onResetSchema={handleResetSchema}
         />
       ) : (
-        <MemberView trackers={trackers} workspacePath={workspacePath} />
+        <MemberView trackers={trackers} team={team} workspacePath={workspacePath} />
       )}
+
+      <TrackerSchemaChangeConfirm
+        preview={schemaChangeConfirm?.preview ?? null}
+        pending={schemaChangePending}
+        onCancel={() => setSchemaChangeConfirm(null)}
+        onApply={async () => {
+          if (!schemaChangeConfirm) return;
+          setSchemaChangePending(true);
+          try {
+            await applyResetSchema(schemaChangeConfirm.model, true);
+            setSchemaChangeConfirm(null);
+          } finally {
+            setSchemaChangePending(false);
+          }
+        }}
+      />
     </div>
   );
 }

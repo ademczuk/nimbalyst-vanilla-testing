@@ -29,11 +29,11 @@
  * }
  * ```
  *
- * Bootstrap-race safety: if two clients both open an empty document, both
- * will call `initializeFromContent` and their CRDT updates merge. To avoid
- * duplicate elements your seeded shared types MUST use **content-derived
- * stable IDs** (e.g. element `id` from the file), not random IDs. The same
- * input yields the same Y.Doc state; merged duplicates collapse.
+ * Bootstrap-race safety: two clients seeding the same file must assign the
+ * same keys, so seed identity must be deterministic from stable file data or
+ * order, not random. In a keyed structured document, assign each key once and
+ * never recompute it from mutable content; changing it replaces the shared
+ * type and loses its history and concurrent edits.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -57,8 +57,8 @@ export interface CollabBindContext {
 }
 
 export type CollabBindResult =
-  | { destroy: () => void }
-  | Promise<{ destroy: () => void }>;
+  | CollaborativeBindingHandle
+  | Promise<CollaborativeBindingHandle>;
 
 /**
  * Preferred config: pass the SAME pure {@link CollabCodec} the extension
@@ -114,8 +114,9 @@ export interface UseCollaborativeEditorLegacyConfig {
   /**
    * @deprecated Provide `seedFromFile` on the codec. Populate the Y.Doc from
    * raw file content when this client is first. Called inside a
-   * `yDoc.transact(..., COLLAB_INIT_ORIGIN)`. Use content-derived stable IDs
-   * (see file-level docs) to keep the bootstrap race deterministic.
+   * `yDoc.transact(..., COLLAB_INIT_ORIGIN)`. Seed keys deterministically from
+   * the file so concurrent seeds converge. In keyed structured documents,
+   * never recompute an assigned key from mutable content.
    */
   initializeFromContent(yDoc: Y.Doc, content: string | ArrayBuffer): void;
 
@@ -125,6 +126,18 @@ export interface UseCollaborativeEditorLegacyConfig {
 export type UseCollaborativeEditorConfig =
   | UseCollaborativeEditorCodecConfig
   | UseCollaborativeEditorLegacyConfig;
+
+/**
+ * What a binding factory returns. `syncNow` is optional and opt-in: a binding
+ * that debounces its local pushes should expose it so the hook can register it
+ * as the host's pending-content drain (see
+ * `CollaborationContext.registerContentFlush`). Bindings that write through to
+ * the Y.Doc synchronously can omit it.
+ */
+export interface CollaborativeBindingHandle {
+  destroy: () => void;
+  syncNow?: () => void | Promise<void>;
+}
 
 export interface UseCollaborativeEditorResult {
   /** True when `host.collaboration` is defined. */
@@ -140,7 +153,7 @@ export interface UseCollaborativeEditorResult {
    * The binding handle once the binding factory has run, or `null` until
    * collaboration is ready / when not collab.
    */
-  binding: { destroy: () => void } | null;
+  binding: CollaborativeBindingHandle | null;
   /**
    * Non-null when the first-open seed failed or its flush was not confirmed by
    * the server. Hosts read this to surface the failure (pending-seed toast)
@@ -214,7 +227,7 @@ export function useCollaborativeEditor(
   const [collaborators, setCollaborators] = useState<
     Map<string, CollaboratorInfo>
   >(() => new Map());
-  const [binding, setBinding] = useState<{ destroy: () => void } | null>(null);
+  const [binding, setBinding] = useState<CollaborativeBindingHandle | null>(null);
   const [seedError, setSeedError] = useState<unknown | null>(null);
 
   // Keep config in a ref so the binding-creation effect doesn't tear down on
@@ -268,101 +281,119 @@ export function useCollaborativeEditor(
     if (!collab) return;
 
     let cancelled = false;
-    let handle: { destroy: () => void } | null = null;
+    let handle: CollaborativeBindingHandle | null = null;
+    let starting = false;
+    let unregisterContentFlush: (() => void) | null = null;
 
     const tryStart = async () => {
-      if (cancelled || handle) return;
-      if (collab.getStatus() !== 'connected') return;
-
+      if (cancelled || handle || starting) return;
       const cfg = resolveConfig(configRef.current);
+      const connected = collab.getStatus() === 'connected';
+      // A complete local replica can hydrate the Y.Doc before any network is
+      // available. Bind that non-empty document immediately so custom editors
+      // can reopen offline; only first-open seeding requires a live transport.
+      if (!connected && cfg.isEmpty(collab.yDoc)) return;
 
-      // NEVER seed when the transport skipped payloads it could not decode:
-      // the Y.Doc looking empty then means "content exists but is unreadable
-      // on this client", and seeding would write a default document over the
-      // real content for every client (the "Untitled map" clobber).
-      const undecoded = collab.hasUndecodedContent?.() === true;
+      starting = true;
+      try {
+        // NEVER seed when the transport skipped payloads it could not decode:
+        // the Y.Doc looking empty then means "content exists but is unreadable
+        // on this client", and seeding would write a default document over the
+        // real content for every client (the "Untitled map" clobber).
+        const undecoded = collab.hasUndecodedContent?.() === true;
 
-      if (!undecoded && cfg.isEmpty(collab.yDoc)) {
-        try {
-          const content = await collab.loadInitialContent();
-          if (cancelled) return;
-          // NEVER seed from empty content. A host that has no bytes for this
-          // document (reopen of an already-shared doc: no in-memory share
-          // payload, no file) returns ''/empty -- seeding from that writes a
-          // default document into the shared room and clobbers whatever the
-          // room's real content is for every client. Fall through to bind:
-          // the room content (or a teammate's seed) will populate the doc.
-          if (!hasSeedableContent(content)) {
-            console.warn(
-              '[useCollaborativeEditor] Skipping first-open seed: host returned empty initial content.'
+        if (connected && !undecoded && cfg.isEmpty(collab.yDoc)) {
+          try {
+            const content = await collab.loadInitialContent();
+            if (cancelled) return;
+            // NEVER seed from empty content. A host that has no bytes for this
+            // document (reopen of an already-shared doc: no in-memory share
+            // payload, no file) returns ''/empty -- seeding from that writes a
+            // default document into the shared room and clobbers whatever the
+            // room's real content is for every client. Fall through to bind:
+            // the room content (or a teammate's seed) will populate the doc.
+            if (!hasSeedableContent(content)) {
+              console.warn(
+                '[useCollaborativeEditor] Skipping first-open seed: host returned empty initial content.'
+              );
+            }
+            // Re-check emptiness in case another client seeded while we were
+            // awaiting -- they would have raced through the WebSocket and
+            // applied their update during our await gap. Avoid double-seeding
+            // in that case; CRDT merge would otherwise insert duplicate
+            // content unless the seed is fully deterministic.
+            else if (cfg.isEmpty(collab.yDoc)) {
+              collab.yDoc.transact(() => {
+                cfg.seed(collab.yDoc, content);
+              }, COLLAB_INIT_ORIGIN);
+              // Durability: the seed the user sees locally must reach the server
+              // before this provider can tear down. flushWithAck resolves only
+              // after a server-persisted ack; flushLocalState is the deprecated
+              // fire-and-forget fallback for older hosts.
+              const flushed = collab.flushWithAck
+                ? await collab.flushWithAck()
+                : (await collab.flushLocalState?.(), true);
+              if (!flushed) {
+                const err = new Error(
+                  'Seed flush was not confirmed by the server before timeout; content may not have persisted.'
+                );
+                console.warn('[useCollaborativeEditor]', err.message);
+                setSeedError(err);
+                collab.reportSeedOutcome?.({ ok: false, error: err });
+                cfg.onSeedOutcome?.({ ok: false, error: err });
+              } else {
+                setSeedError(null);
+                collab.reportSeedOutcome?.({ ok: true });
+                cfg.onSeedOutcome?.({ ok: true });
+              }
+            }
+          } catch (err) {
+            console.error(
+              '[useCollaborativeEditor] Failed to load/seed initial content:',
+              err
+            );
+            setSeedError(err);
+            collab.reportSeedOutcome?.({ ok: false, error: err });
+            cfg.onSeedOutcome?.({ ok: false, error: err });
+            // Continue with bind -- the doc may still be usable once another
+            // client seeds it.
+          }
+        }
+
+        if (cancelled) return;
+        const created = cfg.bind({
+          yDoc: collab.yDoc,
+          awareness: collab.awareness,
+          user: collab.user,
+        });
+        const resolved = created instanceof Promise ? await created : created;
+        if (cancelled) {
+          // Effect unmounted while we were awaiting the extension's
+          // imperative API. Destroy the freshly-built handle so any
+          // observers/awareness subscriptions inside it get cleaned up.
+          try {
+            resolved.destroy();
+          } catch (err) {
+            console.error(
+              '[useCollaborativeEditor] post-cancel destroy failed:',
+              err,
             );
           }
-          // Re-check emptiness in case another client seeded while we were
-          // awaiting -- they would have raced through the WebSocket and
-          // applied their update during our await gap. Avoid double-seeding
-          // in that case; CRDT merge would otherwise insert duplicate
-          // content unless the seed is fully deterministic.
-          else if (cfg.isEmpty(collab.yDoc)) {
-            collab.yDoc.transact(() => {
-              cfg.seed(collab.yDoc, content);
-            }, COLLAB_INIT_ORIGIN);
-            // Durability: the seed the user sees locally must reach the server
-            // before this provider can tear down. flushWithAck resolves only
-            // after a server-persisted ack; flushLocalState is the deprecated
-            // fire-and-forget fallback for older hosts.
-            const flushed = collab.flushWithAck
-              ? await collab.flushWithAck()
-              : (await collab.flushLocalState?.(), true);
-            if (!flushed) {
-              const err = new Error(
-                'Seed flush was not confirmed by the server before timeout; content may not have persisted.'
-              );
-              console.warn('[useCollaborativeEditor]', err.message);
-              setSeedError(err);
-              collab.reportSeedOutcome?.({ ok: false, error: err });
-              cfg.onSeedOutcome?.({ ok: false, error: err });
-            } else {
-              setSeedError(null);
-              collab.reportSeedOutcome?.({ ok: true });
-              cfg.onSeedOutcome?.({ ok: true });
-            }
-          }
-        } catch (err) {
-          console.error(
-            '[useCollaborativeEditor] Failed to load/seed initial content:',
-            err
-          );
-          setSeedError(err);
-          collab.reportSeedOutcome?.({ ok: false, error: err });
-          cfg.onSeedOutcome?.({ ok: false, error: err });
-          // Continue with bind -- the doc may still be usable once another
-          // client seeds it.
+          return;
         }
-      }
-
-      if (cancelled) return;
-      const created = cfg.bind({
-        yDoc: collab.yDoc,
-        awareness: collab.awareness,
-        user: collab.user,
-      });
-      const resolved = created instanceof Promise ? await created : created;
-      if (cancelled) {
-        // Effect unmounted while we were awaiting the extension's
-        // imperative API. Destroy the freshly-built handle so any
-        // observers/awareness subscriptions inside it get cleaned up.
-        try {
-          resolved.destroy();
-        } catch (err) {
-          console.error(
-            '[useCollaborativeEditor] post-cancel destroy failed:',
-            err,
-          );
+        handle = resolved;
+        // A binding that debounces its local pushes holds the newest edit
+        // outside the CRDT. Hand the host a drain so it can complete a write
+        // before reporting it done -- notably after a mutating AI tool, which
+        // otherwise returns success while the edit is still in the debounce.
+        if (typeof handle.syncNow === 'function') {
+          const syncNow = handle.syncNow.bind(handle);
+          unregisterContentFlush = collab.registerContentFlush?.(syncNow) ?? null;
         }
-        return;
+        setBinding(handle);
+      } finally {
+        starting = false;
       }
-      handle = resolved;
-      setBinding(handle);
     };
 
     void tryStart();
@@ -373,6 +404,8 @@ export function useCollaborativeEditor(
     return () => {
       cancelled = true;
       unsubscribe();
+      unregisterContentFlush?.();
+      unregisterContentFlush = null;
       if (handle) {
         handle.destroy();
         handle = null;

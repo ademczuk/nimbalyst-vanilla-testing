@@ -22,8 +22,9 @@
  *     someone else's part of the diagram.
  *
  *   - Awareness: publishes `selectedEntityId` and `selectedRelationshipId`
- *     whenever the local selection changes. Other clients can render presence
- *     indicators alongside the standard cursor/avatar.
+ *     whenever the local selection changes, and notifies the editor via
+ *     `onRemoteAwareness` when a remote state changes so it can repaint
+ *     presence chrome (`getRemotePresences()` supplies the render-ready list).
  *
  *   - Undo: a `Y.UndoManager` tracks only writes tagged with `this`. In collab
  *     mode we install a capture-phase Cmd/Ctrl+Z keyboard handler on the
@@ -38,7 +39,6 @@
 
 import * as Y from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
-import { COLLAB_INIT_ORIGIN } from '@nimbalyst/extension-sdk';
 import type { DataModelStoreApi } from '../store';
 import type {
   DataModelFile,
@@ -54,6 +54,7 @@ import {
   Y_META_KEY,
   Y_RELATIONSHIPS_KEY,
 } from './seed';
+import { extractRemotePresences, type RemotePresence } from './presence';
 
 export interface DataModelBindingOptions {
   /**
@@ -63,6 +64,13 @@ export interface DataModelBindingOptions {
    * no built-in undo to hijack and undo simply does nothing.
    */
   rootEl?: HTMLElement | null;
+
+  /**
+   * Called when remote awareness changes, so the editor can repaint presence
+   * chrome ("X has this entity selected"). Read the current list with
+   * {@link DataModelBinding.getRemotePresences}.
+   */
+  onRemoteAwareness?: () => void;
 }
 
 interface MetaSnapshot {
@@ -158,10 +166,27 @@ export class DataModelBinding {
     );
     this.subscriptions.push(() => this.yMeta.unobserve(onMetaChange));
 
-    // 4. Optional undo/redo keyboard hijack.
+    // 4. Remote awareness -> presence chrome.
+    if (this.awareness && options?.onRemoteAwareness) {
+      const onAwareness = options.onRemoteAwareness;
+      this.awareness.on('change', onAwareness);
+      this.subscriptions.push(() => this.awareness?.off('change', onAwareness));
+    }
+
+    // 5. Optional undo/redo keyboard hijack.
     if (options?.rootEl) {
       this.installUndoKeyboard(options.rootEl);
     }
+  }
+
+  /**
+   * Render-ready presence for every remote collaborator with a selection.
+   * Empty when the editor is running without awareness (local-only opens
+   * never construct the binding at all).
+   */
+  getRemotePresences(): RemotePresence[] {
+    if (!this.awareness) return [];
+    return extractRemotePresences(this.awareness.getStates(), this.awareness.clientID);
   }
 
   destroy(): void {
@@ -320,7 +345,6 @@ export class DataModelBinding {
 
   private handleRemoteChange(txn: Y.Transaction): void {
     if (txn.origin === this) return;
-    if (txn.origin === COLLAB_INIT_ORIGIN) return;
     this.applyYDocStateToStore();
   }
 

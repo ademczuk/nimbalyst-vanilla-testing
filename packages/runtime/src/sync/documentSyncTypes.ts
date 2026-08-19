@@ -8,6 +8,12 @@
 
 import type { Doc } from 'yjs';
 import type { LocalDocumentReplica } from './LocalDocumentReplica';
+import type {
+  PersonalJwt,
+  PersonalMemberId,
+  TeamJwt,
+  TeamMemberId,
+} from '../auth/jwtScopes';
 
 export type {
   DocClientMessage,
@@ -30,7 +36,7 @@ export type {
 // Configuration
 // ============================================================================
 
-export interface DocumentSyncConfig {
+interface DocumentSyncCommonConfig {
   /** Existing durable replica to attach to. The provider never destroys it. */
   replica?: LocalDocumentReplica;
 
@@ -39,18 +45,8 @@ export interface DocumentSyncConfig {
   /** WebSocket server URL (e.g., wss://sync.nimbalyst.com) */
   serverUrl: string;
 
-  /**
-   * Function to get a fresh JWT for WebSocket auth.
-   * `forceRefresh` (NIM-949) bypasses any cached org-scoped token so a reconnect
-   * after an auth-style rejection (HTTP 400 wrong-org/expired) re-exchanges.
-   */
-  getJwt: (opts?: { forceRefresh?: boolean }) => Promise<string>;
-
   /** B2B organization ID */
   orgId: string;
-
-  /** Current user's ID */
-  userId: string;
 
   /** Document ID (used to construct room ID) */
   documentId: string;
@@ -79,6 +75,19 @@ export interface DocumentSyncConfig {
   /** Called when connection status changes */
   onStatusChange?: (status: DocumentSyncStatus) => void;
 
+  /**
+   * Called when an update reached the Y.Doc but a listener threw while handling
+   * it -- in practice, the Lexical binding aborting.
+   *
+   * This is NOT a payload problem and deliberately does not stop sync, but the
+   * host has to know: the document is in the Y.Doc and did not paint, so an
+   * editor left on screen shows an empty document that looks blank rather than
+   * broken. That is exactly how an unregistered `tracker-reference` node
+   * reached production as "some docs still don't load" with nothing but a
+   * console error to show for it.
+   */
+  onEditorBindingError?: (error: unknown) => void;
+
   /** Structured, content-free desktop observability sink. */
   onOfflineMetric?: (event: {
     metric: string;
@@ -100,12 +109,6 @@ export interface DocumentSyncConfig {
   ) => void | Promise<void>;
 
   /**
-   * Called when the review gate state changes (remote changes arrive or are accepted/rejected).
-   * Allows UI to show pending review indicators.
-   */
-  onReviewStateChange?: (state: ReviewGateState) => void;
-
-  /**
    * Called once after the initial sync response from the server completes.
    * `isEmpty` is true if the server had no existing content for this room.
    *
@@ -124,17 +127,6 @@ export interface DocumentSyncConfig {
   onRoomMoved?: (dest: { destOrgId: string }) => void;
 
   /**
-   * Enable the review gate for remote changes.
-   * When true, remote updates are applied to the Y.Doc (for CRDT correctness and live preview)
-   * but marked as "unreviewed" -- the host application should not autosave until
-   * acceptRemoteChanges() is called.
-   *
-   * When false (default), all remote updates are treated as accepted immediately.
-   * Use false for single-user multi-device sync (no review needed for your own edits).
-   */
-  reviewGateEnabled?: boolean;
-
-  /**
    * Override the WebSocket URL construction.
    * If provided, called instead of the default JWT-based URL builder.
    * Useful for integration tests with auth bypass.
@@ -151,22 +143,29 @@ export interface DocumentSyncConfig {
   createWebSocket?: (url: string) => WebSocket;
 }
 
-// ============================================================================
-// Review Gate
-// ============================================================================
+type TeamDocumentSyncIdentity = {
+  /** Fresh team-org JWT for a shared document room. */
+  getJwt: (opts?: { forceRefresh?: boolean }) => Promise<TeamJwt>;
+  teamMemberId: TeamMemberId;
+  personalMemberId?: never;
+};
 
-/**
- * State of the review gate for remote changes.
- * Mirrors the AI "pending review" pattern: remote edits are visible in the editor
- * but not saved to disk until the user explicitly accepts them.
- */
-export interface ReviewGateState {
-  /** Whether there are any unreviewed remote changes */
-  hasUnreviewed: boolean;
-  /** Number of buffered remote update operations */
-  unreviewedCount: number;
-  /** User IDs that contributed unreviewed changes */
-  unreviewedAuthors: string[];
+type PersonalDocumentSyncIdentity = {
+  /** Fresh personal-org JWT for a personal/mobile document room. */
+  getJwt: (opts?: { forceRefresh?: boolean }) => Promise<PersonalJwt>;
+  personalMemberId: PersonalMemberId;
+  teamMemberId?: never;
+};
+
+/** JWT scope and room member identity must travel as one compiler-checked pair. */
+export type DocumentSyncConfig = DocumentSyncCommonConfig & (
+  TeamDocumentSyncIdentity | PersonalDocumentSyncIdentity
+);
+
+export type DocumentSyncMemberId = TeamMemberId | PersonalMemberId;
+
+export function documentSyncMemberId(config: DocumentSyncConfig): DocumentSyncMemberId {
+  return config.teamMemberId ?? config.personalMemberId;
 }
 
 // ============================================================================
@@ -212,6 +211,12 @@ export type AwarenessState = Record<string, unknown> & {
    *  the extension path so the SDK hook can dedupe remote collaborators by
    *  stable user id rather than y-protocols clientID. */
   user: { name: string; color: string; id?: string; [k: string]: unknown };
+  /**
+   * Additive, ephemeral departure marker. Updated clients delete the sender's
+   * remote state immediately; older clients ignore it and fall back to their
+   * existing stale-state cleanup while retaining the required user block.
+   */
+  nimbalystDeparture?: { version: 1 };
   /** Lexical-style cursor block (markdown path only). */
   cursor?: {
     anchor: SerializedRelativePosition;

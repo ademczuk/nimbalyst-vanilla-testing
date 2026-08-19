@@ -19,7 +19,7 @@ import type {
   FieldDefinition,
   FieldOption,
   StatusBarLayoutRow,
-  TrackerSyncPolicy,
+  TrackerSharing,
   TrackerSchemaRole,
 } from './TrackerDataModel';
 
@@ -54,7 +54,7 @@ export interface TrackerFieldPatch {
 
 /**
  * A delta applied on top of a resolved seed model. Every field is optional; only
- * the properties present are changed. Scalars are last-writer; `sync`/`roles` are
+ * the properties present are changed. Scalars are last-writer; `roles` are
  * shallow-merged; `fields`/options merge by key.
  */
 export interface TrackerSchemaPatch {
@@ -73,8 +73,12 @@ export interface TrackerSchemaPatch {
   /** Replaces the whole layout when present (it's a positional array). */
   statusBarLayout?: StatusBarLayoutRow[];
 
-  /** Shallow-merged onto the seed's sync policy. */
-  sync?: Partial<TrackerSyncPolicy>;
+  sharing?: TrackerSharing;
+  draftByDefault?: boolean;
+  /** Retire the tracker: items are kept and keyed, but become read-only. */
+  archived?: boolean;
+  /** Structured schema history, using the same entry shape as tracker item activity. */
+  activity?: unknown[];
   /** Shallow-merged onto the seed's roles map. */
   roles?: Partial<Record<TrackerSchemaRole, string>>;
 
@@ -104,17 +108,23 @@ export function isTrackerSchemaPatch(value: unknown): value is TrackerSchemaPatc
  * against the live seed.
  */
 export function parseTrackerSchemaPatchYAML(yamlString: string): TrackerSchemaPatch {
-  const data = yaml.load(yamlString);
+  const data = yaml.load(yamlString) as (TrackerSchemaPatch & { sync?: { mode?: string } }) | null;
   if (!data) throw new Error('Empty patch document');
   if (!isTrackerSchemaPatch(data)) {
     throw new Error("Tracker schema patch is missing a string 'type'");
   }
+  if (data.sync?.mode && data.sharing === undefined) {
+    data.sharing = data.sync.mode === 'local' ? 'personal' : 'team';
+    data.draftByDefault = data.sync.mode === 'hybrid';
+  }
+  delete data.sync;
   return data;
 }
 
 /** Serialize a patch to YAML for on-disk persistence. */
 export function serializeTrackerSchemaPatchYAML(patch: TrackerSchemaPatch): string {
-  return yaml.dump(patch, { indent: 2, lineWidth: 120, noRefs: true });
+  const { sync: _legacySync, ...serialized } = patch as TrackerSchemaPatch & { sync?: unknown };
+  return yaml.dump(serialized, { indent: 2, lineWidth: 120, noRefs: true });
 }
 
 function mergeOptions(
@@ -211,9 +221,11 @@ export function resolveTrackerSchemaPatch(
   if (patch.primaryCapable !== undefined) resolved.primaryCapable = patch.primaryCapable;
   if (patch.supportsTags !== undefined) resolved.supportsTags = patch.supportsTags;
   if (patch.statusBarLayout !== undefined) resolved.statusBarLayout = patch.statusBarLayout;
-
-  if (patch.sync) {
-    resolved.sync = { ...(seed.sync ?? { mode: 'local', scope: 'project' }), ...patch.sync };
+  if (patch.sharing !== undefined) resolved.sharing = patch.sharing;
+  if (patch.draftByDefault !== undefined) resolved.draftByDefault = patch.draftByDefault;
+  if (patch.archived !== undefined) resolved.archived = patch.archived;
+  if (patch.activity !== undefined) {
+    (resolved as TrackerDataModel & { activity?: unknown[] }).activity = [...patch.activity];
   }
   if (patch.roles) {
     resolved.roles = { ...(seed.roles ?? {}), ...patch.roles };
@@ -245,10 +257,45 @@ export function resolveTrackerSchemaPatch(
 }
 
 /**
+ * One `target` field paired with the same-named `seed` field, when there is one.
+ * A missing `seed` means the field is new in `target`.
+ */
+export interface TrackerFieldDiffEntry {
+  seed?: FieldDefinition;
+  target: FieldDefinition;
+}
+
+export interface TrackerFieldDiff {
+  /** One entry per `target` field, in `target` order (new and kept fields interleaved). */
+  entries: TrackerFieldDiffEntry[];
+  /** Seed fields with no same-named field in `target`, in `seed` order. */
+  removed: FieldDefinition[];
+}
+
+/**
+ * Partition two schemas' field lists by field `name` — the single definition of
+ * what "the same field" means across a schema change. Shared by
+ * {@link diffTrackerSchema}, which turns the partition into a patch, and by the
+ * schema-change classifier, which turns it into additive/destructive verdicts.
+ * Comparing the paired definitions is each caller's job; this only pairs them.
+ */
+export function diffTrackerFields(
+  seed: TrackerDataModel,
+  target: TrackerDataModel,
+): TrackerFieldDiff {
+  const seedFields = new Map(seed.fields.map((f) => [f.name, f]));
+  const targetNames = new Set(target.fields.map((f) => f.name));
+  return {
+    entries: target.fields.map((tf) => ({ seed: seedFields.get(tf.name), target: tf })),
+    removed: seed.fields.filter((sf) => !targetNames.has(sf.name)),
+  };
+}
+
+/**
  * Compute a minimal patch that turns `seed` into `target`. Used when persisting
  * a customized builtin as a delta and when sending overrides to peers so each
  * resolves against its own seed. Only handles the common cases (scalars, roles,
- * sync, fields by name, options by value); callers that need full fidelity can
+ * sharing, fields by name, options by value); callers that need full fidelity can
  * fall back to persisting the whole model.
  */
 export function diffTrackerSchema(
@@ -259,7 +306,8 @@ export function diffTrackerSchema(
 
   const scalarKeys: Array<keyof TrackerDataModel> = [
     'displayName', 'displayNamePlural', 'icon', 'color', 'inlineTemplate',
-    'creatable', 'primaryCapable', 'supportsTags',
+    'creatable', 'primaryCapable', 'supportsTags', 'sharing', 'draftByDefault',
+    'archived',
   ];
   const patchRecord = patch as unknown as Record<string, unknown>;
   for (const key of scalarKeys) {
@@ -268,22 +316,23 @@ export function diffTrackerSchema(
     }
   }
 
+  const targetActivity = (target as TrackerDataModel & { activity?: unknown[] }).activity;
+  const seedActivity = (seed as TrackerDataModel & { activity?: unknown[] }).activity;
+  if (JSON.stringify(seedActivity) !== JSON.stringify(targetActivity) && targetActivity) {
+    patch.activity = [...targetActivity];
+  }
+
   if (JSON.stringify(seed.statusBarLayout) !== JSON.stringify(target.statusBarLayout)) {
     patch.statusBarLayout = target.statusBarLayout;
-  }
-  if (JSON.stringify(seed.sync) !== JSON.stringify(target.sync) && target.sync) {
-    patch.sync = target.sync;
   }
   if (JSON.stringify(seed.roles) !== JSON.stringify(target.roles) && target.roles) {
     patch.roles = target.roles;
   }
 
   const fieldPatches: TrackerFieldPatch[] = [];
-  const seedFields = new Map(seed.fields.map((f) => [f.name, f]));
-  const targetNames = new Set(target.fields.map((f) => f.name));
+  const { entries, removed } = diffTrackerFields(seed, target);
 
-  for (const tf of target.fields) {
-    const sf = seedFields.get(tf.name);
+  for (const { seed: sf, target: tf } of entries) {
     if (!sf) {
       // New field: carry its full definition.
       const { name, options, ...rest } = tf;
@@ -299,10 +348,8 @@ export function diffTrackerSchema(
       fieldPatches.push(fp);
     }
   }
-  for (const sf of seed.fields) {
-    if (!targetNames.has(sf.name)) {
-      fieldPatches.push({ name: sf.name, remove: true });
-    }
+  for (const sf of removed) {
+    fieldPatches.push({ name: sf.name, remove: true });
   }
   if (fieldPatches.length > 0) patch.fields = fieldPatches;
 

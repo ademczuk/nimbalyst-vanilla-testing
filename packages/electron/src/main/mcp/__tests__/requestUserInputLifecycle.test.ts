@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EventEmitter } from 'events';
 
@@ -11,6 +13,7 @@ import {
   notePendingInteractiveWaiter,
   shouldSettleFromSessionFallback,
 } from '../tools/interactivePromptFallback';
+import { getInteractiveToolSchemas } from '../tools/interactiveToolHandlers';
 
 const ipc = new EventEmitter();
 
@@ -263,5 +266,64 @@ describe('RequestUserInput lifecycle', () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(first.isSettled()).toBe(false);
     expect(second.isSettled()).toBe(false);
+  });
+
+  it('preserves the shipped typed-field wire shape', () => {
+    const prompt = getInteractiveToolSchemas('schema-test').find(
+      (tool) => tool.name === 'PromptForUserInput',
+    );
+    const fieldSchema = (
+      prompt?.inputSchema as {
+        properties: { fields: { items: unknown } };
+      }
+    ).properties.fields.items;
+
+    expect(fieldSchema).toMatchObject({
+      type: 'object',
+      required: ['type', 'id', 'label'],
+      properties: {
+        type: { type: 'string', enum: ['multiSelect', 'singleSelect', 'reorder', 'editText', 'confirm'] },
+        id: { type: 'string' },
+        label: { type: 'string' },
+        description: { type: 'string' },
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['id', 'title'],
+            properties: {
+              id: { type: 'string' },
+              title: { type: 'string' },
+              subtitle: { type: 'string' },
+              badge: { type: 'string' },
+              defaultChecked: { type: 'boolean' },
+              removable: { type: 'boolean' },
+            },
+          },
+        },
+        minSelected: { type: 'integer', minimum: 0 },
+        maxSelected: { type: 'integer', minimum: 0 },
+        minItems: { type: 'integer', minimum: 0 },
+        options: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['id', 'label'],
+            properties: {
+              id: { type: 'string' },
+              label: { type: 'string' },
+              description: { type: 'string' },
+            },
+          },
+        },
+        allowOther: { type: 'boolean' },
+        initialText: { type: 'string' },
+        format: { type: 'string', enum: ['markdown', 'plain'] },
+        placeholder: { type: 'string' },
+        minLength: { type: 'integer', minimum: 0 },
+        maxLength: { type: 'integer', minimum: 1 },
+        defaultValue: { type: 'boolean' },
+      },
+    });
   });
 });

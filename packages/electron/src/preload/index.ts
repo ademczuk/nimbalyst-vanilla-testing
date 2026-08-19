@@ -14,8 +14,22 @@ import type {
   ReplaceLocalReplicaSnapshotInput,
 } from '@nimbalyst/runtime/sync';
 import type { ConversationSubscription } from '@nimbalyst/collab-protocol';
+import type {
+  PersonalJwt,
+  PersonalMemberId,
+  TeamJwt,
+  TeamMemberId,
+} from '@nimbalyst/runtime/auth/jwtScopes';
 import type { ConversationSetSubscriptionRequest } from '../shared/conversationDirectory.ts';
-import type { TutorialStartResult, TutorialStatusResult } from '../shared/tutorial.ts';
+import type {
+  FeedbackRequestCloseIpcRequest,
+  FeedbackRequestCommentIpcRequest,
+  FeedbackRequestCreateIpcRequest,
+  FeedbackRequestNudgeIpcRequest,
+  FeedbackRequestRespondIpcRequest,
+  FeedbackRequestServiceTarget,
+} from '../shared/feedbackRequest.ts';
+import type { TutorialEntryPoint, TutorialStartResult, TutorialStatusResult } from '../shared/tutorial.ts';
 
 type StytchAuthFlowOptions = {
   intent: 'sign-in' | 'add-account' | 'reauth';
@@ -286,11 +300,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     filters?: Array<{ name: string; extensions: string[] }>;
     defaultPath?: string;
   }) => ipcRenderer.invoke('dialog:openFile', options),
-  saveFile: (content: string, filePath: string, lastKnownContent?: string) => {
+  saveFile: (
+    content: string,
+    filePath: string,
+    lastKnownContent?: string,
+    saveSource: 'auto' | 'manual' = 'manual',
+  ) => {
     if (!filePath) {
       throw new Error('saveFile requires a filePath parameter. Use saveFileAs for save dialogs.');
     }
-    return ipcRenderer.invoke('save-file', content, filePath, lastKnownContent);
+    return ipcRenderer.invoke('save-file', content, filePath, lastKnownContent, saveSource);
   },
   saveFileAs: (content: string) => ipcRenderer.invoke('save-file-as', content),
   showErrorDialog: (title: string, message: string) => ipcRenderer.invoke('show-error-dialog', title, message),
@@ -736,6 +755,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendMcpCollabIndexResult: (resultChannel: string, result: { success: boolean; error?: string; [key: string]: unknown }) => {
     ipcRenderer.send(resultChannel, result);
   },
+  onMcpGetResourceSharingStatus: (callback: (data: { sourceId: string; resultChannel: string }) => void) => {
+    const handler = (_event: any, data: { sourceId: string; resultChannel: string }) => callback(data);
+    ipcRenderer.on('mcp:getResourceSharingStatus', handler);
+    return () => ipcRenderer.removeListener('mcp:getResourceSharingStatus', handler);
+  },
+  sendMcpCollabReadResult: (
+    resultChannel: string,
+    result: { success: boolean; result?: unknown; error?: string },
+  ) => {
+    ipcRenderer.send(resultChannel, result);
+  },
   onMcpNavigateTo: (callback: (data: { line: number, column: number }) => void) => {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('mcp:navigateTo', handler);
@@ -831,8 +861,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   tutorial: {
     getStatus: () =>
       ipcRenderer.invoke('tutorial:get-status') as Promise<TutorialStatusResult>,
-    start: () =>
-      ipcRenderer.invoke('tutorial:start') as Promise<TutorialStartResult>,
+    start: (entryPoint?: TutorialEntryPoint) =>
+      ipcRenderer.invoke('tutorial:start', entryPoint) as Promise<TutorialStartResult>,
   },
 
   // Project Migration (move/rename)
@@ -868,17 +898,45 @@ contextBridge.exposeInMainWorld('electronAPI', {
       owner?: string;
       tags?: string[];
       customFields?: Record<string, any>;
-      syncMode?: string;
+      sharing?: 'personal' | 'team';
+      draftByDefault?: boolean;
     }) => ipcRenderer.invoke('document-service:create-tracker-item', item) as Promise<{ success: boolean; item?: any; error?: string }>,
     updateTrackerItem: (payload: {
       itemId: string;
       updates: Record<string, any>;
-      syncMode?: string;
+      sharing?: 'personal' | 'team';
+      draftByDefault?: boolean;
     }) => ipcRenderer.invoke('document-service:update-tracker-item', payload) as Promise<{ success: boolean; item?: any; error?: string }>,
-    setTrackerItemShared: (payload: {
+    /**
+     * Update many tracker items in one call. Each entry names its own routing --
+     * `fileUpdates` for a frontmatter-backed item, `storeUpdates` for the tracker
+     * store -- so a bulk board action costs one round trip instead of one per item.
+     * Main rejects empty batches, batches over 100 entries, and malformed entries
+     * before it starts the first write.
+     */
+    updateTrackerItems: (payload: {
+      entries: Array<{
+        itemId: string;
+        fileUpdates?: Record<string, any>;
+        storeUpdates?: Record<string, any>;
+        sharing?: 'personal' | 'team';
+        draftByDefault?: boolean;
+      }>;
+    }) => ipcRenderer.invoke('document-service:update-tracker-items', payload) as Promise<{
+      success: boolean;
+      results?: Array<{ itemId: string; success: boolean; error?: string }>;
+      error?: string;
+    }>,
+    setTrackerItemPublished: (payload: {
       itemId: string;
-      shared: boolean;
-    }) => ipcRenderer.invoke('document-service:set-tracker-item-shared', payload) as Promise<{ success: boolean; item?: any; error?: string }>,
+      published: boolean;
+    }) => ipcRenderer.invoke('document-service:set-tracker-item-published', payload) as Promise<{
+      success: boolean;
+      item?: any;
+      /** Effective type policy plus item flag, computed in main after the write. */
+      teamVisible?: boolean;
+      error?: string;
+    }>,
     migrateSharedFrontmatterIds: (payload?: { dryRun?: boolean }) =>
       ipcRenderer.invoke('document-service:migrate-shared-frontmatter-ids', payload) as Promise<{
         success: boolean;
@@ -980,6 +1038,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  // Tracker lifecycle: personal -> team promotion (one-way) and archive.
+  trackerLifecycle: {
+    promoteToTeam: (payload: { workspacePath: string; type: string }) =>
+      ipcRenderer.invoke('tracker-lifecycle:promote', payload) as Promise<{
+        success: boolean;
+        promotion?: { publishedCount: number; assignedKeyCount: number; pendingKeyCount: number };
+        error?: string;
+      }>,
+    setArchived: (payload: { workspacePath: string; type: string; archived: boolean }) =>
+      ipcRenderer.invoke('tracker-lifecycle:set-archived', payload) as Promise<{ success: boolean; error?: string }>,
+  },
+
   // Plaintext recovery copies for collaborative content
   collabBackup: {
     contentChanged: (payload: {
@@ -1012,7 +1082,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
           documentType?: string;
           serverUrl: string;
           accountId: string;
-          userId: string;
+          teamMemberId: TeamMemberId;
           userName?: string;
           userEmail?: string;
           urlExtraQuery?: string;
@@ -1251,6 +1321,41 @@ contextBridge.exposeInMainWorld('electronAPI', {
         } | null;
         migration?: { okCount: number; failedCount: number };
       }>,
+    pullLocalOrigin: (payload: {
+      workspacePath: string;
+      documentId: string;
+      forceOverwriteLocal?: boolean;
+      conflictToken?: string;
+    }) =>
+      ipcRenderer.invoke('document-sync:pull-local-origin', payload) as Promise<{
+        success: boolean;
+        status: 'noop' | 'pulled' | 'conflict' | 'missing-source' | 'unsupported' | 'error';
+        conflictKind?: 'missing-baseline' | 'local-ahead' | 'diverged';
+        conflictToken?: string;
+        message?: string;
+        binding?: {
+          orgId: string;
+          documentId: string;
+          gitRemoteHash: string | null;
+          workspacePathHash: string | null;
+          relativePath: string;
+          documentType: string;
+          sourceBasename: string;
+          lastLocalContentHash: string | null;
+          lastCollabContentHash: string | null;
+          lastSyncedAt: string | null;
+          lastSeenMtimeMs: number | null;
+          lastSeenSizeBytes: number | null;
+          resolutionStatus: 'resolved' | 'missing' | 'relinked' | 'conflict';
+          resolutionError: string | null;
+          createdAt: string;
+          updatedAt: string;
+          resolvedPath: string | null;
+        } | null;
+        lastEditorId?: string | null;
+        lastEditedAt?: number | null;
+        materializedAssetCount?: number;
+      }>,
     findLocalOriginLink: (workspacePath: string, sourceFilePath: string) =>
       ipcRenderer.invoke('document-sync:find-local-origin-link', {
         workspacePath,
@@ -1281,7 +1386,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getJwt: (orgId: string, forceRefresh?: boolean) =>
       ipcRenderer.invoke('document-sync:get-jwt', { orgId, forceRefresh }) as Promise<{
         success: boolean;
-        jwt?: string;
+        jwt?: TeamJwt;
         error?: string;
       }>,
     resolveIndexConfig: (workspacePath: string) =>
@@ -1290,7 +1395,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         config?: {
           orgId: string;
           serverUrl: string;
-          userId: string;
+          teamMemberId: TeamMemberId;
         };
         error?: string;
       }>,
@@ -1338,7 +1443,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         config?: {
           serverUrl: string;
           orgId: string;
-          userId: string;
+          personalMemberId: PersonalMemberId;
           encryptionKeyBase64: string;
           syncId: string;
           userName: string;
@@ -1348,7 +1453,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getPersonalJwt: () =>
       ipcRenderer.invoke('document-sync:get-personal-jwt') as Promise<{
         success: boolean;
-        jwt?: string;
+        jwt?: PersonalJwt;
         error?: string;
       }>,
 
@@ -1622,6 +1727,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('team:resolve-org-projects-local-state', orgId),
     openProjectWorkspace: (workspacePath: string) =>
       ipcRenderer.invoke('team:open-project-workspace', workspacePath),
+    // Attach a local directory to a shared project that has no git remote, then
+    // open it -- the join half of the git-free flow.
+    openSharedProject: (payload: { orgId: string; teamProjectId: string; directoryPath: string }) =>
+      ipcRenderer.invoke('team:open-shared-project', payload),
+    // Post-sign-in project walk: which orgs have nothing bound, what a chosen
+    // folder can be used for, and making it the project's folder.
+    resolveProjectWalk: () => ipcRenderer.invoke('team:resolve-project-walk'),
+    // Exactly one window records a completed sign-in; main arbitrates because
+    // the auth broadcast reaches all of them.
+    claimSignInAttribution: (key: string) =>
+      ipcRenderer.invoke('team:claim-sign-in-attribution', key),
+    // And exactly one window opens the project walk, for the same reason. Main
+    // prefers the window the sign-in was started from and brings it forward.
+    claimProjectWalk: (key: string) =>
+      ipcRenderer.invoke('team:claim-project-walk', key),
+    inspectProjectFolder: (payload: { orgId: string; teamProjectId: string; directoryPath: string }) =>
+      ipcRenderer.invoke('team:inspect-project-folder', payload),
+    joinProjectFolder: (payload: { orgId: string; teamProjectId: string; directoryPath: string }) =>
+      ipcRenderer.invoke('team:join-project-folder', payload),
+    cloneProject: (payload: { cloneId: string; remoteUrl: string; directoryPath: string }) =>
+      ipcRenderer.invoke('team:clone-project', payload),
+    cancelProjectClone: (cloneId: string) =>
+      ipcRenderer.invoke('team:cancel-project-clone', cloneId),
+    onProjectCloneProgress: (
+      callback: (progress: { cloneId: string; phase: string; percent: number | null }) => void,
+    ) => {
+      const handler = (_event: any, progress: any) => callback(progress);
+      ipcRenderer.on('team:project-clone-progress', handler);
+      return () => ipcRenderer.removeListener('team:project-clone-progress', handler);
+    },
     // Epic H3 P3: move-project wizard. Preview is read-only; move is destructive (admin on both orgs).
     moveProjectPreview: (srcOrgId: string, projectId: string, destOrgId: string) =>
       ipcRenderer.invoke('team:move-project-preview', srcOrgId, projectId, destOrgId),
@@ -1657,7 +1792,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('team:find-pending-invite-for-email', email),
     acceptInvitation: (orgId: string) => ipcRenderer.invoke('team:accept-invite', orgId),
     listMembers: (orgId: string) => ipcRenderer.invoke('team:list-members', orgId),
-    inviteMember: (orgId: string, email: string) => ipcRenderer.invoke('team:invite', orgId, email),
+    inviteMember: (orgId: string, email: string, role?: 'owner' | 'admin' | 'member' | 'viewer' | 'guest') =>
+      ipcRenderer.invoke('team:invite', orgId, email, role),
     removeMember: (orgId: string, memberId: string) => ipcRenderer.invoke('team:remove-member', orgId, memberId),
     updateMemberRole: (orgId: string, memberId: string, role: string) => ipcRenderer.invoke('team:update-role', orgId, memberId, role),
     listProjects: (orgId: string) => ipcRenderer.invoke('team:list-projects', orgId),
@@ -1690,6 +1826,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
         success: boolean;
         error?: string;
       }>,
+  },
+
+  feedbackRequest: {
+    start: (target: FeedbackRequestServiceTarget) =>
+      ipcRenderer.invoke('feedback-request:start', target),
+    getCached: (target: FeedbackRequestServiceTarget) =>
+      ipcRenderer.invoke('feedback-request:get-cached', target),
+    create: (request: FeedbackRequestCreateIpcRequest) =>
+      ipcRenderer.invoke('feedback-request:create', request),
+    respond: (request: FeedbackRequestRespondIpcRequest) =>
+      ipcRenderer.invoke('feedback-request:respond', request),
+    comment: (request: FeedbackRequestCommentIpcRequest) =>
+      ipcRenderer.invoke('feedback-request:comment', request),
+    close: (request: FeedbackRequestCloseIpcRequest) =>
+      ipcRenderer.invoke('feedback-request:close', request),
+    nudge: (request: FeedbackRequestNudgeIpcRequest) =>
+      ipcRenderer.invoke('feedback-request:nudge', request),
   },
 
   // Epic H1: org / project access model. `canAccess` is the single client-side

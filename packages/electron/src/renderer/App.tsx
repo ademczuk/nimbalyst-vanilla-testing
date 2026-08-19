@@ -69,6 +69,7 @@ import {
   setSelectedWorkstreamAtom,
   initSessionList,
 } from './store/atoms/sessions';
+import { dispatchCreateNewSession } from './store/actions/sessionHistoryActions';
 import { NavigationGutter } from './components/NavigationGutter';
 // NOTE: useTabs and useTabNavigation removed - EditorMode manages tabs now
 import type { ContentMode } from './types/WindowModeTypes';
@@ -120,8 +121,12 @@ import { initMenuCommandListeners } from './store/listeners/menuCommandListeners
 import { initNetworkAvailabilityListeners } from './store/listeners/networkAvailabilityListeners';
 import { initTeamInboxListeners } from './store/listeners/teamInboxListeners';
 import { initConversationListeners } from './store/listeners/conversationListeners';
+import { initFeedbackRequestListeners } from './store/listeners/feedbackRequestListeners';
 import { initConversationDirectoryListeners } from './store/listeners/conversationDirectoryListeners';
 import { initOrgSettingsListeners } from './store/listeners/orgSettingsListeners';
+import { initProjectOrgListeners } from './store/listeners/projectOrgListeners';
+import { initOrgProjectWalkListeners } from './store/listeners/orgProjectWalkListeners';
+import { initCollabScopeListeners } from './store/listeners/collabScopeListeners';
 import { initCollabReplicaListeners } from './store/listeners/collabReplicaListeners';
 import { initCollabConversionListeners } from './store/listeners/collabConversionListeners';
 import { initNotificationListeners } from './store/listeners/notificationListeners';
@@ -147,10 +152,10 @@ import { TrackerMode } from './components/TrackerMode';
 import { PullRequestMode, type PullRequestModeRef } from './components/PullRequestMode';
 import { CollabMode, type CollabModeRef } from './components/CollabMode';
 import { TeamManagementApp } from './components/TeamMode';
+import { TrayPanelApp } from './components/TrayPanel/TrayPanelApp';
 import { TerminalBottomPanel } from './components/TerminalBottomPanel';
 import { SessionLaunchPopup } from './components/UnifiedAI/SessionLaunchPopup';
 import { ProjectRail } from './components/ProjectRail';
-import { ProjectWindowStatusBar } from './components/ProjectWindowStatusBar';
 import {
   WindowTopBar,
   type WindowTopBarPanelControls,
@@ -180,6 +185,7 @@ import { UpdateToast } from './components/UpdateToast';
 import { ProjectTrustToast } from './components/ProjectTrustToast';
 import { StartupSkeleton } from './components/StartupSkeleton';
 import { getTextSelection } from './components/UnifiedAI/TextSelectionIndicator';
+import { isClaudeCliTerminalSession } from './components/UnifiedAI/claudeCliInputRouting';
 // NOTE: FeedbackIntakeDialog now managed by DialogProvider
 import { buildFeedbackInitialDraft, type FeedbackIntakeLaunchOptions } from './components/Feedback';
 import OnboardingService from './services/OnboardingService';
@@ -209,9 +215,16 @@ import {
 import { gitStatusAtom } from './store/atoms/gitOperations';
 import { normalizeGitStatus } from './utils/gitStatus';
 import {
+  defaultAgentModelAtom,
   developerModeAtom,
   setDeveloperFeatureSettingsAtom,
 } from './store/atoms/appSettings';
+import { resolveProviderFromModel } from './utils/modelUtils';
+import {
+  buildSelectedCommitPrompt,
+  mapSelectedCommitFiles,
+  type SelectedCommitFile,
+} from '@nimbalyst/runtime/ui/AgentTranscript/utils/commitPromptBuilder';
 import {
   agentInsertPlanReferenceRequestAtom,
   closeActiveTabRequestAtom,
@@ -229,7 +242,7 @@ import {
   showTrustToastRequestAtom,
   toggleAIChatPanelRequestAtom,
 } from './store/atoms/appCommands';
-import { isCollabUri } from './utils/collabUri';
+import { isCollabUri } from '@nimbalyst/collab-protocol';
 import {
   collabConnectionStatusAtom,
   hasCollabUnsyncedChanges,
@@ -378,8 +391,12 @@ export default function App() {
     const cleanupNetworkAvailability = initNetworkAvailabilityListeners();
     const cleanupTeamInbox = initTeamInboxListeners();
     const cleanupConversations = initConversationListeners();
+    const cleanupFeedbackRequests = initFeedbackRequestListeners();
     const cleanupConversationDirectory = initConversationDirectoryListeners();
     const cleanupOrgSettings = initOrgSettingsListeners();
+    const cleanupProjectOrg = initProjectOrgListeners();
+    const cleanupOrgProjectWalk = initOrgProjectWalkListeners();
+    const cleanupCollabScope = initCollabScopeListeners();
     const cleanupCollabReplicas = initCollabReplicaListeners();
     const cleanupCollabConversion = initCollabConversionListeners();
     const cleanupWindowMenu = initWindowMenuListener();
@@ -417,8 +434,12 @@ export default function App() {
       cleanupNetworkAvailability?.();
       cleanupTeamInbox?.();
       cleanupConversations?.();
+      cleanupFeedbackRequests?.();
       cleanupConversationDirectory?.();
       cleanupOrgSettings?.();
+      cleanupProjectOrg?.();
+      cleanupOrgProjectWalk?.();
+      cleanupCollabScope?.();
       cleanupCollabReplicas?.();
       cleanupCollabConversion?.();
     };
@@ -478,6 +499,7 @@ export default function App() {
     return (
       <WorkspaceManagerOnboarding
         showOnboarding={urlParams.get('onboarding') === '1'}
+        safeMode={urlParams.get('safeMode') === '1'}
       />
     );
   }
@@ -515,6 +537,11 @@ export default function App() {
   // (2026-07-17 decision-log correction). TeamManagementApp sets its own title.
   if (windowMode === 'team-management') {
     return <TeamManagementApp />;
+  }
+
+  // Menu-bar sessions panel. A frameless tray-anchored window with no title.
+  if (windowMode === 'tray-panel') {
+    return <TrayPanelApp />;
   }
 
   // IMPORTANT: These are refs, not state, to prevent re-renders when the active file changes.
@@ -1997,7 +2024,7 @@ export default function App() {
     };
   }, [workspacePath]);
 
-  // Listen for open-ai-session events (from rebase/merge conflict resolution)
+  // Listen for open-ai-session events from flows that create and focus AI sessions.
   useEffect(() => {
     const handleOpenAiSession = async (event: CustomEvent<{ sessionId: string; workspacePath: string; draftInput?: string }>) => {
       const { sessionId, workspacePath: eventWorkspacePath, draftInput } = event.detail;
@@ -2027,6 +2054,71 @@ export default function App() {
     window.addEventListener('open-ai-session', handleOpenAiSession as unknown as EventListener);
     return () => window.removeEventListener('open-ai-session', handleOpenAiSession as unknown as EventListener);
   }, [activeMode]);
+
+  // Receive explicit git-extension selections and seed a new standalone commit session.
+  useEffect(() => {
+    const handleCommitWithAi = async (event: CustomEvent<{
+      workspacePath: string;
+      files: SelectedCommitFile[];
+    }>) => {
+      const { workspacePath: commitWorkspacePath, files } = event.detail ?? {};
+      if (!commitWorkspacePath || !Array.isArray(files) || files.length === 0) return;
+
+      const commitFiles = mapSelectedCommitFiles(files);
+      if (commitFiles.length === 0) {
+        errorNotificationService.showWarning(
+          'Nothing to commit',
+          'The selected files cannot be committed (conflicted files are excluded).',
+        );
+        return;
+      }
+
+      try {
+        // The git panel's workspacePath is the extension host's, i.e. the active
+        // workspace — the same path createNewSessionActionAtom creates against.
+        const model = store.get(defaultAgentModelAtom);
+        const provider = resolveProviderFromModel(model);
+        const sessionId = await dispatchCreateNewSession({
+          title: `Commit: ${commitFiles.length} ${commitFiles.length === 1 ? 'file' : 'files'}`,
+          mode: 'agent',
+        });
+
+        if (!sessionId) {
+          throw new Error('Failed to create commit session');
+        }
+
+        // The atom selects the session but does not switch modes or open a tab.
+        window.dispatchEvent(new CustomEvent('open-ai-session', {
+          detail: { sessionId, workspacePath: commitWorkspacePath },
+        }));
+
+        const message = buildSelectedCommitPrompt(commitFiles);
+        const docContext = {
+          filePath: undefined,
+          content: undefined,
+          fileType: undefined,
+          attachments: undefined,
+          mode: 'agent',
+          inputType: 'user' as const,
+        };
+
+        if (isClaudeCliTerminalSession(provider)) {
+          await window.electronAPI.invoke('ai:createQueuedPrompt', sessionId, message, [], docContext);
+        } else {
+          await window.electronAPI.invoke('ai:sendMessage', message, docContext, sessionId, commitWorkspacePath);
+        }
+      } catch (error) {
+        console.error('[App] Commit with AI failed:', error);
+        errorNotificationService.showError(
+          'Commit with AI failed',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    };
+
+    window.addEventListener('nimbalyst:commit-with-ai', handleCommitWithAi as unknown as EventListener);
+    return () => window.removeEventListener('nimbalyst:commit-with-ai', handleCommitWithAi as unknown as EventListener);
+  }, []);
 
   // AI chat layout persistence is owned by EditorMode's workspace-keyed atoms.
   // Do not mirror the legacy App-local values here: they are not reset on rail
@@ -2413,6 +2505,19 @@ export default function App() {
           const anchor = target as HTMLAnchorElement;
           const href = anchor.getAttribute('href');
 
+          if (href?.startsWith('nimbalyst://conversation/')) {
+            event.preventDefault();
+            event.stopPropagation();
+            void window.electronAPI.invoke('deep-link:open-inbox-source', href)
+              .then((opened: boolean) => {
+                if (!opened) logger.ui.warn('Conversation link could not be opened:', href);
+              })
+              .catch((error: unknown) => {
+                logger.ui.error('Failed to open conversation link:', error);
+              });
+            return;
+          }
+
           // Check if it's an external link (http:// or https://)
           if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
             event.preventDefault();
@@ -2510,6 +2615,7 @@ export default function App() {
           }}
           panelControls={windowTopBarPanelControls}
           newSessionControl={windowTopBarNewSessionControl}
+          workspacePath={workspacePath}
         />
       )}
       <div data-layout="workspace-row" className="flex flex-row flex-1 min-h-0">
@@ -2849,7 +2955,6 @@ export default function App() {
         })()}
       </div>
       </div>
-      {workspaceMode && <ProjectWindowStatusBar workspacePath={workspacePath} />}
 
       {/* Navigation dialogs (QuickOpen, SessionQuickOpen, PromptQuickOpen, ProjectQuickOpen) */}
       {/* are now managed by DialogProvider and rendered automatically */}

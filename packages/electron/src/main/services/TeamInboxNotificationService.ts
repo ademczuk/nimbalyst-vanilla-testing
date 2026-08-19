@@ -1,5 +1,6 @@
 import {
   MAX_INBOX_PREVIEW_SNIPPET_CHARS,
+  type ActivityRef,
   type CommentRef,
 } from "@nimbalyst/collab-protocol";
 import type { TeamInboxMaterializedDelivery } from "@nimbalyst/runtime/sync";
@@ -17,6 +18,11 @@ export interface TeamInboxNotificationDependencies {
   showNativeNotification: (notification: TeamInboxNativeNotification) => void;
   openConversation: (orgId: string, conversationId: string) => void;
   openInboxSource: (url: string) => Promise<boolean>;
+  /**
+   * Open the organization's Inbox with no source in mind. The destination for
+   * a delivery whose source has no route of its own yet.
+   */
+  openInbox: (orgId: string) => void;
   resolveConversationTitle: (
     orgId: string,
     conversationId: string
@@ -29,7 +35,13 @@ export interface TeamInboxNotificationDependencies {
 
 type DeliveryRoute =
   | { kind: "conversation"; orgId: string; conversationId: string }
-  | { kind: "inboxSource"; url: string };
+  | { kind: "inboxSource"; url: string }
+  /**
+   * The delivery is real and worth a banner, but its source has no route yet.
+   * Clicking lands on the organization's Inbox, where the row is, instead of
+   * suppressing the notification or opening an unrelated resource.
+   */
+  | { kind: "inbox"; orgId: string };
 
 const SOURCE_FALLBACKS: Record<CommentRef["sourceKind"], string> = {
   roomMessage: "Room",
@@ -37,6 +49,28 @@ const SOURCE_FALLBACKS: Record<CommentRef["sourceKind"], string> = {
   documentDiscussion: "Document discussion",
   trackerComment: "Tracker",
   documentInlineComment: "Document",
+  feedbackRequest: "Feedback request",
+};
+
+/**
+ * Deep-link host per activity resource kind. `null` means the resource has no
+ * route of its own yet and the banner falls back to the Inbox — a fact about
+ * the app rather than about the delivery. A ternary here used to send every
+ * non-document kind to the tracker route.
+ */
+const ACTIVITY_DEEP_LINK_HOSTS: Record<
+  ActivityRef["resourceKind"],
+  string | null
+> = {
+  tracker: "tracker",
+  document: "doc",
+  feedbackRequest: null,
+};
+
+const ACTIVITY_FALLBACKS: Record<ActivityRef["resourceKind"], string> = {
+  tracker: "Tracker",
+  document: "Document",
+  feedbackRequest: "Feedback request",
 };
 const MAX_NOTIFICATION_SANITIZER_INPUT_CHARS =
   MAX_INBOX_PREVIEW_SNIPPET_CHARS * 8;
@@ -62,6 +96,54 @@ function boundedSnippet(value: string | null | undefined): string {
   return cleaned.slice(0, MAX_INBOX_PREVIEW_SNIPPET_CHARS);
 }
 
+/**
+ * Where a comment-backed delivery goes when clicked.
+ *
+ * A switch rather than a chain of ifs with a `return null` tail: a source kind
+ * added to the protocol now fails to compile here, where the decision belongs,
+ * instead of silently falling out of the bottom as an unroutable delivery.
+ */
+function commentRefRoute(source: CommentRef, orgId: string): DeliveryRoute | null {
+  switch (source.sourceKind) {
+    case "roomMessage":
+    case "dmMessage":
+      return source.sourceId
+        ? { kind: "conversation", orgId, conversationId: source.sourceId }
+        : null;
+    case "trackerComment": {
+      if (!source.sourceId) return null;
+      const url = new URL(
+        `nimbalyst://tracker/${encodeURIComponent(source.sourceId)}`
+      );
+      url.searchParams.set("orgId", orgId);
+      if (source.commentId) url.searchParams.set("commentId", source.commentId);
+      return { kind: "inboxSource", url: url.toString() };
+    }
+    case "documentDiscussion":
+    case "documentInlineComment": {
+      if (!source.sourceId) return null;
+      const url = new URL(
+        `nimbalyst://doc/${encodeURIComponent(source.sourceId)}`
+      );
+      url.searchParams.set("orgId", orgId);
+      if (source.threadId) url.searchParams.set("threadId", source.threadId);
+      if (source.commentId) url.searchParams.set("commentId", source.commentId);
+      return { kind: "inboxSource", url: url.toString() };
+    }
+    case "feedbackRequest":
+      // Someone is waiting on an answer from this person, so the banner is
+      // worth showing even though the respond surface owns no deep-link route
+      // yet. It lands on the Inbox rather than on a link that resolves to
+      // nothing.
+      return { kind: "inbox", orgId };
+    default: {
+      const _exhaust: never = source.sourceKind;
+      void _exhaust;
+      return null;
+    }
+  }
+}
+
 function routeForDelivery(
   delivery: TeamInboxMaterializedDelivery
 ): DeliveryRoute | null {
@@ -70,43 +152,12 @@ function routeForDelivery(
   if (source.orgId !== delivery.orgId) return null;
 
   if ("sourceKind" in source) {
-    if (
-      (source.sourceKind === "roomMessage" ||
-        source.sourceKind === "dmMessage") &&
-      source.sourceId
-    ) {
-      return {
-        kind: "conversation",
-        orgId: delivery.orgId,
-        conversationId: source.sourceId,
-      };
-    }
-    if (!source.sourceId) return null;
-    if (source.sourceKind === "trackerComment") {
-      const url = new URL(
-        `nimbalyst://tracker/${encodeURIComponent(source.sourceId)}`
-      );
-      url.searchParams.set("orgId", delivery.orgId);
-      if (source.commentId) url.searchParams.set("commentId", source.commentId);
-      return { kind: "inboxSource", url: url.toString() };
-    }
-    if (
-      source.sourceKind === "documentDiscussion" ||
-      source.sourceKind === "documentInlineComment"
-    ) {
-      const url = new URL(
-        `nimbalyst://doc/${encodeURIComponent(source.sourceId)}`
-      );
-      url.searchParams.set("orgId", delivery.orgId);
-      if (source.threadId) url.searchParams.set("threadId", source.threadId);
-      if (source.commentId) url.searchParams.set("commentId", source.commentId);
-      return { kind: "inboxSource", url: url.toString() };
-    }
-    return null;
+    return commentRefRoute(source, delivery.orgId);
   }
 
   if (!source.resourceId) return null;
-  const host = source.resourceKind === "document" ? "doc" : "tracker";
+  const host = ACTIVITY_DEEP_LINK_HOSTS[source.resourceKind];
+  if (!host) return { kind: "inbox", orgId: delivery.orgId };
   const url = new URL(
     `nimbalyst://${host}/${encodeURIComponent(source.resourceId)}`
   );
@@ -121,7 +172,7 @@ function sourceFallback(delivery: TeamInboxMaterializedDelivery): string {
   const source = delivery.source;
   if (!source) return "Inbox";
   if ("sourceKind" in source) return SOURCE_FALLBACKS[source.sourceKind];
-  return source.resourceKind === "tracker" ? "Tracker" : "Document";
+  return ACTIVITY_FALLBACKS[source.resourceKind];
 }
 
 /**
@@ -155,7 +206,7 @@ export class TeamInboxNotificationService {
     }
     if (
       delivery.actor?.onBehalfOfUserId &&
-      delivery.actor.onBehalfOfUserId === delivery.recipientUserId
+      delivery.actor.onBehalfOfUserId === delivery.teamMemberId
     ) {
       return;
     }
@@ -212,6 +263,10 @@ export class TeamInboxNotificationService {
               route.orgId,
               route.conversationId
             );
+            return;
+          }
+          if (route.kind === "inbox") {
+            this.dependencies.openInbox(route.orgId);
             return;
           }
           void this.dependencies.openInboxSource(route.url).catch(() => false);

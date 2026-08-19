@@ -52,7 +52,7 @@ public struct ProjectListView: View {
                         .foregroundStyle(.secondary)
                     Text("No Projects")
                         .font(.title3)
-                    Text("Projects will appear here once synced from your Mac.")
+                    Text("Projects will appear here once synced from the desktop app.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

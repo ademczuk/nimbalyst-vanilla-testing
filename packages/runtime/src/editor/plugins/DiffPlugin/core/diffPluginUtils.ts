@@ -331,6 +331,39 @@ export function $hasDiffNodes(editor: LexicalEditor): boolean {
 }
 
 /**
+ * Sweep every remaining diff marker out of the document.
+ *
+ * Call this when the approval session is over -- no change groups are left to
+ * act on -- so that container markers no group could ever name do not stay
+ * behind. `groupDiffChanges` deliberately excludes 'modified' nodes, so a
+ * change that produces only those (a table cell edit is the common one) yields
+ * ZERO groups while `$hasDiffNodes` still reports true. Without this sweep the
+ * approval bar dismisses itself and leaves the red/green paint on screen.
+ *
+ * In a shared document those leftovers are serialized into the Y.Doc and
+ * broadcast to every peer, so they survive reloads and stack up on each later
+ * AI turn (#2612). Only container markers can reach this point: 'added' and
+ * 'removed' nodes are what groups are built from, so if there are no groups
+ * there is no pending content decision left to lose.
+ */
+export function $clearResidualDiffMarkers(editor: LexicalEditor): void {
+  editor.update(
+    () => {
+      const walk = (node: LexicalNode): void => {
+        if ($getDiffState(node)) {
+          $clearDiffState(node);
+        }
+        if ($isElementNode(node)) {
+          for (const child of node.getChildren()) walk(child);
+        }
+      };
+      for (const child of $getRoot().getChildren()) walk(child);
+    },
+    { discrete: true },
+  );
+}
+
+/**
  * Helper function to wrap text in appropriate diff nodes
  */
 export function applyTextDiff(editor: LexicalEditor, change: Change): void {
@@ -380,6 +413,72 @@ export function getDiffNodesFromEditor(
   return diffNodes;
 }
 
+/** Does anything below `element` still carry a diff mark? */
+function $hasMarkedDescendant(element: ElementNode): boolean {
+  for (const child of element.getChildren()) {
+    if ($getDiffState(child)) return true;
+    const childType = child.getType();
+    if (childType === 'add' || childType === 'remove') return true;
+    if ($isElementNode(child) && $hasMarkedDescendant(child)) return true;
+  }
+  return false;
+}
+
+/**
+ * Ancestor chain of `node`, innermost first, paired with its depth.
+ *
+ * Captured BEFORE the node is mutated: approving a 'removed' node (or
+ * rejecting an 'added' one) detaches it, after which `getParent()` is null and
+ * the container above it can no longer be reached.
+ */
+function $collectAncestors(node: LexicalNode): Array<{ node: ElementNode; depth: number }> {
+  const chain: Array<{ node: ElementNode; depth: number }> = [];
+  let parent = node.getParent();
+  let depth = 0;
+  while (parent) {
+    chain.push({ node: parent, depth: depth++ });
+    parent = parent.getParent();
+  }
+  return chain;
+}
+
+/**
+ * Clear the container markers above a resolved change once nothing beneath
+ * them is still marked.
+ *
+ * `DefaultDiffHandler` marks the PARENT element 'modified' when a text node
+ * changes, and `groupDiffChanges` deliberately keeps 'modified' nodes out of
+ * every group -- so no group ever names them and nothing else clears them.
+ *
+ * For a local file that is invisible: the `diff` NodeState lives only in the
+ * in-memory Lexical state and the next re-import from disk wipes it. In a
+ * shared document the same NodeState is serialized into the Y.Doc, persisted
+ * server-side and broadcast to every peer, so a leaked marker survives forever
+ * and every later AI turn stacks another one on top (#2612).
+ *
+ * Innermost-first so that clearing an inner container lets an outer one settle
+ * in the same pass -- a nested list item inside a list needs both levels to go,
+ * and the outer one only becomes clearable once the inner one has. A container
+ * is left alone while any sibling change under it is still pending.
+ */
+function $clearSettledAncestors(
+  ancestors: Array<{ node: ElementNode; depth: number }>,
+): void {
+  const byKey = new Map<string, { node: ElementNode; depth: number }>();
+  for (const entry of ancestors) {
+    if (!byKey.has(entry.node.getKey())) byKey.set(entry.node.getKey(), entry);
+  }
+
+  // depth counts up from the resolved node, so ascending depth is innermost-first.
+  const ordered = [...byKey.values()].sort((a, b) => a.depth - b.depth);
+  for (const { node } of ordered) {
+    if (!node.isAttached()) continue;
+    if (!$getDiffState(node)) continue;
+    if ($hasMarkedDescendant(node)) continue;
+    $clearDiffState(node);
+  }
+}
+
 /**
  * Approve a specific change group (specific nodes only)
  */
@@ -387,39 +486,22 @@ export function $approveChangeGroup(editor: LexicalEditor, nodes: LexicalNode[])
   initializeHandlers();
 
   editor.update(() => {
+    const ancestors: Array<{ node: ElementNode; depth: number }> = [];
+
     for (const node of nodes) {
       if (!node || !node.isAttached()) continue;
+
+      // Captured up front: the 'removed' and legacy branches detach the node.
+      ancestors.push(...$collectAncestors(node));
 
       const diffState = $getDiffState(node);
 
       if (diffState === 'added') {
         $clearDiffState(node);
-
-        // Also clear diff state from parent nodes
-        // This is necessary because grouping collects child nodes (text nodes)
-        // but their parent containers (paragraphs) also have diff state
-        let parent = node.getParent();
-        while (parent) {
-          const parentDiffState = $getDiffState(parent);
-          if (parentDiffState) {
-            $clearDiffState(parent);
-          }
-          parent = parent.getParent();
-        }
       } else if (diffState === 'removed') {
         node.remove();
       } else if (diffState === 'modified') {
         $clearDiffState(node);
-
-        // Also clear diff state from parent nodes
-        let parent = node.getParent();
-        while (parent) {
-          const parentDiffState = $getDiffState(parent);
-          if (parentDiffState) {
-            $clearDiffState(parent);
-          }
-          parent = parent.getParent();
-        }
       } else {
         // Handle legacy nodes
         const nodeType = node.getType();
@@ -432,6 +514,8 @@ export function $approveChangeGroup(editor: LexicalEditor, nodes: LexicalNode[])
         }
       }
     }
+
+    $clearSettledAncestors(ancestors);
   }, { discrete: true });
 }
 
@@ -442,8 +526,13 @@ export function $rejectChangeGroup(editor: LexicalEditor, nodes: LexicalNode[]):
   initializeHandlers();
 
   editor.update(() => {
+    const ancestors: Array<{ node: ElementNode; depth: number }> = [];
+
     for (const node of nodes) {
       if (!node || !node.isAttached()) continue;
+
+      // Captured up front: the 'added' and legacy branches detach the node.
+      ancestors.push(...$collectAncestors(node));
 
       const diffState = $getDiffState(node);
 
@@ -465,5 +554,7 @@ export function $rejectChangeGroup(editor: LexicalEditor, nodes: LexicalNode[]):
         }
       }
     }
+
+    $clearSettledAncestors(ancestors);
   }, { discrete: true });
 }

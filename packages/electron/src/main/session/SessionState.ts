@@ -11,7 +11,8 @@ import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { GitStatusService } from '../services/GitStatusService';
 import { autoMatchTeamForWorkspace } from '../services/TeamService';
 import { updateTrackerSchemaWorkspace } from '../services/TrackerSchemaService';
-import { runWhenAppIsActive } from '../window/AppActivationGuard';
+import { onStartupActivated } from '../window/StartupActivation';
+import { shouldSuppressSafeModeSessionSave } from './safeModeSessionState';
 
 // Save session state
 export async function saveSessionState() {
@@ -54,6 +55,11 @@ export async function saveSessionState() {
         lastUpdated: Date.now()
     };
 
+    if (shouldSuppressSafeModeSessionSave(sessionWindows)) {
+        logger.session.info('[SAFE MODE] Preserving the saved restoration state while Workspace Manager is open');
+        return;
+    }
+
     logger.session.debug(`[SAVE] Saving session state: ${sessionWindows.length} window(s): ${sessionWindows.map((w) => w.workspacePath || w.filePath || w.mode).join(', ')}`);
     saveToStore(sessionState);
 
@@ -64,8 +70,8 @@ export async function saveSessionState() {
 
 // Restore session state
 // Returns true if windows were restored, false otherwise.
-// All restored windows use showInactive() so launch never takes focus back
-// after the user switches to another application.
+// All restored windows use showInactive() so no single window takes focus back
+// mid-load; StartupActivation foregrounds the app once when the last one is up.
 export async function restoreSessionState(): Promise<boolean> {
     // In test mode (PLAYWRIGHT=1), always clear and skip session restoration
     // Tests that want to test restoration will not set PLAYWRIGHT env var at all
@@ -101,7 +107,9 @@ export async function restoreSessionState(): Promise<boolean> {
     // Restore each window in order
     // Use async creation to ensure windows are created sequentially
     // Every window is shown inactive so a late ready-to-show event cannot
-    // foreground Nimbalyst after the user has switched applications.
+    // foreground Nimbalyst after the user has switched applications. Each
+    // registration claims `startupFrontmost`, so the last window created here —
+    // the one with the highest focusOrder — is the one brought to the front.
     for (const sessionWindow of sortedWindows) {
 
         // Wait for previous window to be ready before creating next
@@ -165,7 +173,8 @@ export async function restoreSessionState(): Promise<boolean> {
 
                         window = createWindow(false, true, sessionWindow.workspacePath, sessionWindow.bounds, {
                             showInactive: true,
-                            deferShowUntilAppActive: true,
+                            startupReveal: true,
+                            startupFrontmost: true,
                         });
                         logger.session.info(`Restored workspace window: ${sessionWindow.workspacePath}`);
 
@@ -187,7 +196,8 @@ export async function restoreSessionState(): Promise<boolean> {
                     if (existsSync(sessionWindow.filePath)) {
                         window = createWindow(true, false, undefined, sessionWindow.bounds, {
                             showInactive: true,
-                            deferShowUntilAppActive: true,
+                            startupReveal: true,
+                            startupFrontmost: true,
                         });
                         if (window) {
                             window.once('ready-to-show', () => {
@@ -203,8 +213,12 @@ export async function restoreSessionState(): Promise<boolean> {
                 // Restore dev tools state
                 if (window && sessionWindow.devToolsOpen) {
                     // Wait for window to be ready before opening dev tools
+                    // Detached dev tools activate the app, so wait for the
+                    // single startup foregrounding rather than racing it.
                     window.webContents.once('did-finish-load', () => {
-                        runWhenAppIsActive(window, () => window.webContents.openDevTools());
+                        onStartupActivated(() => {
+                            if (!window.isDestroyed()) window.webContents.openDevTools();
+                        });
                     });
                 }
 

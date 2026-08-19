@@ -28,6 +28,7 @@
 import { BaseAgentProvider } from './BaseAgentProvider';
 import {
   AIModel,
+  AIProviderType,
   DocumentContext,
   ProviderConfig,
   StreamChunk,
@@ -46,7 +47,7 @@ import type { ProviderSessionData } from './ProviderSessionManager';
 export class ClaudeCodeCliProvider extends BaseAgentProvider {
   static readonly DEFAULT_MODEL = DEFAULT_MODELS['claude-code-cli'];
 
-  getProviderName(): string {
+  getProviderName(): AIProviderType {
     return 'claude-code-cli';
   }
 

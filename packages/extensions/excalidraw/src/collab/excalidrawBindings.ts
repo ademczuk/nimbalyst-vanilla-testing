@@ -12,19 +12,26 @@
  */
 
 import type {
+  AppState,
   BinaryFileData,
+  BinaryFiles,
   Collaborator,
   ExcalidrawImperativeAPI,
   SocketId,
 } from '@excalidraw/excalidraw/types';
+import type {
+  ExcalidrawElement,
+  NonDeletedExcalidrawElement,
+} from '@excalidraw/excalidraw/element/types';
 import type * as awarenessProtocol from 'y-protocols/awareness';
 import * as Y from 'yjs';
-import { restoreElements } from '@excalidraw/excalidraw';
+import { CaptureUpdateAction, restoreElements } from '@excalidraw/excalidraw';
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import {
   areElementsSame,
   debounce,
   yjsToExcalidraw,
+  type DebouncedFn,
 } from './excalidrawHelpers';
 import {
   applyAssetOperations,
@@ -42,6 +49,60 @@ export interface UndoConfig {
   undoManager: Y.UndoManager;
 }
 
+const compareOrderedElements = (
+  a: LastKnownOrderedElement,
+  b: LastKnownOrderedElement,
+): number => {
+  if (a.pos !== b.pos) return a.pos > b.pos ? 1 : -1;
+  return a.id > b.id ? 1 : a.id < b.id ? -1 : 0;
+};
+
+type ElementRevision = {
+  id: string;
+  version: number;
+  versionNonce: number;
+};
+
+/**
+ * Match Excalidraw's own reconciliation rule: the higher version wins and,
+ * when versions tie, the lower versionNonce wins. Array position is not a
+ * revision signal and depends on concurrent Yjs insertion order.
+ */
+const isNewerElementRevision = (
+  candidate: ElementRevision,
+  current: ElementRevision,
+): boolean => candidate.version > current.version || (
+  candidate.version === current.version &&
+  candidate.versionNonce < current.versionNonce
+);
+
+/**
+ * Whether every element in a change callback's snapshot is already accounted
+ * for -- at the same revision or newer -- somewhere we will not lose it.
+ *
+ * A snapshot that no longer matches the canvas is usually a stale callback and
+ * safe to drop, but only once nothing in it is exclusive to it. An element the
+ * snapshot alone knows about reaches the Y.Doc through this callback or not at
+ * all.
+ */
+const isSupersededSnapshot = (
+  snapshot: readonly { id: string; version: number }[],
+  ...sources: readonly (readonly { id: string; version: number }[])[]
+): boolean => {
+  const newestById = new Map<string, number>();
+  for (const source of sources) {
+    for (const element of source) {
+      const known = newestById.get(element.id);
+      if (known === undefined || element.version > known) {
+        newestById.set(element.id, element.version);
+      }
+    }
+  }
+  return snapshot.every(
+    (element) => (newestById.get(element.id) ?? -1) >= element.version,
+  );
+};
+
 export class ExcalidrawBinding {
   yElements: Y.Array<Y.Map<unknown>>;
   yAssets: Y.Map<unknown>;
@@ -53,6 +114,26 @@ export class ExcalidrawBinding {
   collaborators: Map<SocketId, Collaborator> = new Map();
   lastKnownElements: LastKnownOrderedElement[] = [];
   lastKnownFileIds: Set<string> = new Set();
+  private isApplyingRemoteElements = false;
+  private pendingRemoteElementEchoes: Array<
+    readonly { id: string; version: number }[]
+  > = [];
+  private remoteElementEchoTimers = new Set<ReturnType<typeof setTimeout>>();
+  private apiChangeUnsubscribe: (() => void) | null = null;
+  /**
+   * The debounced local-to-shared push. Held on the instance so `syncNow` can
+   * flush a pending scene into the Y.Doc on demand -- the host drains this
+   * before it reports a write complete, so an AI tool cannot return success on
+   * an edit still waiting out the 50ms delay.
+   */
+  private flushLocalChange!: DebouncedFn<
+    [
+      readonly NonDeletedExcalidrawElement[],
+      LastKnownOrderedElement[],
+      AppState['selectedElementIds'],
+      BinaryFiles,
+    ]
+  >;
 
   constructor(
     yElements: Y.Array<Y.Map<unknown>>,
@@ -68,63 +149,126 @@ export class ExcalidrawBinding {
     this.undoManager = undoConfig?.undoManager;
     const excalidrawDom = undoConfig?.excalidrawDom;
 
-    // Local edits -> Y.Doc (debounced 50ms).
-    this.subscriptions.push(
-      this.api.onChange(
-        debounce((_elements, state, files) => {
-          const elements = this.api.getSceneElements();
-          let operations: Operation[] = [];
-          if (!areElementsSame(this.lastKnownElements, elements)) {
-            try {
-              const res = getDeltaOperationsForElements(
-                this.lastKnownElements,
-                elements,
-              );
-              operations = res.operations;
-              this.lastKnownElements = res.lastKnownElements;
-              applyElementOperations(this.yElements, operations, this);
-            } catch (error) {
-              console.error('[ExcalidrawBinding] Error applying element operations:', error);
-              this.ensureValidOrderingKeys();
-              try {
-                const currentElements = this.api.getSceneElements();
-                const newKeys = generateNKeysBetween(null, null, currentElements.length);
-                const yDoc = this.yElements.doc!;
-                yDoc.transact(() => {
-                  this.yElements.delete(0, this.yElements.length);
-                  currentElements.forEach((el, idx) => {
-                    const yElement = new Y.Map<unknown>();
-                    yElement.set('el', el);
-                    yElement.set('pos', newKeys[idx]);
-                    this.yElements.push([yElement]);
-                  });
-                }, this);
-                this.lastKnownElements = currentElements.map((el, idx) => ({
-                  id: el.id,
-                  version: el.version,
-                  pos: newKeys[idx],
-                }));
-              } catch (err) {
-                console.error('[ExcalidrawBinding] Failed to recover with full refresh:', err);
-              }
-            }
-          }
+    // Local edits -> Y.Doc (debounced 50ms). Capture the event's element
+    // snapshot and Y.Doc baseline immediately. A remote repaint can land
+    // during the debounce window; re-reading api.getSceneElements() afterward
+    // would silently replace the local edit with that remote canvas.
+    this.flushLocalChange = debounce((
+      capturedElements: readonly NonDeletedExcalidrawElement[],
+      capturedBaseline: LastKnownOrderedElement[],
+      selectedElementIds: AppState['selectedElementIds'],
+      files: BinaryFiles,
+    ) => {
+      const baselineVersions = new Map(
+        capturedBaseline.map((element) => [element.id, element.version]),
+      );
+      const capturedIds = new Set(capturedElements.map((element) => element.id));
+      const currentElements = yjsToExcalidraw(this.yElements).filter(
+        (element): element is NonDeletedExcalidrawElement => !element.isDeleted,
+      );
+      const currentById = new Map(
+        currentElements.map((element) => [element.id, element]),
+      );
 
-          const res = getDeltaOperationsForAssets(this.lastKnownFileIds, files);
-          this.lastKnownFileIds = res.lastKnownFileIds;
-          if (res.operations.length > 0) {
-            applyAssetOperations(this.yAssets, res.operations, this);
-          }
+      // Reconcile the delayed local snapshot with remote changes that arrived
+      // after it was captured:
+      // - unchanged baseline elements keep the current remote version;
+      // - locally added/updated elements use the captured version;
+      // - baseline elements omitted by the snapshot remain real deletions;
+      // - remote additions absent from the old baseline are preserved.
+      const elements: NonDeletedExcalidrawElement[] = [];
+      for (const captured of capturedElements) {
+        const baselineVersion = baselineVersions.get(captured.id);
+        if (baselineVersion === captured.version) {
+          const current = currentById.get(captured.id);
+          if (current) elements.push(current);
+        } else {
+          elements.push(captured);
+        }
+      }
+      // The baseline is read when the callback is dispatched, not when
+      // Excalidraw produced the snapshot, so "in the baseline but omitted by
+      // the snapshot" does not by itself mean the user deleted it -- a remote
+      // element that landed in between looks identical. Require the canvas to
+      // have dropped it too before treating the omission as a deletion.
+      const sceneIds = new Set(
+        this.api.getSceneElements().map((element) => element.id),
+      );
+      for (const current of currentElements) {
+        if (capturedIds.has(current.id)) continue;
+        if (!baselineVersions.has(current.id) || sceneIds.has(current.id)) {
+          elements.push(current);
+        }
+      }
 
-          if (this.awareness) {
-            this.awareness.setLocalStateField(
-              'selectedElementIds',
-              state.selectedElementIds,
-            );
+      let operations: Operation[] = [];
+      if (!areElementsSame(this.lastKnownElements, elements)) {
+        try {
+          const res = getDeltaOperationsForElements(
+            this.lastKnownElements,
+            elements,
+          );
+          operations = res.operations;
+          this.lastKnownElements = res.lastKnownElements;
+          applyElementOperations(this.yElements, operations, this);
+        } catch (error) {
+          console.error('[ExcalidrawBinding] Error applying element operations:', error);
+          this.ensureValidOrderingKeys();
+          try {
+            const newKeys = generateNKeysBetween(null, null, elements.length);
+            const yDoc = this.yElements.doc!;
+            yDoc.transact(() => {
+              this.yElements.delete(0, this.yElements.length);
+              elements.forEach((el, idx) => {
+                const yElement = new Y.Map<unknown>();
+                yElement.set('el', el);
+                yElement.set('pos', newKeys[idx]);
+                this.yElements.push([yElement]);
+              });
+            }, this);
+            this.lastKnownElements = elements.map((el, idx) => ({
+              id: el.id,
+              version: el.version,
+              pos: newKeys[idx],
+            }));
+          } catch (err) {
+            console.error('[ExcalidrawBinding] Failed to recover with full refresh:', err);
           }
-        }, 50),
-      ),
-    );
+        }
+      }
+
+      // A remote repaint may have replaced the imperative canvas while this
+      // local snapshot was waiting in the debounce. The reconciliation above
+      // preserves both edits in Y.Doc, but local-origin transactions are
+      // intentionally ignored by the remote observer. Paint the merged Y.Doc
+      // here as the final half of the local-to-shared bridge.
+      const sharedAfterLocalChange = yjsToExcalidraw(this.yElements).filter(
+        (element): element is NonDeletedExcalidrawElement =>
+          !element.isDeleted,
+      );
+      if (!areElementsSame(this.api.getSceneElements(), sharedAfterLocalChange)) {
+        this.updateRemoteElements(sharedAfterLocalChange);
+      }
+
+      const res = getDeltaOperationsForAssets(this.lastKnownFileIds, files);
+      this.lastKnownFileIds = res.lastKnownFileIds;
+      if (res.operations.length > 0) {
+        applyAssetOperations(this.yAssets, res.operations, this);
+      }
+
+      if (this.awareness) {
+        this.awareness.setLocalStateField(
+          'selectedElementIds',
+          selectedElementIds,
+        );
+      }
+    }, 50);
+
+    this.subscribeToApi(api);
+    this.subscriptions.push(() => {
+      this.apiChangeUnsubscribe?.();
+      this.apiChangeUnsubscribe = null;
+    });
 
     // Remote element changes -> Excalidraw scene.
     const _remoteElementsChangeHandler = (
@@ -146,10 +290,9 @@ export class ExcalidrawBinding {
       );
 
       const remoteElements = yjsToExcalidraw(this.yElements);
-
-      // Defensive dedupe: bootstrap-race CRDT merges can in rare cases land
-      // duplicate IDs in the array. Drop later occurrences in a transaction
-      // and bail; the next event cycle picks up the cleaned state.
+      // Defensive dedupe: bootstrap-race CRDT merges can land duplicate IDs in
+      // the array. Keep the newest Excalidraw revision, never whichever Yjs
+      // entry happens to be later in the merged array.
       const idCounts = new Map<string, number>();
       const duplicateIds = new Set<string>();
       for (const el of remoteElements) {
@@ -161,18 +304,30 @@ export class ExcalidrawBinding {
       }
       if (duplicateIds.size > 0) {
         console.warn('[ExcalidrawBinding] Duplicate element IDs detected:', [...duplicateIds]);
-        const firstOccurrences = new Map<string, number>();
+        const winnerIndices = new Map<string, number>();
+        for (let i = 0; i < this.yElements.length; i++) {
+          const element = this.yElements.get(i).get('el') as ElementRevision;
+          if (!duplicateIds.has(element.id)) continue;
+          const winnerIndex = winnerIndices.get(element.id);
+          if (winnerIndex === undefined) {
+            winnerIndices.set(element.id, i);
+            continue;
+          }
+          const winner = this.yElements
+            .get(winnerIndex)
+            .get('el') as ElementRevision;
+          if (isNewerElementRevision(element, winner)) {
+            winnerIndices.set(element.id, i);
+          }
+        }
+
         const yDoc = this.yElements.doc!;
         yDoc.transact(() => {
           for (let i = this.yElements.length - 1; i >= 0; i--) {
             const item = this.yElements.get(i);
-            const id = (item.get('el') as { id: string }).id;
-            if (duplicateIds.has(id)) {
-              if (firstOccurrences.has(id)) {
-                this.yElements.delete(i, 1);
-              } else {
-                firstOccurrences.set(id, i);
-              }
+            const id = (item.get('el') as ElementRevision).id;
+            if (duplicateIds.has(id) && winnerIndices.get(id) !== i) {
+              this.yElements.delete(i, 1);
             }
           }
         }, this);
@@ -183,7 +338,8 @@ export class ExcalidrawBinding {
             version: (x.get('el') as { version: number }).version,
             pos: x.get('pos') as string,
           }))
-          .sort((a, b) => (a.pos > b.pos ? 1 : a.pos < b.pos ? -1 : 0));
+          .sort(compareOrderedElements);
+        this.updateRemoteElements(yjsToExcalidraw(this.yElements));
         return;
       }
 
@@ -202,29 +358,14 @@ export class ExcalidrawBinding {
             version: (x.get('el') as { version: number }).version,
             pos: x.get('pos') as string,
           }))
-          .sort((a, b) => (a.pos > b.pos ? 1 : a.pos < b.pos ? -1 : 0));
+          .sort(compareOrderedElements);
 
-        let hasOrderingIssue = false;
-        for (let i = 1; i < this.lastKnownElements.length; i++) {
-          if (this.lastKnownElements[i].pos <= this.lastKnownElements[i - 1].pos) {
-            hasOrderingIssue = true;
-            break;
-          }
-        }
-        if (hasOrderingIssue) {
-          console.warn('[ExcalidrawBinding] Ordering issue detected in remote changes, fixing...');
-          this.ensureValidOrderingKeys();
-          const reorderedElements = yjsToExcalidraw(this.yElements);
-          this.api.updateScene({ elements: reorderedElements });
-          return;
-        }
-
-        this.api.updateScene({ elements });
+        this.updateRemoteElements(elements);
       } catch (error) {
         console.error('[ExcalidrawBinding] Error in remote elements handler:', error);
         this.ensureValidOrderingKeys();
         const fallbackElements = yjsToExcalidraw(this.yElements);
-        this.api.updateScene({ elements: fallbackElements });
+        this.updateRemoteElements(fallbackElements);
       }
     };
     this.yElements.observeDeep(_remoteElementsChangeHandler);
@@ -268,8 +409,7 @@ export class ExcalidrawBinding {
         version: (x.get('el') as { version: number }).version,
         pos: x.get('pos') as string,
       }))
-      .sort((a, b) => (a.pos > b.pos ? 1 : a.pos < b.pos ? -1 : 0));
-    this.ensureValidOrderingKeys();
+      .sort(compareOrderedElements);
 
     if (initialValue.length > 0) {
       // Push the synced Y.Doc state onto the canvas. For recipients of a
@@ -282,7 +422,7 @@ export class ExcalidrawBinding {
         repairBindings: true,
         refreshDimensions: true,
       });
-      this.api.updateScene({ elements: normalised });
+      this.updateRemoteElements(normalised);
 
       // Refresh lastKnownElements from the freshly-rendered scene so the
       // first onChange tick (debounced 50ms) sees a matching baseline.
@@ -302,7 +442,7 @@ export class ExcalidrawBinding {
           pos: posById.get(el.id) ?? '',
         }))
         .filter((entry) => entry.pos !== '')
-        .sort((a, b) => (a.pos > b.pos ? 1 : a.pos < b.pos ? -1 : 0));
+        .sort(compareOrderedElements);
 
       // Fit content on initial mount.
       setTimeout(() => {
@@ -311,6 +451,28 @@ export class ExcalidrawBinding {
           fitToContent: true,
         });
       }, 10);
+
+      // Excalidraw can finish its own initialization after the imperative API
+      // ref becomes available and reset the scene back to `initialData`. A
+      // collaborative editor intentionally mounts without file initialData,
+      // so replay the already-hydrated Y.Doc on the next task as a per-mount
+      // cold-paint bridge. This is especially important on offline restart,
+      // where no later server event exists to repaint the canvas.
+      const coldPaintTimer = setTimeout(() => {
+        const current = this.api.getSceneElements();
+        const shared = yjsToExcalidraw(this.yElements).filter(
+          (element): element is NonDeletedExcalidrawElement =>
+            !element.isDeleted,
+        );
+        if (!areElementsSame(current, shared)) {
+          const restored = restoreElements(shared, null, {
+            repairBindings: true,
+            refreshDimensions: true,
+          });
+          this.updateRemoteElements(restored);
+        }
+      }, 0);
+      this.subscriptions.push(() => clearTimeout(coldPaintTimer));
     }
 
     // Init assets.
@@ -331,6 +493,90 @@ export class ExcalidrawBinding {
     }
     this.api.updateScene({ collaborators });
     this.collaborators = collaborators;
+  }
+
+  private readonly handleApiChange = (
+    elements: readonly ExcalidrawElement[],
+    state: AppState,
+    files: BinaryFiles,
+  ): void => {
+    const nonDeletedElements = elements.filter(
+      (element): element is NonDeletedExcalidrawElement => !element.isDeleted,
+    );
+    if (this.consumeRemoteElementsEcho(nonDeletedElements)) return;
+    if (this.isApplyingRemoteElements) return;
+    // Excalidraw also fires onChange for updateScene(). Do not let a remote
+    // repaint replace an already-queued local snapshot in the trailing-edge
+    // debounce. The repaint is exactly the current Y.Doc projection, while a
+    // real local change differs from it.
+    const sharedElements = yjsToExcalidraw(this.yElements).filter(
+      (element): element is NonDeletedExcalidrawElement => !element.isDeleted,
+    );
+    if (areElementsSame(sharedElements, nonDeletedElements)) {
+      if (this.awareness) {
+        this.awareness.setLocalStateField(
+          'selectedElementIds',
+          state.selectedElementIds,
+        );
+      }
+      return;
+    }
+    // Excalidraw dispatches onChange asynchronously, so the canvas can have
+    // moved on since this callback was queued -- typically a remote repaint
+    // that landed between a local edit and its dispatch. Dropping the callback
+    // outright loses that edit for good: it is then on neither the canvas nor
+    // the Y.Doc, and the repaint's own callback is consumed as an echo. Skip a
+    // stale snapshot only once everything in it survives elsewhere; otherwise
+    // flush it and let the reconcile in flushLocalChange merge it with what
+    // arrived in the meantime.
+    const currentSceneElements = this.api.getSceneElements();
+    if (
+      !areElementsSame(currentSceneElements, nonDeletedElements)
+      && isSupersededSnapshot(
+        nonDeletedElements,
+        currentSceneElements,
+        sharedElements,
+      )
+    ) {
+      return;
+    }
+    this.flushLocalChange(
+      nonDeletedElements,
+      this.lastKnownElements.map((element) => ({ ...element })),
+      state.selectedElementIds,
+      files,
+    );
+  };
+
+  private subscribeToApi(api: ExcalidrawImperativeAPI): void {
+    this.apiChangeUnsubscribe = api.onChange(this.handleApiChange);
+  }
+
+  /**
+   * Reattach the binding after Excalidraw remounts its imperative API.
+   *
+   * The Y.Doc and awareness outlive theme-keyed canvas mounts. Repaint their
+   * current projection onto the replacement API so remote changes and
+   * collaborator presence do not continue targeting the retired canvas.
+   */
+  public replaceApi(api: ExcalidrawImperativeAPI): void {
+    if (api === this.api) return;
+    this.apiChangeUnsubscribe?.();
+    this.api = api;
+    this.subscribeToApi(api);
+
+    const elements = yjsToExcalidraw(this.yElements).filter(
+      (element): element is NonDeletedExcalidrawElement => !element.isDeleted,
+    );
+    const restored = restoreElements(elements, null, {
+      repairBindings: true,
+      refreshDimensions: true,
+    });
+    this.updateRemoteElements(restored);
+    api.addFiles(
+      [...this.yAssets.keys()].map((key) => this.yAssets.get(key) as BinaryFileData),
+    );
+    api.updateScene({ collaborators: new Map(this.collaborators) });
   }
 
   /** Awareness pointer/button update. Mirrors Excalidraw's onPointerUpdate prop. */
@@ -408,7 +654,13 @@ export class ExcalidrawBinding {
     this.subscriptions.push(() => ro.disconnect());
   }
 
+  /** Push any scene change still waiting in the debounce into the Y.Doc. */
+  syncNow(): void {
+    this.flushLocalChange.flush();
+  }
+
   destroy(): void {
+    this.syncNow();
     for (const s of this.subscriptions) {
       try {
         s();
@@ -417,6 +669,53 @@ export class ExcalidrawBinding {
       }
     }
     this.subscriptions = [];
+    for (const timer of this.remoteElementEchoTimers) clearTimeout(timer);
+    this.remoteElementEchoTimers.clear();
+    this.pendingRemoteElementEchoes = [];
+  }
+
+  private updateRemoteElements(
+    elements: readonly NonDeletedExcalidrawElement[],
+  ): void {
+    const expectedEcho = elements.map(({ id, version }) => ({ id, version }));
+    this.pendingRemoteElementEchoes.push(expectedEcho);
+    const echoTimer = setTimeout(() => {
+      this.remoteElementEchoTimers.delete(echoTimer);
+      const index = this.pendingRemoteElementEchoes.indexOf(expectedEcho);
+      if (index >= 0) this.pendingRemoteElementEchoes.splice(index, 1);
+    }, 1_000);
+    this.remoteElementEchoTimers.add(echoTimer);
+    this.isApplyingRemoteElements = true;
+    try {
+      this.api.updateScene({
+        elements,
+        // Remote/cold-paint updates must not be folded into Excalidraw's next
+        // local Store increment. EVENTUALLY (the API default) lets a repaint
+        // overwrite a pending local edit before the binding's debounce runs.
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    } catch (error) {
+      clearTimeout(echoTimer);
+      this.remoteElementEchoTimers.delete(echoTimer);
+      const index = this.pendingRemoteElementEchoes.indexOf(expectedEcho);
+      if (index >= 0) this.pendingRemoteElementEchoes.splice(index, 1);
+      throw error;
+    } finally {
+      queueMicrotask(() => {
+        this.isApplyingRemoteElements = false;
+      });
+    }
+  }
+
+  private consumeRemoteElementsEcho(
+    elements: readonly NonDeletedExcalidrawElement[],
+  ): boolean {
+    const index = this.pendingRemoteElementEchoes.findIndex((expected) =>
+      areElementsSame(expected, elements),
+    );
+    if (index < 0) return false;
+    this.pendingRemoteElementEchoes.splice(index, 1);
+    return true;
   }
 
   private _remoteAwarenessChangeHandler = ({
@@ -477,9 +776,7 @@ export class ExcalidrawBinding {
    * defensive op when we detect duplicates or non-monotonic positions.
    */
   private ensureValidOrderingKeys(): void {
-    const sortedElements = [...this.lastKnownElements].sort((a, b) =>
-      a.pos > b.pos ? 1 : a.pos < b.pos ? -1 : 0,
-    );
+    const sortedElements = [...this.lastKnownElements].sort(compareOrderedElements);
     const yDoc = this.yElements.doc!;
     const newKeys = generateNKeysBetween(null, null, Math.max(sortedElements.length, 1));
     const newPositions = new Map<string, string>();
@@ -514,9 +811,7 @@ export class ExcalidrawBinding {
       if (this.lastKnownElements.length === 0 || !insertAfterPos) {
         return generateKeyBetween(null, null);
       }
-      const sortedElements = [...this.lastKnownElements].sort((a, b) =>
-        a.pos > b.pos ? 1 : a.pos < b.pos ? -1 : 0,
-      );
+      const sortedElements = [...this.lastKnownElements].sort(compareOrderedElements);
       const insertIndex = sortedElements.findIndex((el) => el.pos === insertAfterPos);
       if (insertIndex === -1) {
         const lastPos = sortedElements[sortedElements.length - 1]?.pos;

@@ -237,6 +237,12 @@ export const SETTINGS_REGISTRY = {
     { store: 'ai-settings', path: 'showGeminiUsageIndicator' },
     true,
   ),
+  /** Width (px) of the gutter's agent sessions attention popover. */
+  'agent.sessionsPopoverWidth': setting(
+    z.number(),
+    { store: 'app-settings', path: 'agentSessionsPopover.width' },
+    420,
+  ),
   'team.presence.status': setting(
     z.enum(['online', 'away']),
     { store: 'app-settings', path: 'teamPresence.status' },

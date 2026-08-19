@@ -9,6 +9,16 @@ import * as codexBinaryPath from '../codex/codexBinaryPath';
 import * as codexSdkLoader from '../codex/codexSdkLoader';
 import { AISessionsRepository } from '../../../../storage/repositories/AISessionsRepository';
 
+// getModels() cross-checks the OpenAI model catalogue whenever it is given an
+// API key. Unmocked, that is a real api.openai.com request from the unit suite:
+// it passes only because the 401 is fast, and times the test out whenever the
+// network is slow or the SDK retries.
+vi.mock('openai', () => ({
+  default: class {
+    models = { list: async () => ({ data: [] as Array<{ id: string }> }) };
+  },
+}));
+
 function createAsyncEventStream(events: any[]): AsyncIterable<any> {
   return {
     async *[Symbol.asyncIterator]() {

@@ -95,8 +95,23 @@ async function buildWorker() {
       },
     });
 
+    await esbuild.build({
+      entryPoints: [
+        path.join(__dirname, '../src/main/workers/historyDiffWorker.ts'),
+      ],
+      bundle: true,
+      platform: 'node',
+      target: 'node18',
+      outfile: path.join(outDir, 'history-diff-worker.bundle.js'),
+      external: ['worker_threads'],
+      minify: false,
+      sourcemap: process.env.NODE_ENV !== 'production',
+      format: 'cjs',
+    });
+
     console.log('Worker bundle created successfully at out/worker.bundle.js');
     console.log('SQLite worker bundle created successfully at out/sqlite-worker.bundle.js');
+    console.log('History diff worker bundle created successfully at out/history-diff-worker.bundle.js');
 
     // Copy PGLite runtime files that are loaded dynamically at runtime
     // The binary loader embeds some files, but PGLite loads these via fs.readFile

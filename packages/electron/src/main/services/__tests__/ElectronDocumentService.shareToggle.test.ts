@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Unit test for the per-item "Share with team" toggle reconciliation
  * (ElectronDocumentService.reconcileItemShare), the backend behind the tracker
@@ -59,8 +60,7 @@ let service: ElectronDocumentService;
 beforeEach(async () => {
   vi.clearAllMocks();
   mockGetWorkspaceState.mockReturnValue({});
-  // Plan-like hybrid type: shares per-item.
-  mockGlobalRegistryGet.mockReturnValue({ sync: { mode: 'hybrid', scope: 'project' } });
+  mockGlobalRegistryGet.mockReturnValue({ sharing: 'team', draftByDefault: true });
   mockQuery.mockResolvedValue({ rows: [] });
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'share-toggle-test-'));
   service = new ElectronDocumentService(tempDir);
@@ -125,14 +125,14 @@ describe('reconcileItemShare', () => {
   });
 
   it('respects a local-mode type: never pushes even when flagged', async () => {
-    mockGlobalRegistryGet.mockReturnValue({ sync: { mode: 'local', scope: 'project' } });
+    mockGlobalRegistryGet.mockReturnValue({ sharing: 'personal', draftByDefault: false });
     (isTrackerSyncActive as any).mockReturnValue(true);
     await reconcile(makeItem(true), true);
     expect(syncTrackerItem).not.toHaveBeenCalled();
   });
 });
 
-describe('setTrackerItemShared (file-backed routing)', () => {
+describe('setTrackerItemPublished (file-backed routing)', () => {
   const REL = 'plans/example.md';
   const FM_ID = `fm:plan:${REL}`;
 
@@ -148,21 +148,22 @@ describe('setTrackerItemShared (file-backed routing)', () => {
     return fullPath;
   }
 
-  it('writes ONLY the top-level share key to the file, preserving planStatus, and reconciles', async () => {
+  it('leaves a provenance pointer with no file-level sharing state after the body move', async () => {
     const fullPath = await seedPlanFile();
     const fmRow = { id: FM_ID, source: 'frontmatter', source_ref: REL, document_path: REL, type: 'plan', data: '{}', workspace: tempDir };
     vi.spyOn(service as any, 'resolveTrackerRowForPublicId').mockResolvedValue(fmRow);
     // DB writes/reads: UPDATE + SELECT (pre) + SELECT (final). rowToTrackerItem
     // needs a row shape back.
     mockQuery.mockResolvedValue({ rows: [{ id: FM_ID, type: 'plan', source: 'frontmatter', source_ref: REL, workspace: tempDir, data: JSON.stringify({ share: { status: 'team', body: 'team' } }), sync_status: 'pending', last_indexed: new Date().toISOString() }] });
-    const reconcileFm = vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(undefined);
+    const reconcileFm = vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(true);
 
-    await service.setTrackerItemShared(FM_ID, true);
+    await service.setTrackerItemPublished(FM_ID, true);
 
     const written = await fs.readFile(fullPath, 'utf-8');
-    expect(written).toContain('share:');
-    expect(written).toContain('status: team');
-    // planStatus block is preserved, NOT flattened to trackerStatus.
+    expect(written).toContain('Moved to the team tracker');
+    expect(written).not.toContain('## Body');
+    expect(written).not.toMatch(/^share:/m);
+    // The provenance block is preserved, NOT flattened to trackerStatus.
     expect(written).toContain('planStatus:');
     expect(written).not.toContain('trackerStatus:');
     // Room push reconciled explicitly with nowShared=true.
@@ -180,9 +181,9 @@ describe('setTrackerItemShared (file-backed routing)', () => {
     const fmRow = { id: FM_ID, source: 'frontmatter', source_ref: REL, document_path: REL, type: 'plan', data: JSON.stringify({ share: { status: 'team', body: 'team' } }), workspace: tempDir };
     vi.spyOn(service as any, 'resolveTrackerRowForPublicId').mockResolvedValue(fmRow);
     mockQuery.mockResolvedValue({ rows: [{ id: FM_ID, type: 'plan', source: 'frontmatter', source_ref: REL, workspace: tempDir, data: '{}', sync_status: 'local', last_indexed: new Date().toISOString() }] });
-    const reconcileFm = vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(undefined);
+    const reconcileFm = vi.spyOn(service as any, 'reconcileFrontmatterShare').mockResolvedValue(true);
 
-    await service.setTrackerItemShared(FM_ID, false);
+    await service.setTrackerItemPublished(FM_ID, false);
 
     const written = await fs.readFile(fullPath, 'utf-8');
     expect(written).not.toContain('share:');
@@ -191,10 +192,10 @@ describe('setTrackerItemShared (file-backed routing)', () => {
   });
 });
 
-describe('setTrackerItemShared (native unshare guard)', () => {
+describe('setTrackerItemPublished (native unshare guard)', () => {
   it('refuses to unshare a native item (would delete it)', async () => {
     const nativeRow = { id: 'pln_native1', source: 'native', source_ref: null, document_path: null, type: 'plan', data: JSON.stringify({ share: { status: 'team', body: 'team' } }), workspace: tempDir };
     vi.spyOn(service as any, 'resolveTrackerRowForPublicId').mockResolvedValue(nativeRow);
-    await expect(service.setTrackerItemShared('pln_native1', false)).rejects.toThrow(/not supported/i);
+    await expect(service.setTrackerItemPublished('pln_native1', false)).rejects.toThrow(/not supported/i);
   });
 });

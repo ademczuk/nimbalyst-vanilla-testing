@@ -9,10 +9,12 @@ import { WorkspaceManager } from './WorkspaceManager';
 
 export interface WorkspaceManagerOnboardingProps {
   showOnboarding: boolean;
+  safeMode?: boolean;
 }
 
 export const WorkspaceManagerOnboarding: React.FC<WorkspaceManagerOnboardingProps> = ({
   showOnboarding,
+  safeMode = false,
 }) => {
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(showOnboarding);
 
@@ -29,7 +31,7 @@ export const WorkspaceManagerOnboarding: React.FC<WorkspaceManagerOnboardingProp
       // Land them there deliberately instead — the welcome card's own CTA
       // retries and surfaces the error properly.
       try {
-        const result = await window.electronAPI.tutorial.start();
+        const result = await window.electronAPI.tutorial.start('onboarding');
         if (!result.success) {
           console.error('Failed to start tutorial from onboarding:', result.error);
         }
@@ -41,6 +43,12 @@ export const WorkspaceManagerOnboarding: React.FC<WorkspaceManagerOnboardingProp
 
   return (
     <>
+      {safeMode && (
+        <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-center gap-2 border-b border-[var(--nim-warning)] bg-[var(--nim-bg-secondary)] px-4 py-2 text-sm text-[var(--nim-text)]">
+          <strong>Safe mode:</strong>
+          <span>Saved windows were not restored. Open a project to resume normal session saving, or relaunch without <code>--safe-mode</code>.</span>
+        </div>
+      )}
       <WorkspaceManager />
       {isOnboardingOpen && (
         <UnifiedOnboarding

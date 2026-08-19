@@ -13,7 +13,8 @@
  */
 
 import { BaseAIProvider } from '../AIProvider';
-import { ProviderCapabilities } from '../types';
+import { AIProviderType, ProviderCapabilities } from '../types';
+import { AgentCapabilities, BUILTIN_AGENT_CAPABILITIES } from '../agentCapabilities';
 import { AISessionsRepository } from '../../../storage/repositories/AISessionsRepository';
 import type { MetaAgentWorkflowPreset } from '../../prompt';
 import {
@@ -77,9 +78,22 @@ export abstract class BaseAgentProvider extends BaseAIProvider {
   }
 
   /**
-   * Get the provider name for logging and identification
+   * Get the provider name for logging and identification.
+   *
+   * Narrowed to `AIProviderType` so the agent-capability lookup below is total:
+   * a new agent provider has to appear in `AI_PROVIDER_TYPES` to be selectable,
+   * and that breaks `BUILTIN_AGENT_CAPABILITIES` until it declares.
    */
-  abstract getProviderName(): string;
+  abstract getProviderName(): AIProviderType;
+
+  /**
+   * Declared host-surface capabilities, read from the single exhaustive table.
+   * Providers whose support depends on the live transport (OpenAICodexProvider
+   * and its two transports) override this and narrow.
+   */
+  getAgentCapabilities(): AgentCapabilities {
+    return BUILTIN_AGENT_CAPABILITIES[this.getProviderName()];
+  }
 
   /**
    * Shared abort implementation - subclasses can override to add provider-specific cleanup

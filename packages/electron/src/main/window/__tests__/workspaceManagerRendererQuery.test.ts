@@ -26,4 +26,12 @@ describe('Workspace Manager renderer query', () => {
       'http://localhost:5273/?mode=workspace-manager&theme=light&onboarding=1',
     );
   });
+
+  it('marks a no-restore launch for the visible safe-mode banner', () => {
+    expect(createWorkspaceManagerRendererQuery('dark', { safeMode: true })).toEqual({
+      mode: 'workspace-manager',
+      theme: 'dark',
+      safeMode: '1',
+    });
+  });
 });

@@ -1,3 +1,17 @@
+// LEGACY SDK EVENT SHAPE ONLY -- this parser does NOT understand the
+// app-server transport that ships as the Codex default.
+//
+// It keys off `type: 'token_count'` and `info.model_context_window`, which are
+// @openai/codex-sdk / CLI concepts. The app-server sends
+// `thread/tokenUsage/updated` with `{ tokenUsage: { total, last,
+// modelContextWindow } }` instead, so none of the context-snapshot code below
+// runs on the default transport. Reaching for this file to explain missing
+// Codex context usage is a dead end -- that path lives in
+// CodexAppServerProtocol (#1251).
+//
+// Still live for: CodexSDKProtocol (the legacy transport) and CodexRawParser
+// (reparsing historical SDK-shaped raw events). Do not delete.
+
 import { extractTextFromCodexEvent } from './textExtraction';
 
 export interface ParsedCodexToolCall {

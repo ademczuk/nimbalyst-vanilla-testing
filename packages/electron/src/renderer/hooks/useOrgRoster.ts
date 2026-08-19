@@ -41,10 +41,17 @@ const EMPTY_ROSTER: OrgRoster = {
  * account id cannot be compared against the roster. Email is the only stable
  * join between the signed-in accounts and an organization's members — the same
  * join the shared-documents home uses.
+ *
+ * When two signed-in accounts are both on the roster, matching any of them
+ * makes the viewer whichever row the server happened to list first, so a DM
+ * would title itself after the viewer instead of the other participant
+ * (NIM-2459). `preferredEmail` is the sync account, the same tie-break the
+ * main process applies when it resolves the org's acting member id.
  */
 export function resolveViewerMemberId(
   members: readonly OrgRosterMember[],
   accountEmails: readonly (string | null | undefined)[],
+  preferredEmail?: string | null,
 ): string | null {
   const emails = new Set(
     accountEmails
@@ -52,10 +59,14 @@ export function resolveViewerMemberId(
       .map((email) => email.toLowerCase()),
   );
   if (emails.size === 0) return null;
+  const preferred = preferredEmail?.toLowerCase();
+  const preferredMember = preferred && emails.has(preferred)
+    ? members.find((member) => member.email?.toLowerCase() === preferred)
+    : undefined;
   return (
-    members.find((member) => emails.has(member.email?.toLowerCase() ?? ''))
-      ?.memberId ?? null
-  );
+    preferredMember
+      ?? members.find((member) => emails.has(member.email?.toLowerCase() ?? ''))
+  )?.memberId ?? null;
 }
 
 export function memberNamesById(
@@ -94,7 +105,8 @@ export function useOrgRoster(orgId: string | null | undefined): OrgRoster {
     void Promise.all([
       window.electronAPI?.organization?.listMembers?.(orgId),
       window.electronAPI?.stytch?.getAccounts?.(),
-    ]).then(([roster, accounts]) => {
+      window.electronAPI?.stytch?.getSyncAccount?.(),
+    ]).then(([roster, accounts, syncAccount]) => {
       if (cancelled) return;
       const members: OrgRosterMember[] = roster?.success && Array.isArray(roster.members)
         ? roster.members
@@ -105,6 +117,7 @@ export function useOrgRoster(orgId: string | null | undefined): OrgRoster {
         viewerUserId: resolveViewerMemberId(
           members,
           accountRows.map((account: { email?: string | null }) => account.email),
+          syncAccount?.email,
         ),
         memberNames: memberNamesById(members),
         callerRole: roster?.callerRole ?? 'member',

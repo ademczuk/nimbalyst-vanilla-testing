@@ -43,7 +43,6 @@ import {
   type AgentPermissionMode,
   type AppTheme,
   type SessionSyncConfig,
-  type TrackerSyncModeSetting,
 } from '../utils/store';
 import * as StytchAuth from './StytchAuthService';
 import { logger } from '../utils/logger';
@@ -54,10 +53,10 @@ import {
 } from '../extensions/backendModuleLifecycle';
 import { FeatureUsageService, FEATURES } from './FeatureUsageService';
 import { SessionNamingService } from './SessionNamingService';
+import { setTrackerIssueKeyPrefix } from './TrackerSyncManager';
 import { updateNativeTheme, updateWindowTitleBars } from '../theme/ThemeManager';
 import { createWindow, findWindowByWorkspace } from '../window/WindowManager';
 import { getWorkspaceWindowState } from '../utils/store';
-import { requestTrackerBackfillForWorkspace } from './TrackerSyncManager';
 
 // ─── Allow / deny lists ─────────────────────────────────────────────
 
@@ -99,7 +98,6 @@ export const DENIED_APP_KEYS = [
  * Workspace-scoped keys writable through this service.
  */
 export const ALLOWED_WORKSPACE_KEYS = [
-  'trackerSyncPolicies',
   'issueKeyPrefix',
   'agentPermissions',
 ] as const satisfies readonly string[];
@@ -192,7 +190,7 @@ export class SettingsControlService {
       overview.workspace = {
         path: workspacePath,
         accountId: ws.accountId ?? null,
-        trackerSyncPolicies: ws.trackerSyncPolicies ?? {},
+        trackerSharingMigration: ws.trackerSharingMigration ?? null,
         issueKeyPrefix: ws.issueKeyPrefix ?? null,
         sessionSyncEnabled: (sync?.enabledProjects ?? []).includes(workspacePath),
         docSyncEnabled: (sync?.docSyncEnabledProjects ?? []).includes(workspacePath),
@@ -537,55 +535,6 @@ export class SettingsControlService {
     return { ok: true, before, after: enabled };
   }
 
-  // ── Trackers (workspace-scoped) ──────────────────────────────────
-
-  async setTrackerSyncPolicy(
-    sessionId: string,
-    args: {
-      workspacePath: string;
-      trackerType: string;
-      mode: TrackerSyncModeSetting;
-    },
-  ): Promise<
-    SettingsToolResult<TrackerSyncModeSetting | undefined, TrackerSyncModeSetting>
-  > {
-    rateLimit(sessionId);
-    const { workspacePath, trackerType, mode } = args;
-    if (!workspacePath || !trackerType) {
-      return { ok: false, message: 'workspacePath and trackerType are required.' };
-    }
-    if (!['local', 'shared', 'hybrid'].includes(mode)) {
-      return { ok: false, message: `mode must be one of local, shared, hybrid. Got "${mode}".` };
-    }
-    let before: TrackerSyncModeSetting | undefined;
-    updateWorkspaceState(workspacePath, (state) => {
-      const existing = state.trackerSyncPolicies?.[trackerType];
-      before = typeof existing === 'string' ? existing : existing?.mode;
-      const policies = { ...(state.trackerSyncPolicies ?? {}) };
-      policies[trackerType] = mode;
-      state.trackerSyncPolicies = policies;
-    });
-    this.audit('tracker_set_sync_policy', sessionId, {
-      workspacePath,
-      trackerType,
-      before,
-      after: mode,
-    });
-    // Why: flipping from `local` to `shared`/`hybrid` for a workspace that
-    // already has items means the user expects those items to start
-    // appearing on their other devices. The tracker engine only knows what
-    // was queued through it; nothing else triggers historical items to be
-    // uploaded. Asking it to backfill here matches user expectation.
-    if ((mode === 'shared' || mode === 'hybrid') && before !== mode) {
-      requestTrackerBackfillForWorkspace(workspacePath).catch(err => {
-        // Non-fatal: the engine's on-connect backfill will retry on next
-        // restart. We log so a stuck setting is visible in main.log.
-        logger.main.warn('[SettingsControlService] tracker backfill request failed for', workspacePath, err);
-      });
-    }
-    return { ok: true, before, after: mode };
-  }
-
   // ── Agent trust / permissions (workspace-scoped) ─────────────────
 
   async setWorkspaceTrust(
@@ -625,18 +574,20 @@ export class SettingsControlService {
     if (!workspacePath) {
       return { ok: false, message: 'workspacePath is required.' };
     }
-    if (!/^[A-Z][A-Z0-9_-]{0,15}$/.test(prefix)) {
+    if (!/^[A-Z]{2,5}$/.test(prefix)) {
       return {
         ok: false,
-        message:
-          'prefix must be 1-16 chars, start with an uppercase letter, and use only A-Z, 0-9, _, -.',
+        message: 'prefix must be 2-5 uppercase letters.',
       };
     }
-    let before: string | undefined;
-    updateWorkspaceState(workspacePath, (state) => {
-      before = state.issueKeyPrefix;
-      state.issueKeyPrefix = prefix;
-    });
+    const before = getWorkspaceState(workspacePath).issueKeyPrefix;
+    const result = await setTrackerIssueKeyPrefix(workspacePath, prefix);
+    if (!result.success) {
+      return {
+        ok: false,
+        message: result.error ?? 'The server rejected the issue-key prefix.',
+      };
+    }
     this.audit('tracker_set_issue_key_prefix', sessionId, { workspacePath, before, after: prefix });
     return { ok: true, before, after: prefix };
   }

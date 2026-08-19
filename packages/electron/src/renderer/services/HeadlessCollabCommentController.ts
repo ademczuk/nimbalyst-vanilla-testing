@@ -10,13 +10,14 @@ import {
 } from '@nimbalyst/runtime/editor';
 
 import {
-  getTeamSyncProvider,
-  getSharedDocumentsForWorkspace,
+  getTeamSyncProviderForScopeKey,
+  getSharedDocumentsForScopeKey,
 } from '../store/atoms/collabDocuments';
-import { parseCollabUri } from '../utils/collabUri';
+import { parseCollabUri } from '@nimbalyst/collab-protocol';
 import { notifyDocumentCommentRecipients } from './documentCommentNotifier';
 import { collaborativeEmbedProviderCache } from './CollaborativeEmbedProviderCache';
 import { getCollaborativeDocumentTypeCatalog } from './CollaborativeDocumentTypeCatalog';
+import { teamMemberDisplayName } from '../utils/teamMemberDisplayName';
 
 const HYDRATION_TIMEOUT_MS = 10_000;
 const FLUSH_TIMEOUT_MS = 5_000;
@@ -51,7 +52,7 @@ export async function acquireHeadlessCollabCommentController(
   workspacePath: string,
 ): Promise<HeadlessCollabCommentAcquisition> {
   const { orgId, documentId } = parseCollabUri(documentUri);
-  const document = getSharedDocumentsForWorkspace(workspacePath)
+  const document = getSharedDocumentsForScopeKey(workspacePath)
     .find((candidate) => candidate.documentId === documentId);
   if (!document) {
     throw new Error(
@@ -106,16 +107,16 @@ export async function acquireHeadlessCollabCommentController(
     );
     const config = acquisition.resource.config;
     const currentUser = {
-      id: config.userId,
-      name: config.userName || config.userEmail || config.userId,
+      id: config.teamMemberId,
+      name: config.userName || config.userEmail || config.teamMemberId,
     };
-    const teamProvider = getTeamSyncProvider(workspacePath);
+    const teamProvider = getTeamSyncProviderForScopeKey(workspacePath);
     const getMembers = () =>
       (teamProvider?.getTeamState()?.members ?? [])
         .filter((member) => member.userId !== currentUser.id)
         .map((member) => ({
           userId: member.userId,
-          name: member.email || member.userId,
+          name: teamMemberDisplayName(member),
           personalOrgId: member.personalOrgId,
         }));
     const controller = createCollabCommentController({

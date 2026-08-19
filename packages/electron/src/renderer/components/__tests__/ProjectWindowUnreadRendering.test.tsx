@@ -3,16 +3,18 @@ import React from 'react';
 import type { TeamInboxSnapshot } from '@nimbalyst/runtime/sync';
 import { Provider, createStore } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { OrgSwitcher } from '../OrgSwitcher';
-import { ProjectWindowStatusBar } from '../ProjectWindowStatusBar';
+import { AccountInspectorPopover } from '../Accounts/AccountInspectorPopover';
+import { WindowTopBar } from '../WindowTopBar';
 import { dialogRef } from '../../contexts/DialogContext';
 import { DIALOG_IDS } from '../../dialogs/registry';
 import { activeWorkspacePathAtom } from '../../store/atoms/openProjects';
 import { teamInboxSnapshotAtom } from '../../store/atoms/teamInbox';
 
-vi.mock('@nimbalyst/runtime', () => ({
+vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   MaterialSymbol: ({ icon, className }: { icon: string; className?: string }) => (
     <span data-icon={icon} className={className} aria-hidden="true">{icon}</span>
   ),
@@ -60,7 +62,7 @@ function delivery(
 ): TeamInboxSnapshot['deliveries'][number] {
   return {
     id,
-    recipientUserId: 'member-a',
+    teamMemberId: asTeamMemberId('member-a'),
     orgId,
     orgName,
     createdAt: 10,
@@ -117,12 +119,20 @@ describe('project window unread rendering', () => {
     });
   });
 
-  it('renders the project status-bar chip and opens the active workspace org inbox first', async () => {
+  // The top-bar badge counts only the project's own organization, so it can
+  // never report unread that belongs to an inbox the user isn't working in.
+  it('badges the top-bar inbox with the project org count and opens that org', async () => {
     installApi();
-    findForWorkspace.mockResolvedValue({ team: { orgId: 'org-b' } });
+    findForWorkspace.mockResolvedValue({ team: { orgId: 'org-b', name: 'Beta' } });
 
     renderWithStore(
-      <ProjectWindowStatusBar workspacePath="/workspace/window-root" />,
+      <WindowTopBar
+        workspaceName="Repo"
+        activeModeLabel="Files"
+        gitStatus={null}
+        gitActions={{ onPull: () => {}, onPush: () => {}, onOpenLog: () => {} }}
+        workspacePath="/workspace/window-root"
+      />,
       snapshot([
         delivery('a-1', 'org-a', 'Acme'),
         delivery('a-2', 'org-a', 'Acme'),
@@ -131,16 +141,51 @@ describe('project window unread rendering', () => {
     );
 
     await waitFor(() => {
-      expect(findForWorkspace).toHaveBeenCalledWith('/workspace/acme');
-      expect(screen.getByTestId('project-window-unread-chip').textContent).toBe('3 unread');
+      expect(screen.getByTestId('window-top-bar-inbox-unread').textContent).toBe('1');
     });
+    expect(findForWorkspace).toHaveBeenCalledWith('/workspace/acme');
 
-    fireEvent.click(screen.getByTestId('project-window-unread-chip'));
+    fireEvent.click(screen.getByTestId('window-top-bar-inbox'));
 
     expect(openManagementWindow).toHaveBeenCalledWith({
       orgId: 'org-b',
-      workspacePath: '/workspace/acme',
+      workspacePath: '/workspace/window-root',
     });
+  });
+
+  it('keeps the top-bar inbox with no badge at zero unread, and drops it without an org', async () => {
+    installApi();
+    findForWorkspace.mockResolvedValue({ team: { orgId: 'org-b', name: 'Beta' } });
+
+    const withOrg = renderWithStore(
+      <WindowTopBar
+        workspaceName="Repo"
+        activeModeLabel="Files"
+        gitStatus={null}
+        gitActions={{ onPull: () => {}, onPush: () => {}, onOpenLog: () => {} }}
+        workspacePath="/workspace/window-root"
+      />,
+      snapshot([delivery('b-read', 'org-b', 'Beta', { readAt: 12 })]),
+    );
+
+    await waitFor(() => screen.getByTestId('window-top-bar-inbox'));
+    expect(screen.queryByTestId('window-top-bar-inbox-unread')).toBeNull();
+    withOrg.unmount();
+
+    findForWorkspace.mockResolvedValue({ team: null });
+    renderWithStore(
+      <WindowTopBar
+        workspaceName="Repo"
+        activeModeLabel="Files"
+        gitStatus={null}
+        gitActions={{ onPull: () => {}, onPush: () => {}, onOpenLog: () => {} }}
+        workspacePath="/workspace/window-root"
+      />,
+      snapshot([]),
+    );
+
+    await waitFor(() => expect(findForWorkspace).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId('window-top-bar-inbox')).toBeNull();
   });
 
   // The rows above are the menu's unread list, so they open the messages
@@ -178,13 +223,40 @@ describe('project window unread rendering', () => {
     expect(openManagementWindow).not.toHaveBeenCalled();
   });
 
-  it('hides the status-bar chip when there are no unread deliveries', () => {
+  // Messaging is reachable from the account popover as well as the top bar, but
+  // only where there is an organization whose inbox to open.
+  it('offers Messages in the account popover for an org project, and not otherwise', () => {
     installApi();
-    renderWithStore(
-      <ProjectWindowStatusBar />,
-      snapshot([delivery('read', 'org-a', 'Acme', { readAt: 12 })]),
+    const onOpenMessages = vi.fn();
+    const props = {
+      accounts: [],
+      anchorEl: null,
+      onClose: () => {},
+      onOpenAccount: () => {},
+      onManageOrganization: () => {},
+      onOpenApplicationSettings: () => {},
+      onOpenProjectSettings: () => {},
+      onOpenMessages,
+    };
+
+    const withOrg = renderWithStore(
+      <AccountInspectorPopover
+        {...props}
+        projectOrg={{ orgId: 'org-b', name: 'Beta' }}
+        messagesUnreadCount={140}
+      />,
+      snapshot([]),
     );
 
-    expect(screen.queryByTestId('project-window-unread-chip')).toBeNull();
+    expect(screen.getByTestId('account-inspector-messages-unread').textContent).toBe('99+');
+    fireEvent.click(screen.getByTestId('account-inspector-messages-row'));
+    expect(onOpenMessages).toHaveBeenCalledWith('org-b');
+    withOrg.unmount();
+
+    renderWithStore(
+      <AccountInspectorPopover {...props} projectOrg={null} messagesUnreadCount={0} />,
+      snapshot([]),
+    );
+    expect(screen.queryByTestId('account-inspector-messages-row')).toBeNull();
   });
 });

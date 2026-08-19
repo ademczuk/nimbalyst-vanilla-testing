@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, app, nativeImage, ipcMain, screen, nativeTheme, Menu, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
+import { BrowserWindow, app, nativeImage, ipcMain, screen, nativeTheme, Menu, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import { join, basename } from 'path';
 import { existsSync } from 'fs';
@@ -13,6 +13,7 @@ import { ElectronDocumentService, setupDocumentServiceHandlers } from '../servic
 import { ElectronFileSystemService } from '../services/ElectronFileSystemService';
 import { isWorktreePath, resolveProjectPath } from '../utils/workspaceDetection';
 import { getPreloadPath } from '../utils/appPaths';
+import { createUnresponsiveHandler } from './unresponsiveHandler';
 import {
   setFileSystemService,
   clearFileSystemService,
@@ -20,6 +21,7 @@ import {
 } from '@nimbalyst/runtime';
 import { navigationHistoryService } from '../services/NavigationHistoryService';
 import { revealReadyWindow } from './revealReadyWindow';
+import { registerStartupWindow } from './StartupActivation';
 import { signalFirstWindowLoaded } from '../services/startupMaintenanceGate';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { FeatureTrackingService } from '../services/analytics/FeatureTrackingService';
@@ -168,8 +170,13 @@ export function getFocusedOrNewWindow(): BrowserWindow {
 export interface CreateWindowOptions {
     /** Show the window without activating the app (no focus steal). */
     showInactive?: boolean;
-    /** Keep a restored window hidden if the user switched away during startup. */
-    deferShowUntilAppActive?: boolean;
+    /**
+     * This window is part of app launch: reveal it without activating and let
+     * StartupActivation foreground the app once, at the end of startup.
+     */
+    startupReveal?: boolean;
+    /** Among the startup windows, the one that should end up frontmost. */
+    startupFrontmost?: boolean;
 }
 
 export function createWindow(
@@ -284,6 +291,12 @@ export function createWindow(
         const window = new BrowserWindow(windowOptions);
         if (isWorkspaceMode) {
             registerCustomTitleBarWindow(window);
+        }
+
+        // Join the startup cohort before ready-to-show can fire, so launch
+        // knows to wait for this window before foregrounding the app once.
+        if (options?.startupReveal) {
+            registerStartupWindow(window, { frontmost: options.startupFrontmost });
         }
 
         // Generate a unique window ID
@@ -628,20 +641,11 @@ export function createWindow(
         });
 
         // Handle unresponsive renderer
-        window.webContents.on('unresponsive', () => {
-            console.warn('[MAIN] Window became unresponsive');
-            const choice = dialog.showMessageBoxSync(window, {
-                type: 'warning',
-                buttons: ['Reload', 'Keep Waiting'],
-                defaultId: 0,
-                message: 'The window is not responding',
-                detail: 'Would you like to reload the window?'
-            });
-
-            if (choice === 0 && !window.isDestroyed()) {
-                window.reload();
-            }
-        });
+        window.webContents.on('unresponsive', createUnresponsiveHandler({
+            message: 'The window is not responding',
+            logLabel: '[MAIN]',
+            getWindow: () => window
+        }));
 
         // Handle responsive again
         window.webContents.on('responsive', () => {

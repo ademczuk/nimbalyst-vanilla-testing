@@ -5,7 +5,8 @@ import { render, cleanup, fireEvent, screen, waitFor } from '@testing-library/re
 
 // Keep the component isolated: jotai atom reads return defaults, and the store
 // atom families are callable stubs so importing them has no side effects.
-vi.mock('jotai', () => ({
+vi.mock('jotai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('jotai')>()),
   useAtomValue: () => undefined,
   useSetAtom: () => () => {},
 }));

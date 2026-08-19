@@ -867,6 +867,18 @@ export function registerWorktreeHandlers(): void {
       const worktreeStore = createWorktreeStore(db);
       await worktreeStore.updatePinned(worktreeId, isPinned);
 
+      // Notify all windows so every surface showing this worktree (sidebar
+      // group, Agent mode header) reflects the new pin state.
+      const windows = BrowserWindow.getAllWindows();
+      for (const window of windows) {
+        if (!window.isDestroyed()) {
+          window.webContents.send('worktree:pinned-updated', {
+            worktreeId,
+            isPinned,
+          });
+        }
+      }
+
       return {
         success: true,
       };
@@ -1061,7 +1073,7 @@ export function registerWorktreeHandlers(): void {
    * @param files - Optional array of specific files to commit
    * @returns Commit information
    */
-  ipcMain.handle('worktree:commit', async (_event, worktreePath: string, message: string, files?: string[]) => {
+  ipcMain.handle('worktree:commit', async (_event, worktreePath: string, message: string, files?: string[], sessionId?: string) => {
     try {
       if (!worktreePath) {
         throw new Error('worktreePath is required');
@@ -1072,7 +1084,7 @@ export function registerWorktreeHandlers(): void {
 
       logger.info('Committing changes', { worktreePath, message, fileCount: files?.length });
 
-      const commit = await gitWorktreeService.commitChanges(worktreePath, message, files);
+      const commit = await gitWorktreeService.commitChanges(worktreePath, message, files, sessionId);
 
       // Convert Date object to ISO string for IPC serialization
       const dateValue = commit.date instanceof Date && !isNaN(commit.date.getTime())

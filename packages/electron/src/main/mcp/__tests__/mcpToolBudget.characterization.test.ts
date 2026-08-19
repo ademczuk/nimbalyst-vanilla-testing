@@ -18,6 +18,8 @@ import { trackerToolSchemas } from '../tools/trackerToolHandlers';
 import { feedbackToolSchemas } from '../tools/feedbackToolHandlers';
 import { voiceToolSchemas } from '../tools/voiceToolHandlers';
 import { getCollabIndexToolSchemas } from '../tools/collabIndexToolHandlers';
+import { getCollabReadToolSchemas } from '../tools/collabReadToolHandlers';
+import { getRequestFeedbackToolSchemas } from '../tools/requestFeedbackToolHandler';
 
 /**
  * Phase 0 characterization harness for the MCP server consolidation.
@@ -37,6 +39,8 @@ describe('MCP tool budget characterization (current first-party surface)', () =>
       ...displayToolSchemas,
       ...getEditorToolSchemas('characterization-session'),
       ...getCollabIndexToolSchemas(),
+      ...getCollabReadToolSchemas(),
+      ...getRequestFeedbackToolSchemas(),
       ...trackerToolSchemas,
       ...feedbackToolSchemas,
       ...voiceToolSchemas,

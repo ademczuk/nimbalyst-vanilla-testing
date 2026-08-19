@@ -10,7 +10,10 @@
 import type { TrackerRecord } from '../../../core/TrackerRecord';
 import type { TrackerSchemaRole, FieldDefinition } from '../models/TrackerDataModel';
 import { globalRegistry } from '../models';
-import { resolveRoleFieldName, getFieldByRole, getItemShareState } from '../trackerRecordAccessors';
+import { defaultTrackerTypeColor, defaultTrackerTypeIcon } from '../models/trackerTypeIdentity';
+import { isDateOnlyValue, parseDate } from '../models/dateUtils';
+import { resolveDisplayIssueKey } from '../models/localIssueKey';
+import { resolveRoleFieldName, getFieldByRole, getItemPublicationState } from '../trackerRecordAccessors';
 import { resolveCellEditor, READONLY_STRUCTURAL_COLUMNS, type CellEditorKind } from './trackerCellEditors';
 
 // ============================================================================
@@ -52,8 +55,6 @@ export interface TypeColumnConfig {
   visibleColumns: string[];
   /** Custom column widths (overrides defaults) */
   columnWidths: Record<string, number>;
-  /** Grouping field (null = no grouping) */
-  groupBy: string | null;
 }
 
 // ============================================================================
@@ -69,7 +70,35 @@ const STRUCTURAL_COLUMNS: TrackerColumnDef[] = [
   { id: 'createdBy', label: 'Created by', width: 140, minWidth: 100, sortable: true, render: 'avatar', defaultVisible: false, builtin: true, editable: false, edit: 'readonly' },
   { id: 'updatedBy', label: 'Updated by', width: 140, minWidth: 100, sortable: true, render: 'avatar', defaultVisible: false, builtin: true, editable: false, edit: 'readonly' },
   { id: 'module', label: 'Source', width: 150, minWidth: 100, sortable: true, render: 'module', defaultVisible: false, builtin: true, editable: false, edit: 'readonly' },
-  { id: 'shared', label: 'Shared', width: 90, minWidth: 70, sortable: true, render: 'badge', defaultVisible: false, builtin: true, editable: false, edit: 'readonly' },
+  // Label is the product vocabulary (Draft/Published); the id stays `shared`
+  // so saved views and typed `shared:` filter tokens keep resolving.
+  { id: 'shared', label: 'Publication', width: 90, minWidth: 70, sortable: true, render: 'badge', defaultVisible: false, builtin: true, editable: false, edit: 'readonly' },
+];
+
+/**
+ * Columns used when no schema model is registered for the requested type -- which is
+ * how the cross-tracker "All" view resolves its columns (it passes the empty string).
+ *
+ * Every entry carries a `role`, so the row layer resolves it to whatever field each
+ * item's own type maps that role to: `assignee` reads `owner` on most schemas but
+ * `dueDate` reads `targetDate` on `goal`. Without these, the All view could only ever
+ * show title/status/priority, so "what's overdue?" and "who owns this?" were
+ * unanswerable across trackers (nimbalyst#1129).
+ *
+ * The ids are the conventional field names from ROLE_DEFAULTS rather than the role
+ * names, so a persisted column config or filter clause means the same thing whether it
+ * was saved from the All view or from a single-tracker view.
+ */
+const ROLE_FALLBACK_COLUMNS: TrackerColumnDef[] = [
+  { id: 'title', label: 'Title', width: 'auto', minWidth: 200, sortable: true, render: 'text', defaultVisible: true, builtin: true, role: 'title', editable: true, edit: 'text' },
+  { id: 'status', label: 'Status', width: 120, sortable: true, render: 'badge', defaultVisible: true, builtin: true, role: 'workflowStatus', editable: true, edit: 'select' },
+  { id: 'priority', label: 'Priority', width: 100, sortable: true, render: 'badge', defaultVisible: true, builtin: true, role: 'priority', editable: true, edit: 'select' },
+  { id: 'owner', label: 'Owner', width: 120, minWidth: 100, sortable: true, render: 'avatar', defaultVisible: true, builtin: true, role: 'assignee', editable: true, edit: 'user' },
+  { id: 'dueDate', label: 'Due Date', width: 100, sortable: true, render: 'date', defaultVisible: true, builtin: true, role: 'dueDate', editable: true, edit: 'date' },
+  { id: 'startDate', label: 'Start Date', width: 100, sortable: true, render: 'date', defaultVisible: false, builtin: true, role: 'startDate', editable: true, edit: 'date' },
+  { id: 'reporterEmail', label: 'Reporter', width: 120, minWidth: 100, sortable: true, render: 'avatar', defaultVisible: false, builtin: true, role: 'reporter', editable: true, edit: 'user' },
+  { id: 'tags', label: 'Tags', width: 120, sortable: true, render: 'tags', defaultVisible: false, builtin: true, role: 'tags', editable: true, edit: 'multiselect' },
+  { id: 'progress', label: 'Progress', width: 60, sortable: true, render: 'progress', defaultVisible: false, builtin: true, role: 'progress', editable: true, edit: 'number' },
 ];
 
 /**
@@ -116,12 +145,7 @@ export function resolveColumnsForType(type: string): TrackerColumnDef[] {
   if (!model) {
     // No model: return structural columns + conventional field columns. These stay
     // editable so an unregistered type still gets inline title/status/priority edits.
-    return [
-      ...STRUCTURAL_COLUMNS,
-      { id: 'title', label: 'Title', width: 'auto', minWidth: 200, sortable: true, render: 'text', defaultVisible: true, builtin: true, role: 'title', editable: true, edit: 'text' },
-      { id: 'status', label: 'Status', width: 120, sortable: true, render: 'badge', defaultVisible: true, builtin: true, role: 'workflowStatus', editable: true, edit: 'select' },
-      { id: 'priority', label: 'Priority', width: 100, sortable: true, render: 'badge', defaultVisible: true, builtin: true, role: 'priority', editable: true, edit: 'select' },
-    ];
+    return [...STRUCTURAL_COLUMNS, ...ROLE_FALLBACK_COLUMNS];
   }
 
   // Build role reverse lookup: fieldName -> role
@@ -170,6 +194,19 @@ export function resolveColumnsForType(type: string): TrackerColumnDef[] {
 }
 
 /**
+ * Resolve the record field one column reads for one item.
+ *
+ * A role-bearing column resolves per record, because the same column can be backed by
+ * a different field on each type -- `dueDate` is `dueDate` on most schemas but
+ * `targetDate` on `goal`. In a single-type view this is a no-op (the column id already
+ * is the field name); in the cross-tracker "All" view it is what makes the column
+ * show anything at all.
+ */
+export function resolveColumnFieldName(recordType: string, column: TrackerColumnDef): string {
+  return column.role ? resolveRoleFieldName(recordType, column.role) : column.id;
+}
+
+/**
  * Get the default column config for a type.
  * Resolves visible columns from schema roles + tableView.defaultColumns.
  */
@@ -203,7 +240,7 @@ export function getDefaultColumnConfig(type: string): TypeColumnConfig {
     }
   }
 
-  return { visibleColumns, columnWidths: {}, groupBy: null };
+  return { visibleColumns, columnWidths: {} };
 }
 
 // Keep the old name exported for backward compat
@@ -247,37 +284,117 @@ export function getPriorityColor(priority: string | undefined): string {
 export function getTypeColor(type: string): string {
   const model = globalRegistry.get(type);
   if (model?.color) return model.color;
-  const colors: Record<string, string> = {
-    bug: '#dc2626', task: '#2563eb', plan: '#7c3aed', idea: '#ca8a04',
-    decision: '#8b5cf6', automation: '#60a5fa', feature: '#10b981',
-  };
-  return colors[type] || '#6b7280';
+  return defaultTrackerTypeColor(type);
 }
 
 export function getTypeIcon(type: string): string {
   const model = globalRegistry.get(type);
   if (model?.icon) return model.icon;
-  const icons: Record<string, string> = {
-    bug: 'bug_report', task: 'check_box', plan: 'assignment', idea: 'lightbulb',
-    decision: 'gavel', automation: 'auto_mode', feature: 'rocket_launch',
-  };
-  return icons[type] || 'label';
+  return defaultTrackerTypeIcon(type);
 }
 
-export function formatRelativeDate(date: Date): string {
+/**
+ * Elapsed-time label for an instant, e.g. `3h ago` / `in 3d`.
+ *
+ * Future instants get their own labels rather than falling into the
+ * `minutes < 1` branch, which used to render every future date as "Just now"
+ * (nimbalyst#1156). For a calendar day use `formatRelativeCalendarDay`.
+ */
+export function formatRelativeDate(date: Date, now: Date = new Date()): string {
   if (!date || date.getTime() === 0 || isNaN(date.getTime())) return '';
-  const now = new Date();
   const diff = now.getTime() - date.getTime();
-  const minutes = Math.floor(diff / (1000 * 60));
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const isFuture = diff < 0;
+  const elapsed = Math.abs(diff);
+  const minutes = Math.floor(elapsed / (1000 * 60));
+  const hours = Math.floor(elapsed / (1000 * 60 * 60));
+  const days = Math.floor(elapsed / (1000 * 60 * 60 * 24));
   if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days === 1) return 'Yesterday';
-  if (days < 7) return `${days}d ago`;
-  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  if (minutes < 60) return isFuture ? `in ${minutes}m` : `${minutes}m ago`;
+  if (hours < 24) return isFuture ? `in ${hours}h` : `${hours}h ago`;
+  if (days === 1) return isFuture ? 'Tomorrow' : 'Yesterday';
+  if (days < 7) return isFuture ? `in ${days}d` : `${days}d ago`;
+  if (days < 30) {
+    const weeks = Math.floor(days / 7);
+    return isFuture ? `in ${weeks}w` : `${weeks}w ago`;
+  }
   return date.toLocaleDateString();
+}
+
+/** Local midnight of the day `date` falls on. */
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function pluralDays(count: number): string {
+  return count === 1 ? '1 day' : `${count} days`;
+}
+
+function pluralWeeks(count: number): string {
+  return count === 1 ? '1 week' : `${count} weeks`;
+}
+
+/**
+ * Relative label for a calendar day, compared by local date rather than by
+ * elapsed milliseconds.
+ *
+ * A due date entered as today should read "Today" all day long, not "20h ago"
+ * once the evening arrives, and a date a few days out should name the distance
+ * rather than collapsing to a timestamp label.
+ */
+export function formatRelativeCalendarDay(date: Date, now: Date = new Date()): string {
+  if (!date || isNaN(date.getTime())) return '';
+  const dayMs = 1000 * 60 * 60 * 24;
+  // Positive is in the future. Round because DST makes some local days 23 or 25 hours.
+  const days = Math.round(
+    (startOfLocalDay(date).getTime() - startOfLocalDay(now).getTime()) / dayMs,
+  );
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  if (days === -1) return 'Yesterday';
+  const distance = Math.abs(days);
+  if (distance >= 30) return date.toLocaleDateString();
+  const label = distance < 7 ? pluralDays(distance) : pluralWeeks(Math.floor(distance / 7));
+  return days > 0 ? `in ${label}` : `${label} ago`;
+}
+
+/**
+ * Display text and hover title for a tracker date cell.
+ *
+ * Dispatches on the *stored* value: a calendar day (`YYYY-MM-DD`) is compared
+ * by local date, anything else is treated as an instant. The title always
+ * carries the exact value so the relative label never hides the real date.
+ */
+export function formatTrackerDateCell(
+  value: unknown,
+  now: Date = new Date(),
+): { display: string; title: string } {
+  if (value === undefined || value === null || value === '') return { display: '', title: '' };
+
+  const date = parseDate(value);
+  if (!date) return { display: String(value), title: '' };
+
+  if (isDateOnlyValue(value)) {
+    return {
+      display: formatRelativeCalendarDay(date, now),
+      title: date.toLocaleDateString(undefined, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+      }),
+    };
+  }
+
+  return {
+    display: formatRelativeDate(date, now),
+    title: date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }),
+  };
 }
 
 function parseValidDate(value: string | undefined): Date | undefined {
@@ -286,17 +403,10 @@ function parseValidDate(value: string | undefined): Date | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
-function isDateOnlyOrMidnightUtc(value: string | undefined): boolean {
-  if (!value) return false;
-  const trimmed = value.trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed)
-    || /^\d{4}-\d{2}-\d{2}T00:00:00(?:\.000)?Z$/.test(trimmed);
-}
-
 export function getEffectiveUpdatedDate(record: TrackerRecord): Date | undefined {
   const lastIndexed = parseValidDate(record.system.lastIndexed);
   const dateSource = record.system.updatedAt || record.system.createdAt;
-  if (record.source === 'frontmatter' && lastIndexed && isDateOnlyOrMidnightUtc(dateSource)) {
+  if (record.source === 'frontmatter' && lastIndexed && isDateOnlyValue(dateSource)) {
     return lastIndexed;
   }
   return parseValidDate(dateSource) ?? lastIndexed;
@@ -310,7 +420,7 @@ export function getEffectiveUpdatedDate(record: TrackerRecord): Date | undefined
 export function getCellValue(record: TrackerRecord, columnId: string): any {
   switch (columnId) {
     case 'type': return record.primaryType;
-    case 'key': return record.issueKey ?? '';
+    case 'key': return resolveDisplayIssueKey(record) ?? '';
     case 'updated': return getEffectiveUpdatedDate(record);
     case 'viewed': return record.fields.viewed;
     case 'created': return record.system.createdAt;
@@ -323,7 +433,7 @@ export function getCellValue(record: TrackerRecord, columnId: string): any {
     }
     case 'archived': return record.archived;
     case 'module': return record.system.documentPath;
-    case 'shared': return getItemShareState(record);
+    case 'shared': return getItemPublicationState(record);
     default: return record.fields[columnId];
   }
 }

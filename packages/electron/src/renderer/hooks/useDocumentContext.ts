@@ -3,7 +3,7 @@ import type { TabData } from '../contexts/TabsContext';
 import { getTextSelection } from '../components/UnifiedAI/TextSelectionIndicator';
 import type { MockupSelection, EditorContextItem } from '@nimbalyst/runtime';
 import { getActiveEditorContextItems } from '../stores/editorContextStore';
-import { isCollabUri } from '../utils/collabUri';
+import { isCollabUri } from '@nimbalyst/collab-protocol';
 
 export interface DocumentContext {
   filePath: string;

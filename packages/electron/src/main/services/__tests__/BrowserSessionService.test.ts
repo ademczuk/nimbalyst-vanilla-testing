@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Pure-function tests for BrowserSessionService helpers.
  *
@@ -11,8 +12,43 @@ import {
   clampBounds,
   isAllowedBrowserUrl,
   resolveBrowserPartitionName,
+  scaleBoundsForZoom,
   selectIdleHeadlessSessions,
 } from '../BrowserSessionService';
+
+describe('scaleBoundsForZoom', () => {
+  const cssRect = { x: 200, y: 100, width: 800, height: 600 };
+
+  it('passes bounds through unchanged at 100%', () => {
+    expect(scaleBoundsForZoom(cssRect, 1)).toEqual(cssRect);
+  });
+
+  it('scales origin and size up when the window is zoomed in', () => {
+    // At 125% the renderer's CSS grid is 1.25x smaller than the window's
+    // device-independent grid, so the native view sits further out and larger.
+    expect(scaleBoundsForZoom(cssRect, 1.25)).toEqual({
+      x: 250,
+      y: 125,
+      width: 1000,
+      height: 750,
+    });
+  });
+
+  it('scales down when the window is zoomed out', () => {
+    expect(scaleBoundsForZoom(cssRect, 0.5)).toEqual({
+      x: 100,
+      y: 50,
+      width: 400,
+      height: 300,
+    });
+  });
+
+  it('falls back to 1x for an unusable zoom factor', () => {
+    for (const factor of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(scaleBoundsForZoom(cssRect, factor)).toEqual(cssRect);
+    }
+  });
+});
 
 describe('clampBounds', () => {
   const container = { width: 1000, height: 800 };

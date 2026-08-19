@@ -61,9 +61,12 @@ describe('deriveCollabProductStatus', () => {
     ['ready', 'connected', 'rejected', 'access-changed'],
     ['ready', 'disconnected', 'replaying', 'replaying'],
     ['ready', 'replaying', 'clean', 'replaying'],
-    // connected+pending is in-flight typing, not an offline backlog -- it
-    // must read as synced or the pill flashes on every keystroke.
+    // connected+pending and connected+replaying are both in-flight typing (the
+    // outbox walks clean -> pending -> in-flight -> clean per keystroke), not an
+    // offline backlog -- both must read as synced or the pill and the presence
+    // avatars flash on every character.
     ['ready', 'connected', 'pending', 'synced'],
+    ['ready', 'connected', 'replaying', 'synced'],
     ['ready', 'connected', 'clean', 'synced'],
     ['ready', 'connecting', 'clean', 'connecting'],
     ['ready', 'syncing', 'clean', 'connecting'],

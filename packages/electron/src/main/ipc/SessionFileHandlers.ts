@@ -2,8 +2,9 @@
  * IPC handlers for session-file link operations
  */
 
-import { SessionFilesRepository, type FileLinkType, type FileLink } from '@nimbalyst/runtime';
+import { AISessionsRepository, SessionFilesRepository, type FileLinkType, type FileLink } from '@nimbalyst/runtime';
 import { promises as fs } from 'fs';
+import path from 'node:path';
 import { createPatch } from 'diff';
 import { logger } from '../utils/logger';
 import { safeHandle } from '../utils/ipcRegistry';
@@ -24,6 +25,17 @@ import { registerSessionFilesCacheInvalidator } from '../services/sessionFilesNo
 const SESSION_FILES_CACHE_TTL_MS = 2000; // 2 second cache
 
 const sessionFilesCache = createSessionFilesQueryCache<FileLink[]>(SESSION_FILES_CACHE_TTL_MS);
+
+export function isSessionWorkspaceAllowed(
+  session: { workspacePath?: string; worktreePath?: string; worktreeProjectPath?: string } | null | undefined,
+  workspacePath: string,
+): boolean {
+  if (!session || !workspacePath) return false;
+  const requestedWorkspace = path.resolve(workspacePath);
+  return [session.workspacePath, session.worktreePath, session.worktreeProjectPath]
+    .filter((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0)
+    .some((candidate) => path.resolve(candidate) === requestedWorkspace);
+}
 
 function invalidateSessionCache(sessionId: string): void {
   sessionFilesCache.invalidate(sessionId);
@@ -166,21 +178,32 @@ export function setupSessionFileHandlers(): void {
   safeHandle(
     'session-files:get-tool-call-diffs',
     async (
-      event,
+      _event,
+      workspacePath: string,
       sessionId: string,
       toolCallItemId: string,
       toolCallTimestamp?: number
     ) => {
+      if (!workspacePath || !sessionId || !toolCallItemId) {
+        return { state: 'failed', diffs: [], omissions: [], errorCode: 'snapshot-read-failed' };
+      }
       try {
-        const diffs = await toolCallMatcher.getDiffsForToolCall(
+        const session = await AISessionsRepository.get(sessionId);
+        if (!isSessionWorkspaceAllowed(session, workspacePath)) {
+          logger.main.warn('[SessionFileHandlers] Rejected cross-workspace tool diff request', {
+            sessionId,
+          });
+          return { state: 'failed', diffs: [], omissions: [], errorCode: 'snapshot-read-failed' };
+        }
+
+        return await toolCallMatcher.getDiffsForToolCallResult(
           sessionId,
           toolCallItemId,
           toolCallTimestamp
         );
-        return { success: true, diffs };
       } catch (error) {
         logger.main.error('[SessionFileHandlers] Failed to get tool call diffs:', error);
-        return { success: false, error: String(error), diffs: [] };
+        return { state: 'failed', diffs: [], omissions: [], errorCode: 'worker-failed' };
       }
     }
   );

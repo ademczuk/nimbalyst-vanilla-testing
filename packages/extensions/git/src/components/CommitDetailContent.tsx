@@ -30,6 +30,13 @@ interface CommitDetailContentProps {
    */
   workspacePath?: string;
   commitHash?: string;
+  /**
+   * The AI session that produced this commit, when one is recorded. Absent for
+   * commits made outside a session (bash, release scripts) — the vertical
+   * layout simply omits the row rather than showing "unknown".
+   */
+  sessionLink?: { sessionId: string; title: string | null; provider: string | null } | null;
+  onOpenSession?: (sessionId: string) => void;
 }
 
 // --- Directory tree (matches FileEditsSidebar's collapsing algorithm) ---
@@ -273,6 +280,8 @@ export function CommitDetailContent({
   layout,
   workspacePath,
   commitHash,
+  sessionLink,
+  onOpenSession,
 }: CommitDetailContentProps) {
   // Persisted popover size (shared with the git changes panel & commit proposal widget).
   const [diffPeekSize, setDiffPeekSize] = useState<{ width: number; height: number } | null>(null);
@@ -365,6 +374,22 @@ export function CommitDetailContent({
     /* eslint-disable-next-line jsx-a11y/no-static-element-interactions */
     <div className="git-detail-vertical" onKeyDown={handleKeyDown}>
       <pre className="git-detail-message">{detail.body}</pre>
+      {sessionLink && (
+        <div className="git-detail-session">
+          <span className="git-detail-session-label">Session</span>
+          <button
+            type="button"
+            className="git-detail-session-link"
+            title="Open this session"
+            onClick={() => onOpenSession?.(sessionLink.sessionId)}
+          >
+            {sessionLink.title || 'Untitled session'}
+          </button>
+          {sessionLink.provider && (
+            <span className="git-detail-session-provider">{sessionLink.provider}</span>
+          )}
+        </div>
+      )}
       <div className="git-detail-files">{renderDirNode(tree, 0, rowOptions)}</div>
       <SummaryBar detail={detail} author={author} date={date} />
 

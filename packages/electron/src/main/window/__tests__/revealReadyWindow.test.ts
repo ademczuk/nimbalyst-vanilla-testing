@@ -1,42 +1,17 @@
+// @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The real runWhenAppIsActive drives the ordering under test, so mock only the
-// electron `app` emitter it depends on (same approach as AppActivationGuard.test).
-const mocks = vi.hoisted(() => {
-  class TestEmitter {
-    private listeners = new Map<string, Set<(...args: unknown[]) => void>>();
-
-    on(event: string, listener: (...args: unknown[]) => void) {
-      const listeners = this.listeners.get(event) ?? new Set();
-      listeners.add(listener);
-      this.listeners.set(event, listeners);
-      return this;
-    }
-
-    once(event: string, listener: (...args: unknown[]) => void) {
-      const wrapped = (...args: unknown[]) => {
-        this.removeListener(event, wrapped);
-        listener(...args);
-      };
-      return this.on(event, wrapped);
-    }
-
-    removeListener(event: string, listener: (...args: unknown[]) => void) {
-      this.listeners.get(event)?.delete(listener);
-      return this;
-    }
-
-    emit(event: string, ...args: unknown[]) {
-      for (const listener of [...(this.listeners.get(event) ?? [])]) listener(...args);
-    }
-  }
-
-  return { app: new TestEmitter() };
-});
-
-vi.mock('electron', () => ({ app: mocks.app }));
+vi.mock('electron', () => ({ app: { focus: vi.fn() } }));
+vi.mock('../../utils/logger', () => ({
+  logger: { main: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } },
+}));
 
 import { revealReadyWindow } from '../revealReadyWindow';
+import {
+  beginStartupActivation,
+  registerStartupWindow,
+  resetStartupActivationForTests,
+} from '../StartupActivation';
 
 class TestWindow {
   private listeners = new Map<string, Set<(...args: unknown[]) => void>>();
@@ -45,6 +20,7 @@ class TestWindow {
   isDestroyed = vi.fn(() => false);
   show = vi.fn(() => this.calls.push('show'));
   showInactive = vi.fn(() => this.calls.push('showInactive'));
+  focus = vi.fn(() => this.calls.push('focus'));
   maximize = vi.fn(() => this.calls.push('maximize'));
 
   once(event: string, listener: (...args: unknown[]) => void) {
@@ -62,75 +38,49 @@ class TestWindow {
     this.listeners.get(event)?.delete(listener);
     return this;
   }
-
-  emit(event: string, ...args: unknown[]) {
-    for (const listener of [...(this.listeners.get(event) ?? [])]) listener(...args);
-  }
 }
 
 describe('revealReadyWindow', () => {
   beforeEach(() => {
-    // Start from an inactive app so the darwin guard actually defers.
-    mocks.app.emit('did-resign-active');
+    resetStartupActivationForTests();
   });
 
-  // Greg's review (PR #1079): maximize() shows a hidden window and, before the
-  // fix, ran ahead of the deferShowUntilAppActive guard — revealing (and on
-  // macOS reactivating) the window before the app-active gate allowed it.
-  it('does not maximize a restored window before the app-active guard fires', () => {
+  // The regression this whole mechanism exists for: gating show() on "the app
+  // is currently active" meant a window whose ready-to-show landed while the
+  // user was in another app was never shown at all.
+  it('reveals a startup window even though the app never became active', () => {
     const window = new TestWindow();
+    beginStartupActivation({ platform: 'darwin' });
+    registerStartupWindow(window);
 
-    revealReadyWindow(
-      window,
-      { showInactive: true, deferShowUntilAppActive: true },
-      { isMaximized: true },
-      'darwin',
-    );
-
-    // Guard has not released yet: neither show nor maximize may run, otherwise
-    // maximize would have revealed the hidden window and stolen focus.
-    expect(window.maximize).not.toHaveBeenCalled();
-    expect(window.showInactive).not.toHaveBeenCalled();
-    expect(window.show).not.toHaveBeenCalled();
-  });
-
-  it('maximizes only inside the guarded show action, after the show call', () => {
-    const window = new TestWindow();
-
-    revealReadyWindow(
-      window,
-      { showInactive: true, deferShowUntilAppActive: true },
-      { isMaximized: true },
-      'darwin',
-    );
-    mocks.app.emit('did-become-active');
-
-    // Ordering matters: show reveals via the guarded (inactive) path first,
-    // then maximize resizes an already-visible window instead of revealing it.
-    expect(window.calls).toEqual(['showInactive', 'maximize']);
-    expect(window.show).not.toHaveBeenCalled();
-  });
-
-  it('never maximizes when saved bounds were not maximized', () => {
-    const window = new TestWindow();
-
-    revealReadyWindow(
-      window,
-      { showInactive: true, deferShowUntilAppActive: true },
-      { isMaximized: false },
-      'darwin',
-    );
-    mocks.app.emit('did-become-active');
+    revealReadyWindow(window, { showInactive: true, startupReveal: true }, undefined);
 
     expect(window.calls).toEqual(['showInactive']);
-    expect(window.maximize).not.toHaveBeenCalled();
   });
 
-  it('shows and maximizes immediately when no defer guard is requested', () => {
+  // Greg's review (PR #1079): maximize() shows a hidden window, so it has to
+  // run after the show it belongs to, never before it.
+  it('maximizes a restored window only after revealing it', () => {
+    const window = new TestWindow();
+    beginStartupActivation({ platform: 'darwin' });
+    registerStartupWindow(window);
+
+    revealReadyWindow(
+      window,
+      { showInactive: true, startupReveal: true },
+      { isMaximized: true },
+    );
+
+    expect(window.calls).toEqual(['showInactive', 'maximize']);
+  });
+
+  it('activates a window opened after startup has finished', () => {
     const window = new TestWindow();
 
-    revealReadyWindow(window, undefined, { isMaximized: true });
+    // Same call shape as a file opened from Finder while Nimbalyst is running:
+    // the coordinator is not accepting members, so this window shows normally.
+    revealReadyWindow(window, { startupReveal: true }, undefined);
 
-    expect(window.calls).toEqual(['show', 'maximize']);
+    expect(window.calls).toEqual(['show']);
   });
 });

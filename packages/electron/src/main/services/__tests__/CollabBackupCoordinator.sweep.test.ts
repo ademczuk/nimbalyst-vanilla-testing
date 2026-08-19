@@ -45,11 +45,12 @@ vi.mock('../../database/initialize', () => ({
 
 vi.mock('../TeamService', () => ({
   findTeamForWorkspace: async () => ({ orgId: 'org-1', teamProjectId: 'project-1' }),
+  getOrgScopedIdentity: async () => ({ jwt: 'jwt', teamMemberId: 'member-1' }),
   getOrgScopedJwt: async () => 'jwt',
 }));
 
 vi.mock('../TrackerPolicyService', () => ({
-  getEffectiveTrackerSyncPolicy: () => ({}),
+  getEffectiveTrackerSharingPolicy: () => ({ sharing: 'team', draftByDefault: false }),
   shouldSyncTrackerItem: () => false,
 }));
 

@@ -16,6 +16,10 @@
  * better-sqlite3 behave identically (DATABASE.md parity). `EXCLUDED` is upper-
  * case (works on both backends; SQLite keywords are case-insensitive).
  */
+import type {
+  PersonalMemberId,
+  TeamMemberId,
+} from '@nimbalyst/runtime/auth/jwtScopes';
 
 export type OrgFlavor = 'personal' | 'team';
 export type OrgRole = 'owner' | 'admin' | 'member' | 'viewer' | 'guest';
@@ -35,10 +39,25 @@ export interface OrgInput {
   gitOriginHash?: string | null;
 }
 
-export interface MemberInput {
-  userId: string;
+interface MemberInputBase {
   email?: string | null;
   role: string;
+}
+
+export interface TeamMemberInput extends MemberInputBase {
+  teamMemberId: TeamMemberId;
+  personalMemberId?: never;
+}
+
+export interface PersonalMemberInput extends MemberInputBase {
+  personalMemberId: PersonalMemberId;
+  teamMemberId?: never;
+}
+
+export type MemberInput = TeamMemberInput | PersonalMemberInput;
+
+function memberId(input: MemberInput): TeamMemberId | PersonalMemberId {
+  return input.teamMemberId ?? input.personalMemberId;
 }
 
 export interface OrgWithRoster {
@@ -149,24 +168,24 @@ export async function applyMemberUpserted(db: ProjectionDb, orgId: string, m: Me
        email = COALESCE(EXCLUDED.email, org_members.email),
        role = EXCLUDED.role,
        updated_at = EXCLUDED.updated_at`,
-    [orgId, m.userId, m.email ?? null, m.role, ts],
+    [orgId, memberId(m), m.email ?? null, m.role, ts],
   );
 }
 
 /** Remove a membership and any project grants the user held in that org. */
-export async function applyMemberRemoved(db: ProjectionDb, orgId: string, userId: string): Promise<void> {
-  await db.query(`DELETE FROM org_members WHERE org_id = $1 AND user_id = $2`, [orgId, userId]);
+export async function applyMemberRemoved(db: ProjectionDb, orgId: string, teamMemberId: TeamMemberId): Promise<void> {
+  await db.query(`DELETE FROM org_members WHERE org_id = $1 AND user_id = $2`, [orgId, teamMemberId]);
   // Drop the user's grants on this org's projects (keeps the projection tidy;
   // the resolver would deny anyway once the membership is gone).
   await db.query(
     `DELETE FROM project_access WHERE user_id = $1
        AND project_id IN (SELECT id FROM projects WHERE org_id = $2)`,
-    [userId, orgId],
+    [teamMemberId, orgId],
   );
 }
 
 /** Update just the org role of an existing (or new) membership. */
-export async function applyMemberRoleChanged(db: ProjectionDb, orgId: string, userId: string, role: string): Promise<void> {
+export async function applyMemberRoleChanged(db: ProjectionDb, orgId: string, teamMemberId: TeamMemberId, role: string): Promise<void> {
   const ts = nowIso();
   await db.query(
     `INSERT INTO org_members (org_id, user_id, role, created_at, updated_at)
@@ -174,25 +193,25 @@ export async function applyMemberRoleChanged(db: ProjectionDb, orgId: string, us
      ON CONFLICT (org_id, user_id) DO UPDATE SET
        role = EXCLUDED.role,
        updated_at = EXCLUDED.updated_at`,
-    [orgId, userId, role, ts],
+    [orgId, teamMemberId, role, ts],
   );
 }
 
 /** Upsert a project_access grant (write-through for a project-access broadcast). */
-export async function applyProjectGrant(db: ProjectionDb, projectId: string, userId: string, projectRole: ProjectRole): Promise<void> {
+export async function applyProjectGrant(db: ProjectionDb, projectId: string, teamMemberId: TeamMemberId, projectRole: ProjectRole): Promise<void> {
   const ts = nowIso();
   await db.query(
     `INSERT INTO project_access (project_id, user_id, project_role, created_at)
      VALUES ($1, $2, $3, $4)
      ON CONFLICT (project_id, user_id) DO UPDATE SET
        project_role = EXCLUDED.project_role`,
-    [projectId, userId, projectRole, ts],
+    [projectId, teamMemberId, projectRole, ts],
   );
 }
 
 /** Revoke a project_access grant. */
-export async function applyProjectRevoke(db: ProjectionDb, projectId: string, userId: string): Promise<void> {
-  await db.query(`DELETE FROM project_access WHERE project_id = $1 AND user_id = $2`, [projectId, userId]);
+export async function applyProjectRevoke(db: ProjectionDb, projectId: string, teamMemberId: TeamMemberId): Promise<void> {
+  await db.query(`DELETE FROM project_access WHERE project_id = $1 AND user_id = $2`, [projectId, teamMemberId]);
 }
 
 /**
@@ -212,10 +231,51 @@ export async function seedProjectAccessFromRoster(
       `INSERT INTO project_access (project_id, user_id, project_role, created_at)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (project_id, user_id) DO NOTHING`,
-      [projectId, m.userId, defaultProjectRoleForOrgRole(m.role), ts],
+      [projectId, memberId(m), defaultProjectRoleForOrgRole(m.role), ts],
     );
   }
   return members.length;
+}
+
+/**
+ * Replace this project's local grants with the server's authoritative list.
+ *
+ * `seedProjectAccessFromRoster` guesses grants from org roles because a cold
+ * client has no other source, but a guess is not a grant: it made `canAccess`
+ * report edit rights the server then refused with `document_read_only`, and it
+ * invented rows for members the server had never granted anything. Once the
+ * real list is in hand it wins outright — grants the server does not list are
+ * deleted, and roles it does list overwrite whatever was guessed.
+ *
+ * Scoped to one project; other projects' grants are left alone.
+ */
+export async function reconcileProjectAccessFromServer(
+  db: ProjectionDb,
+  projectId: string,
+  grants: Array<{ teamMemberId: TeamMemberId; projectRole: string }>,
+): Promise<number> {
+  const ts = nowIso();
+  const serverUserIds = grants.map((g) => g.teamMemberId);
+  for (const grant of grants) {
+    await db.query(
+      `INSERT INTO project_access (project_id, user_id, project_role, created_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (project_id, user_id) DO UPDATE SET
+         project_role = EXCLUDED.project_role`,
+      [projectId, grant.teamMemberId, grant.projectRole, ts],
+    );
+  }
+  if (serverUserIds.length === 0) {
+    await db.query(`DELETE FROM project_access WHERE project_id = $1`, [projectId]);
+    return 0;
+  }
+  const placeholders = serverUserIds.map((_, i) => `$${i + 2}`).join(', ');
+  await db.query(
+    `DELETE FROM project_access
+      WHERE project_id = $1 AND user_id NOT IN (${placeholders})`,
+    [projectId, ...serverUserIds],
+  );
+  return grants.length;
 }
 
 /**

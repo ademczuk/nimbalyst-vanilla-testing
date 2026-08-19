@@ -4,6 +4,7 @@
 
 import OpenAI from 'openai';
 import { BaseAIProvider } from '../AIProvider';
+import { AgentCapabilities, BUILTIN_AGENT_CAPABILITIES } from '../agentCapabilities';
 import fs from 'fs/promises';
 import * as path from 'path';
 import {
@@ -604,6 +605,10 @@ export class OpenAIProvider extends BaseAIProvider {
       resumeSession: false,
       supportsFileTools: false  // Files should be attached to messages, not accessed via tools
     };
+  }
+
+  getAgentCapabilities(): AgentCapabilities {
+    return BUILTIN_AGENT_CAPABILITIES.openai;
   }
 
   destroy(): void {

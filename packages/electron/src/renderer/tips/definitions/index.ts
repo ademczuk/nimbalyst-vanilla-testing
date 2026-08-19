@@ -27,6 +27,7 @@ import { sessionCleanupTip } from './session-cleanup';
 import { sessionLaunchShortcutTip } from './session-launch-shortcut';
 import { sessionSharedTip } from './session-shared';
 import { spreadsheetDiscoverTip } from './spreadsheet-discover';
+import { teamsMultiplayerTip } from './teams-multiplayer';
 import { themeExploreTip } from './theme-explore';
 import { trackerModeTip } from './tracker-mode';
 import { wakeupTip } from './wakeup';
@@ -51,6 +52,7 @@ export const tips: TipDefinition[] = [
   datamodelDiscoverTip,
   spreadsheetDiscoverTip,
   // Sharing
+  teamsMultiplayerTip,
   sessionSharedTip,
   documentSharedTip,
   // Power-user discovery

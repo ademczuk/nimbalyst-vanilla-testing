@@ -150,6 +150,8 @@ const COPY_TABLES: readonly string[] = [
   'tool_usage_counters',
   'tool_usage_backfill_meta',
   'tool_usage_backfill_sessions',
+  'session_commits',
+  'session_commit_backfill_meta',
   'tracker_items',
   'tracker_body_cache',
   'tracker_transactions',
@@ -163,6 +165,9 @@ const COPY_TABLES: readonly string[] = [
   'collab_document_outbox',
   'collab_document_assets',
   'project_file_sync_baseline',
+  'feedback_request_cache',
+  'feedback_request_index',
+  'feedback_request_index_backfill',
 ];
 
 /**
@@ -172,6 +177,7 @@ const COPY_TABLES: readonly string[] = [
  */
 const SOURCE_AUTHORITATIVE_CONFLICT_KEYS: Readonly<Record<string, readonly string[]>> = {
   tool_usage_backfill_meta: ['singleton'],
+  session_commit_backfill_meta: ['singleton'],
 };
 
 /**

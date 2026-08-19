@@ -8,9 +8,12 @@
 import { memo } from 'react';
 import { type EdgeProps, type Edge, getSmoothStepPath } from '@xyflow/react';
 import type { Relationship } from '../types';
+import type { RemotePresence } from '../collab/presence';
 
 export interface RelationshipEdgeData extends Record<string, unknown> {
   relationship: Relationship;
+  /** Remote collaborators who currently have this relationship selected. */
+  presences?: RemotePresence[];
 }
 
 const EDGE_OFFSET = 22;
@@ -40,9 +43,16 @@ function RelationshipEdgeComponent({
 
   const relationship = data?.relationship;
 
+  // A remote collaborator's selection colors the edge -- but the local
+  // selection wins, so your own focus is never repainted out from under you.
+  const remotePresence = data?.presences?.[0];
+  const emphasized = Boolean(selected || remotePresence);
+
   // Get stroke color based on selection state
   const getStrokeColor = () => {
-    return selected ? 'var(--nim-primary)' : 'var(--nim-text-muted)';
+    if (selected) return 'var(--nim-primary)';
+    if (remotePresence) return remotePresence.color;
+    return 'var(--nim-text-muted)';
   };
 
   // Get cardinality type for source and target
@@ -78,7 +88,7 @@ function RelationshipEdgeComponent({
     position: 'left' | 'right' | 'top' | 'bottom'
   ) => {
     const strokeColor = getStrokeColor();
-    const strokeWidth = selected ? EDGE_STROKE_WIDTH_SELECTED : EDGE_STROKE_WIDTH;
+    const strokeWidth = emphasized ? EDGE_STROKE_WIDTH_SELECTED : EDGE_STROKE_WIDTH;
 
     let rotation = 0;
     switch (position) {
@@ -132,7 +142,7 @@ function RelationshipEdgeComponent({
         style={{
           fill: 'none',
           stroke: getStrokeColor(),
-          strokeWidth: selected ? EDGE_STROKE_WIDTH_SELECTED : EDGE_STROKE_WIDTH,
+          strokeWidth: emphasized ? EDGE_STROKE_WIDTH_SELECTED : EDGE_STROKE_WIDTH,
           pointerEvents: 'none',
         }}
         d={edgePath}

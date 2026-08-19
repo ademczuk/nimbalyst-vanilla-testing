@@ -3,8 +3,10 @@ import React from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider as JotaiProvider, createStore } from 'jotai';
+import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 import { activeWorkspacePathAtom } from '../../store/atoms/openProjects';
 import {
+  activeCollabScopeAtom,
   pendingCollabDocumentAtom,
   sharedDocumentsAtom,
   workspaceHasTeamAtom,
@@ -45,6 +47,16 @@ import { UnifiedQuickOpen } from '../UnifiedQuickOpen';
 import { NavigationDialogKeyboardHandler } from '../NavigationDialogKeyboardHandler';
 
 const WORKSPACE = '/Users/ghinkle/sources/crystal';
+const TEAM_SCOPE = {
+  scopeKey: WORKSPACE,
+  orgId: 'team-1',
+  indexConfig: { serverUrl: 'ws://sync', teamMemberId: asTeamMemberId('user-1') },
+};
+
+function activateTeam(store: ReturnType<typeof createStore>): void {
+  store.set(activeCollabScopeAtom, TEAM_SCOPE);
+  store.set(workspaceHasTeamAtom, true);
+}
 
 function setupElectronApiMock(trackerItems: unknown[] = []) {
   const appSettings = new Map<string, unknown>();
@@ -145,6 +157,7 @@ function sharedDoc(
 ): SharedDocument {
   return {
     documentId,
+    teamProjectId: null,
     title,
     documentType: 'markdown',
     createdBy: 'user-1',
@@ -220,7 +233,7 @@ describe('UnifiedQuickOpen — Projects tab', () => {
     const onClose = vi.fn();
     const onFileSelect = vi.fn();
     store.set(activeWorkspacePathAtom, WORKSPACE);
-    store.set(workspaceHasTeamAtom, true);
+    activateTeam(store);
     store.set(sharedDocumentsAtom, [sharedDoc('doc-roadmap', 'Planning/Product Roadmap')]);
 
     renderQuickOpen({ initialTab: 'files', onClose, onFileSelect }, store);
@@ -236,6 +249,8 @@ describe('UnifiedQuickOpen — Projects tab', () => {
     expect(store.get(pendingCollabDocumentAtom)).toEqual({
       documentId: 'doc-roadmap',
       documentType: 'markdown',
+      scopeKey: WORKSPACE,
+      orgId: 'team-1',
       analyticsSource: 'quick_open',
     });
     expect(store.get(windowModeAtom)).toBe('collab');
@@ -518,7 +533,7 @@ describe('UnifiedQuickOpen — Team tab', () => {
 
     const withTeamStore = createStore();
     withTeamStore.set(activeWorkspacePathAtom, WORKSPACE);
-    withTeamStore.set(workspaceHasTeamAtom, true);
+    activateTeam(withTeamStore);
     withTeamStore.set(sharedDocumentsAtom, [sharedDoc('doc-roadmap', 'Planning/Product Roadmap')]);
 
     renderQuickOpen({ initialTab: 'team' }, withTeamStore);
@@ -530,7 +545,7 @@ describe('UnifiedQuickOpen — Team tab', () => {
   it('filters by display name and excludes locked documents', async () => {
     const store = createStore();
     store.set(activeWorkspacePathAtom, WORKSPACE);
-    store.set(workspaceHasTeamAtom, true);
+    activateTeam(store);
     store.set(sharedDocumentsAtom, [
       sharedDoc('doc-roadmap', 'Planning/Product Roadmap'),
       sharedDoc('doc-retro', 'Planning/Team Retrospective'),
@@ -553,7 +568,7 @@ describe('UnifiedQuickOpen — Team tab', () => {
     const store = createStore();
     const onClose = vi.fn();
     store.set(activeWorkspacePathAtom, WORKSPACE);
-    store.set(workspaceHasTeamAtom, true);
+    activateTeam(store);
     store.set(sharedDocumentsAtom, [
       sharedDoc('doc-canvas', 'Design/Launch Canvas', { documentType: 'excalidraw' }),
     ]);
@@ -565,6 +580,8 @@ describe('UnifiedQuickOpen — Team tab', () => {
     expect(store.get(pendingCollabDocumentAtom)).toEqual({
       documentId: 'doc-canvas',
       documentType: 'excalidraw',
+      scopeKey: WORKSPACE,
+      orgId: 'team-1',
       analyticsSource: 'quick_open',
     });
     expect(store.get(windowModeAtom)).toBe('collab');
@@ -574,7 +591,7 @@ describe('UnifiedQuickOpen — Team tab', () => {
   it('jumps to the Team tab with Cmd+Shift+D while the palette is open', async () => {
     const store = createStore();
     store.set(activeWorkspacePathAtom, WORKSPACE);
-    store.set(workspaceHasTeamAtom, true);
+    activateTeam(store);
 
     renderQuickOpen({ initialTab: 'files' }, store);
 
@@ -594,7 +611,7 @@ describe('UnifiedQuickOpen — Team tab', () => {
 
     const withTeamStore = createStore();
     withTeamStore.set(activeWorkspacePathAtom, WORKSPACE);
-    withTeamStore.set(workspaceHasTeamAtom, true);
+    activateTeam(withTeamStore);
     renderKeyboardHandler(withTeamStore);
 
     fireEvent.keyDown(window, { key: 'd', code: 'KeyD', ctrlKey: true, shiftKey: true });
@@ -619,7 +636,7 @@ describe('UnifiedQuickOpen — Team tab', () => {
     expect(openUnifiedQuickOpenMock).not.toHaveBeenCalled();
 
     act(() => {
-      store.set(workspaceHasTeamAtom, true);
+      activateTeam(store);
     });
     expect(openUnifiedQuickOpenMock).not.toHaveBeenCalled();
 

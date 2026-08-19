@@ -68,6 +68,7 @@ export const MockupNode = memo(function MockupNode({ data }: NodeProps) {
 
       {/* Label header */}
       <div
+        className="mockup-node-label"
         style={{
           padding: '8px 12px',
           fontSize: 12,

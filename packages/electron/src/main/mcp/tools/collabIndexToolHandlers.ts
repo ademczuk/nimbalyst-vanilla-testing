@@ -1,6 +1,7 @@
-import { BrowserWindow, ipcMain } from "electron";
+import { BrowserWindow } from "electron";
 import { findWindowIdForWorkspacePath } from "../mcpWorkspaceResolver";
 import { getMostRecentlyFocusedWorkspaceWindow } from "../../window/WindowManager";
+import { requestFromRenderer } from "../rendererRequest";
 
 type McpToolResult = {
   content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
@@ -181,25 +182,21 @@ async function resolveTargetWindow(
  * Send `payload` to `channel` on the target window and wait for the renderer's
  * one-shot reply on a unique resultChannel. Mirrors handleReadCollabDoc.
  */
-function roundTripToRenderer(
+async function roundTripToRenderer(
   window: BrowserWindow,
   channel: string,
   payload: Record<string, unknown>
 ): Promise<{ success: boolean; error?: string; [key: string]: unknown }> {
-  const resultChannel = `mcp-result-${Date.now()}-${Math.random()}`;
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      ipcMain.removeAllListeners(resultChannel);
-      resolve({ success: false, error: "Timed out while waiting for the renderer to update the shared index." });
-    }, ROUND_TRIP_TIMEOUT_MS);
-
-    ipcMain.once(resultChannel, (_event, result: { success: boolean; error?: string; [key: string]: unknown }) => {
-      clearTimeout(timeout);
-      resolve(result ?? { success: false, error: "No result returned from renderer." });
-    });
-
-    window.webContents.send(channel, { ...payload, resultChannel });
-  });
+  const outcome = await requestFromRenderer<{ success: boolean; error?: string; [key: string]: unknown } | undefined>(
+    window,
+    channel,
+    payload,
+    { timeoutMs: ROUND_TRIP_TIMEOUT_MS }
+  );
+  if (outcome.status === "timedOut") {
+    return { success: false, error: "Timed out while waiting for the renderer to update the shared index." };
+  }
+  return outcome.response ?? { success: false, error: "No result returned from renderer." };
 }
 
 function errorResult(text: string): McpToolResult {

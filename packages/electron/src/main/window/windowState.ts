@@ -79,6 +79,23 @@ export function windowReferencesWorkspace(state: WindowState | undefined, path: 
 }
 
 /**
+ * Every workspace path an open window references, primary and rail alike.
+ *
+ * Used by the post-sign-in project walk to ask "is the user already working in
+ * one of their organization's projects?" before interrupting them.
+ */
+export function listOpenWorkspacePaths(): string[] {
+    const paths = new Set<string>();
+    for (const state of windowStates.values()) {
+        if (state.workspacePath) paths.add(state.workspacePath);
+        for (const extra of state.additionalWorkspacePaths ?? []) {
+            if (extra) paths.add(extra);
+        }
+    }
+    return [...paths];
+}
+
+/**
  * Whether any window in the current process references a workspace path.
  */
 export function anyWindowReferencesWorkspace(path: string, excludeWindowId?: number): boolean {

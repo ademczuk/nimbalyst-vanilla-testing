@@ -146,6 +146,10 @@
    ============================================================================ */
 
 .datamodel-entity {
+  /* Containing block for the presence chips. The entity fills its React Flow
+     node wrapper exactly (no padding on the wrapper), so making this the
+     positioned ancestor leaves every Handle where it already was. */
+  position: relative;
   min-width: 250px;
   max-width: 350px;
   border-radius: 8px;
@@ -158,6 +162,39 @@
 .datamodel-entity-selected {
   border-color: var(--nim-primary);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--nim-primary) 20%, transparent), 0 4px 12px var(--nim-shadow);
+}
+
+/* A remote collaborator has this entity selected. Drawn with box-shadow (not
+   border) so the node's size -- and therefore every handle position and edge
+   anchor -- is unchanged. The local selection ring still wins visually
+   because it paints its own border color on top. */
+.datamodel-entity-remote-selected {
+  box-shadow:
+    0 0 0 2px var(--datamodel-presence-color, var(--nim-primary)),
+    0 4px 12px var(--nim-shadow);
+}
+
+.datamodel-entity-presence {
+  position: absolute;
+  top: -10px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.datamodel-presence-chip {
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 500;
+  color: #fff;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .datamodel-entity-hovered {

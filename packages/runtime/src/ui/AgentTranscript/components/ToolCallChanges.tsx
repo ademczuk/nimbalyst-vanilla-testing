@@ -1,5 +1,5 @@
 /**
- * ToolCallChanges - Shows pre-resolved file changes caused by a tool call.
+ * ToolCallChanges - Lazily shows file changes caused by a tool call.
  *
  * Renders a collapsible "File Changes" section with:
  * - Compact summary header showing file count and +/- stats
@@ -7,12 +7,11 @@
  * - NewFilePreview for create operations (full content)
  * - Compact file entry for bash/unknown operations (path + stats only)
  *
- * Diff resolution happens in main during transcript enrichment. The renderer
- * only receives the resolved `diffs` payload and renders it synchronously.
+ * History-derived diffs are requested only when the user opens this disclosure.
  */
 
-import React, { useState } from 'react';
-import type { ToolCallDiffResult } from './CustomToolWidgets';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type { ToolCallDiffLoadResult, ToolCallDiffResult } from '../../../ai/server/transcript';
 import { DiffViewer } from './DiffViewer';
 import { NewFilePreview } from './NewFilePreview';
 import { toProjectRelative } from '../utils/pathResolver';
@@ -30,6 +29,7 @@ interface ToolCallChangesProps {
    * editor registry; the runtime asks.
    */
   canEmbedFile?: (filePath: string) => boolean;
+  loadDiffs?: () => Promise<ToolCallDiffLoadResult>;
 }
 
 function getOperationBadge(operation: string): { label: string; colorClass: string; bgClass: string } {
@@ -68,20 +68,66 @@ export const ToolCallChanges: React.FC<ToolCallChangesProps> = ({
   onOpenFile,
   renderEmbeddedFile,
   canEmbedFile,
+  loadDiffs,
 }) => {
   const [changesExpanded, setChangesExpanded] = useState(false);
+  const [loadResult, setLoadResult] = useState<ToolCallDiffLoadResult | null>(
+    diffs && diffs.length > 0
+      ? { state: 'ready', diffs, omissions: [] }
+      : null,
+  );
+  const [loading, setLoading] = useState(false);
+  const requestEpochRef = useRef(0);
 
-  // Don't render anything if not expanded or no diffs
+  useEffect(() => () => {
+    requestEpochRef.current += 1;
+  }, []);
+
+  useEffect(() => {
+    if (diffs && diffs.length > 0) {
+      setLoadResult({ state: 'ready', diffs, omissions: [] });
+    }
+  }, [diffs]);
+
+  const requestDiffs = useCallback(async () => {
+    if (!loadDiffs || loading) return;
+    const requestEpoch = ++requestEpochRef.current;
+    setLoading(true);
+    try {
+      const result = await loadDiffs();
+      if (requestEpoch === requestEpochRef.current) setLoadResult(result);
+    } catch {
+      if (requestEpoch === requestEpochRef.current) {
+        setLoadResult({ state: 'failed', diffs: [], omissions: [], errorCode: 'worker-failed' });
+      }
+    } finally {
+      if (requestEpoch === requestEpochRef.current) setLoading(false);
+    }
+  }, [loadDiffs, loading]);
+
+  const handleToggle = useCallback(() => {
+    const nextExpanded = !changesExpanded;
+    setChangesExpanded(nextExpanded);
+    if (nextExpanded && !loadResult && loadDiffs) {
+      void requestDiffs();
+    }
+  }, [changesExpanded, loadDiffs, loadResult, requestDiffs]);
+
+  // Mounting or expanding the outer tool card must not trigger diff work.
   if (!isExpanded) return null;
-  if (!diffs || diffs.length === 0) return null;
+  if ((!diffs || diffs.length === 0) && !loadDiffs) return null;
+
+  const resolvedDiffs = loadResult?.diffs ?? diffs ?? [];
 
   // Compute summary stats
-  const totalAdded = diffs.reduce((sum, d) => sum + (d.linesAdded ?? 0), 0);
-  const totalRemoved = diffs.reduce((sum, d) => sum + (d.linesRemoved ?? 0), 0);
-  const fileCount = diffs.length;
-  const primaryFilePath = diffs[0]?.filePath;
-  const primarySupportsEmbeddedPreview = !!canEmbedFile?.(diffs[0]?.filePath);
-  const summaryParts = [`${fileCount} file${fileCount !== 1 ? 's' : ''} changed`];
+  const totalAdded = resolvedDiffs.reduce((sum, d) => sum + (d.linesAdded ?? 0), 0);
+  const totalRemoved = resolvedDiffs.reduce((sum, d) => sum + (d.linesRemoved ?? 0), 0);
+  const fileCount = resolvedDiffs.length;
+  const primaryFilePath = resolvedDiffs[0]?.filePath;
+  const primarySupportsEmbeddedPreview = !!primaryFilePath && !!canEmbedFile?.(primaryFilePath);
+  const summaryParts = fileCount > 0
+    ? [`${fileCount} file${fileCount !== 1 ? 's' : ''} changed`]
+    : ['View diff'];
   if (totalAdded > 0) summaryParts.push(`+${totalAdded}`);
   if (totalRemoved > 0) summaryParts.push(`-${totalRemoved}`);
   const summary = summaryParts.join(' ');
@@ -91,7 +137,7 @@ export const ToolCallChanges: React.FC<ToolCallChangesProps> = ({
       {/* Header */}
       <button
         className="flex items-center justify-between w-full py-1.5 px-2 bg-nim-secondary border-b border-nim gap-2 cursor-pointer transition-colors duration-150 text-left hover:bg-nim-hover"
-        onClick={() => setChangesExpanded(!changesExpanded)}
+        onClick={handleToggle}
         type="button"
       >
         <div className="flex items-center gap-1.5">
@@ -121,7 +167,29 @@ export const ToolCallChanges: React.FC<ToolCallChangesProps> = ({
       {/* Expanded content */}
       {changesExpanded && (
         <div className="flex flex-col">
-          {diffs.map((diff, idx) => {
+          {loading && (
+            <div className="px-3 py-2 text-xs text-nim-muted">Computing a safe diff…</div>
+          )}
+          {!loading && loadResult?.state === 'none' && (
+            <div className="px-3 py-2 text-xs text-nim-muted">No attributable file changes were found.</div>
+          )}
+          {!loading && loadResult?.state === 'failed' && (
+            <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-nim-muted">
+              <span>File changes could not be loaded safely.</span>
+              <button className="text-nim-primary hover:underline" type="button" onClick={() => void requestDiffs()}>Retry</button>
+            </div>
+          )}
+          {!loading && loadResult?.omissions.map((omission) => (
+            <div key={`${omission.filePath}-${omission.reason}`} className="px-3 py-2 text-xs text-nim-muted border-t border-nim first:border-t-0">
+              <code>{toProjectRelative(omission.filePath, workspacePath)}</code>: {' '}
+              {omission.reason === 'input-too-large'
+                ? 'Diff omitted because this file is too large to compare safely.'
+                : omission.reason === 'edit-distance-limit'
+                  ? 'Diff omitted because the files differ too extensively.'
+                  : 'Diff omitted because comparison exceeded the safe time limit.'}
+            </div>
+          ))}
+          {resolvedDiffs.map((diff, idx) => {
             const relPath = toProjectRelative(diff.filePath, workspacePath);
             const badge = getOperationBadge(diff.operation);
             const hasDiffContent = diff.diffs.length > 0;

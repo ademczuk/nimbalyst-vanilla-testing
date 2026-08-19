@@ -186,6 +186,31 @@ export function getMigrations(schemaDir: string): Migration[] {
       name: 'tracker_personal_snooze',
       sqlFile: path.join(schemaDir, '0029_tracker_personal_snooze.sql'),
     },
+    {
+      version: 30,
+      name: 'tracker_type_defs_synced_model',
+      sqlFile: path.join(schemaDir, '0030_tracker_type_defs_synced_model.sql'),
+    },
+    {
+      version: 31,
+      name: 'session_commits',
+      sqlFile: path.join(schemaDir, '0031_session_commits.sql'),
+    },
+    {
+      version: 32,
+      name: 'feedback_request_cache',
+      sqlFile: path.join(schemaDir, '0032_feedback_request_cache.sql'),
+    },
+    {
+      version: 33,
+      name: 'tracker_local_key',
+      sqlFile: path.join(schemaDir, '0033_tracker_local_key.sql'),
+    },
+    {
+      version: 34,
+      name: 'feedback_request_index',
+      sqlFile: path.join(schemaDir, '0034_feedback_request_index.sql'),
+    },
   ];
 }
 

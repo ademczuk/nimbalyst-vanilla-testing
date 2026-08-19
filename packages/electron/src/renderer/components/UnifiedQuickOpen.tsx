@@ -34,6 +34,7 @@ import { fileMentionOptionsAtom, searchFileMentionAtom } from '../store/atoms/fi
 import { setWindowModeAtom } from '../store/atoms/windowMode';
 import { setTrackerModeLayoutAtom } from '../store/atoms/trackers';
 import {
+  activeCollabScopeAtom,
   pendingCollabDocumentAtom,
   sharedDocumentsAtom,
   sharedFoldersAtom,
@@ -56,7 +57,7 @@ import {
   type FilterChipOption,
 } from './UnifiedQuickOpen/FilterChip';
 import { useRecentHistory } from './UnifiedQuickOpen/useRecentHistory';
-import { parseFileMask, matchesFileMask } from './UnifiedQuickOpen/fileMask';
+import { parseFileMask, matchesFileMask } from '@nimbalyst/extension-sdk/file-mask';
 import type { TrackerItem } from '@nimbalyst/runtime/core/DocumentService';
 
 const isMac =
@@ -910,6 +911,7 @@ const SharedDocsPane: React.FC<SharedDocsPaneProps> = memo(({
   const favorites = useAtomValue(collabFavoritesAtom);
   const changedDocIds = useAtomValue(changedDocIdsAtom);
   const recentDocuments = useAtomValue(recentSharedDocsAtom);
+  const activeCollabScope = useAtomValue(activeCollabScopeAtom);
   const setPendingCollabDocument = useSetAtom(pendingCollabDocumentAtom);
   const setWindowMode = useSetAtom(setWindowModeAtom);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -973,15 +975,18 @@ const SharedDocsPane: React.FC<SharedDocsPaneProps> = memo(({
 
   const handleSelect = useCallback(
     (doc: SharedDocument) => {
+      if (!activeCollabScope) return;
       setPendingCollabDocument({
         documentId: doc.documentId,
+        scopeKey: activeCollabScope.scopeKey,
+        orgId: activeCollabScope.orgId,
         documentType: doc.documentType,
         analyticsSource: 'quick_open',
       });
       setWindowMode('collab');
       onClose();
     },
-    [setPendingCollabDocument, setWindowMode, onClose],
+    [activeCollabScope, setPendingCollabDocument, setWindowMode, onClose],
   );
 
   useEffect(() => {
@@ -1129,6 +1134,7 @@ const FilesPane: React.FC<FilesPaneProps> = memo(({
   const revealFolder = useSetAtom(revealFolderAtom);
   const sharedDocuments = useAtomValue(sharedDocumentsAtom);
   const sharedFolders = useAtomValue(sharedFoldersAtom);
+  const activeCollabScope = useAtomValue(activeCollabScopeAtom);
   const setPendingCollabDocument = useSetAtom(pendingCollabDocumentAtom);
   const setWindowMode = useSetAtom(setWindowModeAtom);
   const [results, setResults] = useState<FileItem[]>([]);
@@ -1285,8 +1291,11 @@ const FilesPane: React.FC<FilesPaneProps> = memo(({
   const handleSelect = useCallback(
     (file: FileItem) => {
       if (file.source === 'shared' && file.sharedDocument) {
+        if (!activeCollabScope) return;
         setPendingCollabDocument({
           documentId: file.sharedDocument.documentId,
+          scopeKey: activeCollabScope.scopeKey,
+          orgId: activeCollabScope.orgId,
           documentType: file.sharedDocument.documentType,
           analyticsSource: 'quick_open',
         });
@@ -1303,7 +1312,7 @@ const FilesPane: React.FC<FilesPaneProps> = memo(({
       onFileSelect(file.path);
       onClose();
     },
-    [onFileSelect, onFolderSelect, onClose, revealFolder, setPendingCollabDocument, setWindowMode],
+    [activeCollabScope, onFileSelect, onFolderSelect, onClose, revealFolder, setPendingCollabDocument, setWindowMode],
   );
 
   // Keyboard navigation — only when this pane is active

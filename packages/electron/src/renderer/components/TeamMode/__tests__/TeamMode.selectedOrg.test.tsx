@@ -5,17 +5,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
+import { dialogRef } from '../../../contexts/DialogContext';
+import { DIALOG_IDS } from '../../../dialogs/registry';
 import { organizationDirectoryAtom } from '../../../store/atoms/settingsDomains';
 import { trackerItemsMapAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import { TeamMode } from '../TeamMode';
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
-}));
-vi.mock('../../Settings/panels/OrganizationMembersRolesPanel', () => ({
-  OrganizationMembersRolesPanel: ({ orgId, readOnlyRoles }: { orgId?: string; readOnlyRoles?: boolean }) => (
-    <div data-testid={readOnlyRoles ? 'readonly-members' : 'admin-members'} data-org-id={orgId} />
-  ),
 }));
 vi.mock('../../Settings/panels/OrganizationProjectsPanel', () => ({ OrganizationProjectsPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationSecurityPanel', () => ({ OrganizationSecurityPanel: () => <div /> }));
@@ -51,6 +48,7 @@ function installApi() {
       organization: {
         list: vi.fn().mockResolvedValue({ success: true, teams: [workspaceTeam, otherTeam] }),
         listMembers: vi.fn().mockResolvedValue({ success: true, members: [], callerRole: 'owner' }),
+        acceptInvitation: vi.fn().mockResolvedValue({ success: true }),
       },
       invoke: vi.fn().mockResolvedValue([]),
       on: vi.fn().mockReturnValue(() => {}),
@@ -74,6 +72,33 @@ function orgIdentity(): string {
 
 describe('TeamMode organization targeting', () => {
   afterEach(() => cleanup());
+
+  it('routes administration to the management dialog, and offers a stranded invite an Accept', async () => {
+    // Karl, 2026-08-11: the window opened on this surface and it was a dead end
+    // — three organizations he could not administer and a Retry that could not
+    // change anything. Administration is the ORG_MANAGEMENT dialog, which this
+    // window hosts, and an unaccepted invite is the one thing that unsticks the
+    // preserved destination.
+    installApi();
+    (window as any).electronAPI.organization.list = vi.fn().mockResolvedValue({
+      success: true,
+      teams: [otherTeam, { orgId: 'org-invited', name: 'Invited Org', membershipType: 'invited_member' }],
+    });
+    const open = vi.fn();
+    dialogRef.current = { open } as unknown as typeof dialogRef.current;
+    const store = createStore();
+    store.set(selectedOrgIdAtom, 'org-invited');
+    render(<Provider store={store}><TeamMode /></Provider>);
+
+    await waitFor(() => screen.getByTestId('team-mode-organization-settings'));
+    fireEvent.click(screen.getByTestId('team-mode-organization-settings'));
+    expect(open).toHaveBeenCalledWith(DIALOG_IDS.ORG_MANAGEMENT, { orgId: 'org-other' });
+
+    fireEvent.click(screen.getByTestId('pending-invitation-accept'));
+    await waitFor(() => expect(
+      (window as any).electronAPI.organization.acceptInvitation,
+    ).toHaveBeenCalledWith('org-invited'));
+  });
 
   it('preserves an explicit destination instead of falling back to the first organization', async () => {
     installApi();
@@ -145,7 +170,7 @@ describe('TeamMode organization targeting', () => {
     for (const tab of ['members', 'projects', 'settings', 'billing', 'danger']) {
       expect(screen.queryByTestId(`team-tab-${tab}`)).toBeNull();
     }
-    expect(screen.queryByTestId('admin-members')).toBeNull();
+    expect(screen.queryByTestId('organization-members-roles-panel')).toBeNull();
   });
 
   it('hydrates canonical tracker records for chips in the dedicated org window', async () => {

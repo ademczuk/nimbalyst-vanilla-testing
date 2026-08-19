@@ -103,6 +103,20 @@ npx playwright test e2e/ai/diff.spec.ts:55
 npx playwright test --reporter=line
 ```
 
+### E2E runs take over the user's desktop
+
+Every Electron spec launches real windows on whatever machine you are running on — usually the
+user's, in the middle of their workday. Treat starting a run as a machine-wide side effect, not a
+background check.
+
+- **One spec per command.** Never a directory or the full suite unless the user asked for it.
+- **Stop at the first failure and fix it.** The configs set `maxFailures: 1` outside CI, so a run
+  now aborts on the first red test instead of relaunching windows for every remaining case. Read the
+  failure and change something before starting another run.
+- **Never re-run to see whether it passes now.** A re-run with no change between is another burst of
+  windows and yields no new information.
+- **Never open the HTML report.** See "View test report" below.
+
 ### What to Run and When
 
 | Scenario | Command | Time |
@@ -1022,6 +1036,11 @@ npx playwright test e2e/ai/diff.spec.ts:55 --headed --debug
 ```bash
 npx playwright show-report
 ```
+
+**Agents: do not run this.** It opens a browser window on the user's desktop. The `list` reporter
+already prints every failure to stdout, which is what you should read. The HTML reporter is
+configured with `open: 'never'` and the root config forces `PLAYWRIGHT_HTML_OPEN=never` so that a
+command-line `--reporter=html` cannot pop it open either.
 
 ### Enable verbose logging
 

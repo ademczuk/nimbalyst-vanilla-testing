@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import { asTeamJwt, asTeamMemberId } from '../../auth/jwtScopes';
 import { DocumentSyncProvider } from '../DocumentSync';
 
 /**
@@ -25,11 +26,10 @@ async function createDocumentKey(): Promise<CryptoKey> {
 function createProvider(documentKey: CryptoKey): DocumentSyncProvider {
   return new DocumentSyncProvider({
     serverUrl: 'ws://example.test',
-    getJwt: async () => 'token',
+    getJwt: async () => asTeamJwt('token'),
     orgId: 'org-1',
-    userId: 'user-1',
+    teamMemberId: asTeamMemberId('user-1'),
     documentId: 'doc-1',
-    reviewGateEnabled: false,
   });
 }
 
@@ -107,7 +107,9 @@ describe('DocumentSync compaction safety (NIM-1519)', () => {
     primeForCompaction(provider, fakeWs);
 
     // Simulate what handleSyncResponse does when a snapshot/update fails to
-    // decrypt or Y.applyUpdate throws: it skips the payload and records it.
+    // decrypt, or decrypts to bytes Yjs cannot integrate: it skips the payload
+    // and records it. (A Y.Doc listener that throws after a successful
+    // integration deliberately does NOT set this -- see preCutoverRows.)
     (provider as any).skippedUndecodablePayload = true;
 
     await (provider as any).maybeCompact();

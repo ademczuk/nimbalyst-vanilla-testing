@@ -6,12 +6,17 @@
  * 2. Issue key parsing: Parses NIM-123 from any commit message detected by GitRefWatcher
  * 3. Auto-close: Fixes/Closes/Resolves keywords change tracker item status to "done"
  *
- * All behaviors gated by TrackerAutomation settings (opt-in, per-project overridable).
+ * The passive GitRefWatcher path is opt-in (`enabled`, per-project overridable),
+ * because it reacts to every commit in the repo including ones no agent was part
+ * of. The session path is not: the user linked the session to the item and then
+ * approved a commit message that says it closes the item, which is as explicit a
+ * sign-off as exists. Only `autoCloseOnCommit` gates it.
  */
 
 import Store from 'electron-store';
 import { logger } from '../utils/logger';
 import { parseJsonObjectColumn } from '../utils/jsonColumn';
+import { isLocalIssueKey } from '../../shared/localIssueKey';
 import type { CommitDetectedEvent } from '../file/GitRefWatcher';
 import type { TrackerAutomationSettings } from '../utils/store';
 import { getEffectiveTrackerAutomation } from '../utils/store';
@@ -45,6 +50,14 @@ export function parseIssueKeys(commitMessage: string, prefix?: string): IssueKey
   while ((match = closingPattern.exec(commitMessage)) !== null) {
     const closingKeyword = match[1];
     const issueKey = match[2].toUpperCase();
+
+    // A provisional local key is not a real issue reference -- it exists only
+    // until the tracker room acks the item and hands back its own key. Closing
+    // an item off one would resolve to whatever LC-### happens to be unclaimed
+    // in the reader's workspace.
+    if (isLocalIssueKey(issueKey)) {
+      continue;
+    }
 
     // If a prefix filter is provided, only match that prefix
     if (prefix && !issueKey.startsWith(prefix.toUpperCase() + '-')) {
@@ -121,16 +134,23 @@ export class CommitTrackerLinker {
    * Always runs when a session has linked tracker items -- no opt-in required.
    * The user already explicitly linked the session to tracker items via tracker_link_session,
    * so linking the commit back is the expected, natural behavior.
+   *
+   * A closing keyword in the approved message ("Fixes NIM-123") also promotes
+   * that item to `done`. An agent may not write `done` itself, so without this
+   * every finished bug stalls in `in-review` even after the user has reviewed
+   * the diff and committed it. A bare `NIM-123` still only links.
+   *
+   * @returns ids of the items this commit closed (empty when it closed none)
    */
   async linkBySession(
     commitHash: string,
     commitMessage: string,
     sessionId: string,
     workspacePath: string,
-  ): Promise<void> {
+  ): Promise<{ closedItemIds: string[] }> {
 
     const db = this.getDb();
-    if (!db) return;
+    if (!db) return { closedItemIds: [] };
 
     try {
       // Look up session's linked tracker items
@@ -139,7 +159,7 @@ export class CommitTrackerLinker {
         [sessionId]
       );
 
-      if (sessionResult.rows.length === 0) return;
+      if (sessionResult.rows.length === 0) return { closedItemIds: [] };
 
       // SQLite returns metadata as a raw JSON string (NIM-829); an unparsed
       // read sees no linked items and session-based commit linking no-ops.
@@ -147,7 +167,9 @@ export class CommitTrackerLinker {
       const linkedTrackerItemIds: string[] = Array.isArray(metadata.linkedTrackerItemIds)
         ? metadata.linkedTrackerItemIds
         : [];
-      if (linkedTrackerItemIds.length === 0) return;
+      // Skip file: references (these are plan file links, not tracker item IDs)
+      const trackerIds = linkedTrackerItemIds.filter((id) => !id.startsWith('file:'));
+      if (trackerIds.length === 0) return { closedItemIds: [] };
 
       const commit: LinkedCommit = {
         sha: commitHash,
@@ -156,13 +178,29 @@ export class CommitTrackerLinker {
         timestamp: new Date().toISOString(),
       };
 
-      for (const trackerId of linkedTrackerItemIds) {
-        // Skip file: references (these are plan file links, not tracker item IDs)
-        if (trackerId.startsWith('file:')) continue;
+      for (const trackerId of trackerIds) {
         await this.appendCommitToItem(trackerId, commit, workspacePath);
       }
+
+      if (!this.getSettings(workspacePath).autoCloseOnCommit) {
+        return { closedItemIds: [] };
+      }
+
+      const closingKeys = new Set(
+        parseIssueKeys(commitMessage)
+          .filter((match) => match.shouldClose)
+          .map((match) => match.issueKey),
+      );
+      if (closingKeys.size === 0) return { closedItemIds: [] };
+
+      const closedItemIds = await this.resolveClosableIds(trackerIds, closingKeys, workspacePath);
+      for (const itemId of closedItemIds) {
+        await this.closeTrackerItem(itemId, commitHash, workspacePath);
+      }
+      return { closedItemIds };
     } catch (error) {
       logger.main.error('[CommitTrackerLinker] Error linking by session:', error);
+      return { closedItemIds: [] };
     }
   }
 
@@ -287,6 +325,31 @@ export class CommitTrackerLinker {
     );
 
     logger.main.info(`[CommitTrackerLinker] Linked commit ${commit.sha.slice(0, 7)} to ${itemId}`);
+  }
+
+  /**
+   * Of the session's linked items, which ones does this message name with a
+   * closing keyword. One query rather than one per linked id -- a long-running
+   * session can accumulate a lot of linked items.
+   */
+  private async resolveClosableIds(
+    trackerIds: string[],
+    closingKeys: Set<string>,
+    workspacePath: string,
+  ): Promise<string[]> {
+    const db = this.getDb();
+    if (!db) return [];
+
+    const placeholders = trackerIds.map((_, index) => `$${index + 2}`).join(', ');
+    const result = await db.query(
+      `SELECT id, issue_key FROM tracker_items
+       WHERE workspace = $1 AND id IN (${placeholders})`,
+      [workspacePath, ...trackerIds]
+    );
+
+    return (result.rows as Array<{ id: string; issue_key?: string | null }>)
+      .filter((row) => typeof row.issue_key === 'string' && closingKeys.has(row.issue_key.toUpperCase()))
+      .map((row) => row.id);
   }
 
   /**

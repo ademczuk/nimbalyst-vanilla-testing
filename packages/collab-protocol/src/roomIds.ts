@@ -33,6 +33,9 @@ export type ConversationRoomId = `org:${string}:conversation:${string}`;
 /** Team inbox room ID format: org:{orgId}:user:{userId}:inbox (user-scoped, one per member per org) */
 export type TeamInboxRoomId = `org:${string}:user:${string}:inbox`;
 
+/** Feedback request room ID format: org:{orgId}:feedbackRequest:{requestId} */
+export type FeedbackRequestRoomId = `org:${string}:feedbackRequest:${string}`;
+
 export type RoomId =
   | PersonalSessionRoomId
   | PersonalIndexRoomId
@@ -42,7 +45,8 @@ export type RoomId =
   | TeamRoomId
   | PersonalProjectSyncRoomId
   | ConversationRoomId
-  | TeamInboxRoomId;
+  | TeamInboxRoomId
+  | FeedbackRequestRoomId;
 
 /**
  * Build the conversation room id the server parses with
@@ -65,4 +69,12 @@ export function teamInboxRoomId(
   userId: string
 ): TeamInboxRoomId {
   return `org:${orgId}:user:${userId}:inbox`;
+}
+
+/** Build the organization-scoped room for one first-class feedback request. */
+export function feedbackRequestRoomId(
+  orgId: string,
+  requestId: string
+): FeedbackRequestRoomId {
+  return `org:${orgId}:feedbackRequest:${requestId}`;
 }

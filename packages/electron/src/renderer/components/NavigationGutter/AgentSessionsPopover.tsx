@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { MaterialSymbol, ProviderIcon, type SessionMeta } from '@nimbalyst/runtime';
+import { MaterialSymbol, type SessionMeta } from '@nimbalyst/runtime';
 import {
   agentBubbleStateAtom,
   agentSessionAttentionAtom,
@@ -8,9 +8,10 @@ import {
   sessionLastActivityAtom,
 } from '../../store';
 import { selectSessionActionAtom } from '../../store/actions/sessionHistoryActions';
-import { getRelativeTimeString } from '../../utils/dateFormatting';
+import { settingAtom } from '../../store/atoms/settingAtomFamily';
 import { FloatingPortal, useFloatingMenu } from '../../hooks/useFloatingMenu';
 import { HelpTooltip } from '../../help';
+import { SessionAttentionRow } from '../AgenticCoding/SessionAttentionRow';
 import { SessionStatusIndicator } from '../AgenticCoding/SessionListItem';
 import { SessionTranscriptPeek } from '../AgenticCoding/SessionTranscriptPeek';
 
@@ -19,6 +20,16 @@ interface AgentSessionsPopoverProps {
 }
 
 type AttentionState = 'awaiting' | 'running' | 'unread';
+
+const MIN_POPOVER_WIDTH = 280;
+const MAX_POPOVER_WIDTH = 900;
+
+function clampWidth(width: number): number {
+  const viewportLimit = typeof window !== 'undefined'
+    ? Math.max(MIN_POPOVER_WIDTH, window.innerWidth - 80)
+    : MAX_POPOVER_WIDTH;
+  return Math.round(Math.min(Math.max(width, MIN_POPOVER_WIDTH), Math.min(MAX_POPOVER_WIDTH, viewportLimit)));
+}
 
 const STATE_STYLES: Record<AttentionState, { label: string; colorClass: string; dotClass: string }> = {
   awaiting: {
@@ -55,8 +66,7 @@ function AgentSessionAttentionRow({
 }) {
   const liveActivity = useAtomValue(sessionLastActivityAtom(session.id));
   const updatedAt = liveActivity > 0 ? liveActivity : session.updatedAt;
-  const model = session.model?.includes(':') ? session.model.split(':')[1] : session.model;
-  const rowRef = useRef<HTMLDivElement>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
   const hoverTimerRef = useRef<number | null>(null);
 
   // `now` causes the relative label to refresh while the popover is open.
@@ -70,6 +80,8 @@ function AgentSessionAttentionRow({
     };
   }, []);
 
+  // Dwell is scoped to the peek button, not the whole row -- opening a
+  // transcript flyout just because the pointer crossed a row is too eager.
   const handlePeekEnter = useCallback(() => {
     if (isPeekOpen || !rowRef.current) return;
     hoverTimerRef.current = window.setTimeout(() => {
@@ -86,57 +98,43 @@ function AgentSessionAttentionRow({
     }
   }, []);
 
+  const title = session.title || 'Untitled Session';
+
   return (
-    <div
-      ref={rowRef}
-      className="agent-sessions-popover-row flex w-full items-center transition-colors hover:bg-nim-tertiary"
-      data-session-id={session.id}
-    >
-      <button
-        type="button"
-        className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 pr-1 text-left focus-visible:outline-2 focus-visible:outline-[var(--nim-primary)] focus-visible:outline-offset-[-2px]"
-        onClick={() => onSelect(session.id)}
-        data-testid={`agent-sessions-row-${session.id}`}
-      >
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-nim-tertiary text-nim-muted">
-          <ProviderIcon provider={session.provider || 'claude'} size={15} />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-medium text-nim">
-            {session.title || 'Untitled Session'}
-          </span>
-          <span className="block truncate text-[11px] text-nim-muted">
-            {model || session.provider}
-          </span>
-        </span>
-        <span className="shrink-0 text-[10px] text-nim-faint">
-          {getRelativeTimeString(updatedAt)}
-        </span>
-        <SessionStatusIndicator sessionId={session.id} />
-      </button>
-      <button
-        type="button"
-        className={`mr-2 flex h-6 w-6 shrink-0 items-center justify-center rounded transition-colors focus-visible:outline-2 focus-visible:outline-[var(--nim-primary)] ${
-          isPeekOpen
-            ? 'bg-nim-tertiary text-nim'
-            : 'text-nim-disabled hover:bg-nim-tertiary hover:text-nim-muted'
-        }`}
-        title="Preview transcript"
-        aria-label={`Preview transcript for ${session.title || 'Untitled Session'}`}
-        aria-pressed={isPeekOpen}
-        data-testid={`agent-sessions-peek-${session.id}`}
-        onMouseEnter={handlePeekEnter}
-        onMouseLeave={handlePeekLeave}
-        onClick={(event) => {
-          event.stopPropagation();
-          if (rowRef.current) {
-            onPeekToggle(session.id, rowRef.current);
-          }
-        }}
-      >
-        <MaterialSymbol icon="chat_bubble_outline" size={12} />
-      </button>
-    </div>
+    <SessionAttentionRow
+      sessionId={session.id}
+      title={title}
+      provider={session.provider || 'claude'}
+      model={session.model}
+      updatedAt={updatedAt}
+      rowRef={rowRef}
+      onSelect={onSelect}
+      statusSlot={<SessionStatusIndicator sessionId={session.id} />}
+      trailingSlot={(
+        <button
+          type="button"
+          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors focus-visible:outline-2 focus-visible:outline-[var(--nim-primary)] ${
+            isPeekOpen
+              ? 'bg-nim-tertiary text-nim'
+              : 'text-nim-disabled hover:bg-nim-tertiary hover:text-nim-muted'
+          }`}
+          title="Preview transcript"
+          aria-label={`Preview transcript for ${title}`}
+          aria-pressed={isPeekOpen}
+          data-testid={`agent-sessions-peek-${session.id}`}
+          onMouseEnter={handlePeekEnter}
+          onMouseLeave={handlePeekLeave}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (rowRef.current) {
+              onPeekToggle(session.id, rowRef.current);
+            }
+          }}
+        >
+          <MaterialSymbol icon="chat_bubble_outline" size={12} />
+        </button>
+      )}
+    />
   );
 }
 
@@ -150,6 +148,12 @@ export function AgentSessionsPopover({ onOpenAgentMode }: AgentSessionsPopoverPr
     sessionId: string;
     reference: HTMLElement;
   } | null>(null);
+  const persistedWidth = useAtomValue(settingAtom('agent.sessionsPopoverWidth'));
+  const setPersistedWidth = useSetAtom(settingAtom('agent.sessionsPopoverWidth'));
+  // Live width while dragging; committed to settings on pointer-up so a drag
+  // doesn't fire an IPC write per mouse move.
+  const [draftWidth, setDraftWidth] = useState<number | null>(null);
+  const width = clampWidth(draftWidth ?? persistedWidth);
   const menu = useFloatingMenu({
     placement: 'right-end',
     dismiss: {
@@ -210,6 +214,27 @@ export function AgentSessionsPopover({ onOpenAgentMode }: AgentSessionsPopoverPr
     ));
   }, []);
 
+  const handleResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = clampWidth(draftWidth ?? persistedWidth);
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      setDraftWidth(clampWidth(startWidth + (moveEvent.clientX - startX)));
+    };
+    const handleUp = (upEvent: PointerEvent) => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      const finalWidth = clampWidth(startWidth + (upEvent.clientX - startX));
+      setDraftWidth(null);
+      if (finalWidth !== startWidth) void setPersistedWidth(finalWidth);
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+  }, [draftWidth, persistedWidth, setPersistedWidth]);
+
   const handleSelect = (sessionId: string) => {
     setActivePeek(null);
     onOpenAgentMode();
@@ -251,18 +276,18 @@ export function AgentSessionsPopover({ onOpenAgentMode }: AgentSessionsPopoverPr
         <FloatingPortal>
           <div
             ref={menu.refs.setFloating}
-            style={menu.floatingStyles}
+            style={{ ...menu.floatingStyles, width }}
             {...menu.getFloatingProps()}
-            className="agent-sessions-popover z-[10000] w-[304px] overflow-y-auto rounded-lg border border-nim bg-nim-secondary shadow-[0_8px_32px_rgba(0,0,0,0.45)]"
+            className="agent-sessions-popover relative z-[10000] flex flex-col overflow-hidden rounded-lg border border-nim bg-nim-secondary shadow-[0_8px_32px_rgba(0,0,0,0.45)]"
             data-testid="agent-sessions-popover"
             data-component="AgentSessionsPopover"
           >
-            <div className="flex items-center justify-between border-b border-nim px-3.5 py-2.5">
+            <div className="flex shrink-0 items-center justify-between border-b border-nim px-3.5 py-2.5">
               <span className="text-[13px] font-semibold text-nim">Sessions</span>
               <span className="text-[11px] text-nim-muted">{total} need attention</span>
             </div>
 
-            <div className="pb-1">
+            <div className="min-h-0 flex-1 overflow-y-auto pb-1">
               {sections.map(({ state, sessions }) => {
                 const style = STATE_STYLES[state];
                 return (
@@ -299,6 +324,18 @@ export function AgentSessionsPopover({ onOpenAgentMode }: AgentSessionsPopoverPr
                   </section>
                 );
               })}
+            </div>
+
+            <div
+              className="agent-sessions-popover-resize-handle group absolute inset-y-0 right-0 flex w-2 cursor-col-resize justify-center"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sessions popover"
+              data-testid="agent-sessions-popover-resize"
+              onPointerDown={handleResizeStart}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="h-full w-0.5 bg-transparent transition-colors group-hover:bg-[var(--nim-primary)]" />
             </div>
           </div>
         </FloatingPortal>

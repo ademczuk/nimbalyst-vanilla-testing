@@ -54,13 +54,22 @@
 @container tracker-document-list-pane (max-width: 420px) {
   .tracker-document-view-list-pane .tracker-table-row {
     display: grid;
-    grid-template-columns: 8px 24px 20px minmax(0, 1fr) auto;
+    grid-template-columns: 8px 24px 20px minmax(0, 1fr) auto auto;
     grid-template-rows: minmax(24px, auto) minmax(20px, auto);
     column-gap: 8px;
     row-gap: 2px;
     align-items: center;
     padding-top: 7px;
     padding-bottom: 7px;
+  }
+
+  /*
+   * Anything the rules below don't place explicitly still belongs on line 1.
+   * Without this, a newly added row child auto-places into an implicit third
+   * row and every row in the pane grows a band of empty space (NIM-2434).
+   */
+  .tracker-document-view-list-pane .tracker-table-row > * {
+    grid-row: 1;
   }
 
   .tracker-document-view-list-pane .tracker-table-row > .tracker-unread-dot {
@@ -106,8 +115,13 @@
     grid-row: 2;
   }
 
-  .tracker-document-view-list-pane .tracker-table-row > div:last-child:not(.title) {
+  .tracker-document-view-list-pane .tracker-table-row > .tracker-table-row-meta {
     grid-column: 5;
+    grid-row: 1;
+  }
+
+  .tracker-document-view-list-pane .tracker-table-row > .tracker-row-more-actions {
+    grid-column: 6;
     grid-row: 1;
   }
 }

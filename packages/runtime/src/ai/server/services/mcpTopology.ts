@@ -216,6 +216,11 @@ export const SITUATIONAL_TOOLS: readonly string[] = [
   'moveSharedItem',
   'renameSharedItem',
   'deleteSharedItem',
+  // read-only organization/resource discovery for cross-user collaboration
+  'findOrgMembers',
+  'getResourceSharingStatus',
+  // cross-user feedback draft; author confirmation performs the later send
+  'RequestFeedback',
   // feedback (deferred)
   'feedback_anonymize_text',
   'feedback_get_environment',

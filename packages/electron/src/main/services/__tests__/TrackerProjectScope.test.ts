@@ -8,7 +8,10 @@ describe('TrackerProjectScope', () => {
       : { orgId: 'org-1', teamProjectId: 'project-1' });
     const resolveScope = createTrackerProjectScopeResolver({
       findTeamForWorkspace,
-      getNormalizedGitRemote: vi.fn(async () => 'github.com/acme/repo'),
+      getGitRemoteIdentities: vi.fn(async () => ({
+        canonical: 'github.com/acme/repo',
+        legacy: 'github.com/acme/repo',
+      })),
       resolveProjectPath: (workspacePath) => workspacePath,
     });
 

@@ -16,24 +16,33 @@ import { createRoot, Root } from 'react-dom/client';
 import { Provider as JotaiProvider, useAtomValue } from 'jotai';
 import { fileSaveRequestAtom } from '../../store/atoms/appCommands';
 import type { TextReplacement } from '@nimbalyst/runtime';
+import type { CollabScope } from '@nimbalyst/collab-client/core';
 import type { Tab } from '../TabManager/TabManager';
 import { TabEditor } from '../TabEditor/TabEditor';
 import { CollaborativeTabEditor } from '../TabEditor/CollaborativeTabEditor';
+import type { DocumentSessionActions } from '../TabEditor/DocumentSessionControl';
 import { TabEditorErrorBoundary } from '../TabEditorErrorBoundary';
 import { logger } from '../../utils/logger';
 import { useTabsActions, type TabData, notifyDirtyStateChange, isTrackerTabPath } from '../../contexts/TabsContext';
 import { TrackerResourceEditor } from '../AgentMode/TrackerResourceEditor';
-import { SharedDocsListView } from '../CollabMode/SharedDocsListView';
+import { SharedDocsListView } from '@nimbalyst/collab-client/docs-ui';
+import { ElectronCollabDocsUIRoot } from '../CollabMode/ElectronCollabDocsUIProvider';
 import { isSharedHomeTab } from '../CollabMode/sharedHomeTab';
-import { isCollabUri, parseCollabUri } from '../../utils/collabUri';
+import { isSharedFeedbackTab } from '../CollabMode/sharedFeedbackTab';
+import { FeedbackSection } from '../CollabMode/Feedback';
+import { FeedbackRequestResultsTab } from '../FeedbackRequest/FeedbackRequestResultsTab';
+import { isFeedbackRequestTab } from '../FeedbackRequest/feedbackRequestTab';
+import { isCollabUri, parseCollabUri } from '@nimbalyst/collab-protocol';
 import {
   getCollabConfig,
+  getCollabConfigForScopeKey,
   removeCollabConfig,
   resolveCollabConfigForUri,
 } from '../../utils/collabDocumentOpener';
 import { getPersistedCollabDocMetadata } from '../../utils/collabOpenDocsPersistence';
 import { store, editorDirtyAtom, editorHasUnacceptedChangesAtom, makeEditorKey } from '@nimbalyst/runtime/store';
 import { clearMockupAnnotationsForFile, getMockupFilePath } from '../UnifiedAI/MockupAnnotationIndicator';
+import { resolveDesktopCollabScope } from '../../store/atoms/collabDocuments';
 
 interface TabContentProps {
   textReplacements?: TextReplacement[];
@@ -60,8 +69,13 @@ interface TabContentProps {
   // to persist per-tracker-tab content-focus state.
   workstreamId?: string;
 
+  // What the collab editor's header-bar session chip may do. Supplied by the
+  // host that owns the chat sidebar (CollabMode).
+  documentSessionActions?: DocumentSessionActions;
+
   // Document metadata
   workspaceId?: string;
+  collabScope?: CollabScope;
 }
 
 interface TabEditorInstance {
@@ -82,8 +96,10 @@ const TabContentComponent: React.FC<TabContentProps> = ({
   onOpenSessionInChat,
   onTabClose,
   onOpenTracker,
+  documentSessionActions,
   workstreamId,
   workspaceId,
+  collabScope,
 }) => {
   // Debug: trace re-renders - THIS SHOULD ONLY LOG ONCE ON MOUNT
   // if (import.meta.env.DEV) console.log('[TabContent] render - THIS SHOULD ONLY HAPPEN ONCE');
@@ -114,8 +130,10 @@ const TabContentComponent: React.FC<TabContentProps> = ({
     onOpenSessionInChat,
     onTabClose,
     onOpenTracker,
+    documentSessionActions,
     workstreamId,
     workspaceId,
+    collabScope,
   });
   propsRef.current = {
     textReplacements,
@@ -127,9 +145,19 @@ const TabContentComponent: React.FC<TabContentProps> = ({
     onOpenSessionInChat,
     onTabClose,
     onOpenTracker,
+    documentSessionActions,
     workstreamId,
     workspaceId,
+    collabScope,
   };
+
+  // Tab editors render into detached React roots, so they must not capture the
+  // host's action bag by identity -- it would go stale the moment the host
+  // re-renders. Delegate every call through propsRef instead.
+  const collabSessionActionsRef = useRef<DocumentSessionActions>({
+    openInChat: (sessionId: string) => propsRef.current.documentSessionActions?.openInChat?.(sessionId),
+    startNew: () => propsRef.current.documentSessionActions?.startNew?.(),
+  });
 
   // Load content for a file
   const loadContent = useCallback(async (filePath: string, title?: string): Promise<string> => {
@@ -146,13 +174,25 @@ const TabContentComponent: React.FC<TabContentProps> = ({
       return '';
     }
 
+    // Feedback request results are synced state, not content on disk. Same for
+    // the shared area's feedback list, which reads the local index.
+    if (isFeedbackRequestTab(filePath) || isSharedFeedbackTab(filePath)) {
+      return '';
+    }
+
     // Collaborative documents don't load from disk -- content comes via Y.Doc
     if (isCollabUri(filePath)) {
-      if (!getCollabConfig(filePath)) {
-        if (!propsRef.current.workspaceId) {
-          logger.ui.warn('[TabContent] Cannot restore collab tab without workspace path:', filePath);
-          return '';
-        }
+      if (!propsRef.current.workspaceId) {
+        logger.ui.warn('[TabContent] Cannot restore collab tab without a scope key:', filePath);
+        return '';
+      }
+      const scope = propsRef.current.collabScope
+        ?? (await resolveDesktopCollabScope(propsRef.current.workspaceId)).scope;
+      if (!scope) {
+        logger.ui.warn('[TabContent] Cannot resolve collab scope:', filePath);
+        return '';
+      }
+      if (!getCollabConfig(scope, filePath)) {
         try {
           const { documentId } = parseCollabUri(filePath);
           // Persisted documentType is the only source of truth on a cold
@@ -161,11 +201,11 @@ const TabContentComponent: React.FC<TabContentProps> = ({
           // routes a shared .excalidraw / .mockup.html Y.Doc through the
           // markdown editor and the canvas comes back blank.
           const persistedMetadata = await getPersistedCollabDocMetadata(
-            propsRef.current.workspaceId,
+            scope,
             documentId,
           );
           await resolveCollabConfigForUri(
-            propsRef.current.workspaceId,
+            scope,
             filePath,
             documentId,
             title,
@@ -303,7 +343,76 @@ const TabContentComponent: React.FC<TabContentProps> = ({
               propsRef.current.onTabClose?.(tab.id);
             }}
           >
-            <SharedDocsListView workspacePath={propsRef.current.workspaceId ?? ''} />
+            {propsRef.current.collabScope
+              ? (
+                // Own React root: context does not cross, so the Shared Docs
+                // context has to be re-established here or the view throws.
+                <ElectronCollabDocsUIRoot scope={propsRef.current.collabScope}>
+                  <SharedDocsListView />
+                </ElectronCollabDocsUIRoot>
+              )
+              : null}
+          </TabEditorErrorBoundary>
+        </JotaiProvider>
+      );
+      tabInstancesRef.current.set(tab.id, { root, element, tabData: tab, content });
+      return;
+    }
+
+    // The shared area's feedback list: every request this member is party to,
+    // read from the local org index. Like the Shared Docs Home it is a virtual
+    // surface with no save/dirty/getContent wiring, and opening a row mounts
+    // the request's own room inside it.
+    if (isSharedFeedbackTab(tab.filePath)) {
+      root.render(
+        <JotaiProvider store={store}>
+          <TabEditorErrorBoundary
+            filePath={tab.filePath}
+            fileName={tab.fileName}
+            onRetry={() => {
+              removeTabEditor(tab.id);
+              createTabEditor(tab, content);
+            }}
+            onClose={() => {
+              propsRef.current.onTabClose?.(tab.id);
+            }}
+          >
+            {propsRef.current.collabScope
+              ? (
+                <FeedbackSection
+                  orgId={propsRef.current.collabScope.orgId}
+                  workspacePath={propsRef.current.workspaceId}
+                />
+              )
+              : null}
+          </TabEditorErrorBoundary>
+        </JotaiProvider>
+      );
+      tabInstancesRef.current.set(tab.id, { root, element, tabData: tab, content });
+      return;
+    }
+
+    // Feedback request results: the author's view of a synced request. No
+    // save/dirty/getContent wiring -- the request lives in its own room and
+    // this tab only reads it.
+    if (isFeedbackRequestTab(tab.filePath)) {
+      root.render(
+        <JotaiProvider store={store}>
+          <TabEditorErrorBoundary
+            filePath={tab.filePath}
+            fileName={tab.fileName}
+            onRetry={() => {
+              removeTabEditor(tab.id);
+              createTabEditor(tab, content);
+            }}
+            onClose={() => {
+              propsRef.current.onTabClose?.(tab.id);
+            }}
+          >
+            <FeedbackRequestResultsTab
+              tabUri={tab.filePath}
+              workspacePath={propsRef.current.workspaceId}
+            />
           </TabEditorErrorBoundary>
         </JotaiProvider>
       );
@@ -383,7 +492,9 @@ const TabContentComponent: React.FC<TabContentProps> = ({
     // Wrap in JotaiProvider so TabEditor can subscribe to theme atom
     // (separate React roots need their own provider to access the shared store)
     const isCollab = isCollabUri(tab.filePath);
-    const collabConfig = isCollab ? getCollabConfig(tab.filePath) : undefined;
+    const collabConfig = isCollab && propsRef.current.workspaceId
+      ? getCollabConfigForScopeKey(propsRef.current.workspaceId, tab.filePath)
+      : undefined;
 
     // Guard: collab tabs without config can't connect (e.g., restored from
     // workspace state after restart/HMR when the in-memory registry is empty).
@@ -420,6 +531,7 @@ const TabContentComponent: React.FC<TabContentProps> = ({
               onDirtyChange={handleDirtyChange}
               onGetContentReady={handleGetContentReady}
               onManualSaveReady={handleManualSaveReady}
+              documentSessionActions={propsRef.current.documentSessionActions ? collabSessionActionsRef.current : undefined}
             />
           ) : (
             <TabEditor
@@ -468,7 +580,10 @@ const TabContentComponent: React.FC<TabContentProps> = ({
 
     // Clean up collab config registry for collaborative tabs
     if (isCollabUri(instance.tabData.filePath)) {
-      removeCollabConfig(instance.tabData.filePath);
+      const config = propsRef.current.workspaceId
+        ? getCollabConfigForScopeKey(propsRef.current.workspaceId, instance.tabData.filePath)
+        : undefined;
+      if (config) removeCollabConfig(config.scope, instance.tabData.filePath);
     }
 
     // Defer root.unmount() to avoid "synchronously unmount a root while React

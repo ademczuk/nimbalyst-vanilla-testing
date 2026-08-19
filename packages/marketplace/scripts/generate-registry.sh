@@ -160,6 +160,34 @@ for NIMEXT in "$INPUT_DIR"/*.nimext; do
   rm -f "$TEMP_DIR/manifest.json"
 done
 
+# dist/ accumulates one .nimext per release, so an id can appear at several
+# versions. Publishing all of them puts duplicate entries in the registry and
+# clients have no rule for picking between them -- an old build can win and
+# silently serve a superseded extension. Keep the highest version per id.
+EXTENSIONS_JSON=$(node -e "
+  const arr = $EXTENSIONS_JSON;
+  const rank = (v) => String(v || '0').split('.').map((p) => parseInt(p, 10) || 0);
+  const newer = (a, b) => {
+    const x = rank(a), y = rank(b);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) {
+      if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+    }
+    return false;
+  };
+  const best = new Map();
+  const dropped = [];
+  for (const entry of arr) {
+    const held = best.get(entry.id);
+    if (!held) { best.set(entry.id, entry); continue; }
+    if (newer(entry.version, held.version)) { best.set(entry.id, entry); dropped.push(held); }
+    else { dropped.push(entry); }
+  }
+  for (const d of dropped) {
+    console.error('  Superseded: ' + d.id + ' ' + d.version + ' (keeping ' + best.get(d.id).version + ')');
+  }
+  console.log(JSON.stringify([...best.values()]));
+")
+
 # Define categories
 CATEGORIES='[
   {"id":"developer-tools","name":"Developer Tools","icon":"code"},

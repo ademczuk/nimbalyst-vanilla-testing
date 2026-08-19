@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 
 const { fetchMock } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
@@ -20,7 +21,16 @@ vi.mock('../../utils/logger', () => ({
     },
   },
 }));
-vi.mock('../../utils/gitUtils', () => ({ getNormalizedGitRemote: vi.fn() }));
+const gitRemoteFnMock = vi.hoisted(() => vi.fn());
+vi.mock('../../utils/gitUtils', () => ({
+  getNormalizedGitRemote: gitRemoteFnMock,
+  getRawGitRemote: gitRemoteFnMock,
+  normalizeGitRemote: (url: string | null) => url,
+  getGitRemoteIdentities: async (workspacePath: string) => {
+    const remote = await gitRemoteFnMock(workspacePath);
+    return remote ? { canonical: remote, legacy: remote } : null;
+  },
+}));
 vi.mock('../teamProjectResolver', () => ({ resolveTeamForRemoteHash: vi.fn() }));
 vi.mock('../../utils/collabSyncUrl', () => ({
   getCollabSyncHttpUrl: () => 'https://sync.test',
@@ -44,12 +54,15 @@ vi.mock('../StytchAuthService', () => ({
   refreshPersonalSessionForAccount: vi.fn(async () => null),
   onAuthStateChange: vi.fn(() => () => {}),
   updateSessionToken: vi.fn(),
+  updateSessionTokenForAccount: vi.fn(),
   getUserEmail: vi.fn(() => 'user@test.com'),
   getPersonalOrgId: vi.fn(() => 'personal-1'),
   getPersonalUserId: vi.fn(() => 'user-1'),
 }));
 vi.mock('@nimbalyst/runtime', () => ({
+  asPersonalMemberId: (id: string) => id,
   asTeamJwt: (jwt: string) => jwt,
+  asTeamMemberId: (id: string) => id,
 }));
 vi.mock('../../database/initialize', () => ({}));
 vi.mock('../AccountOrgBindingService', () => ({
@@ -160,13 +173,13 @@ describe('TeamService conversation directory REST client', () => {
     await setConversationMembership(
       orgId,
       'design',
-      'member-b',
+      asTeamMemberId('member-b'),
       { active: true, role: 'roomAdmin' },
     );
     await setConversationMembership(
       orgId,
       'design',
-      'member-b',
+      asTeamMemberId('member-b'),
       { active: false },
     );
     await setAgentPosting(orgId, 'design', false);

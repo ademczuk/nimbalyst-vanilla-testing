@@ -20,6 +20,9 @@ import {
   renderImporterSearch,
   renderImportResult,
   renderResnapshot,
+  getAssignedIssueKey,
+  getTrackerDisplayRef,
+  UNASSIGNED_ISSUE_KEY_MESSAGE,
 } from '../cli/output.js';
 import { loadTypeSchema } from './typeSchema.js';
 import { dim, green } from '../cli/colors.js';
@@ -144,12 +147,17 @@ async function trackerCreate(args: ParsedArgs): Promise<number> {
   try {
     const workspace = await resolveWorkspace(gateway, flagStr(args, 'workspace'));
     const record = await gateway.createTracker(workspace, input);
+    const issueKey = getAssignedIssueKey(record);
+    const displayRef = getTrackerDisplayRef(record);
     if (flagBool(args, 'json')) {
       process.stdout.write(renderRecord(record, undefined, outputOptions(args)) + '\n');
     } else if (flagBool(args, 'quiet')) {
-      process.stdout.write((record.issueKey ?? record.id) + '\n');
+      process.stdout.write(displayRef + '\n');
     } else {
-      process.stdout.write(green(`Created ${record.issueKey ?? record.id}`) + dim(` (${record.primaryType})`) + '\n');
+      process.stdout.write(
+        green(`Created ${displayRef}`) + dim(` (${record.primaryType})`)
+        + (issueKey ? '' : `\n${dim(UNASSIGNED_ISSUE_KEY_MESSAGE)}`) + '\n',
+      );
     }
     return 0;
   } finally {
@@ -165,12 +173,17 @@ async function trackerUpdate(args: ParsedArgs): Promise<number> {
   try {
     const workspace = await resolveWorkspace(gateway, flagStr(args, 'workspace'));
     const record = await gateway.updateTracker(workspace, reference, input);
+    const issueKey = getAssignedIssueKey(record);
+    const displayRef = getTrackerDisplayRef(record);
     if (flagBool(args, 'json')) {
       process.stdout.write(renderRecord(record, undefined, outputOptions(args)) + '\n');
     } else if (flagBool(args, 'quiet')) {
-      process.stdout.write((record.issueKey ?? record.id) + '\n');
+      process.stdout.write(displayRef + '\n');
     } else {
-      process.stdout.write(green(`Updated ${record.issueKey ?? record.id}`) + '\n');
+      process.stdout.write(
+        green(`Updated ${displayRef}`)
+        + (issueKey ? '' : `\n${dim(UNASSIGNED_ISSUE_KEY_MESSAGE)}`) + '\n',
+      );
     }
     return 0;
   } finally {
@@ -203,7 +216,11 @@ async function trackerArchive(args: ParsedArgs, archived: boolean): Promise<numb
     const workspace = await resolveWorkspace(gateway, flagStr(args, 'workspace'));
     const record = await gateway.setArchived(workspace, reference, archived);
     if (!flagBool(args, 'quiet')) {
-      process.stdout.write(green(`${archived ? 'Archived' : 'Unarchived'} ${record.issueKey ?? record.id}.`) + '\n');
+      const issueKey = getAssignedIssueKey(record);
+      process.stdout.write(
+        green(`${archived ? 'Archived' : 'Unarchived'} ${getTrackerDisplayRef(record)}.`)
+        + (issueKey ? '' : `\n${dim(UNASSIGNED_ISSUE_KEY_MESSAGE)}`) + '\n',
+      );
     }
     return 0;
   } finally {

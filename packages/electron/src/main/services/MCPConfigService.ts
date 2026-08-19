@@ -20,7 +20,11 @@ import {
   extractMcpRemoteConfig,
   usesNativeRemoteOAuth,
 } from './MCPRemoteOAuth';
-import { requiresMcpRemote, type McpRemoteRequirementOptions } from './mcpRemoteRequirement';
+import {
+  requiresMcpRemote,
+  resolveMcpRemoteRequirementOptions,
+  type McpRemoteRequirementOptions,
+} from './mcpRemoteRequirement';
 
 /**
  * Service for managing MCP server configurations.
@@ -844,6 +848,20 @@ export class MCPConfigService {
     };
   }
 
+  /**
+   * Resolve the wrapper decision for one server before it is used.
+   *
+   * Callers that pass `nativeHttpSupported` must run this first and hand the
+   * result to BOTH `isOAuthAuthorized` and `processServerConfigForRuntime`, so
+   * the two answers are derived from the same reading of ~/.mcp-auth (NIM-2433).
+   */
+  async resolveMcpRemoteOptions(
+    serverConfig: MCPServerConfig,
+    options: McpRemoteRequirementOptions,
+  ): Promise<McpRemoteRequirementOptions> {
+    return resolveMcpRemoteRequirementOptions(serverConfig, options);
+  }
+
   isOAuthServer(serverConfig: MCPServerConfig): boolean {
     if (usesNativeRemoteOAuth(serverConfig)) {
       return true;
@@ -859,12 +877,23 @@ export class MCPConfigService {
     if (usesNativeRemoteOAuth(serverConfig) && !options.useMcpRemoteForNativeOAuth) {
       return true;
     }
-    // An http server we are not going to wrap must not be OAuth-probed through
+    // The token this would go on to look for has already been found by
+    // `resolveMcpRemoteOptions`; re-probing the server over the network to
+    // rediscover that it wants OAuth buys nothing.
+    if (options.hasCachedMcpRemoteToken) {
+      return true;
+    }
+    // A remote server we are not going to wrap must not be OAuth-probed through
     // mcp-remote either: a static-key server answering 401 to that probe was
     // being classified as an unauthorized OAuth server and silently dropped.
     //
-    // Scoped to `http` on purpose. `sse` servers and stdio servers that are
-    // themselves `npx mcp-remote` invocations still go through the real check.
+    // This covers `sse` as well as `http` (nimbalyst#1057). `requiresMcpRemote`
+    // refuses to wrap anything that is not `http`, so an sse server always goes
+    // to the CLI directly and no token is ever written to ~/.mcp-auth -- gating
+    // it on that token dropped every sse OAuth server from the session while the
+    // same config worked in the Claude CLI on its own keychain token. stdio
+    // servers that are themselves `npx mcp-remote` invocations are excluded, and
+    // still go through the real check.
     //
     // `useMcpRemoteForNativeOAuth` opts a caller INTO the wrapper for native-OAuth
     // servers (Codex, Codex ACP, Copilot), so it must not be short-circuited here:
@@ -872,7 +901,7 @@ export class MCPConfigService {
     // which would report every such server authorized and stop those providers
     // dropping the ones that are not.
     if (
-      serverConfig.type === 'http' &&
+      (serverConfig.type === 'http' || serverConfig.type === 'sse') &&
       !options.useMcpRemoteForNativeOAuth &&
       !requiresMcpRemote(serverConfig, options)
     ) {

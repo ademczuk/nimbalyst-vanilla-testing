@@ -9,6 +9,7 @@ import type { FieldDefinition, UrlFieldValue } from '../models/TrackerDataModel'
 import { CustomSelect } from './CustomSelect';
 import { UserAvatar } from './UserAvatar';
 import { getInitials, stringToColor } from './trackerColumns';
+import { formatLocalDateOnly, parseDate } from '../models/dateUtils';
 import { RelationshipFieldEditor, type RelationshipCandidate } from './RelationshipFieldEditor';
 
 /** Team member info for user picker dropdown */
@@ -53,18 +54,17 @@ function formatFieldLabel(name: string): string {
 /**
  * Format a datetime value for read-only display.
  * Shows relative date (e.g. "Mar 14, 2026") with full timestamp on hover.
+ *
+ * Parses through `parseDate` rather than `new Date`: a `date` field holds a
+ * calendar day (`YYYY-MM-DD`), and bare `new Date` reads that as UTC midnight,
+ * which renders as the previous day anywhere west of Greenwich (nimbalyst#1135).
  */
 export function formatDateTimeDisplay(value: any): { display: string; title: string } {
   if (!value) return { display: '--', title: '' };
 
-  let date: Date;
-  if (value instanceof Date) {
-    date = value;
-  } else {
-    date = new Date(String(value));
-  }
+  const date = parseDate(value);
 
-  if (isNaN(date.getTime())) return { display: String(value), title: '' };
+  if (!date) return { display: String(value), title: '' };
 
   const display = date.toLocaleDateString(undefined, {
     month: 'short',
@@ -196,10 +196,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
     case 'datetime': {
       let dateValue = value || '';
       if (value instanceof Date && !isNaN(value.getTime())) {
-        const y = value.getFullYear();
-        const m = String(value.getMonth() + 1).padStart(2, '0');
-        const d = String(value.getDate()).padStart(2, '0');
-        dateValue = `${y}-${m}-${d}`;
+        dateValue = formatLocalDateOnly(value);
       }
       return (
         <div className={wrapperClasses}>

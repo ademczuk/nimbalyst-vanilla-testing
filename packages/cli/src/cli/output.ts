@@ -20,12 +20,37 @@ export interface OutputOptions {
 }
 
 const DEFAULT_COLUMNS = ['key', 'type', 'status', 'title', 'updated'];
+export const UNASSIGNED_ISSUE_KEY_MESSAGE = 'This item has no key until it is published.';
+const LEGACY_LOCAL_ISSUE_KEY_PATTERN = /^LC-\d+$/;
+
+/** Legacy provisional LC keys remain stored but are not stable identifiers. */
+export function getAssignedIssueKey(record: Pick<TrackerRecord, 'issueKey'>): string | undefined {
+  const issueKey = record.issueKey?.trim();
+  return issueKey && !LEGACY_LOCAL_ISSUE_KEY_PATTERN.test(issueKey) ? issueKey : undefined;
+}
+
+export function getTrackerDisplayRef(record: Pick<TrackerRecord, 'id' | 'issueKey'>): string {
+  return getAssignedIssueKey(record) ?? record.id;
+}
+
+function recordForJson(record: TrackerRecord): TrackerRecord & {
+  issueKeyStatus: 'assigned' | 'unassigned';
+  issueKeyMessage?: string;
+} {
+  const issueKey = getAssignedIssueKey(record);
+  return {
+    ...record,
+    issueKey,
+    issueKeyStatus: issueKey ? 'assigned' : 'unassigned',
+    ...(!issueKey ? { issueKeyMessage: UNASSIGNED_ISSUE_KEY_MESSAGE } : {}),
+  };
+}
 
 /** Field accessor for a column name, returning a display string. */
 function columnValue(r: TrackerRecord, col: string): string {
   switch (col) {
     case 'key':
-      return r.issueKey ?? shortId(r.id);
+      return getAssignedIssueKey(r) ?? 'unassigned';
     case 'id':
       return r.id;
     case 'type':
@@ -52,29 +77,29 @@ function columnValue(r: TrackerRecord, col: string): string {
   }
 }
 
-function shortId(id: string): string {
-  return id.length > 10 ? id.slice(0, 8) : id;
-}
-
 export function renderList(records: TrackerRecord[], opts: OutputOptions): string {
   if (opts.json) {
-    return JSON.stringify({ items: records, count: records.length }, null, 2);
+    return JSON.stringify({ items: records.map(recordForJson), count: records.length }, null, 2);
   }
   if (opts.quiet) {
-    return records.map((r) => r.issueKey ?? r.id).join('\n');
+    return records.map(getTrackerDisplayRef).join('\n');
   }
   if (opts.csv) {
     return renderCsv(records, opts.columns ?? DEFAULT_COLUMNS);
   }
-  return renderTable(records, opts.columns ?? DEFAULT_COLUMNS);
+  const table = renderTable(records, opts.columns ?? DEFAULT_COLUMNS);
+  return records.some((record) => !getAssignedIssueKey(record))
+    ? `${table}\n\n${dim(UNASSIGNED_ISSUE_KEY_MESSAGE)}`
+    : table;
 }
 
 export function renderRecord(record: TrackerRecord, body: string | undefined, opts: OutputOptions): string {
   if (opts.json) {
-    return JSON.stringify(body !== undefined ? { ...record, body } : record, null, 2);
+    const jsonRecord = recordForJson(record);
+    return JSON.stringify(body !== undefined ? { ...jsonRecord, body } : jsonRecord, null, 2);
   }
   if (opts.quiet) {
-    return record.issueKey ?? record.id;
+    return getTrackerDisplayRef(record);
   }
   return renderDetail(record, body);
 }
@@ -135,7 +160,7 @@ function renderCsv(records: TrackerRecord[], columns: string[]): string {
 function rawColumnValue(r: TrackerRecord, col: string): string {
   switch (col) {
     case 'key':
-      return r.issueKey ?? r.id;
+      return getAssignedIssueKey(r) ?? 'unassigned';
     case 'updated':
       return r.system.updatedAt ?? '';
     case 'created':
@@ -147,8 +172,10 @@ function rawColumnValue(r: TrackerRecord, col: string): string {
 
 function renderDetail(record: TrackerRecord, body: string | undefined): string {
   const lines: string[] = [];
-  const key = record.issueKey ?? record.id;
+  const issueKey = getAssignedIssueKey(record);
+  const key = issueKey ?? record.id;
   lines.push(`${bold(key)}  ${dim(record.primaryType)}`);
+  if (!issueKey) lines.push(`${bold('Issue key')}  ${UNASSIGNED_ISSUE_KEY_MESSAGE}`);
   lines.push('');
   lines.push(`${bold('Title')}    ${record.fields.title ?? ''}`);
   lines.push(`${bold('Status')}   ${colorStatus(record.fields.status as string)}`);

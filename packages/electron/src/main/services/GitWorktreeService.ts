@@ -21,6 +21,7 @@ import log from 'electron-log/main';
 import { getUntrackedFilesInDirectories } from '../utils/gitUtils';
 import { GIT_INHERITED_ENV_UNSAFE } from './gitInheritedEnvUnsafe';
 import { gitOperationLock } from './GitOperationLock';
+import { SessionCommitService } from './SessionCommitService';
 
 const logger = log.scope('GitWorktreeService');
 
@@ -1336,9 +1337,16 @@ ${newLines.map(line => '+' + line).join('\n')}`;
    * @param worktreePath - Path to the worktree
    * @param message - Commit message
    * @param files - Optional array of specific files to commit (commits all changes if not specified)
+   * @param sessionId - Optional AI session that produced the commit; recorded in
+   *   the session_commits ledger so the Git Log panel can attribute it
    * @returns Commit information
    */
-  async commitChanges(worktreePath: string, message: string, files?: string[]): Promise<CommitInfo> {
+  async commitChanges(
+    worktreePath: string,
+    message: string,
+    files?: string[],
+    sessionId?: string
+  ): Promise<CommitInfo> {
     if (!worktreePath) {
       throw new Error('worktreePath is required');
     }
@@ -1347,9 +1355,20 @@ ${newLines.map(line => '+' + line).join('\n')}`;
     }
 
     // Use centralized lock to prevent concurrent commit/staging operations
-    return gitOperationLock.withLock(worktreePath, 'commitChanges', () =>
+    const commit = await gitOperationLock.withLock(worktreePath, 'commitChanges', () =>
       this.commitChangesImpl(worktreePath, message, files)
     );
+
+    if (sessionId && commit.hash) {
+      void SessionCommitService.getInstance().recordCommit({
+        commitSha: commit.hash,
+        sessionId,
+        workspaceId: worktreePath,
+        committedAt: commit.date,
+      });
+    }
+
+    return commit;
   }
 
   /**

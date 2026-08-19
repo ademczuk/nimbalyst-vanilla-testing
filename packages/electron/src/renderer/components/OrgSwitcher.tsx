@@ -22,6 +22,8 @@ import {
 import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { activeWorkspacePathAtom } from '../store/atoms/openProjects';
+import { orgProjectWalkAtom } from '../store/atoms/orgProjectWalk';
+import { openOrgProjectWalk } from '../store/listeners/orgProjectWalkListeners';
 import { organizationCreationEnabled } from '../store/atoms/settingsDomains';
 import { dialogRef } from '../contexts/DialogContext';
 // The registry/context directly rather than the `dialogs` barrel, which would
@@ -53,6 +55,9 @@ function initials(name: string): string {
 export function OrgSwitcher() {
   const activePath = useAtomValue(activeWorkspacePathAtom);
   const inboxSnapshot = useAtomValue(teamInboxSnapshotAtom);
+  // These rows open the org's MESSAGES, which is not a way into its project.
+  // For a member with nothing bound here, that is the actual dead end.
+  const projectWalk = useAtomValue(orgProjectWalkAtom);
 
   const [orgs, setOrgs] = useState<OrgEntry[]>([]);
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
@@ -221,6 +226,19 @@ export function OrgSwitcher() {
               </button>
             )}
             <div className="border-t border-[var(--nim-border)] mt-1 pt-1">
+              {projectWalk.enterableOrgs[0] && (
+                <button
+                  className="org-switcher-join-project w-full flex items-center gap-2 px-3 py-2 text-[12px] text-[var(--nim-text)] hover:bg-[var(--nim-bg-secondary)]"
+                  data-testid="org-switcher-join-project"
+                  onClick={() => {
+                    setOpen(false);
+                    openOrgProjectWalk();
+                  }}
+                >
+                  <MaterialSymbol icon="drive_folder_upload" size={14} />
+                  Join {projectWalk.enterableOrgs[0].name} project
+                </button>
+              )}
               <button
                 className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-[var(--nim-text-muted)] hover:bg-[var(--nim-bg-secondary)]"
                 data-testid="org-switcher-manage-organization"

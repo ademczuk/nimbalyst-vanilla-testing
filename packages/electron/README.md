@@ -24,6 +24,10 @@ npm run build:mac:notarized
 npm run build:mac:local
 ```
 
+### Startup safe mode
+
+If a saved workspace or session prevents the app from becoming usable, launch Electron with `--safe-mode` (the alias `--no-restore` is also accepted). Safe mode skips saved-window restoration and opens Project Manager without deleting the saved state. Opening a project resumes normal session-state persistence; otherwise, quit and relaunch without the flag to retry the original restoration.
+
 ## Features
 
 ### Editor Capabilities

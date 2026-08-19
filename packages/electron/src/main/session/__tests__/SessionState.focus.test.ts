@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   createWindow: vi.fn(),
   getSessionState: vi.fn(),
   clearSessionState: vi.fn(),
-  runWhenAppIsActive: vi.fn(),
+  onStartupActivated: vi.fn(),
   updateTrackerSchemaWorkspace: vi.fn(),
 }));
 
@@ -74,8 +74,8 @@ vi.mock('../../services/TrackerSchemaService', () => ({
   updateTrackerSchemaWorkspace: mocks.updateTrackerSchemaWorkspace,
 }));
 
-vi.mock('../../window/AppActivationGuard', () => ({
-  runWhenAppIsActive: mocks.runWhenAppIsActive,
+vi.mock('../../window/StartupActivation', () => ({
+  onStartupActivated: mocks.onStartupActivated,
 }));
 
 import { restoreSessionState } from '../SessionState';
@@ -86,10 +86,11 @@ describe('restoreSessionState window activation', () => {
     mocks.createWindow.mockReset();
     mocks.getSessionState.mockReset();
     mocks.clearSessionState.mockReset();
-    mocks.runWhenAppIsActive.mockReset();
+    mocks.onStartupActivated.mockReset();
     mocks.updateTrackerSchemaWorkspace.mockReset();
 
     mocks.createWindow.mockImplementation(() => ({
+      isDestroyed: () => false,
       webContents: { once: vi.fn(), openDevTools: vi.fn() },
     }));
   });
@@ -114,7 +115,7 @@ describe('restoreSessionState window activation', () => {
       true,
       '/workspace/older',
       undefined,
-      { showInactive: true, deferShowUntilAppActive: true },
+      { showInactive: true, startupReveal: true, startupFrontmost: true },
     );
     expect(mocks.createWindow).toHaveBeenNthCalledWith(
       2,
@@ -122,11 +123,11 @@ describe('restoreSessionState window activation', () => {
       true,
       '/workspace/newer',
       undefined,
-      { showInactive: true, deferShowUntilAppActive: true },
+      { showInactive: true, startupReveal: true, startupFrontmost: true },
     );
   });
 
-  it('defers saved DevTools restoration until Nimbalyst is active', async () => {
+  it('defers saved DevTools restoration until startup foregrounding is done', async () => {
     mocks.getSessionState.mockReturnValue({
       windows: [
         {
@@ -150,13 +151,10 @@ describe('restoreSessionState window activation', () => {
     expect(didFinishLoad).toBeTypeOf('function');
     didFinishLoad();
 
-    expect(mocks.runWhenAppIsActive).toHaveBeenCalledWith(
-      restoredWindow,
-      expect.any(Function),
-    );
+    expect(mocks.onStartupActivated).toHaveBeenCalledWith(expect.any(Function));
     expect(restoredWindow.webContents.openDevTools).not.toHaveBeenCalled();
 
-    const deferredOpen = mocks.runWhenAppIsActive.mock.calls[0][1];
+    const deferredOpen = mocks.onStartupActivated.mock.calls[0][0];
     deferredOpen();
     expect(restoredWindow.webContents.openDevTools).toHaveBeenCalledTimes(1);
   });

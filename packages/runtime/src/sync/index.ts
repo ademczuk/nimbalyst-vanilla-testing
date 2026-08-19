@@ -60,6 +60,12 @@ export {
 } from './types';
 
 export { createCollabV3Sync } from './CollabV3Sync';
+export { createExtensionAwarenessBridge } from './extensionAwarenessBridge';
+export type {
+  ExtensionAwarenessBridge,
+  ExtensionAwarenessTransport,
+  ExtensionAwarenessUser,
+} from './extensionAwarenessBridge';
 export { deriveTrackerPersonalStateKey } from './trackerPersonalStateKey';
 export { setSyncImageCompressor } from './syncContentTruncator';
 export type { SyncImageCompressor } from './syncContentTruncator';
@@ -105,6 +111,18 @@ export type {
   ConversationSyncEvent,
   ConversationTarget,
 } from './ConversationSync';
+
+export {
+  FeedbackRequestSync,
+  FeedbackRequestSyncError,
+} from './FeedbackRequestSync';
+export type {
+  FeedbackRequestNudgeReceipt,
+  FeedbackRequestSyncConfig,
+  FeedbackRequestSyncEvent,
+  FeedbackRequestSyncState,
+  FeedbackRequestTarget,
+} from './FeedbackRequestSync';
 
 export {
   createSyncedSessionStore,
@@ -176,7 +194,6 @@ export type {
   DocumentSyncStatus,
   AwarenessState,
   SerializedRelativePosition,
-  ReviewGateState,
   DocClientMessage,
   DocServerMessage,
 } from './documentSyncTypes';
@@ -268,6 +285,7 @@ export type {
 // main process. Import them from `@nimbalyst/runtime/collab-lexical`.
 export {
   createRevisionAdapterFromCollabContent,
+  previewRevisionSnapshot,
   type CollabAdapterRevisionBridgeOptions,
 } from './revisionSnapshotBridge';
 

@@ -43,8 +43,13 @@ import {
 } from '@nimbalyst/runtime/plugins/TrackerPlugin';
 import { isCollectionType } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerCollections';
 import {
+  formatTrackerUndoToast,
+  type TrackerUndoChange,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerUndoStack';
+import {
   trackerItemsByTypeAtom,
   trackerDataLoadedAtom,
+  trackerRelationshipLabelAtom,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import {
   getRecordTitle,
@@ -59,13 +64,21 @@ import {
   type TrackerFilterEvaluationContext,
   type TrackerFieldFilter,
   type TrackerFilterSet,
+  type TrackerGroupBy,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
-import { buildGridColumns, buildGridSource, ROW_ITEM_ID } from './grid/trackerGridColumns';
+import {
+  buildGridActionsColumn,
+  buildGridColumns,
+  buildGridSource,
+  ROW_ACTIONS,
+  ROW_ITEM_ID,
+} from './grid/trackerGridColumns';
 import type { RelationshipCandidate } from './grid/trackerGridEditors';
 import {
   TrackerFilterValueMenu,
 } from './TrackerFilterValueMenu';
 import type { TrackerFilterField } from './TrackerViewHeaderControls';
+import { errorNotificationService } from '../../services/ErrorNotificationService';
 import './grid/trackerGrid.css';
 
 const ROW_GROUP_LABEL = '__trackerGroupLabel';
@@ -80,12 +93,13 @@ interface TrackerGridViewProps {
   filterType?: TrackerItemType | 'all';
   sortBy?: string;
   sortDirection?: 'asc' | 'desc';
+  groupBy?: TrackerGroupBy;
   onItemSelect?: (itemId: string) => void;
   onDetailClose?: () => void;
   selectedItemId?: string | null;
   overrideItems?: TrackerRecord[];
   onDeleteItems?: (itemIds: string[]) => void;
-  onArchiveItems?: (itemIds: string[], archive: boolean) => void;
+  onArchiveItems?: (itemIds: string[], archive: boolean) => void | Promise<void>;
   onSwitchToFilesMode?: () => void;
   searchQuery?: string;
   hasExternalFilters?: boolean;
@@ -118,6 +132,7 @@ export function TrackerGridView({
   filterType = 'all',
   sortBy = 'lastIndexed',
   sortDirection = 'desc',
+  groupBy = 'none',
   onItemSelect,
   onDetailClose,
   selectedItemId,
@@ -148,6 +163,7 @@ export function TrackerGridView({
 
   const atomItems = useAtomValue(trackerItemsByTypeAtom(activeTypeFilter));
   const dataLoaded = useAtomValue(trackerDataLoadedAtom);
+  const relationshipLabel = useAtomValue(trackerRelationshipLabelAtom);
   const sourceItems = overrideItems ?? atomItems;
 
   // Collections live outside the active type filter (you add bugs to a
@@ -158,6 +174,18 @@ export function TrackerGridView({
       .filter((item: TrackerRecord) => !item.archived && isCollectionType(item.primaryType))
       .slice(0, 50),
     [allTypeItems],
+  );
+
+  // "Add to Collection" writes a milestone that the active type filter hides, so
+  // its undo has to resolve the record from the unfiltered set.
+  const allItemsById = useMemo(() => {
+    const map = new Map<string, TrackerRecord>();
+    for (const item of allTypeItems as TrackerRecord[]) map.set(item.id, item);
+    return map;
+  }, [allTypeItems]);
+  const resolveRecordById = useCallback(
+    (itemId: string): TrackerRecord | undefined => allItemsById.get(itemId),
+    [allItemsById],
   );
 
   const items = useMemo(() => withEffectiveUpdated(sourceItems), [sourceItems]);
@@ -211,19 +239,37 @@ export function TrackerGridView({
 
   const sortedItems = useMemo(() => {
     if (preserveItemOrder) return filteredItems;
-    return sortTrackerRecords(filteredItems, sortBy, sortDirection);
-  }, [filteredItems, sortBy, sortDirection, preserveItemOrder]);
+    return sortTrackerRecords(filteredItems, sortBy, sortDirection, allColumnDefs);
+  }, [allColumnDefs, filteredItems, sortBy, sortDirection, preserveItemOrder]);
+
+  // The archive recorder needs `recordUndoEntry`, and the hook needs the
+  // recorder so an archive undo inverts through the same callback. The ref
+  // breaks that cycle with a stable indirection.
+  const archiveRecorderRef = useRef<
+    ((itemIds: string[], archive: boolean, options?: { record?: boolean }) => Promise<void>) | null
+  >(null);
+  const archiveThroughRecorder = useCallback(
+    (itemIds: string[], archive: boolean, options?: { record?: boolean }): Promise<void> =>
+      archiveRecorderRef.current?.(itemIds, archive, options) ?? Promise.resolve(),
+    [],
+  );
 
   const rows = useTrackerRows({
     items: sortedItems,
     activeTypeFilter,
     onItemSelect,
     onDeleteItems,
-    onArchiveItems,
+    onArchiveItems: onArchiveItems ? archiveThroughRecorder : undefined,
     onSwitchToFilesMode,
+    resolveRecordById,
   });
   const {
     handleItemUpdate,
+    runUndoable,
+    recordUndoEntry,
+    captureUndoGeneration,
+    undo,
+    redo,
     isItemEditable,
     selectedIds,
     setSelectedIds,
@@ -257,6 +303,48 @@ export function TrackerGridView({
     return item ? isItemEditable(item) : false;
   }, [itemsById, isItemEditable]);
 
+  /**
+   * Archive through the host callback, recording the inverse. Archiving does not
+   * go through `handleItemUpdate`, so the entry is pushed by hand. A replay
+   * passes `record: false` -- the history already owns that change, and
+   * re-recording it would push the inverse back onto the stack.
+   */
+  const archiveWithUndo = useCallback(async (
+    itemIds: string[],
+    archive: boolean,
+    options?: { record?: boolean },
+  ): Promise<void> => {
+    if (!onArchiveItems) return;
+    if (options?.record === false) {
+      await onArchiveItems(itemIds, archive);
+      return;
+    }
+
+    const changes: TrackerUndoChange[] = itemIds
+      .map(itemId => itemsById.get(itemId))
+      .filter((item): item is TrackerRecord => item !== undefined && Boolean(item.archived) !== archive)
+      .map(item => ({
+        kind: 'archive',
+        itemId: item.id,
+        previousArchived: Boolean(item.archived),
+        nextArchived: archive,
+      }));
+
+    // Archiving many rows is slow enough that the user can switch tracker type
+    // mid-flight, which clears the history. The generation captured here makes
+    // the entry land in that history or nowhere -- never in the fresh one, where
+    // Cmd+Z would unarchive rows from a view the user has left.
+    const generation = captureUndoGeneration();
+    await onArchiveItems(itemIds, archive);
+    recordUndoEntry({
+      label: `${archive ? 'Archive' : 'Unarchive'} ${changes.length} item${changes.length === 1 ? '' : 's'}`,
+      changes,
+    }, generation);
+  }, [captureUndoGeneration, itemsById, onArchiveItems, recordUndoEntry]);
+  useEffect(() => {
+    archiveRecorderRef.current = archiveWithUndo;
+  }, [archiveWithUndo]);
+
   // Relationship editors pick from the loaded records rather than issuing a
   // lookup per cell -- the tracker atoms already hold every item in scope.
   const relationshipCandidates = useCallback((): RelationshipCandidate[] => {
@@ -287,18 +375,22 @@ export function TrackerGridView({
     [favoriteItemIds, onToggleFavorite],
   );
   const gridColumns = useMemo(
-    () => buildGridColumns(visibleColumnDefs, {
-      trackerType: schemaType,
-      columnWidths: effectiveColumnConfig.columnWidths,
-      isRowEditable,
-      editorContext: { relationshipCandidates },
-      filteredColumnIds,
-      onOpenFilter: onColumnFiltersChange
-        ? (columnId, rect) => setFilterTarget({ columnId, rect })
-        : undefined,
-      sortingEnabled,
-      favorites,
-    }),
+    () => [
+      ...buildGridColumns(visibleColumnDefs, {
+        trackerType: schemaType,
+        columnWidths: effectiveColumnConfig.columnWidths,
+        isRowEditable,
+        editorContext: { relationshipCandidates },
+        filteredColumnIds,
+        onOpenFilter: onColumnFiltersChange
+          ? (columnId, rect) => setFilterTarget({ columnId, rect })
+          : undefined,
+        sortingEnabled,
+        favorites,
+        rowActions: true,
+      }),
+      buildGridActionsColumn(),
+    ],
     [
       visibleColumnDefs, schemaType, effectiveColumnConfig.columnWidths,
       isRowEditable, relationshipCandidates, filteredColumnIds, onColumnFiltersChange,
@@ -323,16 +415,17 @@ export function TrackerGridView({
       ...row,
       [ROW_GROUP_LABEL]: getTrackerGroupLabel(
         sortedItems[index],
-        effectiveColumnConfig.groupBy,
+        groupBy,
+        relationshipLabel,
       ),
     })),
-    [effectiveColumnConfig.groupBy, sortedItems, visibleColumnDefs],
+    [groupBy, sortedItems, visibleColumnDefs, relationshipLabel],
   );
   const gridGrouping = useMemo(
-    () => effectiveColumnConfig.groupBy
+    () => groupBy !== 'none'
       ? { props: [ROW_GROUP_LABEL], expandedAll: true }
       : undefined,
-    [effectiveColumnConfig.groupBy],
+    [groupBy],
   );
 
   const resolveGridRowItem = useCallback(async (rowIndex: number): Promise<TrackerRecord | null> => {
@@ -402,56 +495,82 @@ export function TrackerGridView({
     onColumnConfigChange({ ...effectiveColumnConfig, columnWidths });
   }, [effectiveColumnConfig, onColumnConfigChange]);
 
+  /**
+   * Resolve the schema field a column maps to for one item, or `null` when the
+   * cell cannot be edited (derived column, readonly field, or locked row). The
+   * role lookup happens per item because a mixed-type view maps the same column
+   * to differently named fields on each row.
+   */
+  const resolveEditableField = useCallback((
+    item: TrackerRecord,
+    prop: string,
+  ): { fieldName: string; field: NonNullable<ReturnType<typeof getFieldForColumn>> } | null => {
+    if (!isItemEditable(item)) return null;
+    const column = visibleColumnDefs.find(c => c.id === prop);
+    if (!column?.editable) return null;
+    const fieldName = column.role
+      ? resolveRoleFieldName(item.primaryType, column.role)
+      : prop;
+    const field = getFieldForColumn(item.primaryType, fieldName);
+    if (!field || field.readOnly) return null;
+    return { fieldName, field };
+  }, [isItemEditable, visibleColumnDefs]);
+
   /** Commit one or more cells from the same row as one durable item update. */
   const commitRow = useCallback(async (
     rowIndex: number,
     changes: Record<string, unknown>,
   ): Promise<void> => {
     const item = await resolveGridRowItem(rowIndex);
-    if (!item || !isItemEditable(item)) return;
+    if (!item) return;
 
     const updates: Record<string, unknown> = {};
     for (const [prop, rawValue] of Object.entries(changes)) {
-      const column = visibleColumnDefs.find(c => c.id === prop);
-      if (!column?.editable) continue;
-      const fieldName = column.role
-        ? resolveRoleFieldName(item.primaryType, column.role)
-        : prop;
-      const field = getFieldForColumn(item.primaryType, fieldName);
-      if (!field || field.readOnly) continue;
-      const value = coerceCellValue(field, rawValue);
-      const current = item.fields[fieldName];
+      const editable = resolveEditableField(item, prop);
+      if (!editable) continue;
+      const value = coerceCellValue(editable.field, rawValue);
+      const current = item.fields[editable.fieldName];
       if (JSON.stringify(current ?? null) !== JSON.stringify(value ?? null)) {
-        updates[fieldName] = value;
+        updates[editable.fieldName] = value;
       }
     }
     if (Object.keys(updates).length > 0) {
       await handleItemUpdate(item, updates);
     }
-  }, [handleItemUpdate, isItemEditable, resolveGridRowItem, visibleColumnDefs]);
+  }, [handleItemUpdate, resolveEditableField, resolveGridRowItem]);
 
   const handleAfterEdit = useCallback((event: RevoGridCustomEvent<AfterEditEvent>) => {
     const detail = event.detail;
 
     if (isRangeEdit(detail)) {
       // Paste / fill-down: one write per touched row, so two cells in the same
-      // JSON-backed item cannot race and overwrite each other.
-      const writes: Array<Promise<void>> = [];
-      for (const [rowKey, changes] of Object.entries(detail.data ?? {})) {
-        writes.push(commitRow(Number(rowKey), changes as Record<string, unknown>));
-      }
-      void Promise.all(writes);
+      // JSON-backed item cannot race and overwrite each other. The whole range
+      // is one undo entry so a mis-landed paste takes one Cmd+Z, not one per row.
+      const rowEntries = Object.entries(detail.data ?? {});
+      const cellCount = rowEntries.reduce(
+        (total, [, changes]) => total + Object.keys(changes as Record<string, unknown>).length,
+        0,
+      );
+      void runUndoable(`Paste ${cellCount} cell${cellCount === 1 ? '' : 's'}`, async () => {
+        await Promise.all(rowEntries.map(([rowKey, changes]) =>
+          commitRow(Number(rowKey), changes as Record<string, unknown>)));
+      });
       return;
     }
 
     const single = detail as BeforeSaveDataDetails;
-    void commitRow(single.rowIndex, { [String(single.prop)]: single.val });
-  }, [commitRow]);
+    const prop = String(single.prop);
+    const columnLabel = visibleColumnDefs.find(column => column.id === prop)?.label ?? prop;
+    void runUndoable(`Edit ${columnLabel}`, () => commitRow(single.rowIndex, { [prop]: single.val }));
+  }, [commitRow, runUndoable, visibleColumnDefs]);
 
   /**
-   * Double-click opens the row's item as a document. RevoGrid renders its own
-   * cells, so the row comes from the same `data-rgrow` attribute the context
-   * menu resolves against rather than a React row handler.
+   * Double-click edits an editable cell and opens the row's item as a document
+   * otherwise. RevoGrid's own double-click handler already opened the inline
+   * editor by the time this runs, so opening the document over an editable cell
+   * would immediately throw the edit away. RevoGrid renders its own cells, so
+   * the row comes from the same `data-rgrow` attribute the context menu
+   * resolves against rather than a React row handler.
    */
   const handleGridDoubleClick = useCallback(async (
     event: ReactMouseEvent<HTMLDivElement>,
@@ -463,8 +582,21 @@ export function TrackerGridView({
     const rowIndex = Number(rowAttr);
     if (!Number.isFinite(rowIndex)) return;
     const item = await resolveGridRowItem(rowIndex);
-    if (item) onOpenDocument(item.id);
-  }, [onOpenDocument, resolveGridRowItem]);
+    if (!item) return;
+
+    // The pointer down that started this double-click already focused the cell,
+    // so the focused column is the one under the cursor.
+    const focused = await gridRef.current?.getFocused?.();
+    const prop = focused?.column?.prop;
+    if (
+      focused?.cell?.y === rowIndex
+      && prop != null
+      && resolveEditableField(item, String(prop))
+    ) {
+      return;
+    }
+    onOpenDocument(item.id);
+  }, [onOpenDocument, resolveEditableField, resolveGridRowItem]);
 
   const openFocusedItem = useCallback(async (): Promise<void> => {
     const focused = await gridRef.current?.getFocused();
@@ -482,6 +614,22 @@ export function TrackerGridView({
     await grid.setCellEdit(focused.cell.y, prop, focused.rowType);
   }, []);
 
+  /**
+   * Replay the top of the stack and report it. An empty stack stays silent --
+   * every other app treats Cmd+Z with nothing to undo as a no-op.
+   */
+  const replayUndoEntry = useCallback(async (direction: 'undo' | 'redo'): Promise<void> => {
+    const result = direction === 'undo' ? await undo() : await redo();
+    if (!result) return;
+    const { title, body } = formatTrackerUndoToast(
+      direction,
+      result.label,
+      result.applied,
+      result.skipped,
+    );
+    errorNotificationService.showInfo(title, body, { duration: 2500 });
+  }, [redo, undo]);
+
   const handleGridKeyDownCapture = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     const key = event.key;
     const path = event.nativeEvent.composedPath();
@@ -497,6 +645,15 @@ export function TrackerGridView({
     // focus change after Enter/Tab does not accidentally open the detail panel.
     if (isEditing) {
       if (key === 'Enter' || key === 'Tab') focusOriginRef.current = 'keyboard';
+      return;
+    }
+
+    // Outside a cell editor Cmd/Ctrl+Z belongs to the grid's own history. The
+    // app menu's `Edit > Undo` role does not swallow the keydown, so this runs.
+    if ((event.metaKey || event.ctrlKey) && key.toLowerCase() === 'z') {
+      event.preventDefault();
+      event.stopPropagation();
+      void replayUndoEntry(event.shiftKey ? 'redo' : 'undo');
       return;
     }
 
@@ -530,7 +687,7 @@ export function TrackerGridView({
       event.stopPropagation();
       onDetailClose();
     }
-  }, [editFocusedCell, onDetailClose, openFocusedItem, selectedItemId]);
+  }, [editFocusedCell, onDetailClose, openFocusedItem, replayUndoEntry, selectedItemId]);
 
   const handleCellFocus = useCallback((
     event: RevoGridCustomEvent<FocusAfterRenderEvent>,
@@ -542,7 +699,7 @@ export function TrackerGridView({
     // A mouse focus opens details as before. Keyboard focus only changes the
     // row while browsing; once details are open, it keeps the panel in sync.
     if (onItemSelect && (!keyboardFocused || selectedItemId)) {
-      if (!effectiveColumnConfig.groupBy) {
+      if (groupBy === 'none') {
         const item = sortedItemsRef.current[rowIndex];
         if (item) onItemSelect(item.id);
         return;
@@ -551,7 +708,7 @@ export function TrackerGridView({
         if (item) onItemSelect(item.id);
       });
     }
-  }, [effectiveColumnConfig.groupBy, onItemSelect, resolveGridRowItem, selectedItemId]);
+  }, [groupBy, onItemSelect, resolveGridRowItem, selectedItemId]);
 
   const handleBeforeSorting = useCallback((
     event: RevoGridCustomEvent<BeforeSortingDetail>,
@@ -604,6 +761,13 @@ export function TrackerGridView({
       const beforeSorting = (event: Event): void => {
         handleBeforeSorting(event as RevoGridCustomEvent<BeforeSortingDetail>);
       };
+      // Drag-to-clone silently rewrites a whole column of tracker items with no
+      // way back. `trackerGrid.css` hides the handle; cancelling here survives a
+      // RevoGrid upgrade that renames the class. Clipboard paste reaches
+      // `afteredit` through `rangeeditapply` instead, so it is unaffected.
+      const beforeAutofill = (event: Event): void => {
+        event.preventDefault();
+      };
       const persistGridOrder = (): void => {
         if (!onColumnConfigChange || typeof grid.getColumnStore !== 'function') return;
         void grid.getColumnStore('rgCol').then(store => {
@@ -612,7 +776,7 @@ export function TrackerGridView({
           const items = store.get('items') as number[];
           const visibleColumns = items
             .map(index => source[index]?.prop)
-            .filter((prop): prop is string => typeof prop === 'string');
+            .filter((prop): prop is string => typeof prop === 'string' && prop !== ROW_ACTIONS);
           if (
             visibleColumns.length === effectiveColumnConfig.visibleColumns.length
             && visibleColumns.some((id, index) => id !== effectiveColumnConfig.visibleColumns[index])
@@ -627,6 +791,7 @@ export function TrackerGridView({
       grid.addEventListener('afterfocus', afterFocus);
       grid.addEventListener('aftercolumnresize', afterColumnResize);
       grid.addEventListener('beforesorting', beforeSorting);
+      grid.addEventListener('beforeautofill', beforeAutofill);
       grid.addEventListener('columndragend', persistGridOrder);
       removeGridListeners = () => {
         grid.removeEventListener('aftergridinit', hydrateGridData);
@@ -634,6 +799,7 @@ export function TrackerGridView({
         grid.removeEventListener('afterfocus', afterFocus);
         grid.removeEventListener('aftercolumnresize', afterColumnResize);
         grid.removeEventListener('beforesorting', beforeSorting);
+        grid.removeEventListener('beforeautofill', beforeAutofill);
         grid.removeEventListener('columndragend', persistGridOrder);
       };
 
@@ -824,7 +990,7 @@ export function TrackerGridView({
         onAddToCollection={handleAddSelectionToCollection}
         onCopyDeepLink={onCopyDeepLink}
         onOpenDocument={onOpenDocument}
-        onArchiveItems={onArchiveItems}
+        onArchiveItems={onArchiveItems ? archiveWithUndo : undefined}
         onDeleteItems={onDeleteItems}
         closeContextMenu={closeContextMenu}
         clearSelection={() => setSelectedIds(new Set())}

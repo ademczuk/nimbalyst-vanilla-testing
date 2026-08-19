@@ -7,6 +7,7 @@
  */
 
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
+import type { TrackerSharing } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
 
 export type TrackerContentMode = 'file-backed' | 'local-pglite' | 'collaborative';
 
@@ -44,20 +45,16 @@ export function isFileBackedRecord(record: TrackerRecord): boolean {
 
 export function resolveTrackerContentMode(params: {
   item: TrackerRecord | null | undefined;
-  /** The type's sync mode: 'local' | 'hybrid' | 'shared'. */
-  syncMode: string;
-  /** Whether THIS item is shared with the team (per-item for hybrid types). */
-  isItemShared: boolean;
+  sharing: TrackerSharing;
+  /** The existing per-item bit, expressed as Draft/Published. */
+  isItemPublished: boolean;
   /** Tri-state: undefined = team lookup pending, null = confirmed no team. */
   teamOrgId: string | null | undefined;
 }): TrackerContentMode {
-  const { item, syncMode, isItemShared, teamOrgId } = params;
+  const { item, sharing, isItemPublished, teamOrgId } = params;
   if (!item || !isNativeItem(item)) return 'file-backed';
-  if (syncMode === 'local') return 'local-pglite';
-  // Hybrid trackers are per-item: an unshared hybrid item edits locally and
-  // never connects its body room. (Sharing flips this to collaborative.)
-  if (syncMode === 'hybrid' && !isItemShared) return 'local-pglite';
-  // Shared/hybrid trackers need a team for collaborative editing. Without one,
+  if (sharing === 'personal' || !isItemPublished) return 'local-pglite';
+  // Published team items need a team for collaborative editing. Without one,
   // content is purely local. While the team check is still pending
   // (`teamOrgId === undefined`) stay in collaborative mode so the loading UI
   // runs -- otherwise the local editor would mount and risk being clobbered if a

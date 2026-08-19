@@ -28,18 +28,24 @@ When executing this command:
   - Parse the YAML frontmatter
   - Extract the implementation details, acceptance criteria, and goals
 
-2. **Generate task list**
+2. **Link this session to the projected plan item**
+  - Normalize the plan path to a workspace-relative path with `/` separators
+  - Resolve the existing frontmatter projection as `fm:plan:<relative-path>` with `tracker_get`
+  - Call `tracker_link_session` with the item ID returned by `tracker_get` before implementation begins
+  - Do not create a second tracker item; shared/promoted plans are resolved through the same projection reference
+
+3. **Generate task list**
   - Create markdown checkboxes from acceptance criteria
   - Add any implementation tasks from the Implementation Details section
   - Insert this task list after the plan title (after the first # heading)
 
-3. **Update plan frontmatter**
+4. **Update plan frontmatter**
   - Set `status` to `in-development` (if currently `ready-for-development` or `draft`)
   - Set `startDate` to today if not already set
   - Update `updated` timestamp to current time (use new Date().toISOString())
   - Set `progress` to 0 initially
 
-4. **Begin implementation**
+5. **Begin implementation**
   - Use TodoWrite to track tasks internally (for your own progress tracking)
   - Work through each task systematically
   - As each task is completed:
@@ -47,11 +53,11 @@ When executing this command:
     - Update the `progress` percentage in frontmatter
     - Update the `updated` timestamp
 
-5. **Calculate progress**
+6. **Calculate progress**
   - Progress = (completed checkboxes / total checkboxes) × 100
   - Round to nearest integer
 
-6. **Final updates**
+7. **Final updates**
   - When all tasks complete, set `status` to `in-review`
   - Set `progress` to 100
   - Update `updated` timestamp

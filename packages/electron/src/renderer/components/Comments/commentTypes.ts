@@ -45,7 +45,7 @@ export type {
   RichCommentBody,
 };
 
-/** The seven `ResourceRef.kind` values, as a value the UI can iterate. */
+/** Every `ResourceRef.kind` value, as a value the UI can iterate. */
 export const RESOURCE_KINDS = [
   'tracker',
   'document',
@@ -54,9 +54,21 @@ export const RESOURCE_KINDS = [
   'commit',
   'pullRequest',
   'conversation',
-] as const;
+  'feedbackRequest',
+] as const satisfies readonly ResourceRef['kind'][];
 
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
+
+/**
+ * A protocol kind missing from the list above resolves to something other than
+ * `never` here and stops this file compiling. Without it the omission is
+ * invisible until a pill renders with no icon, because every consumer casts to
+ * `ResourceKind` at the boundary.
+ */
+type AssertNever<T extends never> = T;
+type UnlistedResourceKind = AssertNever<
+  Exclude<ResourceRef['kind'], ResourceKind>
+>;
 
 /** A person the viewer may mention. */
 export interface PersonHandle {
@@ -214,7 +226,7 @@ export type BodySegment =
   | { type: 'emphasis'; text: string }
   | { type: 'emoji'; shortcode: string; glyph: string }
   | { type: 'mention'; userId: string; displayName: string; initials: string; isViewer: boolean }
-  | { type: 'agentMention'; sessionId: string; sessionName: string; ownerDisplayName?: string }
+  | { type: 'agentMention'; sessionId: string; sessionName: string; ownerDisplayName?: string; pending?: boolean }
   | {
       type: 'resource';
       pill: ResourcePillView;

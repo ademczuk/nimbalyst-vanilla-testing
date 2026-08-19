@@ -28,6 +28,7 @@ import {
 } from '../../store';
 import type { SuperLoop, SuperLoopStatus, SuperIteration, SuperLearning } from '../../../shared/types/superLoop';
 import { getRelativeTimeString } from '../../utils/dateFormatting';
+import { sessionAgentWakePendingAtom } from '../../store/atoms/teamInbox';
 
 interface SuperLoopGroupProps {
   loopId: string;
@@ -126,6 +127,7 @@ const SuperGroupStatus: React.FC<{ sessionIds: string[]; loopStatus: SuperLoopSt
 const SuperIterationStatus: React.FC<{ sessionId: string }> = memo(({ sessionId }) => {
   const isProcessing = useAtomValue(sessionProcessingAtom(sessionId));
   const hasPendingPrompt = useAtomValue(sessionPendingPromptAtom(sessionId));
+  const hasAgentWakePending = useAtomValue(sessionAgentWakePendingAtom(sessionId));
   const hasUnread = useAtomValue(sessionUnreadAtom(sessionId));
 
   if (isProcessing) {
@@ -134,6 +136,9 @@ const SuperIterationStatus: React.FC<{ sessionId: string }> = memo(({ sessionId 
         <MaterialSymbol icon="progress_activity" size={12} />
       </div>
     );
+  }
+  if (hasAgentWakePending) {
+    return <MaterialSymbol icon="hourglass_top" size={12} />;
   }
   if (hasPendingPrompt) {
     return (

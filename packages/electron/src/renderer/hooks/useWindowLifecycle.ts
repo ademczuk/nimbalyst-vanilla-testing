@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { logger } from '../utils/logger';
 import { store, editorDirtyAtom, makeEditorKey } from '@nimbalyst/runtime/store';
-import { isCollabUri } from '../utils/collabUri';
+import { isCollabUri } from '@nimbalyst/collab-protocol';
 import {
   collabConnectionStatusAtom,
   hasCollabUnsyncedChanges,

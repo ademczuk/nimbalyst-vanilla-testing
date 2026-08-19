@@ -27,7 +27,8 @@ import {
   describeScreenshotCaptureError,
   sanitizeScreenshotCloneForXml,
 } from "../utils/screenshotUtils";
-import { renderMockupHtml } from "../utils/mockupDomUtils";
+import { mockupHasScript, renderMockupHtml } from "../utils/mockupDomUtils";
+import { remapCaretAcrossReplace } from "../utils/sourcePaneCaret";
 import { MockupDiffViewer } from "./MockupDiffViewer";
 import { injectTheme, type MockupTheme } from "../utils/themeEngine";
 import { MockupBinding } from "../collab/mockupBinding";
@@ -37,10 +38,17 @@ import {
   seedMockupYDoc,
 } from "../collab/seed";
 
-// Import shared types for mockup annotations from runtime package
+// Shared types for mockup annotations. These resolve against the ambient
+// `declare module '@nimbalyst/runtime'` in globals.d.ts and are erased at build
+// time, so they cost the bundle nothing.
+//
+// There is deliberately no side-effect import of the runtime beside them. The
+// desktop host maps that specifier to a curated re-export of a handful of UI
+// members, which registers no globals; the Window members this editor uses are
+// declared in globals.d.ts and set by the editor itself. In the browser console
+// the specifier has no provider at all, so importing it for its non-existent
+// side effect made the whole extension unresolvable there.
 import type { DrawingPath, MockupSelection } from "@nimbalyst/runtime";
-// Side effect import to register Window globals
-import "@nimbalyst/runtime";
 
 // electronAPI is declared globally in electron.d.ts
 
@@ -69,6 +77,28 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
 
     // Content lives in a ref -- iframe rendering is imperative, not React state
     const contentRef = useRef<string | null>(null);
+
+    // Source pane (see "Source editing" below). Declared here because the
+    // collaborative binding writes it, and the binding is wired above the pane.
+    const sourceTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+    /**
+     * Push document text into the open source pane, preserving the caret.
+     *
+     * Must run SYNCHRONOUSLY with the remote update, not from an effect. The
+     * pane's input handler treats the textarea value as the whole document and
+     * diffs it against Y.Text: if the DOM still held the pre-merge text for one
+     * React tick, a keystroke landing in that window would diff from a stale
+     * baseline and delete the teammate's insertion.
+     */
+    const writeSourcePane = useCallback((next: string) => {
+      const textarea = sourceTextareaRef.current;
+      if (!textarea || textarea.value === next) return;
+      const start = remapCaretAcrossReplace(textarea.value, next, textarea.selectionStart);
+      const end = remapCaretAcrossReplace(textarea.value, next, textarea.selectionEnd);
+      textarea.value = next;
+      textarea.setSelectionRange(start, end);
+    }, []);
 
     // UI state that clearAllAnnotations modifies
     const [drawingDataUrl, setDrawingDataUrl] = useState<string | null>(null);
@@ -181,6 +211,7 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
             getCurrentHtml: () => contentRef.current ?? "",
             onRemoteContent: (content: string) => {
               contentRef.current = content;
+              writeSourcePane(content);
               setContentVersion((v) => v + 1);
               clearAllAnnotations();
               collabBindingRef.current?.noteAppliedRemote(content);
@@ -190,6 +221,9 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
         );
         collabBindingRef.current = binding;
         return {
+          // The host drains this before it reports a write complete, so an AI
+          // tool cannot return success on an edit still sitting in the debounce.
+          syncNow: () => binding.syncNow(),
           destroy: () => {
             // Flush any pending edit so a closing tab doesn't drop the last
             // sync interval; the binding is about to be destroyed either way.
@@ -213,6 +247,57 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
           : null,
       });
     }, [selectedElement]);
+
+    // ---- Source editing -------------------------------------------------
+    // For a local file the host owns source mode: TabEditor flushes the dirty
+    // buffer to disk, re-reads it, and swaps the custom editor for Monaco.
+    // A collaborative document has no disk to round-trip through, so the collab
+    // host deliberately does not provide `toggleSourceMode` -- and a mockup has
+    // no other content-editing control, which left a shared mockup read-only in
+    // practice. When the host can't provide source mode we open an in-editor
+    // source pane instead and write straight into the shared Y.Text.
+    const [isInlineSourceOpen, setIsInlineSourceOpen] = useState(false);
+    /**
+     * This mockup declares scripts and the host's CSP refused to run them --
+     * true on the web console, false on desktop. Measured per render rather
+     * than asked of the host, which cannot see the policy the page was served
+     * with. See `mockupDomUtils.MockupRenderResult`.
+     */
+    const [areScriptsBlocked, setAreScriptsBlocked] = useState(false);
+
+    const handleToggleSource = useCallback(() => {
+      if (host.toggleSourceMode) {
+        void host.toggleSourceMode();
+        return;
+      }
+      // Re-render the iframe from whatever the pane left behind on close.
+      if (isInlineSourceOpen) setContentVersion((v) => v + 1);
+      setIsInlineSourceOpen((prev) => !prev);
+    }, [host, isInlineSourceOpen]);
+
+    // Fill the pane when it is first opened; `writeSourcePane` keeps it current
+    // from then on.
+    useEffect(() => {
+      if (isInlineSourceOpen) writeSourcePane(contentRef.current ?? "");
+    }, [isInlineSourceOpen, writeSourcePane]);
+
+    const handleSourceInput = useCallback(
+      (event: React.FormEvent<HTMLTextAreaElement>) => {
+        contentRef.current = event.currentTarget.value;
+        if (host.collaboration) {
+          // syncNow, not scheduleSync: the debounce window is long enough for a
+          // teammate's update to land first, and `onRemoteContent` replaces
+          // contentRef wholesale -- which would silently discard the keystroke
+          // that has not reached Y.Text yet. Pushing synchronously keeps
+          // contentRef and Y.Text equal at rest, so a remote replace is always
+          // safe. The debounce still serves streamed (AI) rewrites.
+          collabBindingRef.current?.syncNow();
+        } else {
+          markDirty();
+        }
+      },
+      [host, markDirty]
+    );
 
     // Check if this mockup was opened from a project (for back-link)
     const projectOrigin = (window.__mockupProjectOrigin || {})[filePath] as
@@ -336,7 +421,7 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
         return;
       }
 
-      renderMockupHtml(iframeRef.current, contentRef.current, {
+      const { scriptsRan } = renderMockupHtml(iframeRef.current, contentRef.current, {
         onAfterRender: (iframeDoc) => {
           injectTheme(iframeDoc, mockupTheme);
 
@@ -351,6 +436,10 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
           iframeDoc.head.appendChild(style);
         },
       });
+
+      // Only worth saying when this mockup actually has a script to lose. Most
+      // do not, and a notice on every mockup in the browser would be noise.
+      setAreScriptsBlocked(!scriptsRan && mockupHasScript(contentRef.current));
     }, [contentVersion, diffState, mockupTheme]);
 
     // Separate effect for click handler -- toggling interactive mode shouldn't re-render iframe
@@ -841,7 +930,7 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
 
     if (isReadOnlyViewer) {
       return (
-        <div className="h-full overflow-hidden bg-white relative">
+        <div className="mockup-editor h-full overflow-hidden bg-white relative">
           <iframe
             ref={iframeRef}
             className="w-full h-full border-none absolute top-0 left-0"
@@ -854,7 +943,7 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
 
     // Render preview mode
     return (
-      <div className="flex flex-col h-full bg-nim relative">
+      <div className="mockup-editor flex flex-col h-full bg-nim relative">
         {/* Toolbar */}
         <div className="px-4 py-2 border-b border-nim bg-nim-secondary flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1049,18 +1138,36 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
             </div>
           )}
 
-          {/* Floating action buttons */}
-          {host.toggleSourceMode && (
-            <div className="absolute bottom-4 right-4 flex gap-2 z-[1000]">
-              <button
-                onClick={() => host.toggleSourceMode?.()}
-                className="px-3 py-2 text-xs bg-nim-secondary border border-nim rounded text-nim cursor-pointer hover:bg-nim-hover"
-                title="View Source"
-              >
-                View Source
-              </button>
+          {areScriptsBlocked && !isInlineSourceOpen && (
+            <div
+              className="mockup-scripts-blocked-notice absolute bottom-4 left-4 z-[1000] max-w-xs rounded-md border border-nim bg-nim-secondary px-3 py-2 text-xs text-nim-secondary shadow-lg select-text"
+              role="status"
+            >
+              This mockup&rsquo;s scripts are not running here. Its layout and styles are
+              unaffected; anything driven by script stays in its starting state.
             </div>
           )}
+
+          {isInlineSourceOpen && (
+            <textarea
+              ref={sourceTextareaRef}
+              onInput={handleSourceInput}
+              spellCheck={false}
+              aria-label={`Mockup source: ${fileName}`}
+              className="mockup-source-editor absolute inset-0 w-full h-full z-20 resize-none border-none outline-none p-3 font-mono text-xs leading-relaxed bg-nim text-nim select-text"
+            />
+          )}
+
+          {/* Floating action buttons */}
+          <div className="absolute bottom-4 right-4 flex gap-2 z-[1000]">
+            <button
+              onClick={handleToggleSource}
+              className="mockup-view-source-button px-3 py-2 text-xs bg-nim-secondary border border-nim rounded text-nim cursor-pointer hover:bg-nim-hover"
+              title={isInlineSourceOpen ? "Hide Source" : "View Source"}
+            >
+              {isInlineSourceOpen ? "Hide Source" : "View Source"}
+            </button>
+          </div>
         </div>
       </div>
     );

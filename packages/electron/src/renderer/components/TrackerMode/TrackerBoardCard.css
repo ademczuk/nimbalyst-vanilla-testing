@@ -1,0 +1,276 @@
+/**
+ * Board card affordances: the milestone chip, the staleness chip, their popovers,
+ * and the multi-select checkbox. Colors come from the canonical --nim-* variables
+ * so every theme is covered.
+ */
+
+.tracker-card-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 1px 5px;
+  border: 1px solid var(--nim-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nim-text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.tracker-card-chip:hover {
+  background: var(--nim-bg-hover);
+  color: var(--nim-text);
+}
+
+.tracker-card-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* An unplaced card reads as an invitation rather than a value. */
+.tracker-card-chip-empty {
+  border-style: dashed;
+  color: var(--nim-text-faint);
+}
+
+.tracker-card-chip-drift {
+  border-color: var(--nim-warning);
+  color: var(--nim-warning);
+}
+
+.tracker-card-chip-drift:hover {
+  background: var(--nim-bg-hover);
+  color: var(--nim-warning);
+}
+
+/* Shared popover shell for both card chips. */
+.tracker-card-popover {
+  z-index: 60;
+  min-width: 240px;
+  max-width: 340px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--nim-border);
+  border-radius: 6px;
+  background: var(--nim-bg-secondary);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  color: var(--nim-text);
+  font-size: 12px;
+}
+
+.tracker-milestone-picker-heading,
+.tracker-card-drift-headline {
+  margin-bottom: 6px;
+  color: var(--nim-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tracker-milestone-picker-footer {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--nim-border);
+}
+
+.tracker-milestone-picker-unavailable {
+  padding: 6px;
+  color: var(--nim-text-muted);
+}
+
+.tracker-milestone-picker-search {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--nim-border);
+  border-radius: 4px;
+  background: var(--nim-bg);
+  color: var(--nim-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.tracker-milestone-picker-search:focus {
+  border-color: var(--nim-primary);
+  outline: none;
+}
+
+.tracker-milestone-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  margin-top: 8px;
+  overflow-y: auto;
+}
+
+.tracker-milestone-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tracker-milestone-picker-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nim-text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tracker-milestone-picker-option-active {
+  background: var(--nim-bg-hover);
+}
+
+.tracker-milestone-picker-option:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.tracker-milestone-picker-option-icon {
+  flex: none;
+  color: var(--nim-text-faint);
+}
+
+.tracker-milestone-picker-option-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Some-but-not-all: a count, deliberately not a checkmark, because clicking
+   this row still assigns the whole selection rather than undoing anything. */
+.tracker-milestone-picker-option-partial {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--nim-border);
+  border-radius: 999px;
+  color: var(--nim-text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tracker-milestone-picker-option-open {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nim-text-faint);
+  cursor: pointer;
+}
+
+.tracker-milestone-picker-option-open:hover {
+  background: var(--nim-bg-hover);
+  color: var(--nim-text);
+}
+
+.tracker-milestone-picker-empty {
+  padding: 8px;
+  color: var(--nim-text-faint);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.tracker-milestone-picker-error {
+  margin-top: 6px;
+  color: var(--nim-error);
+  font-size: 11px;
+}
+
+.tracker-card-drift-note {
+  margin-bottom: 8px;
+  color: var(--nim-text-muted);
+  line-height: 1.5;
+}
+
+.tracker-card-drift-evidence-label {
+  margin-bottom: 2px;
+  color: var(--nim-text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.tracker-card-drift-evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+  /* Shas and session ids exist to be copied into a git or session lookup. */
+  user-select: text;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.tracker-card-select-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  border: 1px solid var(--nim-border);
+  border-radius: 3px;
+  background: var(--nim-bg);
+  color: transparent;
+  cursor: pointer;
+}
+
+.tracker-kanban-card:hover .tracker-card-select-checkbox,
+.tracker-card-select-checkbox:focus-visible {
+  border-color: var(--nim-border-focus);
+}
+
+.tracker-card-select-checkbox-checked {
+  border-color: var(--nim-primary);
+  background: var(--nim-primary);
+  color: #fff;
+}
+
+/* Unchecked boxes stay out of the way until the card is hovered or focused. */
+.tracker-card-select-checkbox-unchecked {
+  opacity: 0;
+}
+
+.tracker-kanban-card:hover .tracker-card-select-checkbox-unchecked,
+.tracker-card-select-checkbox-unchecked:focus-visible {
+  opacity: 1;
+}
+
+.tracker-board-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--nim-border);
+  background: var(--nim-bg-secondary);
+  font-size: 12px;
+}
+
+.tracker-board-selection-bar-count {
+  color: var(--nim-text);
+  font-weight: 600;
+}
+
+.tracker-board-selection-bar-hint {
+  color: var(--nim-text-faint);
+}
+
+.tracker-board-selection-bar-status {
+  color: var(--nim-text-muted);
+}

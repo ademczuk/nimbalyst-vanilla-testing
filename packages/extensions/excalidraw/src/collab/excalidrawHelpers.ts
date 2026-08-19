@@ -18,18 +18,42 @@ export const moveArrayItem = <T>(arr: T[], from: number, to: number, inPlace = t
   return arr;
 };
 
-/** Trailing-edge debounce. */
+/**
+ * Trailing-edge debounce with a `flush()` that runs a pending call immediately.
+ * The host drains pending local content through `flush()` before it reports a
+ * write complete, so an edit cannot be left waiting out the delay.
+ */
+export interface DebouncedFn<Args extends unknown[]> {
+  (...args: Args): void;
+  /** Run the pending call now, if any. No-op when nothing is scheduled. */
+  flush(): void;
+}
+
 export const debounce = <Args extends unknown[]>(
   callback: (...args: Args) => void,
   wait: number,
-): ((...args: Args) => void) => {
+): DebouncedFn<Args> => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  return (...args: Args) => {
+  let pendingArgs: Args | null = null;
+  const debounced = (...args: Args) => {
     if (timeoutId) clearTimeout(timeoutId);
+    pendingArgs = args;
     timeoutId = setTimeout(() => {
-      callback(...args);
+      timeoutId = null;
+      const call = pendingArgs;
+      pendingArgs = null;
+      if (call) callback(...call);
     }, wait);
   };
+  debounced.flush = () => {
+    if (!timeoutId) return;
+    clearTimeout(timeoutId);
+    timeoutId = null;
+    const call = pendingArgs;
+    pendingArgs = null;
+    if (call) callback(...call);
+  };
+  return debounced;
 };
 
 export const areElementsSame = (
@@ -53,7 +77,13 @@ export const yjsToExcalidraw = (yArray: Y.Array<Y.Map<unknown>>): ExcalidrawElem
     .sort((a, b) => {
       const key1 = a.get('pos') as string;
       const key2 = b.get('pos') as string;
-      return key1 > key2 ? 1 : key1 < key2 ? -1 : 0;
+      if (key1 !== key2) return key1 > key2 ? 1 : -1;
+      // Concurrent inserts at the same visual position legitimately generate
+      // the same fractional key. Element ids provide a stable CRDT-wide
+      // tie-break; rewriting both keys after merge creates a repair race.
+      const id1 = (a.get('el') as { id?: string })?.id ?? '';
+      const id2 = (b.get('el') as { id?: string })?.id ?? '';
+      return id1 > id2 ? 1 : id1 < id2 ? -1 : 0;
     })
     .map((x) => x.get('el') as ExcalidrawElement);
 };

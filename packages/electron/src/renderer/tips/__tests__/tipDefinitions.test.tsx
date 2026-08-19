@@ -6,6 +6,7 @@ import { DIALOG_IDS } from '../../dialogs/registry';
 import { dialogRef } from '../../contexts/DialogContext';
 import { windowModeAtom } from '../../store/atoms/windowMode';
 import { openSettingsCommandAtom } from '../../store/atoms/settingsNavigation';
+import { organizationDirectoryAtom, type OrganizationDirectoryEntry } from '../../store/atoms/settingsDomains';
 import { FEATURE_USAGE_KEYS, type FeatureUsageKey, type FeatureUsageRecord } from '../../../shared/featureUsage';
 import { tipCreateWorktreeSessionRequestAtom } from '../atoms';
 import { keyboardShortcutsTip } from '../definitions/keyboard-shortcuts';
@@ -15,6 +16,7 @@ import { filesAgentContextTip } from '../definitions/files-agent-context';
 import { filesVisualEditorsTip } from '../definitions/files-visual-editors';
 import { themeExploreTip } from '../definitions/theme-explore';
 import { trackerModeTip } from '../definitions/tracker-mode';
+import { teamsMultiplayerTip } from '../definitions/teams-multiplayer';
 import { worktreeSessionTip } from '../definitions/worktree-session';
 import type { TipTriggerContext } from '../types';
 
@@ -60,6 +62,7 @@ describe('contextual tip definitions', () => {
   beforeEach(() => {
     store.set(windowModeAtom, 'files');
     store.set(openSettingsCommandAtom, null);
+    store.set(organizationDirectoryAtom, []);
     store.set(tipCreateWorktreeSessionRequestAtom, 0);
     dialogRef.current = {
       open: vi.fn(),
@@ -227,6 +230,33 @@ describe('contextual tip definitions', () => {
     expect(filesAgentContextTip.trigger.screen).toBe('files-empty');
     expect(filesVisualEditorsTip.trigger.condition(createContext())).toBe(true);
     expect(filesAgentContextTip.trigger.condition(createContext())).toBe(true);
+  });
+
+  it('shows the Teams tip to established users who are in no organization', () => {
+    const eligible = createContext({
+      featureUsage: createFeatureUsage({ [FEATURE_USAGE_KEYS.SESSION_CREATED]: 5 }),
+    });
+    const newUser = createContext({
+      featureUsage: createFeatureUsage({ [FEATURE_USAGE_KEYS.SESSION_CREATED]: 4 }),
+    });
+
+    expect(teamsMultiplayerTip.trigger.screen).toEqual(['files-empty', 'agent']);
+    expect(teamsMultiplayerTip.trigger.condition(eligible)).toBe(true);
+    expect(teamsMultiplayerTip.trigger.condition(newUser)).toBe(false);
+
+    store.set(organizationDirectoryAtom, [
+      { orgId: 'org-1', name: 'Acme', role: 'admin' } as OrganizationDirectoryEntry,
+    ]);
+    expect(teamsMultiplayerTip.trigger.condition(eligible)).toBe(false);
+  });
+
+  it('opens project sharing settings from the Teams tip action', () => {
+    teamsMultiplayerTip.content.action?.onClick?.();
+
+    expect(store.get(openSettingsCommandAtom)).toMatchObject({
+      category: 'project-sharing',
+      scope: 'project',
+    });
   });
 
   it('seeds a visual-editor prompt from the welcome tip action', () => {

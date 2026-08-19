@@ -9,6 +9,7 @@ import os from 'os';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { openWorkspaceFile, openFile } from '../file/FileOpener';
 import { fuzzyMatchPath } from '@nimbalyst/runtime';
+import { parseFileMask, matchesFileMask } from '@nimbalyst/extension-sdk/file-mask';
 import { getSyncId, removeFileFromIndex } from '../services/DocSyncService';
 
 const { writeFile, mkdir, rename, unlink, rmdir, copyFile, readFile, rm, stat, cp } = fsPromises;
@@ -30,6 +31,12 @@ import {
 } from '../utils/store';
 import { loadFileIntoWindow } from '../file/FileOperations';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
+import {
+    getLocalKeyPrefixConfig,
+    reassignLocalKeyPrefix,
+} from '../services/tracker/localKeyAllocator';
+import { workspaceLocalKeyStore } from '../services/tracker/workspaceLocalKeyStore';
+import { database } from '../database/PGLiteDatabaseWorker';
 
 /**
  * Deep merge utility for workspace state updates.
@@ -109,39 +116,13 @@ const BINARY_EXTENSIONS = new Set([
 
 const NIMBALYST_LOCAL_DIRNAME = 'nimbalyst-local';
 
-function globToRegex(glob: string): RegExp {
-    const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-    const pattern = escaped
-        .replace(/\*\*/g, '__DOUBLESTAR__')
-        .replace(/\*/g, '[^/]*')
-        .replace(/__DOUBLESTAR__/g, '.*')
-        .replace(/\?/g, '[^/]');
-    return new RegExp(`^${pattern}$`, 'i');
-}
-
-function parseQuickOpenFileMask(mask: string | null | undefined): RegExp[] {
-    if (!mask) return [];
-    return mask
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean)
-        .map(globToRegex);
-}
-
-function matchesQuickOpenFileMask(filePath: string, patterns: RegExp[]): boolean {
-    if (patterns.length === 0) return true;
-    const normalizedPath = filePath.replace(/\\/g, '/');
-    const base = path.basename(normalizedPath);
-    return patterns.some(re => re.test(base) || re.test(normalizedPath));
-}
-
 function shouldIncludeQuickOpenCacheItem(
     item: { path: string; type: 'file' | 'directory' },
     maskPatterns: RegExp[]
 ): boolean {
     if (maskPatterns.length === 0) return true;
     if (item.type === 'directory') return false;
-    return matchesQuickOpenFileMask(item.path, maskPatterns);
+    return matchesFileMask(item.path, maskPatterns);
 }
 
 // Get the ripgrep binary path for the current platform.
@@ -446,7 +427,7 @@ export function registerWorkspaceHandlers() {
     ) => {
         try {
             const trimmedQuery = query.trim();
-            const maskPatterns = parseQuickOpenFileMask(options?.fileMask);
+            const maskPatterns = parseFileMask(options?.fileMask);
 
             // Use cache if available
             const cache = fileNameCaches.get(workspacePath);
@@ -745,9 +726,56 @@ export function registerWorkspaceHandlers() {
         return getWorkspaceState(workspacePath);
     });
 
+    safeHandle('tracker-local-key:get-prefix-config', async (_event, workspacePath: string) => {
+        if (typeof workspacePath !== 'string' || workspacePath.trim().length === 0) {
+            throw new Error('tracker-local-key:get-prefix-config requires workspacePath');
+        }
+        const teamPrefix = getWorkspaceState(workspacePath).issueKeyPrefix;
+        return getLocalKeyPrefixConfig(workspaceLocalKeyStore, workspacePath, teamPrefix);
+    });
+
+    safeHandle('tracker-local-key:set-prefix', async (_event, payload: {
+        workspacePath: string;
+        prefix: string;
+    }) => {
+        if (!payload || typeof payload.workspacePath !== 'string' || payload.workspacePath.trim().length === 0) {
+            throw new Error('tracker-local-key:set-prefix requires workspacePath');
+        }
+        if (typeof payload.prefix !== 'string') {
+            throw new Error('tracker-local-key:set-prefix requires prefix');
+        }
+        const teamPrefix = getWorkspaceState(payload.workspacePath).issueKeyPrefix;
+        // Moves any numbers already issued onto the new letters, so a project
+        // that auto-pinned a prefix it never chose is not stuck with it.
+        return reassignLocalKeyPrefix(
+            database,
+            workspaceLocalKeyStore,
+            payload.workspacePath,
+            payload.prefix,
+            teamPrefix,
+        );
+    });
+
     // Update workspace state - takes partial update, merges atomically with deep merge
     safeHandle('workspace:update-state', async (event, workspacePath: string, updates: any) => {
+        if (
+            updates
+            && (
+                Object.prototype.hasOwnProperty.call(updates, 'localKeyPrefix')
+                || Object.prototype.hasOwnProperty.call(updates, 'localKeyCounter')
+            )
+        ) {
+            throw new Error('Local tracker numbering state must be changed through the validated tracker-local-key API.');
+        }
         return updateWorkspaceState(workspacePath, (state) => {
+            // Extension storage writes carry the complete cache. Replace this one
+            // field so deletions survive; deepMerge intentionally preserves keys.
+            if (updates && Object.prototype.hasOwnProperty.call(updates, 'extensionStorage')) {
+                const { extensionStorage, ...remainingUpdates } = updates;
+                deepMerge(state, remainingUpdates);
+                Object.assign(state, { extensionStorage });
+                return;
+            }
             deepMerge(state, updates);
         });
     });

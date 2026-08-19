@@ -90,4 +90,52 @@ describe('AccountInspectorPopover', () => {
     fireEvent.click(screen.getByTestId('account-inspector-organization-row'));
     expect(onManageOrganization).toHaveBeenCalledWith(undefined);
   });
+
+  // The reported bug: an active member whose open folder matches no project
+  // was told to set up an organization they were already in. The walk's entry
+  // point takes that row over, and must not be mistaken for org creation.
+  it('offers the project walk instead of org setup to a member with nothing bound', () => {
+    const onManageOrganization = vi.fn();
+    const onJoinOrganizationProject = vi.fn();
+    render(
+      <AccountInspectorPopover
+        accounts={[]}
+        projectOrg={null}
+        enterableOrgs={[{ orgId: 'org-acme', name: 'Acme Corp' }]}
+        anchorEl={anchor()}
+        onClose={vi.fn()}
+        onOpenAccount={vi.fn()}
+        onManageOrganization={onManageOrganization}
+        onJoinOrganizationProject={onJoinOrganizationProject}
+        onOpenApplicationSettings={vi.fn()}
+        onOpenProjectSettings={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText('No organization')).toBeNull();
+    fireEvent.click(screen.getByTestId('account-inspector-join-project-row'));
+    expect(onJoinOrganizationProject).toHaveBeenCalledWith('org-acme');
+    expect(onManageOrganization).not.toHaveBeenCalled();
+  });
+
+  // An unresolved lookup used to render as "No organization -- Set up", which
+  // offered org creation to a user who had just finished it.
+  it('does not offer org setup while the organization lookup is still running', () => {
+    render(
+      <AccountInspectorPopover
+        accounts={[]}
+        projectOrg={null}
+        projectOrgLoading
+        anchorEl={anchor()}
+        onClose={vi.fn()}
+        onOpenAccount={vi.fn()}
+        onManageOrganization={vi.fn()}
+        onOpenApplicationSettings={vi.fn()}
+        onOpenProjectSettings={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId('account-inspector-organization-row')).toBeNull();
+    screen.getByTestId('account-inspector-organization-loading');
+  });
 });

@@ -70,8 +70,8 @@ export const HelpContent: Record<string, HelpEntry> = {
     body: 'Invite members and open room settings — rename, edit the topic, manage membership and room admins, allow or block agent posting, or archive the room. Available to room admins and organization admins.',
   },
   'org-window-status-bar': {
-    title: 'Nimbalyst Teams is in alpha',
-    body: 'Expect bugs, and keep your own copy of anything important — do not treat shared organization data as your only copy.\n\nOrganizations are free during alpha and will require a paid Nimbalyst Teams subscription after launch; existing organizations get advance notice before any pricing change.',
+    title: 'Nimbalyst Teams is in beta',
+    body: 'Expect bugs.\n\nOrganizations are free during beta and will require a paid Nimbalyst Teams subscription after launch; existing organizations get advance notice before any pricing change.',
   },
 
   // ============================================================================
@@ -122,9 +122,9 @@ export const HelpContent: Record<string, HelpEntry> = {
   // Files Mode - Unified Header
   // ============================================================================
 
-  'ai-sessions-button': {
-    title: 'Past AI Sessions',
-    body: 'See AI sessions that edited this file. Jump back to continue a conversation or review changes.',
+  'document-session-control': {
+    title: 'AI Sessions for This Document',
+    body: 'Jump straight back into the last session on this document, or use the arrow to pick another session or start a new one.',
   },
   'file-history-button': {
     title: 'Document History',

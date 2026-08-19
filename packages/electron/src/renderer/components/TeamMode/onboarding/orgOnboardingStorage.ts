@@ -21,8 +21,16 @@ import {
   serializeOrgWizardDraft,
   type OrgWizardState,
 } from './orgWizardModel';
+import { ORG_PROJECT_WALK_DISMISSED_SETTING_KEY } from '../../../../shared/orgProjectWalk';
 
 export const ORG_WIZARD_DRAFT_SETTING_KEY = 'orgWizardDraft';
+
+/**
+ * Organizations whose post-sign-in project walk the user has closed. Dismissal
+ * only silences the dialog; the "Join {Org} project" entry point stays. Main
+ * clears this on sign-out, so the key itself is declared in the shared module.
+ */
+export { ORG_PROJECT_WALK_DISMISSED_SETTING_KEY };
 
 async function readSetting(key: string): Promise<unknown> {
   try {
@@ -54,6 +62,18 @@ export async function markOrgWelcomeDismissed(orgId: string): Promise<void> {
   const stored = await readSetting(ORG_WELCOME_DISMISSED_SETTING_KEY);
   await writeSetting(
     ORG_WELCOME_DISMISSED_SETTING_KEY,
+    withDismissedOrgId(stored, orgId),
+  );
+}
+
+export async function readOrgProjectWalkDismissals(): Promise<string[]> {
+  return parseDismissedOrgIds(await readSetting(ORG_PROJECT_WALK_DISMISSED_SETTING_KEY));
+}
+
+export async function markOrgProjectWalkDismissed(orgId: string): Promise<void> {
+  const stored = await readSetting(ORG_PROJECT_WALK_DISMISSED_SETTING_KEY);
+  await writeSetting(
+    ORG_PROJECT_WALK_DISMISSED_SETTING_KEY,
     withDismissedOrgId(stored, orgId),
   );
 }

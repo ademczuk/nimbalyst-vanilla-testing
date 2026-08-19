@@ -24,9 +24,16 @@ import {
   type SeededTutorialTracker,
 } from "./TutorialTrackerSeeder";
 import { getTutorialTemplateDirectory } from "./tutorialTemplateDirectory";
+import {
+  TUTORIAL_MARKER_FILE,
+  hasValidTutorialMarker,
+} from "./tutorialMarker";
+import {
+  captureTutorialStarted,
+  type TutorialEntryPoint,
+} from "./tutorialAnalytics";
 
 const TUTORIAL_DIRECTORY_NAME = "Nimbalyst Tutorial";
-const TUTORIAL_MARKER_FILE = ".nimbalyst-tutorial.json";
 const TUTORIAL_TEMPLATE_VERSION = 1;
 const TUTORIAL_README_TAB_ID = "tutorial-readme";
 // Never copied into the user's project. `sessions` holds the raw transcript
@@ -66,6 +73,10 @@ export interface TutorialProjectServiceDependencies {
     workspacePath: string,
     trackerReferences: SeededTutorialTracker[]
   ) => Promise<void>;
+  captureTutorialStarted: (
+    entryPoint: TutorialEntryPoint,
+    reused: boolean
+  ) => void;
 }
 
 const defaultDependencies: TutorialProjectServiceDependencies = {
@@ -84,6 +95,7 @@ const defaultDependencies: TutorialProjectServiceDependencies = {
   seedTutorialSessions: async (workspacePath, trackerReferences) => {
     await seedTutorialSessions(workspacePath, { trackerReferences });
   },
+  captureTutorialStarted,
 };
 
 interface DestinationResolution {
@@ -119,18 +131,22 @@ export class TutorialProjectService {
     }
   }
 
-  async startTutorial(): Promise<TutorialStartResult> {
+  async startTutorial(
+    entryPoint: TutorialEntryPoint = "unknown"
+  ): Promise<TutorialStartResult> {
     if (this.startInFlight) {
       return this.startInFlight;
     }
 
-    this.startInFlight = this.startTutorialInternal().finally(() => {
+    this.startInFlight = this.startTutorialInternal(entryPoint).finally(() => {
       this.startInFlight = null;
     });
     return this.startInFlight;
   }
 
-  private async startTutorialInternal(): Promise<TutorialStartResult> {
+  private async startTutorialInternal(
+    entryPoint: TutorialEntryPoint
+  ): Promise<TutorialStartResult> {
     try {
       const templateDirectory = this.dependencies.getTemplateDirectory();
       await this.assertTemplateDirectory(templateDirectory);
@@ -144,6 +160,10 @@ export class TutorialProjectService {
       }
 
       this.openProject(destination.workspacePath);
+      this.dependencies.captureTutorialStarted(
+        entryPoint,
+        destination.reused
+      );
       return {
         success: true,
         workspacePath: destination.workspacePath,
@@ -221,22 +241,8 @@ export class TutorialProjectService {
     return path.join(documentsDirectory, directoryName);
   }
 
-  private async hasValidMarker(workspacePath: string): Promise<boolean> {
-    try {
-      const markerContent = await fs.readFile(
-        path.join(workspacePath, TUTORIAL_MARKER_FILE),
-        "utf8"
-      );
-      const marker = JSON.parse(markerContent) as { templateVersion?: unknown };
-      return (
-        (typeof marker.templateVersion === "number" &&
-          marker.templateVersion > 0) ||
-        (typeof marker.templateVersion === "string" &&
-          marker.templateVersion.trim().length > 0)
-      );
-    } catch {
-      return false;
-    }
+  private hasValidMarker(workspacePath: string): Promise<boolean> {
+    return hasValidTutorialMarker(workspacePath);
   }
 
   private async pathExists(candidatePath: string): Promise<boolean> {

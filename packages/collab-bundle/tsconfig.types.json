@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "noCheck": true,
+    "noEmit": false,
+    "outDir": "./types/internal",
+    "rootDir": ".."
+  },
+  "include": [
+    "src/docs-ui.ts",
+    "src/feedback-ui.ts",
+    "src/inbox.ts",
+    "src/editor/hostTypes.ts"
+  ],
+  "exclude": [
+    "**/__tests__/**",
+    "node_modules",
+    "dist"
+  ]
+}

@@ -16,6 +16,7 @@
  * `parseResourceUrn` returns null for them and `parseMentionUrn` exists.
  */
 
+import { feedbackRequestUrn, parseFeedbackRequestUrn } from '@nimbalyst/collab-protocol';
 import type { CommentRef, ResourceRef, ResourceKind } from './commentTypes';
 
 const SCHEME = 'nimbalyst://';
@@ -29,6 +30,8 @@ const KIND_SEGMENT: Record<ResourceKind, string> = {
   file: 'file',
   commit: 'commit',
   pullRequest: 'pull',
+  // Matches `feedbackRequestUrn`, which stays the authority for forming one.
+  feedbackRequest: 'feedback-request',
 };
 
 const SEGMENT_KIND: Record<string, ResourceKind> = Object.fromEntries(
@@ -49,9 +52,12 @@ export function isProjectScopedKind(kind: ResourceKind): boolean {
  * paths, which legitimately contain slashes and spaces.
  */
 export function resourceRefToUrn(ref: ResourceRef): string {
-  const segment = KIND_SEGMENT[ref.kind as ResourceKind];
+  if (ref.kind === 'feedbackRequest') {
+    return feedbackRequestUrn(ref.sourceId);
+  }
+  const segment = KIND_SEGMENT[ref.kind];
   const id = encodeURIComponent(ref.sourceId);
-  if (PROJECT_SCOPED.has(ref.kind as ResourceKind)) {
+  if (PROJECT_SCOPED.has(ref.kind)) {
     return `${SCHEME}project/${encodeURIComponent(ref.projectId ?? '')}/${segment}/${id}`;
   }
   if (ref.kind === 'conversation' && ref.messageId) {
@@ -68,6 +74,10 @@ export function resourceRefToUrn(ref: ResourceRef): string {
  * accepting a cross-org id out of body text would be a trust hole.
  */
 export function parseResourceUrn(urn: string, orgId: string): ResourceRef | null {
+  const feedbackRequestId = parseFeedbackRequestUrn(urn);
+  if (feedbackRequestId) {
+    return { orgId, kind: 'feedbackRequest', sourceId: feedbackRequestId };
+  }
   if (!urn.startsWith(SCHEME)) return null;
   const parts = urn.slice(SCHEME.length).split('/').filter((part) => part.length > 0);
   if (parts.length < 2) return null;

@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { BaseAIProvider } from '../AIProvider';
+import { AgentCapabilities, BUILTIN_AGENT_CAPABILITIES } from '../agentCapabilities';
 import {
   DocumentContext,
   ProviderConfig,
@@ -935,6 +936,10 @@ export class ClaudeProvider extends BaseAIProvider {
       resumeSession: false,  // Cannot resume Claude sessions
       supportsFileTools: false  // Files should be attached to messages, not accessed via tools
     };
+  }
+
+  getAgentCapabilities(): AgentCapabilities {
+    return BUILTIN_AGENT_CAPABILITIES.claude;
   }
 
   protected buildSystemPrompt(documentContext?: DocumentContext): string {

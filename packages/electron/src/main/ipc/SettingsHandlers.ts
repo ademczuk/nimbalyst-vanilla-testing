@@ -72,6 +72,7 @@ import {
 } from '../services/PersonalSyncProfiles';
 import { purgeOfflineCollabAccounts } from '../services/CollabOfflineAccountLifecycle';
 import { listPersonalSyncDevices } from '../services/PersonalSyncDevicesService';
+import { recordProjectWalkOriginator } from '../services/ProjectWalkClaim';
 
 // Track if we've subscribed to sync status changes
 let syncStatusListenerSetup = false;
@@ -97,6 +98,16 @@ function ensureStytchInitialized(): void {
     });
 
     stytchInitialized = true;
+}
+
+/**
+ * Note the window a sign-in was started from, so the post-sign-in project walk
+ * comes back to it. Sign-in finishes in an external browser, so by the time the
+ * auth broadcast lands there is no focused window to infer this from.
+ */
+function rememberSignInWindow(event: Electron.IpcMainInvokeEvent): void {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window) recordProjectWalkOriginator(window.id, Date.now());
 }
 
 function parseAuthFlowOptions(
@@ -1359,8 +1370,9 @@ export function registerSettingsHandlers() {
     });
 
     // Sign in with Google OAuth
-    safeHandle('stytch:sign-in-google', async (_event, rawOptions?: unknown) => {
+    safeHandle('stytch:sign-in-google', async (event, rawOptions?: unknown) => {
         ensureStytchInitialized();
+        rememberSignInWindow(event);
         const options = parseAuthFlowOptions(rawOptions, 'sign-in');
         // Get the sync server URL from settings
         const syncConfig = getSessionSyncConfig();
@@ -1385,11 +1397,12 @@ export function registerSettingsHandlers() {
     });
 
     // Send magic link for passwordless authentication
-    safeHandle('stytch:send-magic-link', async (_event, email: string, rawOptions?: unknown) => {
+    safeHandle('stytch:send-magic-link', async (event, email: string, rawOptions?: unknown) => {
         ensureStytchInitialized();
         if (!email) {
             return { success: false, error: 'Email is required' };
         }
+        rememberSignInWindow(event);
         const options = parseAuthFlowOptions(rawOptions, 'sign-in');
         // Get the sync server URL from settings
         const syncConfig = getSessionSyncConfig();

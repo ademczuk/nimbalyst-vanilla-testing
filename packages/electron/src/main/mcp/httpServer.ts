@@ -54,6 +54,15 @@ import {
   getCollabIndexToolSchemas,
 } from "./tools/collabIndexToolHandlers";
 import {
+  getCollabReadToolSchemas,
+  handleFindOrgMembers,
+  handleGetResourceSharingStatus,
+} from "./tools/collabReadToolHandlers";
+import {
+  getRequestFeedbackToolSchemas,
+  handleRequestFeedback,
+} from "./tools/requestFeedbackToolHandler";
+import {
   handleTrackerList,
   handleTrackerGet,
   handleTrackerListTypes,
@@ -438,6 +447,8 @@ function createSharedMcpServer(
     const builtInTools: Array<{ name: string; description: string; inputSchema: any }> = [
       ...getEditorToolSchemas(sessionId),
       ...getCollabIndexToolSchemas(),
+      ...getCollabReadToolSchemas(),
+      ...getRequestFeedbackToolSchemas(),
       ...displayToolSchemas,
       ...voiceToolSchemas,
       ...getInteractiveToolSchemas(sessionId),
@@ -534,6 +545,15 @@ function createSharedMcpServer(
 
         case "deleteSharedItem":
           return handleDeleteSharedItem(args, workspacePath);
+
+        case "findOrgMembers":
+          return handleFindOrgMembers(args, workspacePath);
+
+        case "getResourceSharingStatus":
+          return handleGetResourceSharingStatus(args, workspacePath);
+
+        case "RequestFeedback":
+          return handleRequestFeedback(args, workspacePath);
 
         case "streamContent":
           return handleStreamContent(args);

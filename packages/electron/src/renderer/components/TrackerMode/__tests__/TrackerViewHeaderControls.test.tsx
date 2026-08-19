@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createStore, Provider } from 'jotai';
 import type {
   TrackerColumnDef,
   TypeColumnConfig,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin';
+import { trackerModeLayoutAtom } from '../../../store/atoms/trackers';
 import { TrackerViewHeaderControls } from '../TrackerViewHeaderControls';
 
 const columns = [
@@ -46,7 +48,6 @@ const columns = [
 const columnConfig: TypeColumnConfig = {
   visibleColumns: ['title', 'status'],
   columnWidths: {},
-  groupBy: null,
 };
 
 const filterFields = [
@@ -83,23 +84,41 @@ const filterFields = [
   { id: 'updated', label: 'Updated', type: 'date' as const },
 ];
 
+let store = createStore();
+
+beforeEach(() => {
+  store = createStore();
+});
+
 function renderControls(overrides: Partial<Parameters<typeof TrackerViewHeaderControls>[0]> = {}) {
   const onColumnConfigChange = vi.fn();
   const onFiltersChange = vi.fn();
   render(
-    <TrackerViewHeaderControls
-      itemCount={42}
-      availableColumns={columns}
-      columnConfig={columnConfig}
-      onColumnConfigChange={onColumnConfigChange}
-      showColumnControls
-      filterFields={filterFields}
-      filters={null}
-      onFiltersChange={onFiltersChange}
-      {...overrides}
-    />,
+    <Provider store={store}>
+      <TrackerViewHeaderControls
+        itemCount={42}
+        availableColumns={columns}
+        columnConfig={columnConfig}
+        onColumnConfigChange={onColumnConfigChange}
+        showColumnControls
+        filterFields={filterFields}
+        filters={null}
+        onFiltersChange={onFiltersChange}
+        {...overrides}
+      />
+    </Provider>,
   );
   return { onColumnConfigChange, onFiltersChange };
+}
+
+/** Pick an option from one of the panel's floating selects. */
+function chooseDisplaySetting(testId: string, optionLabel: string): void {
+  fireEvent.click(within(screen.getByTestId(testId)).getByRole('button'));
+  const dropdown = document.querySelector('.custom-select-dropdown');
+  const option = Array.from(dropdown?.querySelectorAll('button') ?? [])
+    .find(candidate => candidate.textContent === optionLabel);
+  if (!option) throw new Error(`No "${optionLabel}" option in ${testId}`);
+  fireEvent.click(option);
 }
 
 describe('TrackerViewHeaderControls', () => {
@@ -108,23 +127,7 @@ describe('TrackerViewHeaderControls', () => {
 
     expect(screen.getByTestId('tracker-view-item-count').textContent).toBe('42 items');
     screen.getByTestId('tracker-view-filter-button');
-    const displayOptions = screen.getByTestId('tracker-view-display-options');
-    // The button is text-labeled ("Columns"), not a bare icon.
-    expect(displayOptions.textContent).toContain('Columns');
-  });
-
-  it('persists the grouping selected in Display Options', () => {
-    const { onColumnConfigChange } = renderControls();
-    fireEvent.click(screen.getByTestId('tracker-view-display-options'));
-
-    fireEvent.change(screen.getByLabelText('Group tracker items'), {
-      target: { value: 'status' },
-    });
-
-    expect(onColumnConfigChange).toHaveBeenCalledWith({
-      ...columnConfig,
-      groupBy: 'status',
-    });
+    screen.getByTestId('tracker-view-display-options');
   });
 
   it('builds multiple field-aware clauses with AND/OR semantics', () => {
@@ -338,13 +341,13 @@ describe('TrackerViewHeaderControls', () => {
   it('uses the same display-options panel for column visibility', () => {
     const { onColumnConfigChange } = renderControls();
     fireEvent.click(screen.getByTestId('tracker-view-display-options'));
-    screen.getByText('Display Options');
+    screen.getByTestId('tracker-display-options-panel');
 
-    fireEvent.click(screen.getAllByText('Priority').find(element => element.tagName === 'SPAN')!);
+    fireEvent.click(within(screen.getByTestId('tracker-display-options-columns'))
+      .getByText('Priority'));
     expect(onColumnConfigChange).toHaveBeenCalledWith({
       visibleColumns: ['title', 'status', 'priority'],
       columnWidths: {},
-      groupBy: null,
     });
   });
 
@@ -413,12 +416,29 @@ describe('TrackerViewHeaderControls', () => {
       .toContain('Starred is Yes');
   });
 
-  it('hides column controls for non-column views while preserving filters and count', () => {
+  it('keeps Display Settings reachable from views that have no table columns', () => {
     renderControls({ showColumnControls: false });
+    fireEvent.click(screen.getByTestId('tracker-view-display-options'));
 
-    expect(screen.queryByTestId('tracker-view-display-options')).toBeNull();
-    screen.getByTestId('tracker-view-filter-button');
-    screen.getByTestId('tracker-view-item-count');
+    // The board has no column properties to configure, but view mode,
+    // grouping, and ordering still have to be reachable from it.
+    screen.getByTestId('tracker-display-view-settings');
+    expect(screen.queryByTestId('tracker-display-options-columns')).toBeNull();
+  });
+
+  it('writes the chosen view mode, column axis, and ordering onto the view state', () => {
+    renderControls();
+    fireEvent.click(screen.getByTestId('tracker-view-display-options'));
+
+    chooseDisplaySetting('tracker-display-group-by', 'Milestone');
+    expect(store.get(trackerModeLayoutAtom).groupBy).toBe('milestone');
+
+    chooseDisplaySetting('tracker-display-ordering', 'Priority');
+    expect(store.get(trackerModeLayoutAtom).ordering).toBe('priority');
+
+    // Timeline is selectable and persists ahead of the view that draws it.
+    fireEvent.click(screen.getByTestId('tracker-display-view-mode-timeline'));
+    expect(store.get(trackerModeLayoutAtom).viewMode).toBe('timeline');
   });
 
   it('opens filter management when an active filter pill requests it', () => {

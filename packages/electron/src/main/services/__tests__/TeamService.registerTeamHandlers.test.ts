@@ -1,5 +1,6 @@
 import { readFile } from 'fs/promises';
 import { resolve } from 'path';
+import { createHash } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -38,7 +39,24 @@ vi.mock('../../utils/logger', () => ({
   logger: { main: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } },
 }));
 
-vi.mock('../../utils/gitUtils', () => ({ getNormalizedGitRemote: vi.fn() }));
+const gitRemoteFnMock = vi.hoisted(() => vi.fn());
+vi.mock('../../utils/gitUtils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/gitUtils')>();
+  return {
+    ...actual,
+    getNormalizedGitRemote: gitRemoteFnMock,
+    getRawGitRemote: gitRemoteFnMock,
+    // The real one closes over the unmocked getRawGitRemote, so it would spawn
+    // git against the test's cwd. Both normalizers stay real -- their exact
+    // output is what several tests below assert on.
+    getGitRemoteIdentities: async (workspacePath: string) => {
+      const raw = await gitRemoteFnMock(workspacePath);
+      const canonical = actual.normalizeGitRemote(raw);
+      const legacy = actual.legacyNormalizeGitRemote(raw);
+      return canonical && legacy ? { canonical, legacy } : null;
+    },
+  };
+});
 
 vi.mock('../teamProjectResolver', () => ({ resolveTeamForRemoteHash: vi.fn() }));
 
@@ -72,6 +90,7 @@ vi.mock('../StytchAuthService', () => ({
   refreshPersonalSessionForAccount: vi.fn(async () => null),
   onAuthStateChange: vi.fn(() => () => {}),
   updateSessionToken: vi.fn(),
+  updateSessionTokenForAccount: vi.fn(),
   getStytchUserId: vi.fn(() => 'user-1'),
   getUserEmail: vi.fn(() => 'user@test.com'),
   getPersonalOrgId: vi.fn(() => 'personal-1'),
@@ -80,7 +99,9 @@ vi.mock('../StytchAuthService', () => ({
 
 vi.mock('@nimbalyst/runtime', () => ({
   asPersonalJwt: (jwt: string) => jwt,
+  asPersonalMemberId: (id: string) => id,
   asTeamJwt: (jwt: string) => jwt,
+  asTeamMemberId: (id: string) => id,
 }));
 
 vi.mock('../../menu/organizationMenuState', () => ({ setHasOrganizationsForMenu: vi.fn() }));
@@ -101,6 +122,10 @@ import {
 } from '../TeamService';
 import type { TeamDetails } from '../TeamService';
 import { registerTeamCustodyHandlers } from '../TeamCustodyService';
+import { registerOrgProjectWalkHandlers } from '../OrgProjectWalkService';
+import { registerSignInAttributionHandlers } from '../SignInAttribution';
+import { registerProjectWalkClaimHandlers } from '../ProjectWalkClaim';
+import { normalizeGitRemote } from '../../utils/gitUtils';
 
 const EXPECTED_TEAM_CHANNELS = [
   'team:accept-invite',
@@ -126,8 +151,11 @@ const EXPECTED_TEAM_CHANNELS = [
   'team:update-role',
 ];
 
+// Both live in WorkspaceManagerWindow: opening a project is window work, and
+// TeamService only owns the membership check and the binding behind it.
 const TEAM_CHANNELS_REGISTERED_OUTSIDE_TEAM_SERVICE = [
   'team:open-project-workspace',
+  'team:open-shared-project',
 ];
 
 const EXPECTED_ORG_CHANNELS = [
@@ -156,6 +184,9 @@ describe('registerTeamHandlers channel registration', () => {
 
   it('covers every team:* channel the preload invokes', async () => {
     registerTeamCustodyHandlers(); // owns team:get-key-custody-status
+    registerOrgProjectWalkHandlers(); // owns the post-sign-in project walk channels
+    registerSignInAttributionHandlers(); // owns team:claim-sign-in-attribution
+    registerProjectWalkClaimHandlers(); // owns team:claim-project-walk
 
     const preloadSource = await readFile(
       resolve(__dirname, '../../../preload/index.ts'),
@@ -197,6 +228,100 @@ describe('registerTeamHandlers channel registration', () => {
 
     expect(pendingInviteForEmail(teams, 'member@example.com')?.orgId).toBe('org-invite');
     expect(pendingInviteForEmail(teams, 'missing@example.com')).toBeNull();
+  });
+});
+
+/**
+ * Org creation was blocked in every non-development build while Teams was being
+ * finished (NIM-2306). That gate is gone; a packaged build must reach the API
+ * instead of short-circuiting with "not available yet".
+ */
+describe('team:create handler', () => {
+  beforeEach(() => {
+    handlers.clear();
+    safeHandleMock.mockClear();
+    fetchMock.mockReset();
+    gitRemoteFnMock.mockReset();
+    gitRemoteFnMock.mockResolvedValue(null);
+    registerTeamHandlers();
+  });
+
+  async function captureCreateRequest(rawRemote: string): Promise<Record<string, unknown>> {
+    gitRemoteFnMock.mockResolvedValue(rawRemote);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ orgId: 'org-new', name: 'Acme', creatorMemberId: 'member-1' }),
+    });
+
+    await handlers.get('team:create')!({}, 'Acme', '/workspace');
+
+    const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/teams'));
+    return JSON.parse(String((call?.[1] as { body?: string } | undefined)?.body));
+  }
+
+  it('calls the teams API from a packaged build', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ orgId: 'org-new', name: 'Acme', creatorMemberId: 'member-1' }),
+    });
+
+    const handler = handlers.get('team:create');
+    if (!handler) throw new Error('team:create is not registered');
+    const result = await handler({}, 'Acme');
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/teams');
+    expect(result.error ?? '').not.toContain('not available yet');
+
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ['https://user:token@github.com/acme/widgets.git', 'https://github.com/acme/widgets.git'],
+    ['git@github.com:acme/widgets.git', 'git@github.com:acme/widgets.git'],
+    ['ssh://git:password@github.com/acme/widgets.git', 'ssh://git@github.com/acme/widgets.git'],
+    // A git remote never needs a query string, so the whole thing goes rather
+    // than a denylist of names a secret could hide behind.
+    ['https://github.com/acme/widgets.git?ref=main&api_key=SECRET&access-token=SECRET', 'https://github.com/acme/widgets.git'],
+  ])('sanitizes the clone remote before transmit: %s', async (rawRemote, expectedRemote) => {
+    const body = await captureCreateRequest(rawRemote);
+
+    expect(body.remoteUrl).toBe(expectedRemote);
+  });
+
+  it('hashes the canonical remote, so a credentialed origin matches a clean clone', async () => {
+    // Asserted against a literal, not against normalizeGitRemote's own output:
+    // deriving the expectation from the function under test is what let the
+    // credentialed/clean mismatch survive here unnoticed.
+    const expectedHash = createHash('sha256').update('github.com/acme/widgets').digest('hex');
+
+    const credentialed = await captureCreateRequest('https://user:token@github.com/acme/widgets.git');
+    const cleanClone = await captureCreateRequest('https://github.com/acme/widgets.git');
+
+    expect(credentialed.gitRemoteHash).toBe(expectedHash);
+    expect(cleanClone.gitRemoteHash).toBe(expectedHash);
+    expect(credentialed.remoteUrl).toBe('https://github.com/acme/widgets.git');
+  });
+
+  it('writes one identity for every spelling of the same repository', async () => {
+    const expectedHash = createHash('sha256').update('github.com/acme/widgets').digest('hex');
+
+    for (const raw of [
+      'ssh://git@github.com/acme/widgets.git',
+      'git@github.com:acme/widgets.git',
+      'https://user@github.com/acme/widgets.git',
+    ]) {
+      expect((await captureCreateRequest(raw)).gitRemoteHash).toBe(expectedHash);
+    }
+  });
+
+  it('omits malformed hierarchical userinfo rather than transmitting it', async () => {
+    const body = await captureCreateRequest('https://user:token@github.com:bad/widgets.git');
+
+    expect(body).not.toHaveProperty('remoteUrl');
   });
 });
 

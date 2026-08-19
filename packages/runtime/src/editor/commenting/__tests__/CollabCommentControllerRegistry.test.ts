@@ -20,6 +20,7 @@ import { CommentCollabProvider } from '../CommentCollabProvider';
 import {
   createCollabCommentController,
 } from '../CollabCommentControllerRegistry';
+import { reanchorOrphanedThreads } from '../reanchorOrphanedThreads';
 
 function createFixture(
   text = 'Alpha target Omega',
@@ -459,5 +460,54 @@ describe('CollabCommentController', () => {
     });
     unregisterFirst();
     unregisterSecond();
+  });
+
+  describe('reanchorOrphanedThreads', () => {
+    it('re-attaches a thread whose MarkNode was stripped but whose quote survives', () => {
+      // The state a markdown round-trip leaves behind (#2644): the thread and
+      // the quoted text both survive, but every MarkNode is gone, so the
+      // highlight stops rendering and the anchor reports orphaned.
+      const { commentStore, controller, editor } = createFixture(
+        'Alpha target Omega',
+      );
+      const thread = createThread(
+        'target',
+        [createComment('Still relevant?', 'Owner')],
+        'thread-orphan',
+      );
+      commentStore.addComment(thread);
+      expect(controller.list().threads[0].anchorState).toBe('orphaned');
+
+      const result = reanchorOrphanedThreads(editor as LexicalEditor, [thread]);
+
+      expect(result.reattached).toEqual(['thread-orphan']);
+      expect(controller.list().threads[0].anchorState).toBe('attached');
+    });
+
+    it('leaves a thread orphaned when its quote no longer resolves uniquely', () => {
+      // Rewritten text (gone) and repeated text (ambiguous) must both be left
+      // alone rather than guessed at — a wrong re-anchor syncs permanently.
+      const { commentStore, controller, editor } = createFixture(
+        'target and target again',
+      );
+      const gone = createThread('vanished wording', [], 'thread-gone');
+      const ambiguous = createThread('target', [], 'thread-ambiguous');
+      commentStore.addComment(gone);
+      commentStore.addComment(ambiguous);
+
+      const result = reanchorOrphanedThreads(editor as LexicalEditor, [
+        gone,
+        ambiguous,
+      ]);
+
+      expect(result.reattached).toEqual([]);
+      expect(result.skipped).toEqual([
+        { id: 'thread-gone', reason: 'ANCHOR_NOT_FOUND' },
+        { id: 'thread-ambiguous', reason: 'ANCHOR_AMBIGUOUS' },
+      ]);
+      for (const entry of controller.list().threads) {
+        expect(entry.anchorState).toBe('orphaned');
+      }
+    });
   });
 });

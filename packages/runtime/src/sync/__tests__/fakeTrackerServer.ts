@@ -208,6 +208,8 @@ export interface FakeTrackerRoomOptions {
    * drive the rejection / rollback path.
    */
   rejectAll?: boolean;
+  /** Prefix to reject through trackerError, exercising config correlation. */
+  rejectConfigPrefix?: string;
 }
 
 /**
@@ -230,6 +232,7 @@ export class FakeTrackerRoom {
   private nextIssueNumber = 1;
   private config: TrackerRoomConfig;
   private rejectAll: boolean;
+  private readonly rejectConfigPrefix?: string;
 
   /** Mutation log for test assertions. */
   readonly receivedMutations: Array<{ itemId: string; clientMutationId: string }> = [];
@@ -240,6 +243,7 @@ export class FakeTrackerRoom {
   constructor(options: FakeTrackerRoomOptions = {}) {
     this.config = options.config ?? { issueKeyPrefix: 'NIM' };
     this.rejectAll = options.rejectAll ?? false;
+    this.rejectConfigPrefix = options.rejectConfigPrefix;
   }
 
   /** Stop rejecting (used after the "first attempt fails, retry succeeds" tests). */
@@ -330,7 +334,7 @@ export class FakeTrackerRoom {
         this.handleNavigationMutation(ws, msg);
         break;
       case 'trackerSetConfig':
-        this.handleSetConfig(msg.key, msg.value);
+        this.handleSetConfig(ws, msg);
         break;
       case 'trackerPing':
         this.deliver(ws, { type: 'trackerPong' });
@@ -592,9 +596,23 @@ export class FakeTrackerRoom {
     }
   }
 
-  private handleSetConfig(key: 'issueKeyPrefix', value: string): void {
-    if (key === 'issueKeyPrefix') {
-      this.config = { ...this.config, issueKeyPrefix: value };
+  private handleSetConfig(
+    ws: FakeWebSocket,
+    msg: Extract<TrackerClientMessage, { type: 'trackerSetConfig' }>,
+  ): void {
+    if (msg.key === 'issueKeyPrefix') {
+      if (msg.value === this.rejectConfigPrefix) {
+        this.deliver(ws, {
+          type: 'trackerError',
+          code: 'issueKeyPrefixTaken',
+          message: `Prefix ${msg.value} is already used by project "Other Project". Try FREE.`,
+          clientMutationId: msg.clientMutationId,
+          conflictingProjectName: 'Other Project',
+          suggestedPrefix: 'FREE',
+        });
+        return;
+      }
+      this.config = { ...this.config, issueKeyPrefix: msg.value };
       const broadcast = { type: 'trackerConfigBroadcast', config: this.config } as const;
       for (const peer of this.connections) {
         this.deliver(peer, broadcast);

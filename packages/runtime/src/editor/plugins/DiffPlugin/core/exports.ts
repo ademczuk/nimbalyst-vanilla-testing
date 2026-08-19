@@ -12,6 +12,7 @@ export {
   $rejectDiffs,
   $approveChangeGroup,
   $rejectChangeGroup,
+  $clearResidualDiffMarkers,
   APPLY_DIFF_COMMAND,
   APPROVE_DIFF_COMMAND,
   REJECT_DIFF_COMMAND,

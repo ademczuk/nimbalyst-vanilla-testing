@@ -12,7 +12,7 @@
  * async restore) still register their own RevisionSnapshotAdapter
  * directly; this bridge is the default path for editors that don't.
  */
-import type { Doc } from 'yjs';
+import { Doc } from 'yjs';
 import {
   getCollabContentAdapter,
   getRevisionSnapshotFns,
@@ -30,6 +30,36 @@ export interface CollabAdapterRevisionBridgeOptions {
   /** Override the preview kind. Defaults to 'text' (matches the
    *  toPlainText projection the dialog can render). */
   previewKind?: RevisionPreviewKind;
+}
+
+/**
+ * Render a stored revision as text for the history dialog.
+ *
+ * A revision's bytes are opaque -- with the default adapter they are a Y
+ * state update, and an adapter with a custom snapshot format can make them
+ * anything. Rather than special-casing formats, materialize the snapshot
+ * into a scratch document using the adapter's own restore path (whose whole
+ * job is "make this doc hold that snapshot's content"), then project it with
+ * `toPlainText`.
+ *
+ * Returns null when the document type has no registered adapter, which is
+ * the `previewKind: 'metadata-only'` case.
+ */
+export function previewRevisionSnapshot(
+  documentType: string,
+  bytes: Uint8Array,
+): string | null {
+  const adapter = getCollabContentAdapter(documentType);
+  if (!adapter) return null;
+
+  const { restoreRevisionSnapshot } = getRevisionSnapshotFns(adapter);
+  const scratch = new Doc();
+  try {
+    restoreRevisionSnapshot(scratch, bytes);
+    return adapter.toPlainText(scratch);
+  } finally {
+    scratch.destroy();
+  }
 }
 
 export function createRevisionAdapterFromCollabContent(

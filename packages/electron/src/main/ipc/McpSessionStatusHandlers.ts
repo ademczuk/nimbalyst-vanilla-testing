@@ -40,6 +40,7 @@ interface McpStatusCapableProvider {
   getMcpSessionStatus(): {
     servers: { name: string; status: string; error?: string; scope?: string; serverInfo?: { name?: string; version?: string }; tools?: unknown[] }[];
     configuredNames: string[] | null;
+    withheldNames?: string[] | null;
     lastCheckedAt: number | null;
   };
 }
@@ -68,13 +69,14 @@ export function getMcpSessionStatusSnapshot(
     return { sessionId, supported: true, active: false, servers: [], lastCheckedAt: null };
   }
 
-  const { servers, configuredNames, lastCheckedAt } = instance.getMcpSessionStatus();
+  const { servers, configuredNames, withheldNames, lastCheckedAt } = instance.getMcpSessionStatus();
   return buildMcpSessionStatusSnapshot({
     sessionId,
     supported: true,
     active: true,
     statuses: servers,
     configuredNames,
+    withheldNames,
     lastCheckedAt,
   });
 }

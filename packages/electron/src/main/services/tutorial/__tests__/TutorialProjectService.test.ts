@@ -62,6 +62,7 @@ async function createHarness() {
     seedTutorialTrackers: vi.fn(async () => [EXAMPLE_BUG]),
     deleteTutorialTrackers: vi.fn(async () => undefined),
     seedTutorialSessions: vi.fn(async () => undefined),
+    captureTutorialStarted: vi.fn(),
   };
 
   return {

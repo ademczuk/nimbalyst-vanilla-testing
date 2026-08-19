@@ -29,6 +29,7 @@ export type DriveReason =
   | 'send-now'
   | 'meta-agent'
   | 'wakeup'
+  | 'agent-wake'
   | 'restart-continuation'
   | 'safety-sweep';
 

@@ -137,6 +137,104 @@ Review the issue, isolate the root cause, and prepare a fix plan.
     expect(fs.existsSync(path.join(generatedPluginPath, 'commands', 'repair.md'))).toBe(true);
   });
 
+  // #1213: the SDK reports every command/skill it discovered in `slash_commands`,
+  // not just provider builtins, so those names collide with the files they came
+  // from. The file must win, or the palette shows `Execute <name> command`.
+  it('keeps frontmatter metadata when the SDK reports the same name as a native command', async () => {
+    setAgentWorkflowSourceSettings({
+      workspaceClaudeCompatibilityEnabled: true,
+      includeProjectClaudeSources: true,
+      includeUserClaudeSources: true,
+      extensionWorkflowsEnabled: true,
+    });
+
+    const userSkillDir = path.join(userHomePath, '.claude', 'skills', 'deep-research');
+    fs.mkdirSync(userSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(userSkillDir, 'SKILL.md'),
+      `---
+name: deep-research
+description: Research a question across many sources and synthesize the findings
+---
+
+Sweep the sources, read the primaries, then synthesize.
+`,
+      'utf-8',
+    );
+
+    const commandsDir = path.join(workspacePath, '.claude', 'commands');
+    fs.mkdirSync(commandsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(commandsDir, 'investigate.md'),
+      `---
+description: Investigate a problem and align on the right next step
+argument-hint: [problem]
+---
+
+Investigate first, then advise.
+`,
+      'utf-8',
+    );
+
+    const service = new AgentWorkflowService(workspacePath, {
+      userHomePath,
+      extensionDirectoriesLoader: async () => [],
+      nativeClaudePluginPathsLoader: async () => [],
+      releaseChannelLoader: () => 'stable',
+    });
+
+    const entries = await service.listEntries({
+      provider: 'claude-code',
+      // The SDK lists the two discovered files alongside a genuine builtin.
+      nativeCommands: ['investigate', 'deep-research', 'compact'],
+      nativeSkills: ['deep-research'],
+    });
+
+    const skill = entries.find(entry => entry.name === 'deep-research');
+    expect(skill?.description).toBe('Research a question across many sources and synthesize the findings');
+    expect(skill?.source).toBe('user');
+    expect(skill?.kind).toBe('skill');
+    expect(skill?.content).toContain('Sweep the sources');
+    expect(skill?.filePath).toBe(path.join(userSkillDir, 'SKILL.md'));
+
+    const command = entries.find(entry => entry.name === 'investigate');
+    expect(command?.description).toBe('Investigate a problem and align on the right next step');
+    expect(command?.source).toBe('project');
+    expect(command?.argumentHint).toBe('[problem]');
+
+    // A builtin with no file behind it still comes through from the SDK list.
+    const builtin = entries.find(entry => entry.name === 'compact');
+    expect(builtin?.source).toBe('builtin');
+    expect(builtin?.description).toBe('Reduces conversation history by summarizing older messages');
+  });
+
+  it('hides skills that opt out with user-invocable: false', async () => {
+    const skillsDir = path.join(workspacePath, '.claude', 'skills', 'hidden-skill');
+    fs.mkdirSync(skillsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillsDir, 'SKILL.md'),
+      `---
+name: hidden-skill-test
+description: Model-invoked only, never offered in the palette
+user-invocable: false
+---
+
+Run whenever the model decides it applies.
+`,
+      'utf-8',
+    );
+
+    const service = new AgentWorkflowService(workspacePath, {
+      userHomePath,
+      extensionDirectoriesLoader: async () => [],
+      nativeClaudePluginPathsLoader: async () => [],
+      releaseChannelLoader: () => 'stable',
+    });
+
+    const entries = await service.listEntries({ provider: 'claude-code' });
+    expect(entries.some(entry => entry.name === 'hidden-skill-test')).toBe(false);
+  });
+
   it('extracts a fallback description from Claude command bodies before exporting to Codex skills', async () => {
     const commandsDir = path.join(workspacePath, '.claude', 'commands');
     fs.mkdirSync(commandsDir, { recursive: true });

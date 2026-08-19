@@ -11,8 +11,11 @@
 
 import { BrowserWindow } from 'electron';
 import { getQueuedPromptsStore } from '../RepositoryManager';
+import { getSyncProvider } from '../SyncManager';
 import { submitClaudeCliPromptProduction } from './claudeCliSubmitSingleton';
 import { flushNextClaudeCliQueuedPrompt } from './claudeCliQueueFlush';
+import { publishQueuedPromptClaim } from './queuedPromptClaimEvents';
+import { publishQueuedPromptsToSync } from './queuedPromptSyncPublisher';
 
 /** Per-session guard so two close `idle` events can't double-flush. */
 const flushInFlight = new Set<string>();
@@ -29,7 +32,19 @@ export async function flushNextClaudeCliQueuedPromptForSession(
   flushInFlight.add(sessionId);
   try {
     const store = getQueuedPromptsStore();
-    return await flushNextClaudeCliQueuedPrompt(
+    // This path claims rows outside AIService, so it owns its own mirror of the
+    // queue to mobile — see queuedPromptSyncPublisher.ts (NIM-2402).
+    const publishQueueState = () =>
+      publishQueuedPromptsToSync(
+        {
+          listPending: (s) => store.listPending(s),
+          getSyncProvider,
+          logWarn: (message) => console.warn(message),
+        },
+        sessionId,
+      );
+
+    const flushed = await flushNextClaudeCliQueuedPrompt(
       { sessionId, workspacePath },
       {
         listPending: (s) => store.listPending(s),
@@ -41,14 +56,23 @@ export async function flushNextClaudeCliQueuedPromptForSession(
         // event, so there is no single target window; broadcasting is safe
         // because the renderer filters by sessionId (NIM-830).
         notifyClaimed: (promptId) => {
+          publishQueuedPromptClaim({ sessionId, promptId });
           for (const win of BrowserWindow.getAllWindows()) {
             if (!win.isDestroyed()) {
               win.webContents.send('ai:promptClaimed', { sessionId, promptId });
             }
           }
+          void publishQueueState();
         },
       },
     );
+
+    // Only when a row actually moved — this runs on every PID-idle transition,
+    // and an unconditional publish would be one index update per idle tick.
+    if (flushed) {
+      await publishQueueState();
+    }
+    return flushed;
   } catch (error) {
     console.warn('[ClaudeCliQueueFlush] flush failed:', error);
     return false;

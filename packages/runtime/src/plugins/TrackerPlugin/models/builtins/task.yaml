@@ -8,9 +8,8 @@ modes:
   inline: true
   fullDocument: false
 
-sync:
-  mode: shared
-  scope: project
+sharing: team
+draftByDefault: false
 
 idPrefix: tsk
 idFormat: ulid
@@ -75,6 +74,17 @@ fields:
     targetTrackerTypes:
       - milestone
       - release
+    multiValue: true
+
+  # Goal membership. Written directly, or by inverse propagation when an item
+  # is added from a goal's `contributes` field.
+  - name: goal
+    type: relationship
+    relationshipTypeKey: contributed-by
+    inverseRelationshipTypeKey: contributes-to
+    inverseFieldId: contributes
+    targetTrackerTypes:
+      - goal
     multiValue: true
 
   - name: tags

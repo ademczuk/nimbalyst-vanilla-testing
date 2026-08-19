@@ -119,11 +119,14 @@ export interface TableViewConfig {
   exportable: boolean;
 }
 
-/**
- * Sync policy for a tracker type.
- * Controls whether tracked items of this type participate in collaborative sync.
- */
-export type TrackerSyncMode = 'local' | 'shared' | 'hybrid';
+/** A tracker owns its schema and items together: personally or as a team artifact. */
+export type TrackerSharing = 'personal' | 'team';
+
+export interface TrackerSharingPolicy {
+  sharing: TrackerSharing;
+  /** Team trackers can create private drafts while reusing the existing per-item published bit. */
+  draftByDefault: boolean;
+}
 
 /**
  * Semantic roles that map product concepts to schema-defined field names.
@@ -154,13 +157,6 @@ export type TrackerSchemaRole =
    */
   | 'prMergedStatus';
 
-export interface TrackerSyncPolicy {
-  /** How items sync: local (never), shared (always), hybrid (per-item choice) */
-  mode: TrackerSyncMode;
-  /** Scope of sync: project (git remote) or workspace (local path) */
-  scope: 'project' | 'workspace';
-}
-
 export interface TrackerDataModel {
   type: string;
   displayName: string;
@@ -174,8 +170,18 @@ export interface TrackerDataModel {
   statusBarLayout?: StatusBarLayoutRow[];
   inlineTemplate?: string;
   tableView?: TableViewConfig;
-  /** Sync policy for collaborative tracking. Defaults to local if omitted. */
-  sync?: TrackerSyncPolicy;
+  /** Whether the tracker schema and its items are personal or team-owned. Defaults to personal. */
+  sharing?: TrackerSharing;
+  /** Whether new items in a team tracker begin as private drafts. Defaults to false. */
+  draftByDefault?: boolean;
+  /**
+   * Retired: the tracker is no longer used, but every item is kept, stays
+   * visible and searchable, and keeps its issue key. Archiving is the answer to
+   * "we should stop using this tracker" — it is deliberately NOT a demotion
+   * back to personal, which would strand teammates' items, and NOT a delete.
+   * Read-only is the only behavioral consequence.
+   */
+  archived?: boolean;
   /** If false, items of this type cannot be created via tracker_create. Defaults to true. */
   creatable?: boolean;
   /** Whether this type can be used as a primary type. Defaults to true. */

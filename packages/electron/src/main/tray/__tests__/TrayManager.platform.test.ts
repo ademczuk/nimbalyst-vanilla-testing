@@ -106,6 +106,20 @@ vi.mock('../../utils/store', () => ({
   setShowTrayIcon: setShowTrayIconMock,
   getSessionSyncConfig: vi.fn(() => ({})),
   setSessionSyncConfig: vi.fn(),
+  getTheme: vi.fn(() => 'dark'),
+  getTrayPanelWidth: vi.fn(() => undefined),
+  setTrayPanelWidth: vi.fn(),
+}));
+
+// The tray panel is macOS-only; these tests run on whatever platform CI uses, so
+// pin it off unless a test opts in. That keeps the native-menu assertions below
+// exercising the `setContextMenu` path they were written against.
+vi.mock('../../window/TrayPanelWindow', () => ({
+  isTrayPanelSupported: vi.fn(() => false),
+  isTrayPanelWindow: vi.fn(() => false),
+  toggleTrayPanelWindow: vi.fn(),
+  pushTrayPanelFeed: vi.fn(),
+  closeTrayPanelWindow: vi.fn(),
 }));
 
 vi.mock('../../utils/logger', () => ({
@@ -136,7 +150,7 @@ vi.mock('../TrayManager', async (importOriginal) => {
   return actual; // we want the real TrayManager; nothing to override at module level
 });
 
-import { TrayManager } from '../TrayManager';
+import { TrayManager, groupTraySessions } from '../TrayManager';
 
 function resetSingleton() {
   // Reset the private singleton between tests so each it() runs against a
@@ -320,5 +334,56 @@ describe('TrayManager unread actions', () => {
       ],
     });
     expect((tm as any).sessionCache.size).toBe(0);
+  });
+});
+
+describe('groupTraySessions', () => {
+  const base = {
+    workspacePath: '/Users/dev/projects/nimbalyst',
+    isStreaming: false,
+    hasPendingPrompt: false,
+    hasUnread: false,
+    provider: 'claude-code',
+    model: 'claude-code:opus-1m',
+  };
+
+  it('buckets a mixed cross-workspace set the way the in-app popover does', () => {
+    const feed = groupTraySessions([
+      { ...base, sessionId: 'blocked', title: 'Blocked', status: 'running', hasPendingPrompt: true, updatedAt: 500 },
+      { ...base, sessionId: 'errored', title: 'Errored', status: 'error', updatedAt: 400 },
+      { ...base, sessionId: 'running', title: 'Running', status: 'running', isStreaming: true, updatedAt: 300 },
+      { ...base, sessionId: 'unread', title: 'Unread', status: 'completed', hasUnread: true, updatedAt: 200 },
+      { ...base, sessionId: 'quiet', title: 'Quiet', status: 'completed', updatedAt: 100 },
+    ] as any);
+
+    // `error` folds into Needs Attention -- the tray's one intended divergence
+    // from the popover, which has no error state of its own.
+    expect(feed.needsAttention.map((s) => s.sessionId)).toEqual(['blocked', 'errored']);
+    expect(feed.running.map((s) => s.sessionId)).toEqual(['running']);
+    expect(feed.unread.map((s) => s.sessionId)).toEqual(['unread']);
+    // A completed, read, unblocked session belongs in no bucket at all.
+    expect(feed.needsAttention.concat(feed.running, feed.unread)
+      .some((s) => s.sessionId === 'quiet')).toBe(false);
+  });
+
+  it('excludes archived and complete-phase sessions, matching agentSessionAttentionAtom', () => {
+    const feed = groupTraySessions([
+      { ...base, sessionId: 'archived', title: 'Archived', status: 'completed', hasUnread: true, isArchived: true, updatedAt: 3 },
+      { ...base, sessionId: 'done', title: 'Done', status: 'running', hasPendingPrompt: true, phase: 'complete', updatedAt: 2 },
+      { ...base, sessionId: 'kept', title: 'Kept', status: 'completed', hasUnread: true, phase: 'validating', updatedAt: 1 },
+    ] as any);
+
+    expect(feed.needsAttention).toEqual([]);
+    expect(feed.unread.map((s) => s.sessionId)).toEqual(['kept']);
+  });
+
+  it('sorts newest first and derives the workspace chip from the path', () => {
+    const feed = groupTraySessions([
+      { ...base, sessionId: 'older', title: 'Older', status: 'running', updatedAt: 10 },
+      { ...base, sessionId: 'newer', title: 'Newer', status: 'running', workspacePath: '/Users/dev/projects/other', updatedAt: 99 },
+    ] as any);
+
+    expect(feed.running.map((s) => s.sessionId)).toEqual(['newer', 'older']);
+    expect(feed.running.map((s) => s.workspaceName)).toEqual(['other', 'nimbalyst']);
   });
 });

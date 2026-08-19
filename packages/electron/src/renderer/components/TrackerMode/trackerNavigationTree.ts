@@ -16,6 +16,51 @@ export interface TrackerNavigationTree {
   rootTypes: Array<{ tracker: TrackerDataModel; placement: TrackerTypePlacement }>;
 }
 
+/** Whose a tracker is. A tracker owns its schema and its items together. */
+export type TrackerOwnership = 'personal' | 'team';
+
+export interface TrackerOwnershipSection {
+  ownership: TrackerOwnership;
+  tree: TrackerNavigationTree;
+}
+
+export function trackerOwnershipOf(tracker: TrackerDataModel): TrackerOwnership {
+  return tracker.sharing === 'team' ? 'team' : 'personal';
+}
+
+/**
+ * Split the navigation tree into "the team's" and "mine", in that display
+ * order — the team's trackers are the shared source of truth and carry most of
+ * the data, so they lead.
+ *
+ * Returns null when the workspace has no team: a solo user gets no sections and
+ * no ownership language at all, just the flat tree they already had. The
+ * grammar appears when they join a team.
+ *
+ * Folders stay the grouping. A folder holding both personal and team trackers
+ * appears under each section carrying only that section's trackers, so a
+ * workspace with 22 of them keeps its folders instead of collapsing into two
+ * long lists. A section with nothing in it is dropped rather than shown empty.
+ */
+export function partitionTrackerNavigationByOwnership(
+  tree: TrackerNavigationTree,
+  options: { hasTeam: boolean },
+): TrackerOwnershipSection[] | null {
+  if (!options.hasTeam) return null;
+
+  const sections: TrackerOwnershipSection[] = [];
+  for (const ownership of ['team', 'personal'] as const) {
+    const mine = (row: { tracker: TrackerDataModel }) => trackerOwnershipOf(row.tracker) === ownership;
+    const folders = tree.folders
+      .map((node) => ({ folder: node.folder, trackerTypes: node.trackerTypes.filter(mine) }))
+      .filter((node) => node.trackerTypes.length > 0);
+    const rootTypes = tree.rootTypes.filter(mine);
+    if (folders.length === 0 && rootTypes.length === 0) continue;
+    sections.push({ ownership, tree: { folders, rootTypes } });
+  }
+  return sections;
+}
+
 export function buildTrackerNavigationTree(
   trackerTypes: TrackerDataModel[],
   entries: TrackerNavigationEntry[],

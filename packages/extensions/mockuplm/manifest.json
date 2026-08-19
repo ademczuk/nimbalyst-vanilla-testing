@@ -1,13 +1,13 @@
 {
   "id": "com.nimbalyst.mockuplm",
   "name": "MockupLM",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Visual UX mockup creation with HTML/CSS for planning and design",
   "author": "Nimbalyst",
   "main": "dist/index.js",
   "apiVersion": "1.0.0",
   "marketplace": {
-    "changelog": "1.0.2: Share selected mockup screens with AI and render shared mockup links more reliably.\n1.0.1: Share to Team collaboration for mockups and projects, shared viewer and diff review fixes.",
+    "changelog": "1.0.3: Shared mockups keep every edit and gain a source pane. Sharing a mockup project is turned off until its screens sync.\n1.0.2: Share selected mockup screens with AI and render shared mockup links more reliably.\n1.0.1: Share to Team collaboration for mockups and projects, shared viewer and diff review fixes.",
     "categories": ["diagrams"],
     "tags": ["mockup", "wireframe", "ui", "ux", "design", "prototype", "html"],
     "icon": "palette",
@@ -55,7 +55,8 @@
         "component": "MockupProjectEditor",
         "supportsSourceMode": true,
         "collaboration": {
-          "supported": true,
+          "supported": false,
+          "unsupportedReason": "Sharing a mockup project is not available yet: each screen's HTML still lives in the author's own workspace, so teammates would see empty screens.",
           "awarenessFields": ["selectedMockupId", "selectedConnectionId"]
         }
       }

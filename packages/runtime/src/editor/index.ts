@@ -191,6 +191,15 @@ export {
   $convertSelectionToEnhancedMarkdownString
 } from './markdown';
 
+// In-place external content replacement (collaborator edit, file watcher,
+// agent write) that preserves the caret instead of remounting the editor.
+export {
+  applyExternalMarkdown,
+  externalContentUpdateTags,
+  mapOffsetAcrossChange,
+  EXTERNAL_CONTENT_UPDATE_TAG,
+} from './applyExternalMarkdown';
+
 // Markdown normalization utilities
 export {
   detectMarkdownIndentSize,
@@ -246,6 +255,7 @@ export {
   scrollToChangeGroup,
   $approveChangeGroup,
   $rejectChangeGroup,
+  $clearResidualDiffMarkers,
   $getDiffState,
   APPROVE_DIFF_COMMAND,
   REJECT_DIFF_COMMAND,

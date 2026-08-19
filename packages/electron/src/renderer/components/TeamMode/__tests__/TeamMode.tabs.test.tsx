@@ -12,9 +12,6 @@ vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
 }));
 vi.mock('../Inbox', () => ({ InboxSection: () => <div data-testid="inbox" /> }));
-vi.mock('../../Settings/panels/OrganizationMembersRolesPanel', () => ({
-  OrganizationMembersRolesPanel: () => <div data-testid="members" />,
-}));
 vi.mock('../../Settings/panels/OrganizationProjectsPanel', () => ({ OrganizationProjectsPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationBillingPanel', () => ({ OrganizationBillingPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationDangerZone', () => ({ OrganizationDangerZone: () => <div /> }));
@@ -97,7 +94,7 @@ describe('TeamMode org window navigation', () => {
     await waitFor(() => expect(store.get(orgWindowRouteAtom))
       .toEqual(DEFAULT_ORG_WINDOW_ROUTE));
     await waitFor(() => screen.getByTestId('inbox'));
-    expect(screen.queryByTestId('members')).toBeNull();
+    expect(screen.queryByTestId('organization-members-roles-panel')).toBeNull();
   });
 
   it('opens the rooms directory from the sidebar', async () => {

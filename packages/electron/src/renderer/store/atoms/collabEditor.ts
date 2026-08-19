@@ -84,21 +84,14 @@ export function deriveCollabProductStatus(
       showRejectedActions: true,
     };
   }
-  if (state.outbox === 'replaying' || state.transport === 'replaying') {
-    return {
-      kind: 'replaying',
-      label: 'Syncing offline changes…',
-      detail: null,
-      severity: 'info',
-      showPresence: false,
-      showRejectedActions: false,
-    };
-  }
-  // A pending outbox while connected is normal in-flight typing (every
-  // keystroke enqueues durably, the server ack clears it moments later).
-  // Surfacing it flip-flopped the pill between "Synced" and "Syncing…" on
-  // every keystroke. A genuine post-reconnect backlog reports the distinct
-  // outbox 'replaying' state, which is handled above.
+  // Any outbox work while connected is normal in-flight typing: every
+  // keystroke walks the outbox clean -> pending -> in-flight -> clean, and
+  // in-flight reports as outbox 'replaying'. Surfacing either state
+  // flip-flopped the pill between "Synced" and "Syncing…" and unmounted the
+  // presence avatars on every character. A genuine post-reconnect backlog is
+  // reported by the transport itself as 'replaying' (the provider only
+  // surfaces that status when the replay started from a non-connected
+  // socket), so the connected check has to come first.
   if (state.transport === 'connected') {
     return {
       kind: 'synced',
@@ -106,6 +99,16 @@ export function deriveCollabProductStatus(
       detail: null,
       severity: 'success',
       showPresence: true,
+      showRejectedActions: false,
+    };
+  }
+  if (state.outbox === 'replaying' || state.transport === 'replaying') {
+    return {
+      kind: 'replaying',
+      label: 'Syncing offline changes…',
+      detail: null,
+      severity: 'info',
+      showPresence: false,
       showRejectedActions: false,
     };
   }

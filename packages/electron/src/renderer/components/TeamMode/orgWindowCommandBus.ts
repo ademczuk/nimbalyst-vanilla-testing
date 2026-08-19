@@ -70,3 +70,41 @@ export function subscribeInboxSearchFocus(listener: () => void): () => void {
   inboxSearchFocusListeners.add(listener);
   return () => { inboxSearchFocusListeners.delete(listener); };
 }
+
+/**
+ * A pending "select the Inbox row for this source" request.
+ *
+ * A `nimbalyst://feedback-request/...` link opens or focuses the organization
+ * window and points it at the Inbox, so the row it wants is behind two waits:
+ * the surface mounting, and the delivery arriving in the snapshot. The request
+ * is therefore latched by *source* rather than by delivery id — the link
+ * carries a request id, and only the inbox knows which delivery carries it.
+ *
+ * Same latch as the search-focus request above; the Inbox clears it once it has
+ * a row to select.
+ */
+export interface InboxRowSelectionRequest {
+  orgId: string;
+  sourceKind: string;
+  sourceId: string;
+}
+
+let inboxRowSelectionPending: InboxRowSelectionRequest | null = null;
+const inboxRowSelectionListeners = new Set<() => void>();
+
+export function requestInboxRowSelection(request: InboxRowSelectionRequest): void {
+  inboxRowSelectionPending = request;
+  for (const listener of inboxRowSelectionListeners) listener();
+}
+
+/** Non-null at most once per request; the caller owns resolving it to a row. */
+export function consumeInboxRowSelectionRequest(): InboxRowSelectionRequest | null {
+  const pending = inboxRowSelectionPending;
+  inboxRowSelectionPending = null;
+  return pending;
+}
+
+export function subscribeInboxRowSelection(listener: () => void): () => void {
+  inboxRowSelectionListeners.add(listener);
+  return () => { inboxRowSelectionListeners.delete(listener); };
+}

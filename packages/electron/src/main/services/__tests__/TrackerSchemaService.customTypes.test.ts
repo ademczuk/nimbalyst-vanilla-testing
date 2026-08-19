@@ -56,6 +56,12 @@ vi.mock('../../database/initialize', () => ({
   getDatabase: () => null,
 }));
 
+/** The destructive-change guard rail's opt-in, on every schema write path. */
+interface TestSchemaWriteOptions {
+  confirmDestructive?: boolean;
+  actorRole?: 'admin' | 'member';
+}
+
 interface TrackerSchemaServiceModule {
   initTrackerSchemaService: (workspacePath?: string | null) => void;
   updateTrackerSchemaWorkspace: (workspacePath: string | null) => void;
@@ -66,7 +72,11 @@ interface TrackerSchemaServiceModule {
   upsertWorkspaceTrackerSchema: (
     workspacePath: string,
     schema: string,
-    options?: { fileName?: string; overwrite?: boolean; allowBuiltinOverride?: boolean },
+    options?: TestSchemaWriteOptions & {
+      fileName?: string;
+      overwrite?: boolean;
+      allowBuiltinOverride?: boolean;
+    },
   ) => Promise<{ model: { type: string }; filePath: string; backupPath?: string }>;
   customizeWorkspaceTrackerSchema: (
     workspacePath: string,
@@ -75,6 +85,7 @@ interface TrackerSchemaServiceModule {
   resetWorkspaceTrackerSchemaOverride: (
     workspacePath: string,
     type: string,
+    options?: TestSchemaWriteOptions,
   ) => Promise<{ reset: boolean; filePath?: string }>;
   getWorkspaceTrackerSchemaOverride: (
     workspacePath: string,
@@ -87,7 +98,7 @@ interface TrackerSchemaServiceModule {
   upsertWorkspaceTrackerSchemaPatch: (
     workspacePath: string,
     patch: unknown,
-    options?: { overwrite?: boolean },
+    options?: TestSchemaWriteOptions & { overwrite?: boolean },
   ) => Promise<{ model: { type: string; fields: any[] }; filePath: string; backupPath?: string }>;
   TrackerTypeExistsError: new (...args: any[]) => Error;
 }
@@ -112,9 +123,8 @@ modes:
   inline: true
   fullDocument: false
 
-sync:
-  mode: local
-  scope: project
+sharing: personal
+draftByDefault: false
 
 idPrefix: ${type.slice(0, 3)}
 idFormat: ulid
@@ -232,7 +242,9 @@ describe('tracker_define_type clobber guard (NIM-760)', () => {
     const result = await service.upsertWorkspaceTrackerSchema(
       workspacePath,
       buildCustomYaml('marketing', 'Marketing REPLACED'),
-      { overwrite: true },
+      // Replacing a definition wholesale drops the fields it had, so it is a
+      // destructive change and states its confirmation like any other.
+      { overwrite: true, confirmDestructive: true },
     );
 
     expect(result.backupPath).toBeDefined();
@@ -361,7 +373,9 @@ describe('TrackerSchemaService builtin override via patch', () => {
     });
     expect(statusOptionValues(service, 'task')).toContain('archived');
 
-    const reset = await service.resetWorkspaceTrackerSchemaOverride(workspacePath, 'task');
+    const reset = await service.resetWorkspaceTrackerSchemaOverride(workspacePath, 'task', {
+      confirmDestructive: true,
+    });
     expect(reset.reset).toBe(true);
 
     // Builtin restored: the patched option is gone.
@@ -405,7 +419,9 @@ describe('TrackerSchemaService reset propagates a tombstone', () => {
       fields: [{ name: 'status', options: { set: [{ value: 'archived', label: 'Archived' }] } }],
     });
 
-    const reset = await service.resetWorkspaceTrackerSchemaOverride(workspacePath, 'task');
+    const reset = await service.resetWorkspaceTrackerSchemaOverride(workspacePath, 'task', {
+      confirmDestructive: true,
+    });
     expect(reset.reset).toBe(true);
     // The tombstone is what propagates the reset (pending delete → pushed → peers
     // restore the builtin). Without it the stale override row keeps syncing.
@@ -464,7 +480,7 @@ describe('TrackerSchemaService remote schema sync apply', () => {
     expect(result).toEqual({ applied: true, deleted: false });
     expect(applyRemoteMock).toHaveBeenCalledWith(workspacePath, {
       type: 'remoteEpic',
-      model,
+      model: JSON.stringify({ ...JSON.parse(model), sharing: 'team', draftByDefault: false }),
       syncId: 42,
     });
     expect(service.getTrackerSchema('remoteEpic')?.type).toBe('remoteEpic');
@@ -481,6 +497,40 @@ describe('TrackerSchemaService remote schema sync apply', () => {
     expect(result).toEqual({ applied: false, reason: 'invalid' });
     expect(applyRemoteMock).not.toHaveBeenCalled();
     expect(service.getTrackerSchema('remoteEpic')).toBeUndefined();
+  });
+
+  it('does not let a remote team schema replace a personal workspace tracker', async () => {
+    await fs.writeFile(
+      path.join(workspacePath, '.nimbalyst', 'trackers', 'remoteEpic.yaml'),
+      buildCustomYaml('remoteEpic', 'Personal Epic'),
+      'utf-8',
+    );
+    const { updateWorkspaceState } = await import('../../utils/store');
+    updateWorkspaceState(workspacePath, (draft) => {
+      const divergence = {
+        trackerType: 'remoteEpic',
+        legacySchemaMode: 'shared' as const,
+        legacyItemMode: 'local' as const,
+        sharing: 'personal' as const,
+        draftByDefault: false,
+        diverged: true,
+      };
+      draft.trackerSharingMigration = {
+        version: 1,
+        migratedAt: 1,
+        entries: [divergence],
+        divergences: [divergence],
+      };
+    });
+
+    const result = await service.applyRemoteWorkspaceTrackerSchemaDef(workspacePath, {
+      type: 'remoteEpic',
+      model: buildSyncedModel('remoteEpic', 'Remote Epic'),
+      syncId: 42,
+    });
+
+    expect(result).toEqual({ applied: false, reason: 'personal' });
+    expect(applyRemoteMock).not.toHaveBeenCalled();
   });
 
   it('applies a remote tombstone to the active registry', async () => {
@@ -516,7 +566,8 @@ describe('TrackerSchemaService remote schema sync apply', () => {
       modes: { inline: true, fullDocument: false },
       idPrefix: 'tsk',
       idFormat: 'ulid',
-      sync: { mode: 'shared', scope: 'project' },
+      sharing: 'team',
+      draftByDefault: false,
       fields: [
         { name: 'title', type: 'string', required: true },
         {

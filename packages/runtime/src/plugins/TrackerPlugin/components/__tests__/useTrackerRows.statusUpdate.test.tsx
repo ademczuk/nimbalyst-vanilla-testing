@@ -86,7 +86,8 @@ describe('useTrackerRows bulk status update', () => {
     expect(updateTrackerItem).toHaveBeenCalledWith({
       itemId: item.id,
       updates: { phase: 'reviewing' },
-      syncMode: 'local',
+      sharing: 'personal',
+      draftByDefault: false,
     });
   });
 });

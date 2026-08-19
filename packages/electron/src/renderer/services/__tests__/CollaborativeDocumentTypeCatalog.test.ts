@@ -13,7 +13,7 @@ import {
 import {
   inferSharedDocumentTypeMetadata,
   resolveSharedDocumentTypePresentation,
-} from '../../utils/sharedDocumentTypeMetadata';
+} from '@nimbalyst/collab-client/docs-ui';
 import {
   getMonacoLanguage,
   MONACO_LANGUAGE_BY_EXTENSION,
@@ -236,6 +236,32 @@ describe('CollaborativeDocumentTypeCatalog', () => {
     catalog.dispose();
   });
 
+  it('gives a compound-suffix owner priority over an extension claiming the generic suffix', () => {
+    // The Browser extension really does claim *.html, which would otherwise swallow
+    // every *.mockup.html file and route it to a non-collaborative editor.
+    const extensions = new MutableExtensionSource([
+      extension({
+        id: 'com.example.browser',
+        editors: [customEditor(['.html'], 'BrowserEditor')],
+        components: ['BrowserEditor'],
+      }),
+      extension({
+        id: 'com.example.mockup',
+        menus: [menu('.mockup.html', 'Mockup', 'palette')],
+        editors: [customEditor(['.mockup.html'], 'MockupEditor')],
+        components: ['MockupEditor'],
+      }),
+    ]);
+    const codecs = new MutableCodecSource([codec('mockup.html', ['.mockup.html'])]);
+    const catalog = makeCatalog(extensions, codecs);
+
+    expect(catalog.resolveShareability('screen.mockup.html')).toMatchObject({
+      state: 'ready',
+      descriptor: { documentType: 'mockup.html', editor: { extensionId: 'com.example.mockup' } },
+    });
+    catalog.dispose();
+  });
+
   it('projects the Monaco suffix/language map without treating markdown as code', () => {
     const catalog = makeCatalog(
       new MutableExtensionSource(),
@@ -292,6 +318,27 @@ describe('CollaborativeDocumentTypeCatalog', () => {
     expect(catalog.resolveShareability('x.codec')).toMatchObject({
       state: 'unsupported',
       reason: 'No collaborative codec is registered for document type "codec".',
+    });
+    catalog.dispose();
+  });
+
+  it('prefers the manifest opt-out reason over the generic missing-binding text', () => {
+    // A type with a working binding whose sharing is known to lose data opts
+    // out with its own reason, so the user is told what is broken rather than
+    // that the work was never started. `.mockupproject` is the live case.
+    const optedOut = customEditor(['.knownbroken'], 'BrokenEditor', false);
+    optedOut.collaboration = {
+      supported: false,
+      unsupportedReason: 'Screens are still workspace-local, so teammates see empty screens.',
+    };
+    const extensions = new MutableExtensionSource([
+      extension({ id: 'opted-out', editors: [optedOut], components: ['BrokenEditor'] }),
+    ]);
+    const catalog = makeCatalog(extensions, new MutableCodecSource([codec('knownbroken', ['.knownbroken'])]));
+
+    expect(catalog.resolveShareability('x.knownbroken')).toMatchObject({
+      state: 'unsupported',
+      reason: 'Screens are still workspace-local, so teammates see empty screens.',
     });
     catalog.dispose();
   });
@@ -378,7 +425,7 @@ describe('shared document metadata and presentation', () => {
     expect(inferSharedDocumentTypeMetadata({
       title: 'types.d.ts',
       documentType: 'code',
-    }, catalog)).toEqual({
+    }, catalog.getDescriptors())).toEqual({
       metadataVersion: 2,
       fileExtension: '.d.ts',
       editorId: 'builtin.monaco',
@@ -392,19 +439,29 @@ describe('shared document metadata and presentation', () => {
       new MutableExtensionSource([structuredExtension]),
       new MutableCodecSource([
         codec('markdown', ['.md']),
-        codec('code', ['.ts']),
+        codec('code', ['.txt', '.ts']),
         codec('diagram', ['.diagram']),
       ]),
       true,
     );
 
     const presentation = (document: Parameters<typeof resolveSharedDocumentTypePresentation>[0]) =>
-      resolveSharedDocumentTypePresentation(document, catalog);
+      resolveSharedDocumentTypePresentation(document, catalog.getDescriptors());
 
     expect(presentation({
       title: 'Notes.md', documentType: 'markdown', metadataVersion: 2,
       fileExtension: '.md', editorId: 'builtin.lexical',
-    })).toMatchObject({ state: 'ready', icon: 'description', typeLabel: 'Markdown' });
+    })).toMatchObject({
+      state: 'ready',
+      icon: 'description',
+      typeLabel: 'Markdown',
+      metadata: {
+        metadataVersion: 2,
+        fileExtension: '.md',
+        editorId: 'builtin.lexical',
+        source: 'v2',
+      },
+    });
     expect(presentation({
       title: 'index.ts', documentType: 'code', metadataVersion: 2,
       fileExtension: '.ts', editorId: 'builtin.monaco',

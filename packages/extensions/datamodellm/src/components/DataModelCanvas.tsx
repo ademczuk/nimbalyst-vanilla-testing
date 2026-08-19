@@ -27,6 +27,7 @@ import '@xyflow/react/dist/style.css';
 import { EntityNode, type EntityNodeData } from './EntityNode';
 import { RelationshipEdge, type RelationshipEdgeData } from './RelationshipEdge';
 import type { DataModelStoreApi } from '../store';
+import { indexPresences, type RemotePresence } from '../collab/presence';
 
 interface DataModelCanvasProps {
   store: DataModelStoreApi;
@@ -40,14 +41,26 @@ interface DataModelCanvasProps {
    * Used by inline embeds when in view mode.
    */
   readOnly?: boolean;
+  /**
+   * Remote collaborators' selections. Rendered as a colored ring plus a name
+   * chip on the matching entity, and a colored stroke on the matching
+   * relationship. Empty outside collaborative documents.
+   */
+  presences?: RemotePresence[];
 }
+
+/** Stable identity so a presence-free canvas never re-renders its nodes. */
+const NO_PRESENCE: RemotePresence[] = [];
 
 export interface DataModelCanvasRef {
   getCanvasElement: () => HTMLElement | null;
 }
 
 export const DataModelCanvas = forwardRef<DataModelCanvasRef, DataModelCanvasProps>(
-  function DataModelCanvas({ store, theme, screenshotMode = false, readOnly = false }, ref) {
+  function DataModelCanvas(
+    { store, theme, screenshotMode = false, readOnly = false, presences = NO_PRESENCE },
+    ref,
+  ) {
     // `screenshotMode` is the legacy aggressive lock-down (pan/zoom off,
     // controls hidden, etc.); `readOnly` is the lighter "no edits but
     // still navigate" mode. Treat editing handlers as gated by either.
@@ -67,6 +80,8 @@ export const DataModelCanvas = forwardRef<DataModelCanvasRef, DataModelCanvasPro
   const { entities, relationships, database, entityViewMode, selectedEntityId, selectedRelationshipId, hoveredEntityId } =
     state;
 
+  const presenceIndex = useMemo(() => indexPresences(presences), [presences]);
+
   // Convert entities to React Flow nodes
   const nodes: Node<EntityNodeData>[] = useMemo(
     () =>
@@ -81,9 +96,10 @@ export const DataModelCanvas = forwardRef<DataModelCanvasRef, DataModelCanvasPro
           viewMode: entityViewMode,
           database,
           store,
+          presences: presenceIndex.entities.get(entity.id) ?? NO_PRESENCE,
         },
       })),
-    [entities, selectedEntityId, hoveredEntityId, entityViewMode, database, store]
+    [entities, selectedEntityId, hoveredEntityId, entityViewMode, database, store, presenceIndex]
   );
 
   // Convert relationships to React Flow edges
@@ -153,12 +169,15 @@ export const DataModelCanvas = forwardRef<DataModelCanvasRef, DataModelCanvasPro
         sourceHandle,
         targetHandle,
         selected: selectedRelationshipId === relationship.id,
-        data: { relationship },
+        data: {
+          relationship,
+          presences: presenceIndex.relationships.get(relationship.id) ?? NO_PRESENCE,
+        },
       });
     }
 
     return validEdges;
-  }, [relationships, selectedRelationshipId, entities, entityViewMode]);
+  }, [relationships, selectedRelationshipId, entities, entityViewMode, presenceIndex]);
 
   const [localNodes, setLocalNodes] = useNodesState(nodes);
   const [localEdges, setLocalEdges] = useEdgesState(edges);

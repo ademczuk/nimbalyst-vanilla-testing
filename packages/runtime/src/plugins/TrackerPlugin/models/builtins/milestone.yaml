@@ -8,9 +8,8 @@ modes:
   inline: false
   fullDocument: true
 
-sync:
-  mode: shared
-  scope: project
+sharing: team
+draftByDefault: false
 
 idPrefix: mst
 idFormat: ulid

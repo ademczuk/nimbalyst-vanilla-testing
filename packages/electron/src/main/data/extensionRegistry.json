@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-20T22:46:26.014Z",
+  "generatedAt": "2026-08-13T04:11:31.838Z",
   "extensions": [
     {
       "id": "com.nimbalyst.astro",
@@ -127,7 +127,7 @@
       "id": "com.nimbalyst.calc-sheets",
       "name": "Calc Sheets",
       "description": "Line-oriented calculation worksheets with units, formulas, and live result gutters",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": "Nimbalyst",
       "categories": [
         "data"
@@ -148,10 +148,10 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.calc-sheets/1.0.1",
-      "checksum": "0658e63d93363321585a07b15de2b44df13bf94a71c039545cb6eb1ca88cbb75",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.calc-sheets/1.0.2",
+      "checksum": "227fe5a97706d4ca31f708fbd47b4d3dfdde66d0487bb44816e94b153f634c35",
       "repositoryUrl": "",
-      "changelog": "",
+      "changelog": "1.0.2: The results column in a shared calc sheet stays in sync with the document.",
       "tagline": "Reusable business-model worksheets with live results",
       "longDescription": "Open .calc.md files in a dedicated editor built for line-oriented assumptions, formulas, units, assertions, and quick business modeling. Calc Sheets stay text-first, embed inside markdown documents, and show live results in a calculator-style gutter.",
       "highlights": [
@@ -168,7 +168,7 @@
       "id": "com.nimbalyst.csv-spreadsheet",
       "name": "CSV Spreadsheet",
       "description": "Edit CSV files with a spreadsheet interface and formula support",
-      "version": "1.0.2",
+      "version": "1.1.3",
       "author": "Nimbalyst",
       "categories": [
         "data"
@@ -195,10 +195,10 @@
         "filesystem"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.csv-spreadsheet/1.0.2",
-      "checksum": "d72c92bf1f28e132e1cd1890c3dd1a8f257f2498612c09e6c031defb3ef3beb2",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.csv-spreadsheet/1.1.3",
+      "checksum": "4a8cf249c636263acae886f86d180182525a024c6ae3862c1086490401675bb7",
       "repositoryUrl": "",
-      "changelog": "1.0.2: See collaborator presence in shared spreadsheets, share selected cells with AI, and reopen shared documents more reliably.\n1.0.1: Collaborative editing support, currency/percent/number cell formatting, and full ISO date rendering.",
+      "changelog": "1.1.3: Editing a shared spreadsheet in a browser no longer reports a save it did not make.\n1.1.2: A collaborator editing a cell stays visible while they type.\n1.1.1: Shared spreadsheets keep every edit.\n1.1.0: Formulas now compute live and survive a save, plus find and replace, per-column filters, selections that cross frozen columns, right-aligned numbers, and AI tools for analyzing data and applying formulas.\n1.0.2: See collaborator presence in shared spreadsheets, share selected cells with AI, and reopen shared documents more reliably.\n1.0.1: Collaborative editing support, currency/percent/number cell formatting, and full ISO date rendering.",
       "tagline": "Visual CSV editing with formulas and column formatting",
       "longDescription": "Open CSV and TSV files in a full spreadsheet interface with formula support, column resizing, frozen rows/columns, and sortable headers. Edit data visually while the underlying CSV stays clean and git-friendly. Toggle to source mode to see and edit the raw text.",
       "highlights": [
@@ -216,7 +216,7 @@
       "id": "com.nimbalyst.datamodellm",
       "name": "DatamodelLM",
       "description": "AI-assisted data modeling with visual entity-relationship diagrams",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst",
       "categories": [
         "data"
@@ -244,10 +244,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.datamodellm/1.0.2",
-      "checksum": "6f09392f3ace49c08b7548df67646c8621970a63111d3831b3e66b8aa987caa4",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.datamodellm/1.0.3",
+      "checksum": "618e13aa5247d419818f3eb770ced073d63a1f0a7eb70eb3516c304993ca7155",
       "repositoryUrl": "",
-      "changelog": "1.0.2: Share selected model elements with AI and reopen shared documents more reliably.\n1.0.1: Collaborative editing support, light-theme readability fixes, and more reliable external file edits.",
+      "changelog": "1.0.3: Shared data models keep every edit.\n1.0.2: Share selected model elements with AI and reopen shared documents more reliably.\n1.0.1: Collaborative editing support, light-theme readability fixes, and more reliable external file edits.",
       "tagline": "Visual database schema design with Prisma syntax",
       "longDescription": "Design database schemas visually as entity-relationship diagrams backed by real Prisma syntax. Drag entities around the canvas, define fields and relations, and switch to source mode to edit the Prisma schema directly. The AI can generate schemas from descriptions or modify existing ones.",
       "highlights": [
@@ -339,7 +339,7 @@
       "id": "com.nimbalyst.excalidraw",
       "name": "Excalidraw",
       "description": "Excalidraw diagram editor with AI-assisted editing",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst",
       "categories": [
         "diagrams"
@@ -367,10 +367,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.excalidraw/1.0.2",
-      "checksum": "d9bb5fe0814f7c2c8953c7c90aa559a7e84800543413bf91b7fe69904c03b0a9",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.excalidraw/1.0.3",
+      "checksum": "f15b16024218048509c71d6578c6ada9babec3e12b4ea58e7aa05491d693ca59",
       "repositoryUrl": "",
-      "changelog": "1.0.2: Share selected diagram elements with AI, with improved Mermaid imports and arrow labels.\n1.0.1: Shared-document collaboration fixes, Mermaid image import fix, and more reliable AI edits to open diagrams.",
+      "changelog": "1.0.3: Shared drawings keep every edit.\n1.0.2: Share selected diagram elements with AI, with improved Mermaid imports and arrow labels.\n1.0.1: Shared-document collaboration fixes, Mermaid image import fix, and more reliable AI edits to open diagrams.",
       "tagline": "Hand-drawn style diagrams with AI-assisted editing",
       "longDescription": "Create architecture diagrams, flowcharts, wireframes, and freeform sketches using the Excalidraw canvas. The AI can create and modify diagrams from natural language descriptions, import Mermaid syntax, and lay out complex systems visually. Switch between the visual canvas and source mode for direct JSON editing.",
       "highlights": [
@@ -617,7 +617,7 @@
       "id": "com.nimbalyst.mockuplm",
       "name": "MockupLM",
       "description": "Visual UX mockup creation with HTML/CSS for planning and design",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst",
       "categories": [
         "diagrams"
@@ -646,10 +646,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.mockuplm/1.0.2",
-      "checksum": "daab297d796d5ac3b7561b4f7481160c11908cf143a25caef39bf656b9a540a1",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.mockuplm/1.0.3",
+      "checksum": "1110e91d7c66ae451fc9241d19daadda8a9d30361a6e88413d3a2e8a15e31c17",
       "repositoryUrl": "",
-      "changelog": "1.0.2: Share selected mockup screens with AI and render shared mockup links more reliably.\n1.0.1: Share to Team collaboration for mockups and projects, shared viewer and diff review fixes.",
+      "changelog": "1.0.3: Shared mockups keep every edit and gain a source pane. Sharing a mockup project is turned off until its screens sync.\n1.0.2: Share selected mockup screens with AI and render shared mockup links more reliably.\n1.0.1: Share to Team collaboration for mockups and projects, shared viewer and diff review fixes.",
       "tagline": "AI-generated UI mockups rendered as live HTML/CSS",
       "longDescription": "Design UI mockups by describing what you want in natural language. The AI generates complete HTML/CSS mockups that render as live previews in the editor. Iterate on designs visually or switch to source mode to hand-edit the HTML. Great for planning features, communicating designs, and rapid prototyping.",
       "highlights": [
@@ -876,7 +876,7 @@
       "id": "com.nimbalyst.slides",
       "name": "Nimbalyst Slides",
       "description": "Presentation editor with live reveal.js preview",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "author": "Nimbalyst",
       "categories": [
         "diagrams"
@@ -898,10 +898,10 @@
         "ai"
       ],
       "minimumAppVersion": "1.0.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.slides/1.0.2",
-      "checksum": "4bf4614cd5d3b9f6fcec18c130e5199b8ada06f52915bed1853d646da5bd246e",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.slides/1.0.3",
+      "checksum": "b16e127c9593b2865c03920e7b86b41c4fc6af307c6d055782b144bb7640b8aa",
       "repositoryUrl": "",
-      "changelog": "1.0.2: Share the selected slide with AI and browse presentations in the shared viewer.\n1.0.1: Professional theme tier with grouped picker, and slide embeds in the transcript.",
+      "changelog": "1.0.3: Share a presentation with your team and edit it together in real time.\n1.0.2: Share the selected slide with AI and browse presentations in the shared viewer.\n1.0.1: Professional theme tier with grouped picker, and slide embeds in the transcript.",
       "tagline": "Presentation editor with live reveal.js preview",
       "longDescription": "Create slide decks in markdown with a split-view editor. Write your content on the left, see the live reveal.js presentation on the right. Supports 12 themes, transitions, speaker notes, and fragments.",
       "highlights": [

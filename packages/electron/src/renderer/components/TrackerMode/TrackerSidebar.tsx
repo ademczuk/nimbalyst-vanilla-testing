@@ -1,18 +1,33 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useAtomValue } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import type { TrackerIdentity, TrackerItemType } from '@nimbalyst/runtime';
 import { trackerDataLoadedAtom, trackerItemsArrayAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin';
 import type { TrackerDataModel, TrackerFilterSet } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import { generateKeyBetween } from '@nimbalyst/runtime/utils/fractionalIndex';
 import type { TrackerNavigationEntry, TrackerNavigationFolder, TrackerTypePlacement } from '@nimbalyst/runtime/sync';
-import type { TrackerFilterChip } from '../../store/atoms/trackers';
-import type { ViewMode } from './TrackerMainView';
+import {
+  setTrackerModeLayoutAtom,
+  trackerSidebarCollapsedSectionsAtom,
+  trackerSidebarExpandedFoldersAtom,
+  type TrackerFilterChip,
+} from '../../store/atoms/trackers';
+import type { TrackerViewMode } from './trackerViewModes';
 import type { SavedView } from './trackerSavedViews';
 import { WorkspaceSummaryHeader } from '../WorkspaceSummaryHeader';
 import { AlphaBadge } from '../common/AlphaBadge';
 import { FloatingPortal, useFloatingMenu, virtualElement } from '../../hooks/useFloatingMenu';
-import { buildTrackerNavigationTree } from './trackerNavigationTree';
+import {
+  buildTrackerNavigationTree,
+  partitionTrackerNavigationByOwnership,
+  type TrackerNavigationTree,
+  type TrackerOwnership,
+} from './trackerNavigationTree';
+import { toggleListEntry } from './trackerSidebarCollapse';
+import type { TrackerTeam } from './useTrackerTeamMembers';
+import type { OwnershipMember } from '../common/TrackerOwnershipChip';
+import { TrackerOwnershipSection } from './TrackerOwnershipSection';
+import { TrackerSavedViewsSection } from './TrackerSavedViewsSection';
 import { trackerSyncConnectionAtom } from '../../store/atoms/trackerSync';
 import { trackerSnoozedUntilByItemIdAtom } from '../../store/atoms/trackerPersonalState';
 import { countInboxItems, type InboxSignals } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
@@ -45,9 +60,13 @@ interface TrackerSidebarProps {
   personalStateHydrated: boolean;
   recentlyViewedDays: 7 | 30 | 90 | null;
   columnFilters: TrackerFilterSet | null;
-  viewMode: ViewMode;
+  /**
+   * The chosen mode, which may be one this shortcut row has no button for
+   * (`timeline`) -- Display Settings is the full control surface.
+   */
+  viewMode: TrackerViewMode;
   onSelectType: (type: string | 'all') => void;
-  onViewModeChange: (mode: ViewMode) => void;
+  onViewModeChange: (mode: TrackerViewMode) => void;
   /** Saved views for this workspace (NIM-788). */
   savedViews: SavedView[];
   /** View currently represented by the main header. */
@@ -60,6 +79,9 @@ interface TrackerSidebarProps {
   onToggleShareView: (view: SavedView) => void;
   onSaveNavigationEntry: (entry: TrackerNavigationEntry) => Promise<void>;
   onDeleteFolder: (folderId: string) => Promise<void>;
+  /** The workspace's team, or null for a solo user (no ownership sections at all). */
+  team: TrackerTeam | null;
+  teamMembers: OwnershipMember[];
 }
 
 interface SidebarCountProps {
@@ -189,6 +211,8 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
   onToggleShareView,
   onSaveNavigationEntry,
   onDeleteFolder,
+  team,
+  teamMembers,
 }) => {
   const trackerSyncConnection = useAtomValue(trackerSyncConnectionAtom);
   const isSharedLayout = !!workspacePath &&
@@ -196,7 +220,22 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
     trackerSyncConnection.projectId !== null;
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  // Collapse state lives in the persisted mode layout so it survives remounts
+  // and restarts (folders used to reset to all-collapsed on every remount).
+  const collapsedSections = useAtomValue(trackerSidebarCollapsedSectionsAtom);
+  const expandedFolderIds = useAtomValue(trackerSidebarExpandedFoldersAtom);
+  const setModeLayout = useSetAtom(setTrackerModeLayoutAtom);
+  const expandedFolders = useMemo(() => new Set(expandedFolderIds), [expandedFolderIds]);
+  const setFolderExpanded = (folderId: string, expanded: boolean) =>
+    setModeLayout({ expandedNavFolders: toggleListEntry(expandedFolderIds, folderId, expanded) });
+  const toggleSectionCollapsed = (ownership: TrackerOwnership) =>
+    setModeLayout({
+      collapsedOwnershipSections: toggleListEntry(
+        collapsedSections,
+        ownership,
+        !collapsedSections.includes(ownership),
+      ),
+    });
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [draggedEntryId, setDraggedEntryId] = useState<string | null>(null);
@@ -225,6 +264,13 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
     () => buildTrackerNavigationTree(trackerTypes, navigationEntries),
     [trackerTypes, navigationEntries],
   );
+  // Ownership is legible here or nowhere: this is where you pick what to work
+  // in. With no team there is nothing to distinguish, so the sections -- and
+  // every word about sharing -- stay away entirely.
+  const ownershipSections = useMemo(
+    () => partitionTrackerNavigationByOwnership(navigationTree, { hasTeam: team !== null }),
+    [navigationTree, team],
+  );
 
   const saveEntry = (entry: TrackerNavigationEntry) => {
     void onSaveNavigationEntry(entry).catch((error) => {
@@ -244,7 +290,7 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
       name,
       sortKey: generateKeyBetween(lastKey, null),
     });
-    setExpandedFolders((current) => new Set(current).add(folderId));
+    setFolderExpanded(folderId, true);
     setNewFolderName('');
     setCreatingFolder(false);
   };
@@ -439,68 +485,14 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
 
       <div className="flex-1 overflow-y-auto">
         {/* Saved Views Section (NIM-788) */}
-        <div className="px-2 pt-2 pb-1" data-testid="tracker-saved-views">
-          <div className="flex items-center justify-between px-1 mb-1.5">
-            <span className="text-[10px] font-semibold text-nim-faint uppercase tracking-wider">
-              Saved Views
-            </span>
-          </div>
-
-          {savedViews.length === 0 ? (
-            <div className="px-1 text-[10px] text-nim-faint italic">
-              Saved views will appear here.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-0.5">
-              {savedViews.map((view) => (
-                <div
-                  key={view.id}
-                  className={`group flex items-center gap-1 rounded-md ${
-                    activeSavedViewId === view.id ? 'bg-nim-active' : 'hover:bg-nim-tertiary'
-                  }`}
-                  data-testid="tracker-saved-view-item"
-                >
-                  <button
-                    className="flex-1 flex items-center gap-2 px-2 py-1.5 text-left text-[12px] text-nim-muted hover:text-nim min-w-0"
-                    onClick={() => onApplyView(view)}
-                    title={`Apply view: ${view.name}`}
-                  >
-                    <MaterialSymbol icon="bookmark" size={13} className="shrink-0" />
-                    <span className="flex-1 truncate">{view.name}</span>
-                    {view.shared && (
-                      <MaterialSymbol
-                        icon="group"
-                        size={12}
-                        className="shrink-0 text-nim-faint"
-                        title="Shared with this team"
-                      />
-                    )}
-                  </button>
-                  {isSharedLayout && (
-                    <button
-                      className={view.shared
-                        ? 'px-1.5 text-[var(--nim-primary)]'
-                        : 'opacity-0 group-hover:opacity-100 px-1.5 text-nim-faint hover:text-nim transition-opacity'}
-                      onClick={() => onToggleShareView(view)}
-                      title={view.shared ? 'Stop sharing with the team' : 'Share view with the team'}
-                      data-testid="tracker-saved-view-share"
-                    >
-                      <MaterialSymbol icon={view.shared ? 'group' : 'group_add'} size={13} />
-                    </button>
-                  )}
-                  <button
-                    className="opacity-0 group-hover:opacity-100 px-1.5 text-nim-faint hover:text-[#ef4444] transition-opacity"
-                    onClick={() => onDeleteView(view)}
-                    title={view.shared ? 'Delete view for the whole team' : 'Delete view'}
-                    data-testid="tracker-saved-view-delete"
-                  >
-                    <MaterialSymbol icon="close" size={13} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <TrackerSavedViewsSection
+          savedViews={savedViews}
+          activeSavedViewId={activeSavedViewId}
+          isSharedLayout={isSharedLayout}
+          onApplyView={onApplyView}
+          onDeleteView={onDeleteView}
+          onToggleShareView={onToggleShareView}
+        />
 
         {/* Types Section */}
         <div className="px-1.5 py-2 border-t border-nim mt-1">
@@ -581,114 +573,20 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
             <span className="flex-1 text-left truncate">All</span>
           </button>
 
-          {navigationTree.folders.map(({ folder, trackerTypes: folderTypes }) => {
-            const expanded = expandedFolders.has(folder.folderId);
-            const renaming = renamingFolderId === folder.folderId;
-            return (
-              <React.Fragment key={folder.entryId}>
-                <div
-                  draggable={!renaming}
-                  data-testid="tracker-folder-row"
-                  data-folder-id={folder.folderId}
-                  className="group flex items-center gap-1 w-full px-1 py-1 rounded-md text-sm text-nim-muted hover:bg-nim-tertiary hover:text-nim"
-                  onDragStart={(event) => {
-                    setDraggedEntryId(folder.entryId);
-                    event.dataTransfer.effectAllowed = 'move';
-                    event.dataTransfer.setData('text/plain', folder.entryId);
-                  }}
-                  onDragEnd={() => setDraggedEntryId(null)}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    if (draggedEntry?.kind === 'type-placement') {
-                      appendTypeToFolder(draggedEntry, folder.folderId);
-                      setExpandedFolders((current) => new Set(current).add(folder.folderId));
-                    } else if (draggedEntry?.kind === 'folder' && draggedEntry.entryId !== folder.entryId) {
-                      insertFolderBefore(draggedEntry, folder);
-                    }
-                    setDraggedEntryId(null);
-                  }}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    setContextPoint({ x: event.clientX, y: event.clientY });
-                    setContextFolder(folder);
-                  }}
-                >
-                  <button
-                    className="flex items-center justify-center w-4 h-5 shrink-0"
-                    title={expanded ? 'Collapse folder' : 'Expand folder'}
-                    onClick={() => setExpandedFolders((current) => {
-                      const next = new Set(current);
-                      if (expanded) next.delete(folder.folderId);
-                      else next.add(folder.folderId);
-                      return next;
-                    })}
-                  >
-                    <MaterialSymbol icon={expanded ? 'expand_more' : 'chevron_right'} size={15} />
-                  </button>
-                  <MaterialSymbol icon={expanded ? 'folder_open' : 'folder'} size={16} />
-                  {renaming ? (
-                    <input
-                      autoFocus
-                      value={renameValue}
-                      onChange={(event) => setRenameValue(event.target.value)}
-                      onKeyDown={(event) => {
-                        event.stopPropagation();
-                        if (event.key === 'Enter') commitRenameFolder(folder);
-                        if (event.key === 'Escape') setRenamingFolderId(null);
-                      }}
-                      onBlur={() => {
-                        setRenamingFolderId(null);
-                        setRenameValue('');
-                      }}
-                      className="min-w-0 flex-1 px-1 py-0.5 text-xs bg-nim border border-nim-focus rounded text-nim outline-none"
-                    />
-                  ) : (
-                    <button
-                      className="min-w-0 flex-1 text-left truncate"
-                      onClick={() => setExpandedFolders((current) => {
-                        const next = new Set(current);
-                        if (expanded) next.delete(folder.folderId);
-                        else next.add(folder.folderId);
-                        return next;
-                      })}
-                    >
-                      {folder.name}
-                    </button>
-                  )}
-                  <span className="text-[10px] font-semibold text-nim-faint min-w-[20px] text-right">
-                    <SidebarFolderCount
-                      types={folderTypes.map((row) => row.tracker.type)}
-                      activeFilters={activeFilters}
-                      tagFilter={tagFilter}
-                      sourceFilter={sourceFilter}
-                      currentIdentity={currentIdentity}
-                      favoriteItemIds={favoriteItemIds}
-                      viewedAtByItemId={viewedAtByItemId}
-                      personalStateHydrated={personalStateHydrated}
-                      recentlyViewedDays={recentlyViewedDays}
-                      columnFilters={columnFilters}
-                      nowMs={filterClockMs}
-                    />
-                  </span>
-                  <button
-                    className="opacity-0 group-hover:opacity-100 text-nim-faint hover:text-nim"
-                    title="Folder actions"
-                    onClick={(event) => {
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      setContextPoint({ x: rect.right, y: rect.bottom });
-                      setContextFolder(folder);
-                    }}
-                  >
-                    <MaterialSymbol icon="more_horiz" size={14} />
-                  </button>
-                </div>
-                {expanded && folderTypes.map(({ tracker, placement }) => renderTypeRow(tracker, placement, true))}
-              </React.Fragment>
-            );
-          })}
-
-          {navigationTree.rootTypes.map(({ tracker, placement }) => renderTypeRow(tracker, placement))}
+          {ownershipSections === null
+            ? renderNavigationTree(navigationTree)
+            : ownershipSections.map((section) => (
+              <TrackerOwnershipSection
+                key={section.ownership}
+                ownership={section.ownership}
+                teamName={team?.name}
+                members={teamMembers}
+                collapsed={collapsedSections.includes(section.ownership)}
+                onToggleCollapsed={() => toggleSectionCollapsed(section.ownership)}
+              >
+                {renderNavigationTree(section.tree)}
+              </TrackerOwnershipSection>
+            ))}
         </div>
       </div>
 
@@ -705,7 +603,7 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
               onClick={() => {
                 setRenamingFolderId(contextFolder.folderId);
                 setRenameValue(contextFolder.name);
-                setExpandedFolders((current) => new Set(current).add(contextFolder.folderId));
+                setFolderExpanded(contextFolder.folderId, true);
                 setContextFolder(null);
               }}
             >
@@ -730,4 +628,110 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
       )}
     </div>
   );
+
+  /** Folders and their trackers, rendered the same way inside or outside a section. */
+  function renderNavigationTree(tree: TrackerNavigationTree) {
+    return (
+      <>
+        {tree.folders.map(({ folder, trackerTypes: folderTypes }) => {
+          const expanded = expandedFolders.has(folder.folderId);
+          const renaming = renamingFolderId === folder.folderId;
+          return (
+            <React.Fragment key={folder.entryId}>
+              <div
+                draggable={!renaming}
+                data-testid="tracker-folder-row"
+                data-folder-id={folder.folderId}
+                className="group flex items-center gap-1 w-full px-1 py-1 rounded-md text-sm text-nim-muted hover:bg-nim-tertiary hover:text-nim"
+                onDragStart={(event) => {
+                  setDraggedEntryId(folder.entryId);
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/plain', folder.entryId);
+                }}
+                onDragEnd={() => setDraggedEntryId(null)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (draggedEntry?.kind === 'type-placement') {
+                    appendTypeToFolder(draggedEntry, folder.folderId);
+                    setFolderExpanded(folder.folderId, true);
+                  } else if (draggedEntry?.kind === 'folder' && draggedEntry.entryId !== folder.entryId) {
+                    insertFolderBefore(draggedEntry, folder);
+                  }
+                  setDraggedEntryId(null);
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setContextPoint({ x: event.clientX, y: event.clientY });
+                  setContextFolder(folder);
+                }}
+              >
+                <button
+                  className="flex items-center justify-center w-4 h-5 shrink-0"
+                  title={expanded ? 'Collapse folder' : 'Expand folder'}
+                  onClick={() => setFolderExpanded(folder.folderId, !expanded)}
+                >
+                  <MaterialSymbol icon={expanded ? 'expand_more' : 'chevron_right'} size={15} />
+                </button>
+                <MaterialSymbol icon={expanded ? 'folder_open' : 'folder'} size={16} />
+                {renaming ? (
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={(event) => setRenameValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      event.stopPropagation();
+                      if (event.key === 'Enter') commitRenameFolder(folder);
+                      if (event.key === 'Escape') setRenamingFolderId(null);
+                    }}
+                    onBlur={() => {
+                      setRenamingFolderId(null);
+                      setRenameValue('');
+                    }}
+                    className="min-w-0 flex-1 px-1 py-0.5 text-xs bg-nim border border-nim-focus rounded text-nim outline-none"
+                  />
+                ) : (
+                  <button
+                    className="min-w-0 flex-1 text-left truncate"
+                    onClick={() => setFolderExpanded(folder.folderId, !expanded)}
+                  >
+                    {folder.name}
+                  </button>
+                )}
+                <span className="text-[10px] font-semibold text-nim-faint min-w-[20px] text-right">
+                  <SidebarFolderCount
+                    types={folderTypes.map((row) => row.tracker.type)}
+                    activeFilters={activeFilters}
+                    tagFilter={tagFilter}
+                    sourceFilter={sourceFilter}
+                    currentIdentity={currentIdentity}
+                    favoriteItemIds={favoriteItemIds}
+                    viewedAtByItemId={viewedAtByItemId}
+                    personalStateHydrated={personalStateHydrated}
+                    recentlyViewedDays={recentlyViewedDays}
+                    columnFilters={columnFilters}
+                    nowMs={filterClockMs}
+                  />
+                </span>
+                <button
+                  className="opacity-0 group-hover:opacity-100 text-nim-faint hover:text-nim"
+                  title="Folder actions"
+                  onClick={(event) => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    setContextPoint({ x: rect.right, y: rect.bottom });
+                    setContextFolder(folder);
+                  }}
+                >
+                  <MaterialSymbol icon="more_horiz" size={14} />
+                </button>
+              </div>
+              {expanded && folderTypes.map(({ tracker, placement }) => renderTypeRow(tracker, placement, true))}
+            </React.Fragment>
+          );
+        })}
+
+        {tree.rootTypes.map(({ tracker, placement }) => renderTypeRow(tracker, placement))}
+      </>
+    );
+  }
 };

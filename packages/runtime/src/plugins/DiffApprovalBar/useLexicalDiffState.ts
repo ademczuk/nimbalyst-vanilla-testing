@@ -20,7 +20,8 @@ import {
   scrollToChangeGroup,
   type DiffChangeGroup,
   $getDiffState,
-  $hasDiffNodes
+  $hasDiffNodes,
+  $clearResidualDiffMarkers
 } from '../../editor';
 
 const HIGHLIGHT_CLASS_REMOVED = 'diff-group-highlight-removed';
@@ -319,6 +320,11 @@ export function useLexicalDiffState(editor: LexicalEditor | undefined): LexicalD
       const hasDiff = $hasDiffNodes(editor);
 
       if (updatedGroups.length === 0 || !hasDiff) {
+        // Nothing actionable is left, so anything still marked is a container
+        // marker no group could name. Sweep it before the bar dismisses --
+        // otherwise it stays painted, and in a shared doc it persists in the
+        // Y.Doc and stacks up on every later turn (#2612).
+        $clearResidualDiffMarkers(editor);
         editor.dispatchCommand(CLEAR_DIFF_TAG_COMMAND, undefined);
         return;
       }
@@ -358,6 +364,8 @@ export function useLexicalDiffState(editor: LexicalEditor | undefined): LexicalD
       const hasDiff = $hasDiffNodes(editor);
 
       if (updatedGroups.length === 0 || !hasDiff) {
+        // See acceptCurrent: sweep container markers no group could name.
+        $clearResidualDiffMarkers(editor);
         editor.dispatchCommand(CLEAR_DIFF_TAG_COMMAND, undefined);
         return;
       }

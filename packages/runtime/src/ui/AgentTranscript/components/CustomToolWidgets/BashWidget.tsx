@@ -177,7 +177,7 @@ function getOutputSummary(output: string | null): string | null {
   return `${lines.length} lines`;
 }
 
-export const BashWidget: React.FC<CustomToolWidgetProps> = ({ message, isExpanded, onToggle, workspacePath }) => {
+export const BashWidget: React.FC<CustomToolWidgetProps> = ({ message, isExpanded, onToggle, workspacePath, loadToolCallDiffs }) => {
   const [copied, setCopied] = useState(false);
   const [outputExpanded, setOutputExpanded] = useState(false);
 
@@ -411,12 +411,13 @@ export const BashWidget: React.FC<CustomToolWidgetProps> = ({ message, isExpande
       )}
 
       {/* File changes caused by this tool call */}
-      {tool.fileDiffs && tool.fileDiffs.length > 0 && (
+      {((tool.fileDiffs && tool.fileDiffs.length > 0) || loadToolCallDiffs) && (
         <div className="px-2 pb-2">
           <ToolCallChanges
             diffs={tool.fileDiffs}
             isExpanded={isExpanded}
             workspacePath={workspacePath}
+            loadDiffs={loadToolCallDiffs}
           />
         </div>
       )}

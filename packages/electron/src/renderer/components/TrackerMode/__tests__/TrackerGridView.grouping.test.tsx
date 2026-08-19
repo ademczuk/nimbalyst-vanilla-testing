@@ -100,6 +100,7 @@ describe('TrackerGridView grouping', () => {
     render(
       <TrackerGridView
         filterType="bug"
+        groupBy="status"
         overrideItems={[
           record('bug-1', 'in-progress'),
           record('bug-2', 'done'),
@@ -107,7 +108,6 @@ describe('TrackerGridView grouping', () => {
         columnConfig={{
           visibleColumns: ['title', 'status', 'priority'],
           columnWidths: {},
-          groupBy: 'status',
         }}
       />,
     );
@@ -145,12 +145,13 @@ describe('TrackerGridView sorting', () => {
         columnConfig={{
           visibleColumns: ['title', 'status', 'priority'],
           columnWidths: {},
-          groupBy: null,
         }}
       />,
     );
 
-    await waitFor(() => expect(gridElement.columns).toHaveLength(3));
+    await waitFor(() => expect(gridElement.columns).toEqual(expect.arrayContaining([
+      expect.objectContaining({ prop: 'status', sortable: true }),
+    ])));
     const statusColumn = gridElement.columns.find(
       (column: Record<string, unknown>) => column.prop === 'status',
     );

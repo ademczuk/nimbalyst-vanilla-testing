@@ -25,6 +25,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0, // No retries -- agent handles failures directly
+  maxFailures: process.env.CI ? 0 : 1, // Stop at the first failure; fix it, then re-run
   timeout: 30000,
   reporter: [
     ['json', { outputFile: path.join(outputDir, 'results.json') }],

@@ -130,6 +130,25 @@ describe('viewer identity', () => {
     expect(resolveViewerMemberId(members, [null, undefined])).toBeNull();
   });
 
+  // NIM-2459: with both accounts on the roster the viewer used to be whichever
+  // row the server listed first, so a DM titled itself after the viewer.
+  it('picks the sync account when two signed-in accounts are both on the roster', () => {
+    const both = ['karl@example.com', 'greg@example.com'];
+    expect(resolveViewerMemberId(members, both, 'karl@example.com')).toBe('member-b');
+    expect(resolveViewerMemberId(members, both, 'greg@example.com')).toBe('member-a');
+
+    const dm = descriptor({ id: 'dm-1', kind: 'dm', title: undefined });
+    const names = memberNamesById(members);
+    expect(buildRoomHeader(dm, {
+      dmParticipants: ['member-a', 'member-b'],
+      memberNames: names,
+      viewerUserId: resolveViewerMemberId(members, both, 'karl@example.com') ?? undefined,
+    }).title).toBe('Greg Hinkle');
+
+    // A sync account off this roster still falls back to first-match.
+    expect(resolveViewerMemberId(members, both, 'elsewhere@example.com')).toBe('member-a');
+  });
+
   it('names members by display name, falling back to email', () => {
     expect(memberNamesById([
       ...members,

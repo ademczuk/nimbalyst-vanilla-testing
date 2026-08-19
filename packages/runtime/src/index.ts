@@ -98,16 +98,27 @@ export type {
   TrackerItemPriority,
   TrackerPluginProps,
   TrackerDataModel,
-  TrackerSyncPolicy,
-  TrackerSyncMode,
+  TrackerSharing,
+  TrackerSharingPolicy,
   TrackerSchemaRole,
   FieldDefinition,
   DocumentHeaderProvider,
   DocumentHeaderComponentProps,
 } from './plugins/TrackerPlugin';
 // Canonical TrackerRecord type
-export type { TrackerRecord, TrackerRecordSystem, LinkedCommit } from './core/TrackerRecord';
+export type { TrackerRecord, TrackerRecordSystem, LinkedCommit, TrackerDerivedSignal } from './core/TrackerRecord';
 export { trackerItemToRecord, trackerRecordToItem, dbRowToRecord, recordToDbParams } from './core/TrackerRecord';
+export {
+  PLAN_INVALID_STATUS_SIGNAL_KIND,
+  PLAN_STATUS_DRIFT_SIGNAL_KIND,
+  derivePlanStatusSignals,
+  normalizePlanStatusForProjection,
+} from './plugins/TrackerPlugin/models/planStatusIntegrity';
+export type {
+  InvalidPlanStatusSignal,
+  PlanStatusDriftSignal,
+  StalePlanStatus,
+} from './plugins/TrackerPlugin/models/planStatusIntegrity';
 // Generic Frontmatter Plugin
 // Import triggers registration with DocumentHeaderRegistry (priority 50, below tracker's 100)
 export {
@@ -195,6 +206,7 @@ export * from './editors';
 // Sync types (for capacitor)
 export type { SessionIndexEntry } from './sync/types';
 export * from './sync/ConversationSync';
+export * from './sync/FeedbackRequestSync';
 // Read receipts (unread indicators for trackers/docs)
 export {
   isEntityUnread,

@@ -26,4 +26,21 @@ describe('getCommentToolbarActions', () => {
       undefined,
     );
   });
+
+  it('withholds the comment action from a host that reports no comment capability', () => {
+    const editor = { dispatchCommand: vi.fn() };
+    const capabilities = { read: true, comment: false };
+    const comments = {
+      getCapabilities: () => capabilities,
+    } as unknown as CommentsConfig;
+
+    // A viewer's comment is rejected server-side, so the affordance must not
+    // reach them at all.
+    expect(getCommentToolbarActions(comments, editor)).toEqual([]);
+
+    // Resolved per call, not snapshotted: regaining access restores the action
+    // without the host having to rebuild the config object.
+    capabilities.comment = true;
+    expect(getCommentToolbarActions(comments, editor)).toHaveLength(1);
+  });
 });

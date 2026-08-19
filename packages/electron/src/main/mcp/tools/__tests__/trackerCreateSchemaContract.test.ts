@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -29,7 +30,7 @@ vi.mock('../../../services/TrackerIdentityService', () => ({
 }));
 
 vi.mock('../../../services/TrackerPolicyService', () => ({
-  getEffectiveTrackerSyncPolicy: vi.fn(() => ({ mode: 'local', scope: 'project' })),
+  getEffectiveTrackerSharingPolicy: vi.fn(() => ({ sharing: 'personal', draftByDefault: false })),
   getInitialTrackerSyncStatus: vi.fn(() => 'local'),
   shouldSyncTrackerItem: vi.fn(() => false),
 }));
@@ -84,18 +85,17 @@ function makeRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function setupCreateQueue(type: string) {
+function setupCreateQueue(type: string, hasDescription = false) {
   const createdRow = makeRow({ id: `${type}_test`, type, type_tags: [type], workspace: '/tmp/ws' });
-  const keyedRow = { ...createdRow, issue_key: 'NIM-1', issue_number: 1 };
   mockQuery
     .mockResolvedValueOnce({ rows: [] }) // INSERT
-    .mockResolvedValueOnce({ rows: [createdRow] }) // resolve created
-    .mockResolvedValueOnce({ rows: [{ max_num: 0 }] }) // MAX(issue_number)
-    .mockResolvedValueOnce({ rows: [] }) // UPDATE issue_key
-    .mockResolvedValueOnce({ rows: [keyedRow] }) // re-resolve
-    .mockResolvedValueOnce({ rows: [{ body_version: 1 }] }) // UPDATE content (description path)
-    .mockResolvedValueOnce({ rows: [] }) // INSERT tracker_body_cache
-    .mockResolvedValueOnce({ rows: [keyedRow] }); // notifyTrackerItemAdded
+    .mockResolvedValueOnce({ rows: [createdRow] }); // resolve created
+  if (hasDescription) {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ body_version: 1 }] }) // UPDATE content
+      .mockResolvedValueOnce({ rows: [] }); // INSERT tracker_body_cache
+  }
+  mockQuery.mockResolvedValueOnce({ rows: [createdRow] }); // notifyTrackerItemAdded
 }
 
 /** The data JSONB handed to the INSERT. */
@@ -116,7 +116,7 @@ beforeEach(() => {
 
 describe('tracker_create honors the builtin schema contract (real schemas)', () => {
   it('creates a decision with exactly the docs/TRACKER_WORKFLOWS.md arguments', async () => {
-    setupCreateQueue('decision');
+    setupCreateQueue('decision', true);
     // Verbatim shape from docs/TRACKER_WORKFLOWS.md "Decision Tracking".
     const result = await handleTrackerCreate(
       {

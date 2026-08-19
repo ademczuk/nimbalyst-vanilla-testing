@@ -59,6 +59,7 @@ import type {
   TrackerSavedViewDeltaMessage,
   TrackerSavedViewMutationAckMessage,
   TrackerRoomMovedMessage,
+  TrackerErrorMessage,
 } from './trackerProtocol';
 import { SYNC_ID_INITIAL, buildTrackerRoomId } from './trackerProtocol';
 import { appendSyncClientParams } from './syncClientInfo';
@@ -70,6 +71,7 @@ import {
   decodeTrackerSavedViewEnvelopePlaintext,
 } from './TrackerEnvelopeCrypto';
 import type { TrackerPersistence, TrackerRowSnapshot } from './trackerPersistence';
+import type { TeamJwt, TeamMemberId } from '../auth/jwtScopes';
 
 // ============================================================================
 // Public types
@@ -107,6 +109,15 @@ export interface RejectedTrackerMutation {
   rejection: NonNullable<TrackerTransactionRow['lastRejection']>;
 }
 
+export interface TrackerConfigSetResult {
+  success: boolean;
+  config?: TrackerRoomConfig;
+  code?: string;
+  message?: string;
+  conflictingProjectName?: string;
+  suggestedPrefix?: string;
+}
+
 export interface TrackerSchemaLocalChange {
   type: string;
   /** JSON-serialized TrackerDataModel, or null for a tombstone. */
@@ -122,7 +133,8 @@ export interface AppliedTrackerSchema {
 }
 
 export interface TrackerSchemaSyncHooks {
-  getMaxSyncId: () => Promise<SyncId>;
+  // No `getMaxSyncId`: schemas bootstrap from zero every connect so the server's
+  // definition can repair a diverged row. See runSchemaBootstrap (#1178).
   listUnsynced: () => Promise<TrackerSchemaLocalChange[]>;
   applyRemote: (def: { type: string; model: string | null; syncId: SyncId }) => Promise<unknown>;
 }
@@ -171,8 +183,8 @@ export interface TrackerSyncEngineConfig {
    */
   teamProjectId: string;
 
-  /** The current user's ID (informational; not used in auth). */
-  userId: string;
+  /** The current user's member id in this team organization. */
+  teamMemberId: TeamMemberId;
 
   /** PGLite (or in-memory test) storage seam. */
   persistence: TrackerPersistence;
@@ -197,7 +209,7 @@ export interface TrackerSyncEngineConfig {
    * during reconnect retries -- the JWT can expire during long
    * disconnections.
    */
-  getJwt: () => Promise<string>;
+  getJwt: () => Promise<TeamJwt>;
 
   // --- Observers (all optional) -------------------------------------------
 
@@ -212,6 +224,9 @@ export interface TrackerSyncEngineConfig {
 
   /** Fires when a mutation was rejected and rolled back. */
   onRejection?: (rejection: RejectedTrackerMutation) => void;
+
+  /** Fires for server diagnostics that are not item-mutation acknowledgements. */
+  onServerError?: (error: TrackerErrorMessage) => void;
 
   /** Fires for every applied schema definition (remote OR self-originated ack). */
   onSchemaApplied?: (schema: AppliedTrackerSchema) => void;
@@ -245,6 +260,13 @@ export interface TrackerSyncEngineConfig {
    * or the `partysocket` reconnecting client used elsewhere.
    */
   createWebSocket?: (url: string) => WebSocket;
+
+  /**
+   * How long the schema bootstrap waits for one `trackerSchemaSyncResponse`
+   * before giving up on the schema lane. Defaults to
+   * {@link SCHEMA_BOOTSTRAP_TIMEOUT_MS}; tests shorten it.
+   */
+  schemaBootstrapTimeoutMs?: number;
 }
 
 // ============================================================================
@@ -257,6 +279,20 @@ const RECONNECT_MAX_MS = 30_000;
 
 /** Keep-alive cadence. */
 const PING_INTERVAL_MS = 30_000;
+
+/**
+ * How long the schema bootstrap waits for a `trackerSchemaSyncResponse`.
+ *
+ * The schema lane runs BEFORE items so the team's definitions are in place when
+ * rows land -- which also means an unanswered `trackerSchemaSync` (a server too
+ * old to implement it, say) would hang the whole bootstrap and leave a fresh
+ * client with an empty tracker. Bounded, the same failure degrades to "items
+ * load, schemas are whatever this machine already knows".
+ */
+const SCHEMA_BOOTSTRAP_TIMEOUT_MS = 15_000;
+
+/** Thrown by a bootstrap request whose response never arrived. */
+class SyncRequestTimeoutError extends Error {}
 
 // ============================================================================
 // TrackerSyncEngine
@@ -290,6 +326,12 @@ export class TrackerSyncEngine {
   private readonly rollbackSnapshots = new Map<string, {
     itemId: string;
     snapshot: TrackerRowSnapshot;
+  }>();
+
+  private readonly pendingConfigChanges = new Map<string, {
+    requestedPrefix: string;
+    resolve: (result: TrackerConfigSetResult) => void;
+    timer: ReturnType<typeof setTimeout>;
   }>();
 
   constructor(config: TrackerSyncEngineConfig) {
@@ -377,6 +419,11 @@ export class TrackerSyncEngine {
     }
     this.connecting = false;
     this.synced = false;
+    this.resolvePendingConfigChanges({
+      success: false,
+      code: 'disconnected',
+      message: 'Tracker sync disconnected before the prefix change was confirmed.',
+    });
     this.setStatus('disconnected');
   }
 
@@ -437,11 +484,42 @@ export class TrackerSyncEngine {
    * via `trackerConfigBroadcast` -- the engine surfaces it through
    * `onConfigChange`.
    */
-  setIssueKeyPrefix(prefix: string): void {
-    this.send({
-      type: 'trackerSetConfig',
-      key: 'issueKeyPrefix',
-      value: prefix,
+  setIssueKeyPrefix(
+    prefix: string,
+    assignmentMode: 'auto' | 'explicit' = 'explicit',
+  ): Promise<TrackerConfigSetResult> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return Promise.resolve({
+        success: false,
+        code: 'disconnected',
+        message: 'Tracker sync must be connected before changing the issue-key prefix.',
+      });
+    }
+    const clientMutationId = generateClientMutationId();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingConfigChanges.delete(clientMutationId);
+        resolve({
+          success: false,
+          code: 'timeout',
+          message: 'Timed out waiting for the server to confirm the issue-key prefix.',
+        });
+      }, 5_000);
+      (timer as { unref?: () => void }).unref?.();
+      this.pendingConfigChanges.set(clientMutationId, { requestedPrefix: prefix, resolve, timer });
+      try {
+        this.send({
+          type: 'trackerSetConfig',
+          key: 'issueKeyPrefix',
+          value: prefix,
+          clientMutationId,
+          assignmentMode,
+        });
+      } catch (error) {
+        clearTimeout(timer);
+        this.pendingConfigChanges.delete(clientMutationId);
+        resolve({ success: false, code: 'sendFailed', message: error instanceof Error ? error.message : String(error) });
+      }
     });
   }
 
@@ -451,6 +529,8 @@ export class TrackerSyncEngine {
 
   private async runBootstrap(): Promise<void> {
     try {
+      await this.runSchemaBootstrap();
+
       let cursor: SyncId = await this.persistence.getMaxSyncId();
       // Loop while the server says it has more rows. SYNC_ID_INITIAL (0)
       // is the "send me everything" sentinel.
@@ -483,10 +563,12 @@ export class TrackerSyncEngine {
       ) {
         // WebSocket messages are ordered, so the config reaches the room
         // before replayPending can ask it to allocate the first issue key.
-        this.setIssueKeyPrefix(desiredPrefix);
+        const result = await this.setIssueKeyPrefix(desiredPrefix, 'auto');
+        if (!result.success) {
+          console.warn(`[TrackerSync] automatic issue-key prefix assignment failed: ${result.message ?? result.code}`);
+        }
       }
 
-      await this.runSchemaBootstrap();
       await this.runNavigationBootstrap();
       await this.runSavedViewBootstrap();
 
@@ -521,32 +603,62 @@ export class TrackerSyncEngine {
         resolve(msg);
       };
       this.ws.addEventListener('message', handler);
-      this.send({ type: 'trackerSync', sinceSyncId });
+      this.send({
+        type: 'trackerSync',
+        sinceSyncId,
+        ...(sinceSyncId === SYNC_ID_INITIAL && this.config.initializeIssueKeyPrefix
+          ? { initializeIssueKeyPrefix: this.config.initializeIssueKeyPrefix }
+          : {}),
+      });
     });
   }
 
+  /**
+   * Bootstrap schemas from ZERO, not from the local cursor.
+   *
+   * Items page from `MAX(sync_id)` because there can be tens of thousands of
+   * them. Schemas are a handful of rows, and an incremental cursor makes the
+   * client unrepairable: one workspace-wide MAX means any type whose version
+   * sits BELOW the cursor is never re-sent, so a row that was clobbered or
+   * never applied stays stale forever with no way back (#1178). A full snapshot
+   * every connect is cheap and makes the server's definition self-healing --
+   * `applyRemote` is version-gated and content-gated, so re-delivering what we
+   * already have is a no-op.
+   */
   private async runSchemaBootstrap(): Promise<void> {
     const hooks = this.config.schemaSync;
     if (!hooks) return;
 
-    let cursor: SyncId = await hooks.getMaxSyncId();
-    console.info(`[TrackerSchemaSync] bootstrap start since sync_id=${cursor}`);
+    let cursor: SyncId = 0 as SyncId;
+    console.info('[TrackerSchemaSync] bootstrap start (full snapshot since sync_id=0)');
 
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const response = await this.requestSchemaSync(cursor);
-      console.info(
-        `[TrackerSchemaSync] bootstrap batch: ${response.schemas.length} schema(s), cursor=${response.cursorSyncId}, hasMore=${response.hasMore}`,
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const response = await this.requestSchemaSync(cursor);
+        console.info(
+          `[TrackerSchemaSync] bootstrap batch: ${response.schemas.length} schema(s), cursor=${response.cursorSyncId}, hasMore=${response.hasMore}`,
+        );
+
+        await this.applySchemaBootstrapBatch(response);
+        cursor = response.cursorSyncId;
+        if (!response.hasMore) break;
+      }
+    } catch (err) {
+      if (!(err instanceof SyncRequestTimeoutError)) throw err;
+      // Degrade, don't abort: this lane runs ahead of the item bootstrap, and
+      // aborting here would trade "schemas are stale" for "the tracker is
+      // empty". The next connect re-requests the full snapshot anyway.
+      console.warn(
+        `[TrackerSchemaSync] ${err.message}; continuing with locally-known schemas`,
       );
-
-      await this.applySchemaBootstrapBatch(response);
-      cursor = response.cursorSyncId;
-      if (!response.hasMore) break;
+      return;
     }
     console.info(`[TrackerSchemaSync] bootstrap complete at sync_id=${cursor}`);
   }
 
   private requestSchemaSync(sinceSyncId: SyncId): Promise<TrackerSchemaSyncResponseMessage> {
+    const timeoutMs = this.config.schemaBootstrapTimeoutMs ?? SCHEMA_BOOTSTRAP_TIMEOUT_MS;
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         reject(new Error('WebSocket not open'));
@@ -555,9 +667,17 @@ export class TrackerSyncEngine {
       const handler = (event: MessageEvent) => {
         const msg = parseServerMessage(event.data);
         if (!msg || msg.type !== 'trackerSchemaSyncResponse') return;
+        clearTimeout(timer);
         this.ws?.removeEventListener('message', handler);
         resolve(msg);
       };
+      const timer = setTimeout(() => {
+        this.ws?.removeEventListener('message', handler);
+        reject(new SyncRequestTimeoutError(
+          `schema bootstrap timed out after ${timeoutMs}ms waiting for trackerSchemaSyncResponse`,
+        ));
+      }, timeoutMs);
+      (timer as { unref?: () => void }).unref?.();
       this.ws.addEventListener('message', handler);
       this.send({ type: 'trackerSchemaSync', sinceSyncId });
     });
@@ -733,9 +853,7 @@ export class TrackerSyncEngine {
         this.handleRoomMoved(msg);
         break;
       case 'trackerError':
-        // Server-level error (not tied to a specific mutation). Surface as
-        // a status transition; the connection stays open.
-        this.setStatus('error');
+        this.handleServerError(msg);
         break;
       case 'trackerSyncResponse':
         // The bootstrap loop owns these via its inline `requestSync`
@@ -850,6 +968,52 @@ export class TrackerSyncEngine {
 
   private handleConfigBroadcast(msg: TrackerConfigBroadcastMessage): void {
     this.config.onConfigChange?.(msg.config);
+    for (const [id, pending] of this.pendingConfigChanges) {
+      if (
+        pending.requestedPrefix === msg.config.issueKeyPrefix ||
+        pending.requestedPrefix === msg.config.issueKeyPrefixAssignment?.requestedPrefix
+      ) {
+        clearTimeout(pending.timer);
+        this.pendingConfigChanges.delete(id);
+        pending.resolve({ success: true, config: msg.config });
+      }
+    }
+  }
+
+  private handleServerError(msg: TrackerErrorMessage): void {
+    this.config.onServerError?.(msg);
+    const pending = msg.clientMutationId
+      ? this.pendingConfigChanges.get(msg.clientMutationId)
+      : this.pendingConfigChanges.size === 1
+        ? this.pendingConfigChanges.values().next().value
+        : undefined;
+    if (pending) {
+      clearTimeout(pending.timer);
+      if (msg.clientMutationId) this.pendingConfigChanges.delete(msg.clientMutationId);
+      else {
+        for (const [id, candidate] of this.pendingConfigChanges) {
+          if (candidate === pending) this.pendingConfigChanges.delete(id);
+        }
+      }
+      pending.resolve({
+        success: false,
+        code: msg.code,
+        message: msg.message,
+        conflictingProjectName: msg.conflictingProjectName,
+        suggestedPrefix: msg.suggestedPrefix,
+      });
+    }
+    if (!msg.code.startsWith('issueKeyPrefix') && msg.code !== 'invalid_config') {
+      this.setStatus('error');
+    }
+  }
+
+  private resolvePendingConfigChanges(result: TrackerConfigSetResult): void {
+    for (const pending of this.pendingConfigChanges.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve(result);
+    }
+    this.pendingConfigChanges.clear();
   }
 
   // --------------------------------------------------------------------------
@@ -1136,6 +1300,11 @@ export class TrackerSyncEngine {
     this.ws = null;
     this.synced = false;
     this.connecting = false;
+    this.resolvePendingConfigChanges({
+      success: false,
+      code: 'disconnected',
+      message: 'Tracker sync disconnected before the prefix change was confirmed.',
+    });
     this.setStatus('disconnected');
     if (shouldReconnect && !this.destroyed) {
       this.scheduleReconnect();

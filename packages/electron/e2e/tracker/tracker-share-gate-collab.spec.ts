@@ -102,7 +102,7 @@ async function connectTrackerSync(
 
 /**
  * Create a `plan` through the REAL gated decision path. Passing
- * `syncMode: 'hybrid'` makes the effective policy hybrid even if the main-process
+ * A team tracker with `draftByDefault: true` keeps unflagged items private even if the main-process
  * model registry isn't populated, so the per-item share flag is what decides.
  */
 async function createPlanViaGate(
@@ -122,7 +122,8 @@ async function createPlanViaGate(
       status: 'draft',
       priority: 'medium',
       workspace: data.workspace,
-      syncMode: 'hybrid',
+      sharing: 'team',
+      draftByDefault: true,
       customFields: data.shared ? { share: { status: 'team', body: 'team' } } : {},
     });
   }, item);

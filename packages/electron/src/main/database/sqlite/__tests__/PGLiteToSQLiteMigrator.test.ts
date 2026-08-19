@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * End-to-end migration test against a real PGLite store and a real SQLite
  * database. This is the failing-test-first deliverable required by
@@ -66,6 +67,21 @@ describe('PGLiteToSQLiteMigrator', () => {
         'tool_usage_backfill_sessions',
       ]),
     );
+  });
+
+  // Omitting these silently drops every user's commit provenance on cutover.
+  it('includes the session commit ledger in the cutover whitelist', () => {
+    expect(__TEST_HOOKS.COPY_TABLES).toEqual(
+      expect.arrayContaining(['session_commits', 'session_commit_backfill_meta']),
+    );
+  });
+
+  it('preserves feedback request caches and indexes during backend cutover', () => {
+    expect(__TEST_HOOKS.COPY_TABLES).toEqual(expect.arrayContaining([
+      'feedback_request_cache',
+      'feedback_request_index',
+      'feedback_request_index_backfill',
+    ]));
   });
 
   it('replaces the SQLite bootstrap backfill cutoff with the PGLite source cutoff', async () => {

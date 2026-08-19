@@ -5,7 +5,7 @@ set -eu
 # when the outgoing commits touch any manifest. This is exactly the check
 # CI's `npm ci` performs; without it, lockfile drift is only discovered
 # after pushing (2026-07-07 incident: npm 10/11 override-shape mismatch).
-base=$(git merge-base HEAD origin/main 2>/dev/null || echo HEAD~1)
+base=$(node scripts/resolve-prepush-base.mjs)
 
 # Fail fast, and accurately, when the hook is running under the wrong Node.
 # Every check below shells out to node/npm, and with engine-strict=true the
@@ -58,6 +58,10 @@ npm run typecheck:prepush
 echo "[pre-push] Verifying platform test-gate behavior..."
 npm run test:prepush-gate
 
+# Every line printed here lands in the Git extension's Output panel, so the
+# prepush scripts use dot reporters, --silent=passed-only, and a quiet Vite
+# build. A passing push is ~84 lines instead of ~25500 (most of which was
+# console.log from the tests themselves). Failures still print in full.
 if [ "$(node scripts/prepush-test-gate.mjs)" = "run" ]; then
   echo "[pre-push] Running non-provider unit tests..."
   npm run test:prepush

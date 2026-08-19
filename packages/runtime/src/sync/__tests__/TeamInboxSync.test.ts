@@ -80,6 +80,8 @@ function delivery(
 class FakeOrgClient implements TeamInboxOrgClientLike {
   readonly markRead = vi.fn(async (_deliveryIds: string[]) => {});
   readonly dismiss = vi.fn(async (_deliveryIds: string[]) => {});
+  readonly claimAgentDelivery = vi.fn(async () => true);
+  readonly completeAgentDelivery = vi.fn(async () => true);
   readonly connect = vi.fn(async () => {});
   readonly destroy = vi.fn();
   private listener: ((event: TeamInboxOrgEvent) => void) | null = null;
@@ -272,6 +274,53 @@ describe('TeamInboxOrgClient', () => {
     expect(socket.sent.map((message) => JSON.parse(message))).toContainEqual({
       type: 'inboxSyncRequest',
     });
+    client.destroy();
+  });
+
+  it('correlates agent-delivery claim and completion responses on the org socket', async () => {
+    const socket = new FakeWebSocket();
+    const client = new TeamInboxOrgClient({
+      serverUrl: 'https://sync.example.test',
+      org: {
+        orgId: 'org-a',
+        orgName: 'Acme',
+        teamMemberId: asTeamMemberId('member-a'),
+      },
+      getTeamJwt: async () => asTeamJwt('team-jwt'),
+      createWebSocket: () => socket as unknown as WebSocket,
+      clientId: 'client-a',
+    });
+    await client.connect();
+    socket.open();
+
+    const claim = client.claimAgentDelivery('delivery-a', 'session-a');
+    const claimMessage = socket.sent.map((message) => JSON.parse(message))
+      .find((message) => message.type === 'claimAgentDelivery');
+    expect(claimMessage).toMatchObject({
+      deliveryId: 'delivery-a',
+      sessionId: 'session-a',
+      clientId: 'client-a',
+    });
+    socket.receive({
+      type: 'agentDeliveryClaimResponse',
+      requestId: claimMessage.requestId,
+      deliveryId: 'delivery-a',
+      sessionId: 'session-a',
+      claimed: true,
+    });
+    await expect(claim).resolves.toBe(true);
+
+    const complete = client.completeAgentDelivery('delivery-a', 'session-a');
+    const completeMessage = socket.sent.map((message) => JSON.parse(message))
+      .find((message) => message.type === 'completeAgentDelivery');
+    socket.receive({
+      type: 'agentDeliveryCompleteResponse',
+      requestId: completeMessage.requestId,
+      deliveryId: 'delivery-a',
+      sessionId: 'session-a',
+      dispatched: true,
+    });
+    await expect(complete).resolves.toBe(true);
     client.destroy();
   });
 });

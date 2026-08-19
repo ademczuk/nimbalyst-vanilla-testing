@@ -22,28 +22,34 @@ Execute a plan document while maintaining progress tracking.
    - Parse the YAML frontmatter
    - Extract implementation details, acceptance criteria, and goals
 
-2. **Generate task list**
+2. **Link this session to the projected plan item**
+   - Normalize the plan path to a workspace-relative path with `/` separators
+   - Resolve the existing frontmatter projection as `fm:plan:<relative-path>` with `tracker_get`
+   - Call `tracker_link_session` with the item ID returned by `tracker_get` before implementation begins
+   - Do not create a second tracker item; shared/promoted plans resolve through the same projection reference
+
+3. **Generate task list**
    - Create markdown checkboxes from acceptance criteria
    - Add implementation tasks from the plan
    - Insert task list after the plan title
 
-3. **Update plan frontmatter**
+4. **Update plan frontmatter**
    - Set `status` to `in-development`
    - Set `startDate` to today if not set
    - Update `updated` timestamp
    - Set `progress` to 0
 
-4. **Begin implementation**
+5. **Begin implementation**
    - Use TodoWrite for internal task tracking
    - Work through each task systematically
    - Check off tasks as completed
    - Update progress percentage
 
-5. **Calculate progress**
+6. **Calculate progress**
    - Progress = (completed checkboxes / total) x 100
    - Round to nearest integer
 
-6. **Final updates**
+7. **Final updates**
    - Set `status` to `in-review` when complete
    - Set `progress` to 100
 

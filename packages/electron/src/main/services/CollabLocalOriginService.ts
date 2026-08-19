@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import WebSocket from 'ws';
@@ -7,15 +7,31 @@ import {
   type DocumentSyncConfig,
 } from '@nimbalyst/runtime/sync';
 import {
+  convertExportToFile,
   convertFromFileIntoDoc,
-  convertToPlainText,
   describeCollabCodec,
 } from './CollabConversionClient';
+import {
+  classifyPullState,
+  hashCollabFileContent,
+  type CollabFileContent,
+  type PullConflictKind,
+} from './CollabLocalOriginSync';
+import { materializeMarkdownCollabAssets } from './CollabMarkdownAssetMaterializer';
 import { database } from '../database/PGLiteDatabaseWorker';
 import { getCollabSyncHttpUrl, getCollabSyncWsUrl } from '../utils/collabSyncUrl';
 import { logger } from '../utils/logger';
 import { uploadCollabAsset } from './CollabAssetUploader';
-import { findTeamForWorkspace, getOrgScopedJwt } from './TeamService';
+import { getCollabAssetStore } from './CollabAssetStore';
+import { getPersonalUserId } from './StytchAuthService';
+import { findTeamForWorkspace, getOrgScopedIdentity, getOrgScopedJwt } from './TeamService';
+import {
+  getLocalOriginTeamOverride,
+  type LocalOriginTeam,
+} from './collabLocalOriginTeam';
+import { readCollabAsset } from '../protocols/collabAssetProtocol';
+import { historyManager } from '../HistoryManager';
+import { SessionFileWatcher } from '../file/SessionFileWatcher';
 import {
   rewriteMarkdownImageRefs,
   resolveAssetRef,
@@ -74,10 +90,28 @@ export interface ReuploadLocalOriginResult {
    * On a `conflict`, who last edited the shared doc and when (server clock, ms),
    * so the overwrite confirm can name who/when the push will clobber. Sourced
    * from the DocumentRoom's last content update (not the title-index timestamp).
-   * `lastEditorId` is a room-authed userId the renderer resolves to a member.
+   * `lastEditorId` is a room-authenticated member id the renderer resolves to a member.
    */
   lastEditorId?: string | null;
   lastEditedAt?: number | null;
+}
+
+export interface PullLocalOriginResult {
+  success: boolean;
+  status:
+    | 'noop'
+    | 'pulled'
+    | 'conflict'
+    | 'missing-source'
+    | 'unsupported'
+    | 'error';
+  conflictKind?: PullConflictKind;
+  conflictToken?: string;
+  message?: string;
+  binding?: CollabLocalOriginBinding | null;
+  lastEditorId?: string | null;
+  lastEditedAt?: number | null;
+  materializedAssetCount?: number;
 }
 
 interface CollabLocalOriginRow {
@@ -334,21 +368,33 @@ async function resolveStoredBinding(
   }
 }
 
+async function owningTeam(workspacePath: string): Promise<LocalOriginTeam | null> {
+  const override = getLocalOriginTeamOverride();
+  if (override) return override(workspacePath);
+  const team = await findTeamForWorkspace(workspacePath);
+  if (!team) return null;
+  return {
+    orgId: team.orgId,
+    teamProjectId: team.teamProjectId ?? null,
+    gitRemoteHash: team.gitRemoteHash ?? null,
+  };
+}
+
 async function resolveDocumentSyncConfig(
   workspacePath: string,
   documentId: string,
 ): Promise<DocumentSyncConfig | null> {
   const team = await findTeamForWorkspace(workspacePath);
   if (!team) return null;
+  const { teamMemberId } = await getOrgScopedIdentity(team.orgId);
 
   return {
     serverUrl: getCollabSyncWsUrl(),
     getJwt: () => getOrgScopedJwt(team.orgId),
     orgId: team.orgId,
-    userId: '',
+    teamMemberId,
     documentId,
     createWebSocket: ((url: string) => new WebSocket(url)) as unknown as DocumentSyncConfig['createWebSocket'],
-    reviewGateEnabled: false,
   };
 }
 
@@ -369,34 +415,28 @@ async function withSharedDocument<T>(
   const config = await resolveDocumentSyncConfig(workspacePath, documentId);
   if (!config) return null;
 
-  let connected = false;
+  let resolveFirstSync!: () => void;
+  const firstSync = new Promise<void>((resolve) => { resolveFirstSync = resolve; });
   const provider = new DocumentSyncProvider({
     ...config,
-    onStatusChange: (status) => {
-      if (status === 'connected') {
-        connected = true;
-      }
-    },
+    onFirstSyncComplete: () => resolveFirstSync(),
   });
 
+  let timeout: ReturnType<typeof setTimeout> | null = null;
   try {
     await provider.connect();
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error(`Timed out connecting to shared document ${documentId}`));
-      }, 5000);
-      const poll = () => {
-        if (connected) {
-          clearTimeout(timeout);
-          resolve();
-          return;
-        }
-        setTimeout(poll, 50);
-      };
-      poll();
-    });
+    const synced = await Promise.race([
+      firstSync.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => resolve(false), 8_000);
+      }),
+    ]);
+    if (!synced) {
+      throw new Error(`Timed out syncing shared document ${documentId}`);
+    }
     return await callback({ provider, yDoc: provider.getYDoc() });
   } finally {
+    if (timeout) clearTimeout(timeout);
     try {
       provider.destroy();
     } catch {
@@ -405,18 +445,18 @@ async function withSharedDocument<T>(
   }
 }
 
-async function readSharedDocText(
+async function readSharedDocContent(
   workspacePath: string,
   documentId: string,
   documentType: string,
-): Promise<string | null> {
+): Promise<CollabFileContent | null> {
   return withSharedDocument(workspacePath, documentId, async ({ yDoc }) => {
-    return convertToPlainText(documentType, yDoc, { workspacePath });
+    return convertExportToFile(documentType, yDoc, { workspacePath });
   });
 }
 
 interface SharedDocReadResult {
-  text: string;
+  content: CollabFileContent;
   lastWriterUserId: string | null;
   lastUpdatedAt: number | null;
 }
@@ -432,7 +472,7 @@ async function readSharedDocWithMeta(
   documentType: string,
 ): Promise<SharedDocReadResult | null> {
   return withSharedDocument(workspacePath, documentId, async ({ yDoc, provider }) => ({
-    text: await convertToPlainText(documentType, yDoc, { workspacePath }),
+    content: await convertExportToFile(documentType, yDoc, { workspacePath }),
     lastWriterUserId: provider.getLastWriterUserId(),
     lastUpdatedAt: provider.getLastUpdatedAt(),
   }));
@@ -562,7 +602,7 @@ export async function recordLocalOriginShare(params: {
   lastLocalContentHash: string | null;
   lastCollabContentHash: string | null;
 }): Promise<CollabLocalOriginBinding | null> {
-  const team = await findTeamForWorkspace(params.workspacePath);
+  const team = await owningTeam(params.workspacePath);
   if (!team) {
     throw new Error('No team found for this workspace.');
   }
@@ -595,7 +635,7 @@ export async function getLocalOriginBinding(
   workspacePath: string,
   documentId: string,
 ): Promise<CollabLocalOriginBinding | null> {
-  const team = await findTeamForWorkspace(workspacePath);
+  const team = await owningTeam(workspacePath);
   if (!team) return null;
 
   const row = await fetchBindingRow(team.orgId, documentId);
@@ -607,7 +647,7 @@ export async function clearLocalOriginBinding(
   workspacePath: string,
   documentId: string,
 ): Promise<void> {
-  const team = await findTeamForWorkspace(workspacePath);
+  const team = await owningTeam(workspacePath);
   if (!team) return;
   await database.query(
     'DELETE FROM collab_local_origins WHERE org_id = $1 AND document_id = $2',
@@ -621,22 +661,22 @@ export async function relinkLocalOriginBinding(params: {
   documentType: string;
   sourceFilePath: string;
 }): Promise<CollabLocalOriginBinding | null> {
-  const team = await findTeamForWorkspace(params.workspacePath);
+  const team = await owningTeam(params.workspacePath);
   if (!team) {
     throw new Error('No team found for this workspace.');
   }
 
   const relativePath = ensureWorkspaceRelativePath(params.workspacePath, params.sourceFilePath);
-  const sourceContent = await fs.readFile(params.sourceFilePath, 'utf8');
+  const sourceContent = await fs.readFile(params.sourceFilePath);
   const stats = await getSourceFileStats(params.sourceFilePath);
   // A shared-side read only supplies the collab baseline hash; if no host can
   // convert this type, relinking still records the local side.
-  const sharedText = await readSharedDocText(
+  const sharedContent = await readSharedDocContent(
     params.workspacePath,
     params.documentId,
     params.documentType,
   ).catch((error) => {
-    logger.main.info('[CollabLocalOrigin] Could not read shared text while relinking', {
+    logger.main.info('[CollabLocalOrigin] Could not read shared content while relinking', {
       documentId: params.documentId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -652,8 +692,8 @@ export async function relinkLocalOriginBinding(params: {
     relativePath,
     documentType: params.documentType,
     sourceBasename: path.basename(params.sourceFilePath),
-    lastLocalContentHash: hashText(sourceContent),
-    lastCollabContentHash: sharedText !== null ? hashText(sharedText) : null,
+    lastLocalContentHash: hashCollabFileContent(sourceContent),
+    lastCollabContentHash: sharedContent !== null ? hashCollabFileContent(sharedContent) : null,
     lastSyncedAt: null,
     lastSeenMtimeMs: stats.mtimeMs,
     lastSeenSizeBytes: stats.sizeBytes,
@@ -668,13 +708,247 @@ export async function findLinkedDocumentForLocalPath(
   workspacePath: string,
   sourceFilePath: string,
 ): Promise<CollabLocalOriginBinding | null> {
-  const team = await findTeamForWorkspace(workspacePath);
+  const team = await owningTeam(workspacePath);
   if (!team) return null;
 
   const relativePath = ensureWorkspaceRelativePath(workspacePath, sourceFilePath);
   const row = await fetchBindingRowByRelativePath(team.orgId, relativePath);
   if (!row) return null;
   return resolveStoredBinding(workspacePath, row);
+}
+
+function createPullConflictToken(localHash: string, sharedHash: string): string {
+  return hashText(`pull:${localHash}:${sharedHash}`);
+}
+
+async function updatePullBaselines(params: {
+  binding: CollabLocalOriginBinding;
+  sourceFilePath: string;
+  localHash: string;
+  sharedHash: string;
+}): Promise<void> {
+  const stats = await getSourceFileStats(params.sourceFilePath);
+  await upsertBinding({
+    orgId: params.binding.orgId,
+    documentId: params.binding.documentId,
+    projectId: params.binding.projectId,
+    gitRemoteHash: params.binding.gitRemoteHash,
+    workspacePathHash: params.binding.workspacePathHash,
+    relativePath: params.binding.relativePath,
+    documentType: params.binding.documentType,
+    sourceBasename: params.binding.sourceBasename,
+    lastLocalContentHash: params.localHash,
+    lastCollabContentHash: params.sharedHash,
+    lastSyncedAt: new Date(),
+    lastSeenMtimeMs: stats.mtimeMs,
+    lastSeenSizeBytes: stats.sizeBytes,
+    resolutionStatus: 'resolved',
+    resolutionError: null,
+  });
+}
+
+async function writeLocalSourceAtomically(
+  sourceFilePath: string,
+  content: CollabFileContent,
+): Promise<void> {
+  const stats = await fs.stat(sourceFilePath);
+  const tempPath = path.join(
+    path.dirname(sourceFilePath),
+    `.${path.basename(sourceFilePath)}.nimbalyst-pull-${process.pid}-${randomUUID()}.tmp`,
+  );
+  try {
+    await fs.writeFile(tempPath, content, { mode: stats.mode });
+    await fs.chmod(tempPath, stats.mode);
+    SessionFileWatcher.markEditorSave(sourceFilePath);
+    await fs.rename(tempPath, sourceFilePath);
+  } catch (error) {
+    await fs.unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function deriveLocalPullContent(params: {
+  workspacePath: string;
+  binding: CollabLocalOriginBinding;
+  sourceFilePath: string;
+  sharedContent: CollabFileContent;
+}): Promise<{ content: CollabFileContent; materializedAssetCount: number }> {
+  if (params.binding.documentType !== 'markdown') {
+    return { content: params.sharedContent, materializedAssetCount: 0 };
+  }
+  if (typeof params.sharedContent !== 'string') {
+    throw new Error('The shared Markdown codec returned binary content.');
+  }
+
+  const materialized = await materializeMarkdownCollabAssets({
+    markdown: params.sharedContent,
+    workspacePath: params.workspacePath,
+    sourceFilePath: params.sourceFilePath,
+    documentId: params.binding.documentId,
+    readAsset: async (assetId) => {
+      const asset = await readCollabAsset(
+        {
+          orgId: params.binding.orgId,
+          documentId: params.binding.documentId,
+          assetId,
+        },
+        {
+          getOrgScopedJwt,
+          getCollabHttpUrl: getCollabSyncHttpUrl,
+          getAccountId: () => getPersonalUserId(),
+          assetStore: getCollabAssetStore(),
+        },
+      );
+      if (!asset.ok) {
+        throw new Error(`Could not download shared image '${assetId}' (${asset.kind}).`);
+      }
+      return asset;
+    },
+  });
+  return {
+    content: materialized.markdown,
+    materializedAssetCount: materialized.materializedCount,
+  };
+}
+
+export async function pullFromSharedOrigin(params: {
+  workspacePath: string;
+  documentId: string;
+  forceOverwriteLocal?: boolean;
+  conflictToken?: string;
+}): Promise<PullLocalOriginResult> {
+  const binding = await getLocalOriginBinding(params.workspacePath, params.documentId);
+  if (!binding) {
+    return {
+      success: false,
+      status: 'error',
+      message: 'No local source is linked to this shared document.',
+    };
+  }
+
+  if (!(await codecHostSupports(binding.documentType, params.workspacePath))) {
+    return {
+      success: false,
+      status: 'unsupported',
+      message: `No collab codec is available for document type '${binding.documentType}'.`,
+      binding,
+    };
+  }
+
+  if (!binding.resolvedPath) {
+    return {
+      success: false,
+      status: 'missing-source',
+      message: 'The linked local source file is not available in this workspace.',
+      binding,
+    };
+  }
+
+  try {
+    const currentLocalContent = await fs.readFile(binding.resolvedPath);
+    const sharedRead = await readSharedDocWithMeta(
+      params.workspacePath,
+      params.documentId,
+      binding.documentType,
+    );
+    if (sharedRead === null) {
+      return {
+        success: false,
+        status: 'error',
+        message: 'Could not read the current shared document state.',
+        binding,
+      };
+    }
+
+    const candidate = await deriveLocalPullContent({
+      workspacePath: params.workspacePath,
+      binding,
+      sourceFilePath: binding.resolvedPath,
+      sharedContent: sharedRead.content,
+    });
+    const currentLocalHash = hashCollabFileContent(currentLocalContent);
+    const currentSharedHash = hashCollabFileContent(sharedRead.content);
+    const candidateLocalHash = hashCollabFileContent(candidate.content);
+    const classification = classifyPullState({
+      currentLocalHash,
+      currentSharedHash,
+      candidateLocalHash,
+      baselineLocalHash: binding.lastLocalContentHash,
+      baselineSharedHash: binding.lastCollabContentHash,
+    });
+
+    if (classification.status === 'noop') {
+      if (classification.repairBaselines) {
+        await updatePullBaselines({
+          binding,
+          sourceFilePath: binding.resolvedPath,
+          localHash: currentLocalHash,
+          sharedHash: currentSharedHash,
+        });
+      }
+      return {
+        success: true,
+        status: 'noop',
+        message: 'The local file already matches the shared document.',
+        binding: classification.repairBaselines
+          ? await getLocalOriginBinding(params.workspacePath, params.documentId)
+          : binding,
+        materializedAssetCount: candidate.materializedAssetCount,
+      };
+    }
+
+    if (classification.status === 'conflict') {
+      const conflictToken = createPullConflictToken(currentLocalHash, currentSharedHash);
+      if (!params.forceOverwriteLocal || params.conflictToken !== conflictToken) {
+        return {
+          success: false,
+          status: 'conflict',
+          conflictKind: classification.conflictKind,
+          conflictToken,
+          binding,
+          lastEditorId: sharedRead.lastWriterUserId,
+          lastEditedAt: sharedRead.lastUpdatedAt,
+        };
+      }
+    }
+
+    if (typeof candidate.content === 'string') {
+      await historyManager.createSnapshot(
+        binding.resolvedPath,
+        currentLocalContent.toString('utf8'),
+        'manual',
+        'Before pulling shared document',
+      );
+    } else {
+      logger.main.info('[CollabLocalOrigin] Skipping text history snapshot for binary pull', {
+        documentId: params.documentId,
+        documentType: binding.documentType,
+      });
+    }
+    await writeLocalSourceAtomically(binding.resolvedPath, candidate.content);
+    await updatePullBaselines({
+      binding,
+      sourceFilePath: binding.resolvedPath,
+      localHash: candidateLocalHash,
+      sharedHash: currentSharedHash,
+    });
+
+    return {
+      success: true,
+      status: 'pulled',
+      message: 'Updated the local file from the shared document.',
+      binding: await getLocalOriginBinding(params.workspacePath, params.documentId),
+      materializedAssetCount: candidate.materializedAssetCount,
+    };
+  } catch (error) {
+    logger.main.error('[CollabLocalOrigin] Pull failed:', error);
+    return {
+      success: false,
+      status: 'error',
+      message: error instanceof Error ? error.message : String(error),
+      binding,
+    };
+  }
 }
 
 export async function reuploadFromLocalOrigin(params: {
@@ -725,10 +999,8 @@ export async function reuploadFromLocalOrigin(params: {
         binding,
       };
     }
-    const sharedText = sharedRead.text;
-
-    const sourceHash = hashText(sourceText);
-    const sharedHash = hashText(sharedText);
+    const sourceHash = hashCollabFileContent(sourceBuffer);
+    const sharedHash = hashCollabFileContent(sharedRead.content);
     const baselineLocal = binding.lastLocalContentHash;
     const baselineShared = binding.lastCollabContentHash;
 
@@ -766,7 +1038,7 @@ export async function reuploadFromLocalOrigin(params: {
     // all -- the adapter contract leaves binary-attachment handling
     // to each adapter.
     let payloadForUpload: string | Uint8Array;
-    let payloadForHash: string;
+    let payloadForHash: CollabFileContent;
     let migration: { okCount: number; failedCount: number } = { okCount: 0, failedCount: 0 };
     if (binding.documentType === 'markdown') {
       const migrated = await migrateMarkdownAssetsForCollab({
@@ -784,7 +1056,7 @@ export async function reuploadFromLocalOrigin(params: {
       // adapters decode internally, binary-shaped adapters get the
       // raw Uint8Array.
       payloadForUpload = sourceBuffer;
-      payloadForHash = sourceText;
+      payloadForHash = sourceBuffer;
     }
 
     logger.main.info('[CollabLocalOrigin] reupload dispatching to adapter', {
@@ -823,7 +1095,7 @@ export async function reuploadFromLocalOrigin(params: {
       documentType: binding.documentType,
       sourceBasename: binding.sourceBasename,
       lastLocalContentHash: sourceHash,
-      lastCollabContentHash: hashText(payloadForHash),
+      lastCollabContentHash: hashCollabFileContent(payloadForHash),
       lastSyncedAt: new Date(),
       lastSeenMtimeMs: stats.mtimeMs,
       lastSeenSizeBytes: stats.sizeBytes,

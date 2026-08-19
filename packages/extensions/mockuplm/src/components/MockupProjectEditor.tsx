@@ -393,6 +393,7 @@ export function MockupProjectEditor({ host }: EditorHostProps) {
 
   return (
     <div
+      className="mockup-project-editor"
       style={{
         display: 'flex',
         flexDirection: 'column',

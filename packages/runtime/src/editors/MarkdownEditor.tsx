@@ -24,6 +24,7 @@ import {
   $convertFromEnhancedMarkdownString,
   getEditorTransformers,
 } from '../editor';
+import { applyExternalMarkdown } from '../editor/applyExternalMarkdown';
 import type { EditorHost } from '../extensions/editorHost';
 import { $getRoot, $setSelection } from 'lexical';
 
@@ -77,6 +78,34 @@ export interface MarkdownEditorConfig {
   showTreeView?: boolean;
 }
 
+/**
+ * Imperative handle for pushing content *into* a mounted editor.
+ *
+ * Handed to `onContentController` once the editor is ready. It is deliberately
+ * narrow: extensions get the host's enhanced markdown pipeline (frontmatter,
+ * list normalization, every contributed transformer) without the converters
+ * themselves crossing the extension boundary, where a vanilla
+ * `@lexical/markdown` fallback would silently corrupt content.
+ */
+export interface MarkdownEditorContentController {
+  /**
+   * Replace the editor's content with `markdown`, in place.
+   *
+   * The editor is not remounted, so undo history and IME composition survive,
+   * and the caret is carried across the change: an edit above the caret shifts
+   * it by the inserted length, an edit below leaves it alone, an edit that
+   * overlaps it clamps it into the replacement.
+   *
+   * Callers must not push content the editor already shows -- an echo of their
+   * own write, for instance. This costs a full re-parse.
+   *
+   * For editors the extension syncs itself (an extension-owned Y.Text, say),
+   * not for editors mounted with `collaborationConfig`: there Lexical is bound
+   * to the Y.Doc directly and a replacement would be re-broadcast to peers.
+   */
+  applyMarkdown(markdown: string): void;
+}
+
 export interface MarkdownEditorProps {
   /** Host service for all editor-host communication */
   host: EditorHost;
@@ -89,6 +118,23 @@ export interface MarkdownEditorProps {
 
   /** Callback when getContent function is available (for mode switching) */
   onGetContent?: (getContentFn: () => string) => void;
+
+  /**
+   * Callback when the imperative content controller is available. The mirror
+   * of `onGetContent`: that one reads the editor, this one writes it.
+   */
+  onContentController?: (controller: MarkdownEditorContentController) => void;
+
+  /**
+   * Whether this component applies `host.onFileChanged` content to the editor
+   * itself. Default true.
+   *
+   * TabEditor sets it false: it subscribes to the same DocumentModel
+   * notification separately (it also has to reconcile its own last-saved and
+   * dirty bookkeeping), and two subscribers would re-parse the document twice
+   * per external change.
+   */
+  applyExternalFileChanges?: boolean;
 
   /**
    * When set (collaborative documents only), enables document comments
@@ -135,6 +181,8 @@ export function MarkdownEditor({
   config = {},
   onEditorReady,
   onGetContent: onGetContentProp,
+  onContentController,
+  applyExternalFileChanges = true,
   collaborationConfig,
   commentsConfig,
 }: MarkdownEditorProps): React.ReactElement {
@@ -156,6 +204,11 @@ export function MarkdownEditor({
 
   // Function to get current content from editor
   const getContentFnRef = useRef<(() => string) | null>(null);
+
+  // Exact string most recently written to disk from this editor. The file
+  // watcher echoes our own saves back as file changes; re-parsing on those
+  // would churn the caret for no reason.
+  const lastWrittenContentRef = useRef<string | null>(null);
 
   // Load initial content on mount (skip in pure collab mode, keep for personal sync)
   useEffect(() => {
@@ -200,9 +253,11 @@ export function MarkdownEditor({
 
       try {
         const content = getContentFnRef.current();
+        lastWrittenContentRef.current = content;
         await host.saveContent(content);
       } catch (error) {
         console.error('[MarkdownEditor] Save failed:', error);
+        throw error;
       }
     };
 
@@ -215,20 +270,31 @@ export function MarkdownEditor({
   // In personal sync mode, file changes still need handling (e.g., git pull)
   useEffect(() => {
     if (skipDiskOps) return; // No file watcher in pure collaboration mode
+    if (!applyExternalFileChanges) return; // The embedder applies them itself
 
     const handleFileChanged = (newContent: string) => {
-      // If we have an editor, update it with new content
-      // The editor will decide whether to reload based on its internal state
-      if (editorRef.current && editorRef.current.update) {
-        // TODO: Import from editor and use proper update method
-        console.log('[MarkdownEditor] File changed externally, updating editor');
-        // For now, this will be implemented when we have the full Rexical integration
-      }
+      const editor = editorRef.current;
+      if (!editor) return;
+      // Our own save coming back around the file watcher.
+      if (newContent === lastWrittenContentRef.current) return;
+      applyExternalMarkdown(editor, newContent);
     };
 
     const unsubscribe = host.onFileChanged(handleFileChanged);
     return unsubscribe;
-  }, [host, skipDiskOps]);
+  }, [host, skipDiskOps, applyExternalFileChanges]);
+
+  // Hand the embedder an imperative way to push content in (collaborative
+  // bindings, extension-owned sync). Fires once the Lexical instance exists.
+  const [editorInstance, setEditorInstance] = useState<any>(null);
+  useEffect(() => {
+    if (!editorInstance || !onContentController) return;
+    onContentController({
+      applyMarkdown: (markdown: string) => {
+        applyExternalMarkdown(editorInstance, markdown);
+      },
+    });
+  }, [editorInstance, onContentController]);
 
   // NOTE: We intentionally do NOT subscribe to diff requests here.
   // Markdown diff handling is fully implemented in TabEditor.tsx using Lexical's
@@ -259,6 +325,7 @@ export function MarkdownEditor({
   const handleEditorReady = useCallback(
     (editor: any) => {
       editorRef.current = editor;
+      setEditorInstance(editor);
       onEditorReady?.(editor);
     },
     [onEditorReady]

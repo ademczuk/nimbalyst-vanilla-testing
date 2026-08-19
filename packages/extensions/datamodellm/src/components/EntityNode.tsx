@@ -10,6 +10,7 @@ import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { Entity, Field, EntityViewMode, Database } from '../types';
 import { computeHandleState } from '../utils/handleUtils';
 import type { DataModelStoreApi } from '../store';
+import type { RemotePresence } from '../collab/presence';
 
 export interface EntityNodeData extends Record<string, unknown> {
   entity: Entity;
@@ -18,6 +19,31 @@ export interface EntityNodeData extends Record<string, unknown> {
   viewMode: EntityViewMode;
   database: Database;
   store: DataModelStoreApi;
+  /** Remote collaborators who currently have this entity selected. */
+  presences?: RemotePresence[];
+}
+
+/**
+ * Collaborator ring + name chips. The ring uses the first collaborator's
+ * color (the chips carry the rest), and is drawn with `box-shadow` so it
+ * never shifts the node's layout or its handle positions.
+ */
+function PresenceChrome({ presences }: { presences: RemotePresence[] }) {
+  if (presences.length === 0) return null;
+  return (
+    <div className="datamodel-entity-presence" aria-hidden="true">
+      {presences.map((presence) => (
+        <span
+          key={presence.clientId}
+          className="datamodel-presence-chip"
+          style={{ backgroundColor: presence.color }}
+          title={`${presence.name} has this selected`}
+        >
+          {presence.name}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 // Default handle state to prevent creating new objects on every render
@@ -246,7 +272,12 @@ const FieldRow = memo(function FieldRow({
 });
 
 function EntityNodeComponent({ data, selected }: NodeProps<Node<EntityNodeData>>) {
-  const { entity, isSelected, isHovered, viewMode, database, store } = data as EntityNodeData;
+  const { entity, isSelected, isHovered, viewMode, database, store, presences } =
+    data as EntityNodeData;
+  const remotePresences = presences ?? [];
+  const presenceStyle = remotePresences.length
+    ? ({ ['--datamodel-presence-color' as string]: remotePresences[0].color })
+    : undefined;
 
   // Compute handle state for all fields in this entity
   const state = store.getState();
@@ -310,8 +341,11 @@ function EntityNodeComponent({ data, selected }: NodeProps<Node<EntityNodeData>>
       <div
         className={`datamodel-entity datamodel-entity-compact ${isActuallySelected ? 'datamodel-entity-selected' : ''} ${
           isHovered ? 'datamodel-entity-hovered' : ''
-        }`}
+        } ${remotePresences.length ? 'datamodel-entity-remote-selected' : ''}`}
+        style={presenceStyle}
       >
+        <PresenceChrome presences={remotePresences} />
+
         {/* Entity-wide handles */}
         <Handle type="target" position={Position.Top} id="target-top" className="datamodel-handle-invisible" />
         <Handle type="target" position={Position.Left} id="target-left" className="datamodel-handle-invisible" />
@@ -368,8 +402,11 @@ function EntityNodeComponent({ data, selected }: NodeProps<Node<EntityNodeData>>
     <div
       className={`datamodel-entity ${isActuallySelected ? 'datamodel-entity-selected' : ''} ${
         isHovered ? 'datamodel-entity-hovered' : ''
-      }`}
+      } ${remotePresences.length ? 'datamodel-entity-remote-selected' : ''}`}
+      style={presenceStyle}
     >
+      <PresenceChrome presences={remotePresences} />
+
       {/* Entity-wide handles (invisible) */}
       <Handle type="target" position={Position.Top} id="target-top" className="datamodel-handle-invisible" />
       <Handle type="target" position={Position.Left} id="target-left" className="datamodel-handle-invisible" />

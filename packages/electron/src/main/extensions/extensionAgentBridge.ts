@@ -78,6 +78,10 @@ import type {
   ProviderCapabilities,
   StreamChunk,
 } from '@nimbalyst/runtime/ai/server/types';
+import {
+  NO_AGENT_CAPABILITIES,
+  type AgentCapabilities,
+} from '@nimbalyst/runtime/ai/server/agentCapabilities';
 import { logger } from '../utils/logger';
 import {
   getAgentProviderRegistry,
@@ -568,6 +572,24 @@ const bridge: ExtensionAgentBridge = {
       edits: true,
       resumeSession: c.supportsResume ?? false,
       supportsFileTools: true,
+    };
+  },
+
+  getAgentCapabilities(args): AgentCapabilities {
+    // Also static manifest data. An extension that declares nothing gets
+    // NO_AGENT_CAPABILITIES: we cannot inspect a third-party agent to find out
+    // whether it interprets `/compact`, and guessing "probably yes" is exactly
+    // the permissive default that made #1251-#1254 invisible. Opting in is one
+    // manifest field.
+    const entry = getAgentProviderRegistry().get(args.extensionId, args.contributionId);
+    if (!entry) {
+      return NO_AGENT_CAPABILITIES;
+    }
+    const c = entry.contribution;
+    return {
+      slashCommands: c.supportsSlashCommands ?? false,
+      skills: c.supportsSkills ?? false,
+      compaction: c.compaction ?? 'unsupported',
     };
   },
 };
