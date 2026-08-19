@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Opening an extension panel while an agent session is running no longer takes the whole window down.
 - Starting an agent after moving, renaming, or deleting the project folder now says the folder is gone and names it, instead of reporting a broken agent binary and then hanging for minutes.
 - Feedback requests now validate attached artifacts before publishing, keep artifact links in their originating team project, and reliably hand live-preview capacity to the next waiting preview.
 - Push notifications now reach your phone when you walk away from your desk, and a session blocked on your answer or one that hit an error will reach you even while you are at your computer.
