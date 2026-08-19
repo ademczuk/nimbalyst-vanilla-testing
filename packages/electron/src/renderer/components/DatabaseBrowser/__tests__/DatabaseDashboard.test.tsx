@@ -9,6 +9,17 @@ function mockDashboardStats(backup: { size?: number; sizeBytes?: number } | null
     configurable: true,
     value: {
       invoke: vi.fn().mockImplementation(async (channel: string) => {
+        // The storage-retention card reads its settings on mount.
+        if (channel === 'database:maintenance:get') {
+          return {
+            success: true,
+            settings: {
+              backupCopiesKept: 2,
+              backupIntervalHours: 12,
+              toolOutputRetentionDays: 0,
+            },
+          };
+        }
         if (channel !== 'database:getDashboardStats') {
           throw new Error(`Unexpected invoke channel: ${channel}`);
         }

@@ -36,6 +36,12 @@ export interface ReclaimResult extends ReclaimProgress {
 
 const BATCH_SIZE = 1000;
 
+/**
+ * How many ids each candidate statement may span. Keeps a single unindexed
+ * LIKE scan bounded regardless of how sparse the matches are.
+ */
+const ID_WINDOW = 20_000;
+
 interface RawRow {
   id: number;
   content: string;
@@ -66,17 +72,37 @@ export async function reclaimClaudeCodeRawLog(
   const progress: ReclaimProgress = { scanned: 0, rewritten: 0, bytesSaved: 0 };
   let lastId = 0;
 
+  // Highest id at start, so the id-window walk below has a terminus.
+  const maxIdRes = await db.query<{ max_id: number | null }>(
+    `SELECT MAX(id) AS max_id FROM ai_agent_messages`,
+  );
+  const rawMaxId = maxIdRes.rows[0]?.max_id;
+  const maxId = typeof rawMaxId === 'string' ? parseInt(rawMaxId, 10) : Number(rawMaxId ?? 0);
+
   for (;;) {
+    if (lastId >= maxId) break;
+
+    // Bound each statement to an id WINDOW, not just a LIMIT. The two LIKE
+    // predicates are unindexed, so `id > $1 ... LIMIT n` still sweeps every
+    // remaining row whenever matches are sparse -- on a multi-million-row
+    // table that is a single statement running for tens of seconds, which
+    // blocks every other query behind it and hangs the app. Walking a fixed
+    // window keeps each statement's worst case proportional to the window.
+    const windowEnd = lastId + ID_WINDOW;
     const batch = await db.query<RawRow>(
       `SELECT id, content FROM ai_agent_messages
        WHERE source = 'claude-code'
          AND id > $1
+         AND id <= $2
          AND (content LIKE '%"tool_use_result":%' OR content LIKE '%"signature":"%')
        ORDER BY id ASC
-       LIMIT $2`,
-      [lastId, BATCH_SIZE],
+       LIMIT $3`,
+      [lastId, windowEnd, BATCH_SIZE],
     );
-    if (batch.rows.length === 0) break;
+    if (batch.rows.length === 0) {
+      lastId = windowEnd;
+      continue;
+    }
 
     for (const row of batch.rows) {
       lastId = row.id;

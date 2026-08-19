@@ -125,6 +125,17 @@ export {
   resolveClaudeCodeParentContextWindow,
 } from './ai/modelConstants';
 export { slimClaudeCodeChunkForStorage } from './ai/server/providers/claudeCode/toolChunkUtils';
+export {
+  capClaudeCodeChunkForStorage,
+  capToolResultContent,
+  capToolResultText,
+  STORAGE_TOOL_RESULT_BUDGET_BYTES,
+} from './storage/toolOutputBudget';
+export {
+  isTombstoned,
+  tombstoneMarker,
+  tombstoneRawContent,
+} from './storage/toolOutputRetention';
 export { AISessionsRepository } from './storage/repositories/AISessionsRepository';
 export { AgentMessagesRepository } from './storage/repositories/AgentMessagesRepository';
 export { SessionFilesRepository } from './storage/repositories/SessionFilesRepository';

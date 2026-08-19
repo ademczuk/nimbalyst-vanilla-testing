@@ -184,7 +184,7 @@ export async function tryClaimAndDispatchNextQueuedPrompt(
 
   const pendingPrompts = await queueStore.listPending(sessionId);
   if (pendingPrompts.length === 0) {
-    logInfo(`[AIService] ${source}: no pending prompts for session ${sessionId}`);
+    // logInfo(`[AIService] ${source}: no pending prompts for session ${sessionId}`);
     return false;
   }
 

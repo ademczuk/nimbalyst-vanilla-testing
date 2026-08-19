@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { StorageRetentionCard } from './StorageRetentionCard';
 
 interface TableStat {
   name: string;
@@ -420,6 +421,7 @@ export function DatabaseDashboard({ onTableSelect }: Props) {
         </div>
 
         {/* Maintenance */}
+        <StorageRetentionCard />
         <RawLogMaintenanceCard />
       </div>
     </div>

@@ -19,6 +19,11 @@ import { safeHandle } from '../utils/ipcRegistry';
 import type { SQLiteDatabase } from '../database/sqlite/SQLiteDatabase';
 import type { SQLiteDatabaseProxy } from '../database/sqlite/SQLiteDatabaseProxy';
 import type { SQLiteBackupService } from '../services/database/SQLiteBackupService';
+import {
+  getDatabaseMaintenanceSettings,
+  setDatabaseMaintenanceSettings,
+  type DatabaseMaintenanceSettings,
+} from '../utils/store';
 
 /**
  * Backend deps for the IPC layer. Production passes a `SQLiteDatabaseProxy`;
@@ -176,6 +181,54 @@ export class DatabaseBrowserSqliteBackend {
 export function registerDatabaseBrowserSqliteHandlers(deps: SqliteBrowserHandlerDeps): void {
   const { sqlite } = deps;
   const proxy = sqlite as SQLiteDatabaseProxy;
+
+  // Backup retention + cadence, and the tool-output retention window. Each
+  // backup generation is a full copy of the database, so copiesKept is a
+  // direct multiplier on disk usage (#1248).
+  safeHandle('database:maintenance:get', async () => {
+    try {
+      return { success: true, settings: getDatabaseMaintenanceSettings() };
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
+
+  safeHandle('database:maintenance:set', async (_event, patch: Partial<DatabaseMaintenanceSettings>) => {
+    if (!patch || typeof patch !== 'object') {
+      throw new Error('database:maintenance:set requires a settings patch');
+    }
+    try {
+      const settings = setDatabaseMaintenanceSettings(patch);
+      // Applies on the next rotation; push it to the live service so the user
+      // does not have to restart for it to take hold.
+      await proxy.setBackupCopiesKept?.(settings.backupCopiesKept);
+      return { success: true, settings };
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
+
+  // Estimate what tombstoning aged tool output would reclaim. Bounded sample --
+  // the full-table version of this query hangs the app.
+  safeHandle('database:toolRetention:estimate', async (_event, opts?: { retentionDays?: number }) => {
+    try {
+      const estimate = await proxy.toolRetentionEstimate(opts?.retentionDays ?? 30);
+      return { success: true, estimate };
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
+
+  // Run the retention pass. Destructive and irreversible, so user-triggered
+  // only. Executes on the worker's background lane.
+  safeHandle('database:toolRetention:run', async (_event, opts?: { retentionDays?: number; maxRows?: number }) => {
+    try {
+      const result = await proxy.toolRetentionRun(opts?.retentionDays ?? 30, opts?.maxRows);
+      return { success: true, result };
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
 
   safeHandle('database:getTables', async () => {
     try {

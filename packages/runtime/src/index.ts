@@ -17,6 +17,17 @@ export * from './ai/adapters/sessionStore';
 export { SessionManager } from './ai/server/SessionManager';
 export { slimClaudeCodeChunkForStorage } from './ai/server/providers/claudeCode/toolChunkUtils';
 export {
+  capClaudeCodeChunkForStorage,
+  capToolResultContent,
+  capToolResultText,
+  STORAGE_TOOL_RESULT_BUDGET_BYTES,
+} from './storage/toolOutputBudget';
+export {
+  isTombstoned,
+  tombstoneMarker,
+  tombstoneRawContent,
+} from './storage/toolOutputRetention';
+export {
   DocumentContextService,
   type IDocumentContextService,
   type RawDocumentContext,

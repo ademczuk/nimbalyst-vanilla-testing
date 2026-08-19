@@ -29,6 +29,7 @@
  * (every N messages or every M seconds, whichever comes first) and exposes a
  * snapshot for inspection.
  */
+import { utf8ByteLen, formatBytes, isImageBlock } from '../utils/contentBytes';
 
 const TRUNCATE_THRESHOLD_BYTES = 4 * 1024;
 const MAX_SYNC_MESSAGE_BYTES = 16 * 1024;
@@ -349,29 +350,6 @@ function emptyPerMessage(bytesBefore: number): PerMessageTruncationStats {
   };
 }
 
-function formatBytes(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-/** UTF-8 byte length of a string. JSON.stringify result is ASCII-heavy but
- * tool output may include non-ASCII; use Blob to get the real wire size. */
-function utf8ByteLen(s: string): number {
-  // TextEncoder is available in both Node and Workers; fall back to char count
-  // if missing (vanishingly unlikely in our runtime).
-  if (typeof TextEncoder !== 'undefined') {
-    return new TextEncoder().encode(s).length;
-  }
-  return s.length;
-}
-
 /**
  * Find which size bucket a block belongs to. Mirrors the cleanup script's
  * bucket scheme so we can correlate "bytes elided here" with "bytes saved
@@ -463,18 +441,6 @@ function truncateBlockContent(
   }
 
   return null;
-}
-
-/**
- * An inline image block, in either the current Anthropic shape
- * (`{ type:'image', source:{ type:'base64', data } }`) or the legacy MCP shape
- * (`{ type:'image', data, mimeType }`). EditorScreenshotWidget reads both.
- */
-function isImageBlock(item: unknown): boolean {
-  if (item == null || typeof item !== 'object') return false;
-  const block = item as { type?: unknown; data?: unknown; source?: { data?: unknown } };
-  if (block.type !== 'image') return false;
-  return typeof block.data === 'string' || typeof block.source?.data === 'string';
 }
 
 /** Read the base64 payload out of either image block shape. */

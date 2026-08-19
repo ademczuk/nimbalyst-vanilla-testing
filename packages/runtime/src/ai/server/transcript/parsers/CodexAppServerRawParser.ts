@@ -25,6 +25,58 @@ import type {
   CanonicalEventDescriptor,
 } from './IRawMessageParser';
 
+/**
+ * Item types that are NOT treated as "generic tool-like". Each either has its
+ * own explicit branch in the parser or renders nothing at all.
+ */
+const NON_GENERIC_TOOL_ITEM_TYPES = new Set([
+  'userMessage',
+  'agentMessage',
+  'reasoning',
+  'todoList',
+  'todo_list',
+  'error',
+  'fileChange',
+  'mcpToolCall',
+  'commandExecution',
+  'collabAgentToolCall',
+]);
+
+/**
+ * Item types whose `item/started` notification yields no descriptor, so
+ * persisting that row buys nothing -- the subsequent `item/completed` carries
+ * the same item id plus the actual content.
+ *
+ * This is the exact complement of what `parseItemStarted` handles: it emits a
+ * `tool_call_started` only for `mcpToolCall`, `collabAgentToolCall`, and
+ * generic tool-like items. Those three MUST keep persisting `item/started` --
+ * MCP tools that block on the user (commit proposal, AskUserQuestion) render
+ * their widget off that event, and `item/completed` does not fire until after
+ * the user has clicked through. Dropping it strands them on "Thinking...".
+ *
+ * KEEP IN SYNC with `parseItemStarted`. `OpenAICodexProvider` imports this to
+ * decide what to persist, so a parser change that is not reflected here
+ * silently deletes rows the transcript needs.
+ */
+const ITEM_STARTED_NON_RENDERING_TYPES = new Set([
+  'userMessage',
+  'agentMessage',
+  'reasoning',
+  'todoList',
+  'todo_list',
+  'error',
+  'fileChange',
+  'commandExecution',
+]);
+
+/**
+ * True when an `item/started` notification for this item type produces no
+ * canonical descriptor and is therefore safe not to persist.
+ */
+export function isNonRenderingAppServerItemStarted(itemType: unknown): boolean {
+  return typeof itemType === 'string' && ITEM_STARTED_NON_RENDERING_TYPES.has(itemType);
+}
+
 interface AppServerEnvelope {
   method?: string;
   params?: {
@@ -679,18 +731,7 @@ export class CodexAppServerRawParser implements IRawMessageParser {
 
   private isGenericToolLikeItem(item: AppServerItem): boolean {
     if (!item.id || !item.type) return false;
-    return !new Set([
-      'userMessage',
-      'agentMessage',
-      'reasoning',
-      'todoList',
-      'todo_list',
-      'error',
-      'fileChange',
-      'mcpToolCall',
-      'commandExecution',
-      'collabAgentToolCall',
-    ]).has(item.type);
+    return !NON_GENERIC_TOOL_ITEM_TYPES.has(item.type);
   }
 
   private buildGenericToolLikeArguments(item: AppServerItem): Record<string, unknown> {

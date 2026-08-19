@@ -106,6 +106,14 @@
       "import": "./dist/storage/repositories/AgentMessagesRepository.js",
       "types": "./dist/storage/repositories/AgentMessagesRepository.d.ts"
     },
+    "./storage/toolOutputRetention": {
+      "import": "./dist/storage/toolOutputRetention.js",
+      "types": "./dist/storage/toolOutputRetention.d.ts"
+    },
+    "./storage/toolOutputBudget": {
+      "import": "./dist/storage/toolOutputBudget.js",
+      "types": "./dist/storage/toolOutputBudget.d.ts"
+    },
     "./sync": {
       "import": "./dist/sync/index.js",
       "types": "./dist/sync/index.d.ts"

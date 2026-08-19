@@ -28,6 +28,7 @@
 import { Worker } from 'worker_threads';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { getDatabaseMaintenanceSettings } from '../../utils/store';
 import { app, BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { getPackageRoot } from '../../utils/appPaths';
@@ -193,6 +194,9 @@ export class SQLiteDatabaseProxy {
       schemaDir: this.opts.schemaDir,
       slowQueryThresholdMs: this.opts.slowQueryThresholdMs,
       sampleRate: this.opts.sampleRate,
+      // Resolved here rather than in the worker: electron-store needs the
+      // `electron` module, which a worker bundle cannot resolve.
+      backupCopiesKept: getDatabaseMaintenanceSettings().backupCopiesKept,
     };
     await this.send('init', payload, 120_000);
     this.initialized = true;
@@ -332,6 +336,37 @@ export class SQLiteDatabaseProxy {
 
   async walCheckpoint(): Promise<unknown> {
     return this.send('walCheckpoint');
+  }
+
+  /** Apply a new backup-retention setting to the live service. */
+  async setBackupCopiesKept(copiesKept: number): Promise<void> {
+    await this.send('setBackupCopiesKept', { copiesKept });
+  }
+
+  /**
+   * Estimate what the tool-output retention pass would reclaim, from a bounded
+   * sample. Cheap enough for a confirmation prompt.
+   */
+  async toolRetentionEstimate(retentionDays: number): Promise<{
+    sampledRows: number;
+    sampleBytesSaved: number;
+    candidateRows: number;
+    estimatedBytesSaved: number;
+  }> {
+    return (await this.send('toolRetentionEstimate', { retentionDays })) as {
+      sampledRows: number;
+      sampleBytesSaved: number;
+      candidateRows: number;
+      estimatedBytesSaved: number;
+    };
+  }
+
+  /**
+   * Run the retention pass. Executes on the worker's background lane, so the
+   * app stays responsive while it works.
+   */
+  async toolRetentionRun(retentionDays: number, maxRows?: number): Promise<unknown> {
+    return this.send('toolRetentionRun', { retentionDays, maxRows });
   }
 
   // --------------------------------------------------------------------------

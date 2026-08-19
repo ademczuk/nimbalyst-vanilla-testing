@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Nimbalyst now takes far less disk: it keeps two database backups every twelve hours instead of three every four, both now adjustable, and no longer stores enormous command output in full. You can also discard tool output older than a chosen age to reclaim space, which never affects your prompts, the agent's replies, or the edits it made.
 - Nimbalyst now upgrades its local database to the faster storage engine on its own, showing progress while it works and restarting when it finishes; if anything goes wrong it keeps running on the old one.
 - Mockup project files can no longer be shared to a team, since their screens do not yet sync between people.
 - Opening an editor no longer fetches a font from a third-party server.

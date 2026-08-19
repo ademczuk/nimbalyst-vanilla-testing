@@ -50,6 +50,35 @@ export interface ExtensionSettings {
   configuration?: Record<string, unknown>;
 }
 
+/**
+ * Local database maintenance settings.
+ *
+ * Before these existed, backups were a hardcoded rolling-3 every 4 hours, so a
+ * 4.6 GiB store silently occupied 18.5 GiB on disk with no way to turn it down
+ * (#1248).
+ */
+export interface DatabaseMaintenanceSettings {
+  /** Backup generations to keep, 1-3. Each is a full copy. */
+  backupCopiesKept: number;
+  /** Hours between periodic backups. 0 means "only on quit". */
+  backupIntervalHours: number;
+  /**
+   * Days of tool output to keep at full fidelity. Older tool results are
+   * rewritten to a placeholder. 0 disables the pass entirely. User prompts and
+   * agent text are never affected at any setting.
+   */
+  toolOutputRetentionDays: number;
+}
+
+export const DEFAULT_DATABASE_MAINTENANCE: DatabaseMaintenanceSettings = {
+  backupCopiesKept: 2,
+  backupIntervalHours: 12,
+  // Opt-in for now: the pass is destructive and irreversible, so it ships
+  // behind an explicit action in the database dashboard before it becomes a
+  // default. See the rollout in the storage plan.
+  toolOutputRetentionDays: 0,
+};
+
 interface AppStoreSchema {
   theme: AppTheme;
   themeIsDark?: boolean; // Whether the current theme is dark (used for extension themes)
@@ -70,6 +99,9 @@ interface AppStoreSchema {
   communityPopupDismissed?: boolean;
   completedSessionCount?: number;
   completedSessionsWithTools?: number;
+  // Local database maintenance. Each backup generation is a FULL copy of the
+  // database, so `copiesKept` is a direct multiplier on disk usage (#1248).
+  databaseMaintenance?: DatabaseMaintenanceSettings;
   // Sound notifications
   completionSoundEnabled?: boolean;
   completionSoundType?: CompletionSoundType;
@@ -873,6 +905,33 @@ export const store = {
   get path() { return getAppStore().path; },
   get store() { return getAppStore().store; },
 };
+
+/**
+ * Read maintenance settings, merged over defaults. Persisted state predates
+ * these fields for every existing install, so each one is defaulted
+ * individually rather than trusting the stored object to be complete.
+ */
+export function getDatabaseMaintenanceSettings(): DatabaseMaintenanceSettings {
+  const stored = getAppStore().get('databaseMaintenance') as
+    | Partial<DatabaseMaintenanceSettings>
+    | undefined;
+  return {
+    backupCopiesKept:
+      stored?.backupCopiesKept ?? DEFAULT_DATABASE_MAINTENANCE.backupCopiesKept,
+    backupIntervalHours:
+      stored?.backupIntervalHours ?? DEFAULT_DATABASE_MAINTENANCE.backupIntervalHours,
+    toolOutputRetentionDays:
+      stored?.toolOutputRetentionDays ?? DEFAULT_DATABASE_MAINTENANCE.toolOutputRetentionDays,
+  };
+}
+
+export function setDatabaseMaintenanceSettings(
+  patch: Partial<DatabaseMaintenanceSettings>,
+): DatabaseMaintenanceSettings {
+  const next = { ...getDatabaseMaintenanceSettings(), ...patch };
+  getAppStore().set('databaseMaintenance', next);
+  return next;
+}
 
 export function getRecentItems(type: 'workspaces' | 'documents'): RecentItem[] {
   const key = getRecentKey(type);

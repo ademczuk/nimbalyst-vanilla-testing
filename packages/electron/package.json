@@ -278,6 +278,10 @@
         "to": "history-diff-worker.bundle.js"
       },
       {
+        "from": "out/project-manifest-worker.bundle.js",
+        "to": "project-manifest-worker.bundle.js"
+      },
+      {
         "from": "node_modules/better-sqlite3",
         "to": "node_modules/better-sqlite3",
         "filter": [

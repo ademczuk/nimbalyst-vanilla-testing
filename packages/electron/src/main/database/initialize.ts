@@ -24,13 +24,23 @@ import { checkWorktreeArchiveConsistency, createWorktreeStore } from '../service
 import { archiveProgressManager } from '../services/ArchiveProgressManager';
 import { GitWorktreeService } from '../services/GitWorktreeService';
 import { timeStartupPhase } from '../utils/startupTiming';
+import { getDatabaseMaintenanceSettings } from '../utils/store';
 
 // Backup service instance — only used by the PGLite path now. The SQLite
 // backend constructs SQLiteBackupService inside the worker during init, so
 // nothing on main holds a reference.
 let backupService: DatabaseBackupService | SQLiteBackupService | null = null;
 let periodicBackupTimer: NodeJS.Timeout | null = null;
-const BACKUP_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+/**
+ * Periodic backup cadence, from settings. Was a hardcoded 4 hours against a
+ * rolling-3 of full copies, which made a 4.6 GiB database occupy 18.5 GiB on
+ * disk with no user control (#1248). 0 hours means "only back up on quit".
+ */
+function getBackupIntervalMs(): number {
+  const hours = getDatabaseMaintenanceSettings().backupIntervalHours;
+  if (!Number.isFinite(hours) || hours <= 0) return 0;
+  return hours * 60 * 60 * 1000;
+}
 let sqliteDatabase: SQLiteDatabaseProxy | null = null;
 // Lazy-constructed SQLiteDatabaseProxy used by the migration IPC handlers
 // when PGLite is the live backend. The migration code runs inside the
@@ -383,26 +393,31 @@ export async function initializeDatabase(): Promise<SessionStore> {
       // skips the snapshot.
       void runStalenessBackup('startup');
 
-      periodicBackupTimer = setInterval(async () => {
-        logger.main.info('[Database] Running periodic backup...');
-        const result = await database.createBackup();
-        if (result.success) {
-          logger.main.info('[Database] Periodic backup completed successfully');
-        } else {
-          logger.main.warn('[Database] Periodic backup failed:', result.error);
-        }
-      }, BACKUP_INTERVAL_MS);
+      const backupIntervalMs = getBackupIntervalMs();
+      if (backupIntervalMs > 0) {
+        periodicBackupTimer = setInterval(async () => {
+          logger.main.info('[Database] Running periodic backup...');
+          const result = await database.createBackup();
+          if (result.success) {
+            logger.main.info('[Database] Periodic backup completed successfully');
+          } else {
+            logger.main.warn('[Database] Periodic backup failed:', result.error);
+          }
+        }, backupIntervalMs);
 
-      // Cover the macOS-sleep case: when the laptop wakes after sleeping
-      // longer than BACKUP_INTERVAL_MS, the setInterval timer has effectively
-      // been paused — we may have just missed one or more backup windows.
-      // Check staleness on resume and snapshot if needed.
-      powerMonitor.on('resume', () => {
-        logger.main.info('[Database] System resumed from sleep; checking backup staleness');
-        void runStalenessBackup('resume');
-      });
+        // Cover the macOS-sleep case: when the laptop wakes after sleeping
+        // longer than the interval, the setInterval timer has effectively
+        // been paused — we may have just missed one or more backup windows.
+        // Check staleness on resume and snapshot if needed.
+        powerMonitor.on('resume', () => {
+          logger.main.info('[Database] System resumed from sleep; checking backup staleness');
+          void runStalenessBackup('resume');
+        });
 
-      logger.main.info(`[Database] Periodic backup enabled (every ${BACKUP_INTERVAL_MS / (60 * 60 * 1000)} hours)`);
+        logger.main.info(`[Database] Periodic backup enabled (every ${backupIntervalMs / (60 * 60 * 1000)} hours)`);
+      } else {
+        logger.main.info('[Database] Periodic backup disabled by setting; backing up on quit only');
+      }
     }
 
     // Note: Database backup on quit is handled in main/index.ts before-quit handler
@@ -437,7 +452,8 @@ export function getLiveSqliteDatabaseProxy(): SQLiteDatabaseProxy | null {
 }
 
 /**
- * Run a backup if the last successful one is older than BACKUP_INTERVAL_MS.
+ * Run a backup if the last successful one is older than the configured
+ * interval.
  * Used at startup (to catch up after Nimbalyst was closed during a backup
  * window) and on system resume (to catch up after macOS pauses setInterval
  * during sleep). The interval itself runs unchanged; this is purely an
@@ -476,7 +492,10 @@ async function runStalenessBackup(trigger: 'startup' | 'resume'): Promise<void> 
     }
 
     const ageMs = Date.now() - lastSuccessMs;
-    if (lastSuccessMs > 0 && ageMs < BACKUP_INTERVAL_MS) {
+    // At "on quit only" there is no window to be stale against, so fall back to
+    // a day before a catch-up snapshot is worth the disk write.
+    const stalenessWindowMs = getBackupIntervalMs() || 24 * 60 * 60 * 1000;
+    if (lastSuccessMs > 0 && ageMs < stalenessWindowMs) {
       logger.main.info(`[Database] Backup not stale on ${trigger} (age ${Math.round(ageMs / 60000)}m); skipping`);
       return;
     }

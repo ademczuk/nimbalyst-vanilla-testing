@@ -21,6 +21,7 @@ import { timeStartupPhase } from '../utils/startupTiming';
 import { database } from '../database/PGLiteDatabaseWorker';
 import { dirtyEditorRegistry } from './DirtyEditorRegistry';
 import { getPersonalSessionJwt } from './StytchAuthService';
+import { hashProjectFiles } from './ProjectManifestHasher';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -179,14 +180,25 @@ export class ProjectFileSyncService {
       this.projectStates.set(encryptedProjectId, baseline);
     }
 
-    for (const filePath of mdFiles) {
+    // Read + sha256 every file on a worker thread. This loop used to do both
+    // inline on the main-process event loop (~22s blocked on a 1531-file
+    // project, every startup and every reconnect). Only digests come back, so
+    // file contents never cross the thread boundary.
+    const hashed = await hashProjectFiles(mdFiles);
+
+    for (const entry of hashed) {
+      const filePath = entry.filePath;
       try {
+        if (entry.error || !entry.contentHash || entry.lastModifiedAt == null) {
+          // Same outcome as the previous per-file try/catch: log and skip, so a
+          // single unreadable file never truncates the manifest.
+          logger.main.error(`[ProjectFileSync] Failed to process ${filePath}: ${entry.error ?? 'no hash'}`);
+          continue;
+        }
         const relativePath = path.relative(workspacePath, filePath);
         const syncId = this.syncIdFromPath(relativePath);
-        const content = await fs.readFile(filePath, 'utf-8');
-        const stat = await fs.stat(filePath);
-        const contentHash = this.sha256(content);
-        const lastModifiedAt = Math.floor(stat.mtimeMs);
+        const contentHash = entry.contentHash;
+        const lastModifiedAt = entry.lastModifiedAt;
 
         manifest.push({ syncId, contentHash, lastModifiedAt, hasYjs: false, yjsSeq: 0 });
         cache.fileMap.set(syncId, filePath);

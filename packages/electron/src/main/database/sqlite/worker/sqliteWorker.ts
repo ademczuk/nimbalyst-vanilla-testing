@@ -54,8 +54,15 @@ import {
   type PgliteReadRequestPayload,
   type PgliteReadResponsePayload,
   type WorkerControlRequestPayload,
+  type ToolRetentionPayload,
 } from './workerProtocol';
 import { assertWithinResponseLimit, ResponseTooLargeError } from './responseSizeGuard';
+import {
+  createToolOutputEstimateWork,
+  createToolOutputRetentionWork,
+  type ReclaimEstimate,
+  type RetentionResult,
+} from '../../toolOutputRetentionPass';
 import type { PGLiteHandle } from '../PGLiteToSQLiteMigrator';
 
 if (!parentPort) {
@@ -324,6 +331,7 @@ async function handle(req: RequestEnvelope): Promise<unknown> {
         backupDir,
         sqlite,
         log: (level, msg, meta) => log(level, msg, meta),
+        copiesKept: opts.backupCopiesKept,
       });
       await backupService.initialize();
       sqlite.setBackupService(backupService);
@@ -414,6 +422,41 @@ async function handle(req: RequestEnvelope): Promise<unknown> {
       const handle = ensureInitialized().getRawHandle();
       if (!handle) throw new Error('SQLite handle unavailable');
       return { result: handle.pragma('wal_checkpoint(TRUNCATE)') };
+    }
+
+    case 'setBackupCopiesKept': {
+      const { copiesKept } = req.payload as { copiesKept: number };
+      backupService?.setCopiesKept(copiesKept);
+      return { ok: true };
+    }
+
+    case 'toolRetentionEstimate': {
+      // Background lane, not inline: counting all candidates in one statement
+      // took 5.7 s against a real 10 GB store, and better-sqlite3 is
+      // synchronous, so that is 5.7 s of blocked worker behind one click.
+      const { retentionDays } = req.payload as ToolRetentionPayload;
+      const inst = ensureInitialized();
+      let estimate: ReclaimEstimate | null = null;
+      await inst.runBackground(
+        createToolOutputEstimateWork(retentionDays, (e) => {
+          estimate = e;
+        }),
+      );
+      return estimate;
+    }
+
+    case 'toolRetentionRun': {
+      // Runs on the coordinator's BACKGROUND lane, never inline: an unbounded
+      // rewrite of ai_agent_messages on the hot lane hangs the whole app.
+      const { retentionDays, maxRows } = req.payload as ToolRetentionPayload;
+      const inst = ensureInitialized();
+      let result: RetentionResult | null = null;
+      await inst.runBackground(
+        createToolOutputRetentionWork({ retentionDays, maxRows }, (r) => {
+          result = r;
+        }),
+      );
+      return result;
     }
 
     // ----- Migration --------------------------------------------------------

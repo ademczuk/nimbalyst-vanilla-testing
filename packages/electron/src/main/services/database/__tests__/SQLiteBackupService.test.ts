@@ -61,14 +61,59 @@ describe('SQLiteBackupService', () => {
     expect(status.lastSuccessfulBackup).toBeTruthy();
   });
 
-  it('rolls 3 backups: current -> previous -> oldest with each new backup', async () => {
+  const slotPath = (slot: 'current' | 'previous' | 'oldest') =>
+    path.join(backupDir, `nimbalyst.backup-${slot}.sqlite`);
+
+  it('keeps two generations by default: current -> previous', async () => {
+    // Each generation is a FULL copy, so this count is a direct multiplier on
+    // disk. The old hardcoded rolling-3 made a 4.6 GiB store occupy 18.5 GiB
+    // (#1248); two keeps a fallback generation at 3x instead of 4x.
     await svc.createBackup();
     await svc.createBackup();
     await svc.createBackup();
 
-    expect(fs.existsSync(path.join(backupDir, 'nimbalyst.backup-current.sqlite'))).toBe(true);
-    expect(fs.existsSync(path.join(backupDir, 'nimbalyst.backup-previous.sqlite'))).toBe(true);
-    expect(fs.existsSync(path.join(backupDir, 'nimbalyst.backup-oldest.sqlite'))).toBe(true);
+    expect(fs.existsSync(slotPath('current'))).toBe(true);
+    expect(fs.existsSync(slotPath('previous'))).toBe(true);
+    expect(fs.existsSync(slotPath('oldest'))).toBe(false);
+  });
+
+  it('rolls all three generations when the user opts back up to 3', async () => {
+    svc.setCopiesKept(3);
+
+    await svc.createBackup();
+    await svc.createBackup();
+    await svc.createBackup();
+
+    expect(fs.existsSync(slotPath('current'))).toBe(true);
+    expect(fs.existsSync(slotPath('previous'))).toBe(true);
+    expect(fs.existsSync(slotPath('oldest'))).toBe(true);
+  });
+
+  it('reclaims the extra copies when retention is lowered', async () => {
+    svc.setCopiesKept(3);
+    await svc.createBackup();
+    await svc.createBackup();
+    await svc.createBackup();
+    expect(fs.existsSync(slotPath('oldest'))).toBe(true);
+
+    // Lowering the setting has to actually delete the surplus file, not just
+    // stop writing to it -- otherwise the disk never comes back.
+    svc.setCopiesKept(1);
+    await svc.createBackup();
+
+    expect(fs.existsSync(slotPath('current'))).toBe(true);
+    expect(fs.existsSync(slotPath('previous'))).toBe(false);
+    expect(fs.existsSync(slotPath('oldest'))).toBe(false);
+  });
+
+  it('never drops below one backup, whatever the setting says', async () => {
+    svc.setCopiesKept(0);
+    await svc.createBackup();
+    expect(fs.existsSync(slotPath('current'))).toBe(true);
+
+    // A second pass must still leave a backup on disk.
+    await svc.createBackup();
+    expect(fs.existsSync(slotPath('current'))).toBe(true);
   });
 
   it('rejects a new backup that is < 50% of the current size', async () => {

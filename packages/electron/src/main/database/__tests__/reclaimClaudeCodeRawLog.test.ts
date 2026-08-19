@@ -20,10 +20,16 @@ function makeFakeDb(rows: Array<{ id: number; content: string }>) {
         const n = [...store.values()].filter(isCandidate).length;
         return { rows: [{ n }] };
       }
+      if (s.startsWith('SELECT MAX(id)')) {
+        const ids = [...store.keys()];
+        return { rows: [{ max_id: ids.length ? Math.max(...ids) : 0 }] };
+      }
       if (s.startsWith('SELECT id, content')) {
-        const [lastId, limit] = params as [number, number];
+        // The candidate query walks a bounded id WINDOW so a sparse, unindexed
+        // LIKE scan can never sweep the whole table in one statement.
+        const [lastId, windowEnd, limit] = params as [number, number, number];
         const matching = [...store.entries()]
-          .filter(([id, c]) => id > lastId && isCandidate(c))
+          .filter(([id, c]) => id > lastId && id <= windowEnd && isCandidate(c))
           .sort((a, b) => a[0] - b[0])
           .slice(0, limit)
           .map(([id, content]) => ({ id, content }));

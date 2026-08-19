@@ -21,6 +21,8 @@ import { AgentCapabilities, BUILTIN_AGENT_CAPABILITIES } from '../agentCapabilit
 import { CodexSDKProtocol } from '../protocols/CodexSDKProtocol';
 import { CodexAppServerProtocol, type CodexAppServerHostBindings } from '../protocols/CodexAppServerProtocol';
 import { AgentProtocol, ProtocolEvent, ProtocolSession } from '../protocols/ProtocolInterface';
+import { isNonRenderingAppServerItemStarted } from '../transcript/parsers/CodexAppServerRawParser';
+import { capAppServerItemParamsForStorage } from '../../../storage/toolOutputBudget';
 import { ToolPermissionService } from '../permissions/ToolPermissionService';
 import { PermissionMode, TrustChecker, PermissionPatternSaver, PermissionPatternChecker, SecurityLogger } from './ProviderPermissionMixin';
 import { CodexSdkModuleLike, loadCodexSdkModule } from './codex/codexSdkLoader';
@@ -2319,7 +2321,7 @@ export class OpenAICodexProvider extends BaseAgentProvider {
       if (!this.shouldPersistAppServerNotification(sessionId, method, params)) {
         return;
       }
-      const synthesizedRaw = { method, params };
+      const synthesizedRaw = { method, params: capAppServerItemParamsForStorage(params) };
       const content = JSON.stringify(synthesizedRaw);
       const rawItemId = this.extractAppServerItemId(params);
       const editGroupId = rawItemId
@@ -2414,6 +2416,18 @@ export class OpenAICodexProvider extends BaseAgentProvider {
   ): boolean {
     if (!PERSISTED_APP_SERVER_NOTIFICATION_METHODS.has(method)) {
       return false;
+    }
+
+    // An `item/started` for most item types produces no canonical descriptor --
+    // the matching `item/completed` carries the same item id plus the actual
+    // content. Skipping them removes roughly half of all persisted codex rows.
+    // The predicate lives with the parser so the two cannot drift; tool items
+    // that render a widget at start time (MCP prompts) are excluded there.
+    if (method === 'item/started') {
+      const itemType = (params as { item?: { type?: unknown } } | undefined)?.item?.type;
+      if (isNonRenderingAppServerItemStarted(itemType)) {
+        return false;
+      }
     }
 
     const notificationKey = this.buildAppServerNotificationKey(method, params);

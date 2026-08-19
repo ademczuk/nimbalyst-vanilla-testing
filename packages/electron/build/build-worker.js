@@ -89,6 +89,14 @@ async function buildWorker() {
           __dirname,
           '../../../node_modules/@electric-sql/pglite/dist/index.cjs',
         ),
+        // The worker imports a couple of leaf modules from the runtime
+        // (`storage/toolOutputRetention`, ...). Those deep subpaths are not in
+        // the runtime's `exports` map, so node resolution would fall back to
+        // the `@nimbalyst/runtime` barrel — which drags Lexical, CSS and
+        // `?raw` YAML imports into this CJS bundle and fails the build. Alias
+        // the package to its source tree the way electron.vite.config.ts does,
+        // so a deep import stays a single leaf module.
+        '@nimbalyst/runtime': path.join(__dirname, '../../runtime/src'),
       },
       define: {
         'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'production'),
@@ -109,9 +117,27 @@ async function buildWorker() {
       format: 'cjs',
     });
 
+    // Reads + sha256-hashes markdown files for ProjectFileSync's manifest off
+    // the main thread. Node builtins only — nothing to keep external beyond the
+    // worker plumbing itself.
+    await esbuild.build({
+      entryPoints: [
+        path.join(__dirname, '../src/main/workers/projectManifestWorker.ts'),
+      ],
+      bundle: true,
+      platform: 'node',
+      target: 'node18',
+      outfile: path.join(outDir, 'project-manifest-worker.bundle.js'),
+      external: ['worker_threads'],
+      minify: false,
+      sourcemap: process.env.NODE_ENV !== 'production',
+      format: 'cjs',
+    });
+
     console.log('Worker bundle created successfully at out/worker.bundle.js');
     console.log('SQLite worker bundle created successfully at out/sqlite-worker.bundle.js');
     console.log('History diff worker bundle created successfully at out/history-diff-worker.bundle.js');
+    console.log('Project manifest worker bundle created successfully at out/project-manifest-worker.bundle.js');
 
     // Copy PGLite runtime files that are loaded dynamically at runtime
     // The binary loader embeds some files, but PGLite loads these via fs.readFile
