@@ -522,7 +522,11 @@ jobs:
             if [ "${{ github.ref_type }}" == "tag" ] || [ "${{ inputs.release }}" == "true" ]; then
               npm run build:mac:notarized -- --${{ matrix.arch }} --mac dmg zip --publish never
             else
-              npm run build:mac:local -- --${{ matrix.arch }} --mac dmg zip --publish never
+              # No --publish here: build:mac:local already passes it. Repeating
+              # the flag makes yargs parse it as ["never","never"], which no
+              # longer equals "never", so electron-builder falls back to
+              # publishing and fails on a missing GH_TOKEN (run 32302395111).
+              npm run build:mac:local -- --${{ matrix.arch }} --mac dmg zip
             fi
           elif [ "${{ matrix.platform }}" == "win" ]; then
             unset CSC_NAME CSC_LINK CSC_KEY_PASSWORD
