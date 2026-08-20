@@ -111,6 +111,12 @@ jobs:
         working-directory: packages/extension-sdk
         run: npm run build
 
+      # Mirror ci.yml: docsUiStoreBinding.test.tsx imports the built
+      # @nimbalyst/collab-bundle docs-ui entry, which does not exist until the
+      # bundle is built. Without this step every PR job fails at Unit tests.
+      - name: Build collab-bundle
+        run: npm run build --workspace=@nimbalyst/collab-bundle
+
       - name: Unit tests
         run: npm run test:unit -- --run
 
