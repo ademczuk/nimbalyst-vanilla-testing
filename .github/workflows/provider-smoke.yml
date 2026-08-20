@@ -90,7 +90,9 @@ jobs:
         if: steps.decide.outputs.go == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          # Read the version from upstream's .nvmrc so the next engines bump
+          # propagates automatically instead of breaking npm ci (EBADENGINE).
+          node-version-file: '.nvmrc'
 
       - name: Install dependencies
         if: steps.decide.outputs.go == 'true'
