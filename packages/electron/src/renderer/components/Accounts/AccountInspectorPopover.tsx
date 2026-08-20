@@ -16,6 +16,7 @@ import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowCo
 import { resolveAccountOrgRow } from '../../../shared/orgProjectWalk';
 import type { PersonalAccountSummary } from '../../store/atoms/settingsDomains';
 import { formatUnreadCount } from '../../store/projectWindowUnreadViewModel';
+import type { SyncSummary, SyncTone } from './syncStatusSummary';
 
 /** The organization the active project belongs to, resolved by the gutter. */
 export interface ProjectOrganization {
@@ -49,7 +50,25 @@ interface AccountInspectorPopoverProps {
   onOpenApplicationSettings: () => void;
   /** Open the current project's settings. */
   onOpenProjectSettings: () => void;
+  /** One-line sync state, or null when the user isn't signed in. */
+  sync?: SyncSummary | null;
+  /** Open the account settings screen that owns per-project sync selection. */
+  onOpenSyncSettings?: () => void;
 }
+
+const SYNC_TONE_CLASS: Record<SyncTone, string> = {
+  ok: 'text-[var(--nim-text-muted)]',
+  idle: 'text-[var(--nim-text-faint)]',
+  warning: 'text-[var(--nim-warning)]',
+  error: 'text-[var(--nim-error)]',
+};
+
+const SYNC_TONE_ICON: Record<SyncTone, string> = {
+  ok: 'cloud_done',
+  idle: 'cloud_off',
+  warning: 'cloud_off',
+  error: 'cloud_off',
+};
 
 /** Row height/shape shared by the settings, Account and Organization entries. */
 const ROW_CLASS =
@@ -68,6 +87,8 @@ export function AccountInspectorPopover({
   onOpenProjectSettings,
   messagesUnreadCount = 0,
   onOpenMessages,
+  sync = null,
+  onOpenSyncSettings,
 }: AccountInspectorPopoverProps) {
   const { refs, floatingStyles, context } = useFloating({
     open: true,
@@ -200,6 +221,32 @@ export function AccountInspectorPopover({
         )}
 
         <div className="border-t border-[var(--nim-border)]" />
+
+        {/* Sync → the account screen that owns per-project sync selection.
+            This replaced a dedicated gutter slot whose popover reported session
+            counts, file counts and a per-project toggle. The counts were
+            diagnostics, and the toggle is a coarser version of the Mobile App
+            panel's per-project grid, so only the state survives the move. */}
+        {sync && (
+          <button
+            type="button"
+            className={`${ROW_CLASS} py-2`}
+            data-testid="account-inspector-sync-row"
+            data-sync-tone={sync.tone}
+            onClick={() => onOpenSyncSettings?.()}
+          >
+            <MaterialSymbol
+              icon={SYNC_TONE_ICON[sync.tone]}
+              size={20}
+              className={`shrink-0 ${SYNC_TONE_CLASS[sync.tone]}`}
+            />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">Sync</span>
+            <span className={`min-w-0 shrink truncate text-xs ${SYNC_TONE_CLASS[sync.tone]}`}>
+              {sync.detail}
+            </span>
+            <MaterialSymbol icon="chevron_right" size={18} className="shrink-0 text-[var(--nim-text-faint)]" />
+          </button>
+        )}
 
         {/* Account row (bottom) → Account screen (sign-in / manage). */}
         <button

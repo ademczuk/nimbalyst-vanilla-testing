@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Sync no longer takes up a spot in the left gutter: its state reads as a single line in the account menu, and a sync problem shows on your avatar.
 
 ### Fixed
 <!-- Bug fixes go here -->

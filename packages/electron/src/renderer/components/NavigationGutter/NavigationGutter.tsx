@@ -7,7 +7,6 @@ import type { SettingsCategory } from '../Settings/SettingsSidebar';
 import type { SettingsScope } from '../Settings/SettingsView';
 import { KeyboardShortcuts, getShortcutDisplay } from '../../../shared/KeyboardShortcuts';
 import { ThemeToggleButton } from '../ThemeToggleButton/ThemeToggleButton';
-import { SyncStatusButton } from '../SyncStatusButton/SyncStatusButton';
 import { TrustIndicator } from '../TrustIndicator';
 import { ExtensionDevIndicator } from '../ExtensionDevIndicator';
 import { ClaudeUsageIndicator } from '../ClaudeUsageIndicator';
@@ -21,7 +20,6 @@ import {
   developerModeAtom,
   terminalFeatureAvailableAtom,
   syncEnabledAtom,
-  syncEnabledProjectsAtom,
 } from '../../store/atoms/appSettings';
 import {
   hiddenGutterItemsAtom,
@@ -38,6 +36,8 @@ import { formatUnreadCount } from '../../store/projectWindowUnreadViewModel';
 import { useProjectOrg } from '../../hooks/useProjectOrg';
 import { AlphaBadge } from '../common/AlphaBadge';
 import { AccountInspectorPopover } from '../Accounts/AccountInspectorPopover';
+import { summarizeSyncStatus } from '../Accounts/syncStatusSummary';
+import { useSyncStatus } from '../../hooks/useSyncStatus';
 import { GutterContextMenu } from './GutterContextMenu';
 import { CustomizeGutterPopover } from './CustomizeGutterPopover';
 import {
@@ -189,17 +189,20 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
 
   // Check if mobile sync is configured for this workspace
   const syncEnabled = useAtomValue(syncEnabledAtom);
-  const syncEnabledProjects = useAtomValue(syncEnabledProjectsAtom);
-  const isSyncConfigured = syncEnabled && !!workspacePath && syncEnabledProjects.includes(workspacePath);
-
-  // User is "connected" to this project if they have a team or mobile sync configured
-  const isProjectConnected = hasTeam || isSyncConfigured;
 
   // When sync is enabled but the user isn't signed in (creds missing/expired),
   // surface a logged-out indicator on the user button so the broken-sync state
   // isn't silent. Wait for the auth state to load before flipping the icon to
   // avoid flashing the logged-out look during startup.
   const needsSignIn = syncEnabled && isSignedIn === false;
+
+  // Sync state for the account popover's Sync row. It used to have its own
+  // gutter slot; the state now reaches the user through the avatar, which
+  // already carries the sign-in warning, so there is one place to look when
+  // something about the account needs attention rather than two.
+  const syncStatus = useSyncStatus(workspacePath || undefined);
+  const syncSummary = summarizeSyncStatus(syncStatus);
+  const accountNeedsAttention = needsSignIn || (syncSummary?.needsAttention ?? false);
 
   // Get extension panel buttons from the panel registry
   const extensionPanelButtons = useExtensionGutterButtons();
@@ -470,12 +473,6 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
       ),
     },
     {
-      id: 'sync-status', section: 'indicators', icon: 'sync', label: 'Sync Status', hideable: true,
-      render: () => (
-        <SyncStatusButton workspacePath={workspacePath || undefined} onOpenSettings={onOpenSettings} />
-      ),
-    },
-    {
       id: 'theme-toggle', section: 'indicators', icon: 'dark_mode', label: 'Theme Toggle', hideable: true,
       render: () => <ThemeToggleButton />,
     },
@@ -601,22 +598,35 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
                   onContentModeChange('org');
                 }
               }}
+              sync={syncSummary}
+              onOpenSyncSettings={() => {
+                setUserMenuOpen(false);
+                // Per-project sync selection lives in the Mobile App panel.
+                handleNavigateSettings('account', 'account-mobile');
+              }}
             />
           )}
           <HelpTooltip testId="gutter-user-button" placement="right">
             <button
               ref={userMenuButtonRef}
-              className={`account-inspector-trigger nav-button relative w-9 h-9 flex items-center justify-center border-none rounded-md cursor-pointer transition-all duration-150 p-0 active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--nim-primary)] focus-visible:outline-offset-2 ${userMenuOpen ? 'bg-nim-tertiary text-nim' : needsSignIn ? 'bg-transparent text-nim-warning hover:bg-nim-tertiary' : 'bg-transparent text-nim-muted hover:bg-nim-tertiary hover:text-nim'}`}
+              className={`account-inspector-trigger nav-button relative w-9 h-9 flex items-center justify-center border-none rounded-md cursor-pointer transition-all duration-150 p-0 active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--nim-primary)] focus-visible:outline-offset-2 ${userMenuOpen ? 'bg-nim-tertiary text-nim' : accountNeedsAttention ? 'bg-transparent text-nim-warning hover:bg-nim-tertiary' : 'bg-transparent text-nim-muted hover:bg-nim-tertiary hover:text-nim'}`}
               onClick={() => setUserMenuOpen(!userMenuOpen)}
-              aria-label={needsSignIn ? 'User menu (signed out -- sync requires sign in)' : 'User menu'}
+              aria-label={
+                needsSignIn
+                  ? 'User menu (signed out -- sync requires sign in)'
+                  : syncSummary?.needsAttention
+                    ? `User menu (sync: ${syncSummary.detail})`
+                    : 'User menu'
+              }
               aria-expanded={userMenuOpen}
               data-signed-in={isSignedIn === null ? undefined : isSignedIn}
               data-needs-sign-in={needsSignIn || undefined}
+              data-sync-attention={syncSummary?.needsAttention || undefined}
               data-testid="gutter-user-button"
             >
               {accounts.length > 0 ? (
                 <>
-                  <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold text-white ${needsSignIn ? 'bg-[var(--nim-bg-tertiary)] text-[var(--nim-warning)]' : 'bg-[var(--nim-primary)]'}`}>
+                  <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold text-white ${accountNeedsAttention ? 'bg-[var(--nim-bg-tertiary)] text-[var(--nim-warning)]' : 'bg-[var(--nim-primary)]'}`}>
                     {(accounts.find((account) => account.isSyncAccount)?.email?.[0] ?? accounts[0]?.email?.[0] ?? '?').toUpperCase()}
                   </span>
                   {accounts.length > 1 && <span className="absolute -bottom-0.5 -right-0.5 rounded-full border border-[var(--nim-border)] bg-[var(--nim-bg-tertiary)] px-1 text-[8px] font-semibold leading-3">{accounts.length}</span>}

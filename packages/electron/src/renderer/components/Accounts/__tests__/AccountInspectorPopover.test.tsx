@@ -117,4 +117,46 @@ describe('AccountInspectorPopover', () => {
     expect(screen.queryByTestId('account-inspector-organization-row')).toBeNull();
     screen.getByTestId('account-inspector-organization-loading');
   });
+
+  // Sync gave up its gutter slot to this row, so the row has to be the thing
+  // that appears — and it must stay away entirely for a user with no sync,
+  // who is exactly who the old gutter icon hid itself from.
+  it('shows the sync row only when there is sync state, and links it to settings', () => {
+    const onOpenSyncSettings = vi.fn();
+    const { rerender } = render(
+      <AccountInspectorPopover
+        accounts={[]}
+        projectOrg={null}
+        anchorEl={anchor()}
+        onClose={vi.fn()}
+        onOpenAccount={vi.fn()}
+        onManageOrganization={vi.fn()}
+        onOpenApplicationSettings={vi.fn()}
+        onOpenProjectSettings={vi.fn()}
+        sync={null}
+      />,
+    );
+    expect(screen.queryByTestId('account-inspector-sync-row')).toBeNull();
+
+    rerender(
+      <AccountInspectorPopover
+        accounts={[]}
+        projectOrg={null}
+        anchorEl={anchor()}
+        onClose={vi.fn()}
+        onOpenAccount={vi.fn()}
+        onManageOrganization={vi.fn()}
+        onOpenApplicationSettings={vi.fn()}
+        onOpenProjectSettings={vi.fn()}
+        sync={{ tone: 'warning', detail: 'Disconnected', needsAttention: true }}
+        onOpenSyncSettings={onOpenSyncSettings}
+      />,
+    );
+
+    const row = screen.getByTestId('account-inspector-sync-row');
+    expect(row.getAttribute('data-sync-tone')).toBe('warning');
+    screen.getByText('Disconnected');
+    fireEvent.click(row);
+    expect(onOpenSyncSettings).toHaveBeenCalledTimes(1);
+  });
 });

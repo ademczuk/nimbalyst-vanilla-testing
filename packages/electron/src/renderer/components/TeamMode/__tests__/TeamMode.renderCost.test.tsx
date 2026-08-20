@@ -123,9 +123,10 @@ describe('org window navigation repaint cost', () => {
     });
     await waitFor(() => screen.getByTestId('room-view-stub'));
 
-    // The row-level selection subscriber is the only OrgSidebarRow that may
-    // render. Hoisting that subscription would wake the whole list.
-    expect(budget.rendersOf('OrgSidebarRow'), budget.report()).toBe(1);
+    // Two rows and no more: the one being left and the one being entered. The
+    // other eight subscribe to a boolean that stayed false and hear nothing.
+    // Hoisting that subscription would wake the whole list.
+    expect(budget.rendersOf('OrgSidebarRow'), budget.report()).toBe(2);
   });
 
   it('does not repaint the sidebar for an inbox snapshot that changed elsewhere', async () => {
@@ -157,7 +158,7 @@ describe('org window navigation repaint cost', () => {
     expect(budget.rendersOf('OrgSidebarRow'), budget.report()).toBe(0);
   });
 
-  it('keeps a room-to-room navigation to one sidebar-row render', async () => {
+  it('keeps a room-to-room navigation to the two rows that changed', async () => {
     installApi();
     renderHost(seedStore());
 
@@ -170,7 +171,8 @@ describe('org window navigation repaint cost', () => {
       await act(async () => { screen.getByTestId('org-room-item-design').click(); });
     });
 
-    expect(budget.rendersOf('OrgSidebarRow'), budget.report()).toBe(1);
+    // #general and #design. The Inbox rows above them do not hear a room hop.
+    expect(budget.rendersOf('OrgSidebarRow'), budget.report()).toBe(2);
   });
 
   // The Inbox used to be torn down on every hop into a room, which re-read the

@@ -33,6 +33,12 @@ const COMPONENT_TAGS = new Set([TAG_FUNCTION, TAG_CLASS, TAG_FORWARD_REF, TAG_ME
 /** `PerformedWork` — React sets this bit on a fiber whose render function actually ran. */
 const PERFORMED_WORK = 0b1;
 
+/**
+ * `actualStartTime` on a fiber React never timed — it writes -1 there when the
+ * profiler timer is off for that tree, and 0 is as good a floor as -1.
+ */
+const UNTIMED = 0;
+
 /** Guard against a pathological or cyclic tree wedging the walk. */
 const MAX_NODES_PER_COMMIT = 100_000;
 
@@ -101,6 +107,14 @@ const stats = new Map<string, MutableStat>();
 const timeline = new Map<number, { commits: number; renders: number }>();
 const nameCache = new WeakMap<object, string>();
 
+/**
+ * When each root last committed — the floor `renderedInThisCommit` measures
+ * against. Kept per root so two roots cannot shadow each other, and updated on
+ * every commit whether or not we are recording: a floor left behind by the last
+ * *recorded* commit would read every render since as belonging to this one.
+ */
+const lastCommitAt = new WeakMap<object, number>();
+
 let hookInstalled = false;
 let reactInjected = false;
 let recording = false;
@@ -108,6 +122,8 @@ let startedAt = 0;
 let stoppedAt = 0;
 let commitCount = 0;
 let commitId = 0;
+/** The previous commit's timestamp for the root being walked right now. */
+let commitFloor = -1;
 let renderCount = 0;
 let overheadMs = 0;
 let truncated = false;
@@ -285,9 +301,31 @@ function bump(map: Map<string, number>, key: string): void {
   map.set(key, (map.get(key) ?? 0) + 1);
 }
 
+/**
+ * Whether this fiber rendered in the commit being walked, rather than carrying
+ * a `PerformedWork` bit left over from an earlier one.
+ *
+ * React clears that bit by cloning a fiber, and it only clones what it
+ * re-renders — a subtree under a memo that bailed out is the *same* fibers as
+ * last time, flags and all. The flag alone would therefore count that one
+ * render again in every later commit that skips the subtree.
+ *
+ * `actualStartTime` is React's own timestamp for when a render began, on the
+ * same clock as ours, so anything older than the previous commit did not happen
+ * in this one. React records it under `ProfileMode`, which is on whenever a
+ * DevTools hook is installed — which is us, in dev. Where it is missing, trust
+ * the flag: over-counting beats a profiler that silently reports nothing.
+ */
+function renderedInThisCommit(fiber: Fiber): boolean {
+  const startedAt = fiber.actualStartTime;
+  if (typeof startedAt !== 'number' || startedAt <= UNTIMED) return true;
+  return startedAt > commitFloor;
+}
+
 function visit(fiber: Fiber): void {
   if (!COMPONENT_TAGS.has(fiber.tag)) return;
   if ((fiber.flags & PERFORMED_WORK) === 0) return;
+  if (!renderedInThisCommit(fiber)) return;
 
   const name = resolveName(fiber);
   if (!name) return;
@@ -314,11 +352,22 @@ function visit(fiber: Fiber): void {
   }
 }
 
+/**
+ * Depth-first over the committed tree, carrying our own stack.
+ *
+ * Deliberately never follows `fiber.return`. React shares a subtree it skipped
+ * with the previous tree, and those children still point back at *that* tree's
+ * parent — so climbing through one steps onto the previous tree and walks its
+ * siblings from there, reading flags left over from the commit that rendered
+ * them. That is what made a navigation report renders belonging to the click
+ * before it.
+ */
 function walk(rootFiber: Fiber): void {
-  let node: Fiber | null = rootFiber;
+  const stack: Fiber[] = [rootFiber];
   let visited = 0;
 
-  while (node) {
+  while (stack.length) {
+    const node = stack.pop()!;
     visited += 1;
     if (visited > MAX_NODES_PER_COMMIT) {
       truncated = true;
@@ -327,23 +376,22 @@ function walk(rootFiber: Fiber): void {
 
     visit(node);
 
-    if (node.child) {
-      node = node.child;
-      continue;
-    }
-    while (node && node !== rootFiber && !node.sibling) {
-      node = node.return;
-    }
-    if (!node || node === rootFiber) return;
-    node = node.sibling;
+    // The root's siblings belong to another tree; everything below it is ours.
+    if (node !== rootFiber && node.sibling) stack.push(node.sibling);
+    if (node.child) stack.push(node.child);
   }
 }
 
 function onCommit(root: Fiber): void {
   lifetimeCommits += 1;
-  if (!recording) return;
 
   const began = performance.now();
+  const previousCommitAt = lastCommitAt.get(root) ?? -1;
+  lastCommitAt.set(root, began);
+
+  if (!recording) return;
+
+  commitFloor = previousCommitAt;
   commitCount += 1;
   commitId += 1;
 
