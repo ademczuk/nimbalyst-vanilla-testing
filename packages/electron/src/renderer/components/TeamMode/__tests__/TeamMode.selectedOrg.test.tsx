@@ -9,7 +9,8 @@ import { dialogRef } from '../../../contexts/DialogContext';
 import { DIALOG_IDS } from '../../../dialogs/registry';
 import { organizationDirectoryAtom } from '../../../store/atoms/settingsDomains';
 import { trackerItemsMapAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
-import { TeamMode } from '../TeamMode';
+import { OrgModeHost } from '../OrgModeHost';
+import { ORG_WINDOW_SURFACE_ID } from '../orgWindowState';
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
@@ -87,8 +88,15 @@ describe('TeamMode organization targeting', () => {
     const open = vi.fn();
     dialogRef.current = { open } as unknown as typeof dialogRef.current;
     const store = createStore();
-    store.set(selectedOrgIdAtom, 'org-invited');
-    render(<Provider store={store}><TeamMode /></Provider>);
+    render(
+      <Provider store={store}>
+        <OrgModeHost
+        orgId="org-invited"
+        surfaceId={ORG_WINDOW_SURFACE_ID}
+        chrome="window"
+        />
+      </Provider>,
+    );
 
     await waitFor(() => screen.getByTestId('team-mode-organization-settings'));
     fireEvent.click(screen.getByTestId('team-mode-organization-settings'));
@@ -104,7 +112,16 @@ describe('TeamMode organization targeting', () => {
     installApi();
     const store = createStore();
     store.set(selectedOrgIdAtom, 'org-i-left');
-    render(<Provider store={store}><TeamMode /></Provider>);
+    render(
+      <Provider store={store}>
+        <OrgModeHost
+        orgId="org-i-left"
+        surfaceId={ORG_WINDOW_SURFACE_ID}
+        chrome="window"
+        onOrgIdChange={(nextOrgId) => store.set(selectedOrgIdAtom, nextOrgId)}
+        />
+      </Provider>,
+    );
 
     await waitFor(() => screen.getByTestId('team-mode-organization-recovery'));
     expect(store.get(selectedOrgIdAtom)).toBe('org-i-left');
@@ -119,7 +136,16 @@ describe('TeamMode organization targeting', () => {
     });
     const store = createStore();
     store.set(selectedOrgIdAtom, 'org-other');
-    render(<Provider store={store}><TeamMode /></Provider>);
+    render(
+      <Provider store={store}>
+        <OrgModeHost
+        orgId="org-other"
+        surfaceId={ORG_WINDOW_SURFACE_ID}
+        chrome="window"
+        onOrgIdChange={(nextOrgId) => store.set(selectedOrgIdAtom, nextOrgId)}
+        />
+      </Provider>,
+    );
 
     await waitFor(() => screen.getByTestId('team-mode-organization-recovery'));
     expect(store.get(selectedOrgIdAtom)).toBe('org-other');
@@ -132,9 +158,16 @@ describe('TeamMode organization targeting', () => {
   it('offers organization choices on the unbound surface when active organizations exist', async () => {
     installApi();
     const store = createStore();
-    store.set(selectedOrgIdAtom, null);
     // No workspace and no selection: the unbound surface, but the user is in orgs.
-    render(<Provider store={store}><TeamMode /></Provider>);
+    render(
+      <Provider store={store}>
+        <OrgModeHost
+        orgId={null}
+        surfaceId={ORG_WINDOW_SURFACE_ID}
+        chrome="window"
+        />
+      </Provider>,
+    );
 
     await waitFor(() => screen.getByTestId('team-mode-organization-choices'));
     expect(screen.getAllByTestId('team-mode-organization-choice')).toHaveLength(2);
@@ -143,9 +176,16 @@ describe('TeamMode organization targeting', () => {
   it('targets the explicitly selected non-workspace organization', async () => {
     installApi();
     const store = createStore();
-    store.set(selectedOrgIdAtom, 'org-other');
     const { container } = render(
-      <Provider store={store}><TeamMode workspacePath="/workspace" isActive /></Provider>,
+      <Provider store={store}>
+        <OrgModeHost
+          orgId="org-other"
+          workspacePath="/workspace"
+          surfaceId={ORG_WINDOW_SURFACE_ID}
+          chrome="window"
+          isActive
+        />
+      </Provider>,
     );
 
     await waitFor(() => expect(orgIdentity()).toContain('Other Org'));
@@ -173,6 +213,23 @@ describe('TeamMode organization targeting', () => {
     expect(screen.queryByTestId('organization-members-roles-panel')).toBeNull();
   });
 
+  it('uses an explicit host organization without mutating the window selection', async () => {
+    installApi();
+    const store = createStore();
+    store.set(selectedOrgIdAtom, 'org-workspace');
+
+    render(
+      <Provider store={store}>
+        <OrgModeHost orgId="org-other" surfaceId="project-org-mode" />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(
+      (window as any).electronAPI.organization.listMembers,
+    ).toHaveBeenCalledWith('org-other'));
+    expect(store.get(selectedOrgIdAtom)).toBe('org-workspace');
+  });
+
   it('hydrates canonical tracker records for chips in the dedicated org window', async () => {
     installApi();
     const invoke = (window as any).electronAPI.invoke as ReturnType<typeof vi.fn>;
@@ -193,9 +250,15 @@ describe('TeamMode organization targeting', () => {
       return [];
     });
     const store = createStore();
-    store.set(selectedOrgIdAtom, 'org-other');
-
-    render(<Provider store={store}><TeamMode /></Provider>);
+    render(
+      <Provider store={store}>
+        <OrgModeHost
+        orgId="org-other"
+        surfaceId={ORG_WINDOW_SURFACE_ID}
+        chrome="window"
+        />
+      </Provider>,
+    );
 
     await waitFor(() => expect(
       store.get(trackerItemsMapAtom).get('plan-1'),
@@ -212,8 +275,17 @@ describe('TeamMode organization targeting', () => {
   it('falls back to the workspace-bound organization when no organization is selected', async () => {
     installApi();
     const store = createStore();
-    store.set(selectedOrgIdAtom, null);
-    render(<Provider store={store}><TeamMode workspacePath="/workspace" isActive /></Provider>);
+    render(
+      <Provider store={store}>
+        <OrgModeHost
+          orgId={null}
+          workspacePath="/workspace"
+          surfaceId={ORG_WINDOW_SURFACE_ID}
+          chrome="window"
+          isActive
+        />
+      </Provider>,
+    );
 
     await waitFor(() => expect(orgIdentity()).toContain('Workspace Org'));
     await waitFor(() => expect(
@@ -225,9 +297,16 @@ describe('TeamMode organization targeting', () => {
     installApi();
     const findForWorkspace = (window as any).electronAPI.team.findForWorkspace;
     const store = createStore();
-    store.set(selectedOrgIdAtom, 'org-other');
     // No workspacePath: the standalone org-management window targets the org only.
-    render(<Provider store={store}><TeamMode /></Provider>);
+    render(
+      <Provider store={store}>
+        <OrgModeHost
+        orgId="org-other"
+        surfaceId={ORG_WINDOW_SURFACE_ID}
+        chrome="window"
+        />
+      </Provider>,
+    );
 
     await waitFor(() => expect(orgIdentity()).toContain('Other Org'));
     // No workspace-scoped sharing surface, and no workspace lookup at all: the

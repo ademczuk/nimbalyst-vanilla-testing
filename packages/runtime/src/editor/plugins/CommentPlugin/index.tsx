@@ -73,6 +73,7 @@ import type {
 import { INSERT_INLINE_COMMENT_COMMAND } from '../../extensions/builtin/CommentsExtension';
 import { OPEN_COMMENT_COMPOSER_COMMAND } from './commands';
 import { scrollToCommentAnchor } from './scrollToCommentAnchor';
+import { filterMentionCandidates, useMentionRoster } from './useMentionRoster';
 import {
   TypeaheadMenuPlugin,
   type TypeaheadMenuOption,
@@ -174,13 +175,11 @@ function CommentComposerInner({
   autoFocus: boolean;
 }): JSX.Element {
   const [editor] = useLexicalComposerContext();
-  // Snapshot the roster once so the typeahead options stay referentially
-  // stable while the user is composing.
-  const [members] = useState<CommentMember[]>(() => getMembers());
   // displayName -> userId for mentions the user actually picked.
   const mentionsRef = useRef<Map<string, string>>(new Map());
   const [canSubmit, setCanSubmit] = useState(false);
   const [queryString, setQueryString] = useState<string | null>(null);
+  const members = useMentionRoster(getMembers, queryString);
 
   useEffect(() => {
     if (autoFocus) {
@@ -250,13 +249,15 @@ function CommentComposerInner({
   );
 
   const options = useMemo<TypeaheadMenuOption[]>(() => {
-    const q = (queryString ?? '').toLowerCase();
-    return members
-      .filter((m) => !q || m.name.toLowerCase().includes(q))
+    return filterMentionCandidates(members, queryString)
       .slice(0, 10)
       .map((m) => ({
         id: 'mention-' + m.userId,
         label: m.name,
+        // Only when it adds information: `name` already falls back to the
+        // email for members with no display name, and repeating it there
+        // would read as two different people.
+        secondaryText: m.email && m.email !== m.name ? m.email : undefined,
         onSelect: () => {
           editor.update(() => {
             const selection = $getSelection();

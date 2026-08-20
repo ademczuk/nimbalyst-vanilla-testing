@@ -1,8 +1,8 @@
-.team-management-window .org-window-drag-region {
+.org-window-chrome .org-window-drag-region {
   -webkit-app-region: drag;
 }
 
-.team-management-window .org-window-no-drag {
+.org-window-chrome .org-window-no-drag {
   -webkit-app-region: no-drag;
 }
 
@@ -14,14 +14,14 @@
  * class away from a dead button, so the interactive elements opt out by kind
  * as well.
  */
-.team-management-window .org-window-drag-region button,
-.team-management-window .org-window-drag-region a,
-.team-management-window .org-window-drag-region input,
-.team-management-window .org-window-drag-region textarea,
-.team-management-window .org-window-drag-region select,
-.team-management-window .org-window-drag-region [role='button'],
-.team-management-window .org-window-drag-region [role='menuitem'],
-.team-management-window .org-window-drag-region [contenteditable='true'] {
+.org-window-chrome .org-window-drag-region button,
+.org-window-chrome .org-window-drag-region a,
+.org-window-chrome .org-window-drag-region input,
+.org-window-chrome .org-window-drag-region textarea,
+.org-window-chrome .org-window-drag-region select,
+.org-window-chrome .org-window-drag-region [role='button'],
+.org-window-chrome .org-window-drag-region [role='menuitem'],
+.org-window-chrome .org-window-drag-region [contenteditable='true'] {
   -webkit-app-region: no-drag;
 }
 
@@ -33,7 +33,7 @@
  * them in this height. Other platforms keep their native title bar above it and
  * only need the ordinary gutter.
  */
-.team-management-window .org-window-titlebar {
+.org-window-chrome .org-window-titlebar {
   height: 38px;
   padding-left: 12px;
 }

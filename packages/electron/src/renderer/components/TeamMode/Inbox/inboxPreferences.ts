@@ -9,7 +9,7 @@
 
 import type { InboxFilterId, InboxScope, InboxSourceKind } from './inboxTypes';
 import { EMPTY_INBOX_SCOPE } from './inboxTypes';
-import { SOURCE_KIND_LABELS } from './inboxViewModel';
+import { INBOX_FILTERS, SOURCE_KIND_LABELS } from './inboxViewModel';
 
 export const INBOX_PREFERENCES_SETTING_KEY = 'inboxViewPreferences';
 
@@ -50,7 +50,9 @@ export function clampInboxContextPaneWidth(width: number, available?: number): n
   return Math.round(Math.max(INBOX_CONTEXT_PANE_MIN_WIDTH, Math.min(max, width)));
 }
 
-const FILTERS: InboxFilterId[] = ['all', 'mentions', 'assigned', 'follows'];
+// Derived, like the source kinds below: a filter added to the nav must be
+// restorable without a second list here quietly dropping it back to All.
+const FILTERS: InboxFilterId[] = INBOX_FILTERS.map((entry) => entry.id);
 // Derived from the label map rather than restated, so a source kind added to
 // the protocol cannot be silently dropped from a restored scope: the map is a
 // `Record<InboxSourceKind, string>` and stops compiling until it is covered.

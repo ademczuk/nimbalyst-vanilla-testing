@@ -27,6 +27,12 @@ import { openSettingsCommandAtom } from '../atoms/settingsNavigation';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
 import { trackTeamAnalyticsEvent } from '../../utils/teamAnalytics';
 import type { TrackerDeepLinkView } from '../../../shared/trackerDeepLinks';
+import { requestInboxRowSelection } from '../../components/TeamMode/orgWindowCommandBus';
+import {
+  PROJECT_ORG_MODE_SURFACE_ID,
+  inboxRoute,
+  orgWindowRouteAtomFamily,
+} from '../../components/TeamMode/orgWindowState';
 
 interface SharedDocPayload {
   documentId: string;
@@ -45,6 +51,12 @@ interface TrackerPayload {
   orgId: string;
   workspacePath: string;
   view?: TrackerDeepLinkView;
+}
+
+interface OrgFeedbackRequestPayload {
+  requestId: string;
+  orgId: string;
+  workspacePath: string;
 }
 
 function ensureActiveWorkspace(workspacePath: string): void {
@@ -99,6 +111,33 @@ function applyTrackerPayload(data: TrackerPayload): void {
       selectedItemId: data.trackerId,
     });
   }
+}
+
+/**
+ * Bumped by every applied feedback-request payload. A drained payload was
+ * queued before its round trip started, so anything applied while that round
+ * trip was in flight is newer — see `drainPendingFor`.
+ */
+let orgFeedbackApplyGeneration = 0;
+
+function applyOrgFeedbackRequestPayload(data: OrgFeedbackRequestPayload): void {
+  if (!data?.requestId || !data?.orgId || !data?.workspacePath) return;
+  orgFeedbackApplyGeneration += 1;
+  ensureActiveWorkspace(data.workspacePath);
+  // A feedback request is exactly what "Awaiting my reply" collects, so the
+  // link lands on that row rather than on All. If the request has already been
+  // answered or archived the Inbox's own row-selection latch clears the filters
+  // to reveal it, so this cannot strand the recipient on an empty list.
+  store.set(
+    orgWindowRouteAtomFamily(PROJECT_ORG_MODE_SURFACE_ID),
+    inboxRoute('awaiting'),
+  );
+  requestInboxRowSelection(PROJECT_ORG_MODE_SURFACE_ID, {
+    orgId: data.orgId,
+    sourceKind: 'feedbackRequest',
+    sourceId: data.requestId,
+  });
+  store.set(setWindowModeAtom, 'org');
 }
 
 /**
@@ -224,15 +263,23 @@ async function drainPendingTeamInvite(): Promise<void> {
 
 async function drainPendingFor(workspacePath: string | null): Promise<void> {
   if (!workspacePath) return;
+  const feedbackGeneration = orgFeedbackApplyGeneration;
   try {
-    const [docPending, folderPending, trackerPending] = await Promise.all([
+    const [docPending, folderPending, trackerPending, feedbackPending] = await Promise.all([
       window.electronAPI.invoke('deep-link:consume-pending-shared-doc', workspacePath) as Promise<SharedDocPayload | null>,
       window.electronAPI.invoke('deep-link:consume-pending-shared-folder', workspacePath) as Promise<SharedFolderPayload | null>,
       window.electronAPI.invoke('deep-link:consume-pending-tracker', workspacePath) as Promise<TrackerPayload | null>,
+      window.electronAPI.invoke('deep-link:consume-pending-org-feedback-request', workspacePath) as Promise<OrgFeedbackRequestPayload | null>,
     ]);
     if (docPending) applySharedDocPayload(docPending);
     if (folderPending) applySharedFolderPayload(folderPending);
     if (trackerPending) applyTrackerPayload(trackerPending);
+    // A live event that landed while this drain was in flight carries the newer
+    // request; letting the drained one through would move the Inbox selection
+    // back to the older link the user has already been taken past.
+    if (feedbackPending && orgFeedbackApplyGeneration === feedbackGeneration) {
+      applyOrgFeedbackRequestPayload(feedbackPending);
+    }
   } catch (err) {
     console.error('[DeepLink] Failed to consume pending payload:', err);
   }
@@ -286,6 +333,23 @@ export function initDeepLinkListeners(): () => void {
   cleanups.push(
     window.electronAPI.on('deep-link:open-tracker', (data: TrackerPayload) => {
       applyTrackerPayload(data);
+    })
+  );
+
+  // Live: a feedback request owned by this project's organization opens the
+  // mode's Inbox and selects the delivery for that request.
+  cleanups.push(
+    window.electronAPI.on('deep-link:open-org-feedback-request', (data: OrgFeedbackRequestPayload) => {
+      applyOrgFeedbackRequestPayload(data);
+      // The live event and mount-time queue protect opposite sides of the
+      // listener race. Consuming after a live apply prevents a later workspace
+      // switch from replaying the same selection.
+      void window.electronAPI.invoke(
+        'deep-link:consume-pending-org-feedback-request',
+        data.workspacePath,
+      ).catch((err) => {
+        console.error('[DeepLink] Failed to clear pending org feedback request:', err);
+      });
     })
   );
 

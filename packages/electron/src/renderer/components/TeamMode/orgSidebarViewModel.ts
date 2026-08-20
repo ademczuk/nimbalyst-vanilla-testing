@@ -221,6 +221,50 @@ export function buildOrgSidebar(input: OrgSidebarInput): OrgSidebarModel {
 }
 
 /**
+ * Two letters for an organization with no avatar of its own. Shared with the
+ * window's org rail so the same organization is never drawn two ways.
+ */
+export function orgInitials(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return 'O';
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  return parts.slice(0, 2).map((part) => part.slice(0, 1).toUpperCase()).join('');
+}
+
+/**
+ * Whether one navigation row survives the sidebar's search box.
+ *
+ * Substring, case- and accent-insensitive, over the row's visible label — the
+ * sidebar searches what is on screen. Finding a message inside a room is the
+ * Inbox's own search, which reads delivery previews this column never sees.
+ */
+export function matchesOrgSidebarQuery(label: string, query: string): boolean {
+  const needle = query.trim();
+  if (!needle) return true;
+  return label.toLocaleLowerCase().includes(needle.toLocaleLowerCase());
+}
+
+/**
+ * The sidebar model narrowed to one query.
+ *
+ * Returns the model unchanged when there is nothing to search for, identity
+ * included: the sidebar is memoized around this, and a fresh object on every
+ * keystroke-free render would defeat it. Gating is carried through untouched —
+ * a search must not resurrect a section the organization has turned off.
+ */
+export function filterOrgSidebarModel(
+  model: OrgSidebarModel,
+  query: string,
+): OrgSidebarModel {
+  if (!query.trim()) return model;
+  return {
+    ...model,
+    rooms: model.rooms.filter((item) => matchesOrgSidebarQuery(item.label, query)),
+    dms: model.dms.filter((item) => matchesOrgSidebarQuery(item.label, query)),
+  };
+}
+
+/**
  * The conversations the sidebar lists, top to bottom: rooms then direct
  * messages, each in their shipped order. This is the sequence Next/Previous
  * Conversation walks, so the keyboard order and the visible order are the same

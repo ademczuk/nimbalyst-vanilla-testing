@@ -1,46 +1,38 @@
 // @vitest-environment jsdom
+/**
+ * Navigation repaint cost, measured rather than asserted by inspection.
+ *
+ * A route change must wake only the rows being left and entered. Before Slice
+ * 5 it repainted the whole chrome, including every sidebar row. That cost is
+ * invisible in a static review, so this file measures the row components
+ * directly with the render-budget harness.
+ *
+ * The room pane and the Inbox are stubbed so the count is the chrome's alone.
+ */
+
+// MUST be the first import: it installs the DevTools hook shim that the render
+// profiler reads, and react-dom captures that hook once at module init.
+import { measureRenders } from '../../../devtools/renderBudget';
+
 import React from 'react';
 import { Provider, createStore } from 'jotai';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ConversationDirectoryEntry } from '../../../../shared/conversationDirectory';
-import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
 import {
   conversationDirectoryAtomFamily,
   conversationDirectoryLoadStateAtomFamily,
 } from '../../../store/atoms/conversations';
 import { teamInboxSnapshotAtom } from '../../../store/atoms/teamInbox';
-import { TeamMode } from '../TeamMode';
-
-/**
- * Navigation repaint cost, measured rather than asserted by inspection.
- *
- * Every sidebar row renders exactly one `MaterialSymbol`, so counting how many
- * times the icon renders is a direct count of how much of the window a small
- * navigation repainted. Before Slice 5 a route change re-rendered the entire
- * body — rail, every sidebar row, the admin group and the title bar — which is
- * what Greg saw as "small navigations repaint the whole window".
- *
- * The room pane and the Inbox are stubbed so the count is the chrome's alone.
- */
-const counts = { symbol: 0 };
-const icons: string[] = [];
+import { OrgModeHost } from '../OrgModeHost';
+import { ORG_WINDOW_SURFACE_ID } from '../orgWindowState';
 
 vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
-  MaterialSymbol: ({ icon }: { icon: string }) => {
-    counts.symbol += 1;
-    icons.push(icon);
-    return <span>{icon}</span>;
-  },
+  MaterialSymbol: () => <span />,
 }));
-
-vi.mock('../RoomView', () => ({
-  RoomView: () => <div data-testid="room-view-stub" />,
-}));
-vi.mock('../Inbox', () => ({
-  InboxSection: () => <div data-testid="inbox-stub" />,
-}));
+vi.mock('../RoomView', () => ({ RoomView: () => <div data-testid="room-view-stub" /> }));
+vi.mock('../Inbox', () => ({ InboxSection: () => <div data-testid="inbox-stub" /> }));
 vi.mock('../../Settings/panels/OrganizationProjectsPanel', () => ({ OrganizationProjectsPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationBillingPanel', () => ({ OrganizationBillingPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationDangerZone', () => ({ OrganizationDangerZone: () => <div /> }));
@@ -100,19 +92,25 @@ function installApi() {
 
 function seedStore() {
   const store = createStore();
-  store.set(selectedOrgIdAtom, 'org-1');
   store.set(conversationDirectoryAtomFamily('org-1'), CONVERSATIONS);
   store.set(conversationDirectoryLoadStateAtomFamily('org-1'), { status: 'ready' });
   return store;
 }
 
+function renderHost(store: ReturnType<typeof seedStore>) {
+  render(
+    <Provider store={store}>
+      <OrgModeHost orgId="org-1" surfaceId={ORG_WINDOW_SURFACE_ID} chrome="window" />
+    </Provider>,
+  );
+}
+
 describe('org window navigation repaint cost', () => {
   afterEach(() => cleanup());
 
-  it('repaints only the rows whose selection changed when the route changes', async () => {
+  it('keeps an inbox-to-room navigation to one sidebar-row render', async () => {
     installApi();
-    const store = seedStore();
-    render(<Provider store={store}><TeamMode /></Provider>);
+    renderHost(seedStore());
 
     await waitFor(() => screen.getByTestId('org-room-item-general'));
     await waitFor(() => screen.getByTestId('inbox-stub'));
@@ -120,79 +118,73 @@ describe('org window navigation repaint cost', () => {
     // settle so what follows is the navigation's cost alone.
     await act(async () => { await Promise.resolve(); });
 
-    const before = counts.symbol;
-    await act(async () => { screen.getByTestId('org-room-item-general').click(); });
+    const budget = await measureRenders(async () => {
+      await act(async () => { screen.getByTestId('org-room-item-general').click(); });
+    });
     await waitFor(() => screen.getByTestId('room-view-stub'));
-    const navigationCost = counts.symbol - before;
 
-    // Measured: 15 icon renders before Slice 5 — the whole chrome — against 2
-    // after. Inbox deselects, #general selects, and nothing else repaints.
-    expect(icons.slice(before)).toEqual(['inbox', 'tag']);
-    expect(navigationCost).toBe(2);
+    // The row-level selection subscriber is the only OrgSidebarRow that may
+    // render. Hoisting that subscription would wake the whole list.
+    expect(budget.rendersOf('OrgSidebarRow'), budget.report()).toBe(1);
   });
 
   it('does not repaint the sidebar for an inbox snapshot that changed elsewhere', async () => {
     installApi();
     const store = seedStore();
-    render(<Provider store={store}><TeamMode /></Provider>);
+    renderHost(store);
 
     await waitFor(() => screen.getByTestId('org-room-item-general'));
     await act(async () => { await Promise.resolve(); });
 
-    const before = counts.symbol;
     // A delivery in a different organization, and a presence heartbeat for one:
     // this window's sidebar shows neither.
-    await act(async () => {
-      store.set(teamInboxSnapshotAtom, {
-        status: 'ready',
-        deliveries: [{
-          id: 'delivery-1',
-          orgId: 'org-other',
-          createdAt: 1,
-          source: { kind: 'roomMessage', sourceId: 'other-room' },
-        }],
-        organizations: [{ orgId: 'org-1', orgName: 'Acme', status: 'ready' }],
-        presence: { 'org-other': { 'member-9': { memberId: 'member-9', status: 'online' } } },
-      } as never);
+    const budget = await measureRenders(async () => {
+      await act(async () => {
+        store.set(teamInboxSnapshotAtom, {
+          status: 'ready',
+          deliveries: [{
+            id: 'delivery-1',
+            orgId: 'org-other',
+            createdAt: 1,
+            source: { kind: 'roomMessage', sourceId: 'other-room' },
+          }],
+          organizations: [{ orgId: 'org-1', orgName: 'Acme', status: 'ready' }],
+          presence: { 'org-other': { 'member-9': { memberId: 'member-9', status: 'online' } } },
+        } as never);
+      });
     });
 
-    expect(counts.symbol - before).toBe(0);
+    expect(budget.rendersOf('OrgSidebarRow'), budget.report()).toBe(0);
   });
 
-  it('repaints two rows for a room-to-room switch, not the window', async () => {
+  it('keeps a room-to-room navigation to one sidebar-row render', async () => {
     installApi();
-    const store = seedStore();
-    render(<Provider store={store}><TeamMode /></Provider>);
+    renderHost(seedStore());
 
     await waitFor(() => screen.getByTestId('org-room-item-general'));
     await act(async () => { screen.getByTestId('org-room-item-general').click(); });
     await waitFor(() => screen.getByTestId('room-view-stub'));
     await act(async () => { await Promise.resolve(); });
 
-    const before = counts.symbol;
-    await act(async () => { screen.getByTestId('org-room-item-design').click(); });
+    const budget = await measureRenders(async () => {
+      await act(async () => { screen.getByTestId('org-room-item-design').click(); });
+    });
 
-    // #general deselects, #design selects. Both are public rooms, so both are
-    // the same icon — two rows, and only two.
-    expect(icons.slice(before)).toEqual(['tag', 'tag']);
+    expect(budget.rendersOf('OrgSidebarRow'), budget.report()).toBe(1);
   });
 
   // The Inbox used to be torn down on every hop into a room, which re-read the
   // stored preferences over IPC, restarted its relative-label timer and dropped
   // the search and selection on the way.
-  it('keeps the Inbox mounted and hidden once it has been visited', async () => {
+  it('keeps the Inbox mounted while visiting a room', async () => {
     installApi();
-    const store = seedStore();
-    render(<Provider store={store}><TeamMode /></Provider>);
+    renderHost(seedStore());
 
-    await waitFor(() => screen.getByTestId('inbox-stub'));
-    expect(screen.getByTestId('team-mode-inbox-slot').className)
-      .not.toContain('hidden');
+    const inbox = await waitFor(() => screen.getByTestId('inbox-stub'));
 
     await act(async () => { screen.getByTestId('org-room-item-general').click(); });
     await waitFor(() => screen.getByTestId('room-view-stub'));
 
-    screen.getByTestId('inbox-stub');
-    expect(screen.getByTestId('team-mode-inbox-slot').className).toContain('hidden');
+    expect(screen.getByTestId('inbox-stub')).toBe(inbox);
   });
 });

@@ -15,9 +15,10 @@ import { useEffect } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { useCommentToolbarActions } from '../../../Editor';
-import type { CommentsConfig } from '../../../commenting/types';
+import type { CommentMember, CommentsConfig } from '../../../commenting/types';
 import { INSERT_INLINE_COMMENT_COMMAND } from '../../../extensions/builtin/CommentsExtension';
 import CommentsPlugin from '../index';
+import { filterMentionCandidates, useMentionRoster } from '../useMentionRoster';
 import { OPEN_COMMENT_COMPOSER_COMMAND } from '../commands';
 
 function TestEditorBridge({
@@ -228,5 +229,57 @@ describe('useCommentToolbarActions', () => {
     capabilities.comment = false;
     rerender();
     expect(hasCommentAction(result.current)).toBe(false);
+  });
+});
+
+describe('useMentionRoster', () => {
+  const karl = { userId: 'u1', name: 'Karl Wirth' };
+
+  // The roster arrives after team sync hydrates. A composer that mounted first
+  // used to hold the empty snapshot forever, so `@` reported "No matches found"
+  // until it was closed and reopened.
+  it('picks up a roster that arrives after mount', () => {
+    let roster: CommentMember[] = [];
+    const getMembers = () => roster;
+    const { result, rerender } = renderHook(
+      ({ query }: { query: string | null }) => useMentionRoster(getMembers, query),
+      { initialProps: { query: null as string | null } },
+    );
+    expect(result.current).toEqual([]);
+
+    roster = [karl];
+    rerender({ query: '' });
+    expect(result.current).toEqual([karl]);
+  });
+
+  // Callers memoize the typeahead options on this array; re-identifying it on
+  // every keystroke is what the original mount-time snapshot was protecting.
+  it('keeps the same array when the roster is unchanged', () => {
+    const getMembers = () => [{ ...karl }];
+    const { result, rerender } = renderHook(
+      ({ query }: { query: string | null }) => useMentionRoster(getMembers, query),
+      { initialProps: { query: '' as string | null } },
+    );
+    const first = result.current;
+    rerender({ query: 'Ka' });
+    expect(result.current).toBe(first);
+  });
+});
+
+describe('filterMentionCandidates', () => {
+  const karl = { userId: 'u1', name: 'Karl Wirth', email: 'kwirth@stravu.com' };
+  const noName = { userId: 'u2', name: 'greg@stravu.com', email: 'greg@stravu.com' };
+
+  // Karl shows as "Karl Wirth" but earlier comments address him as
+  // kwirth@stravu.com, so typing either has to reach him.
+  it('matches on the email as well as the display name', () => {
+    expect(filterMentionCandidates([karl, noName], 'kwirth')).toEqual([karl]);
+    expect(filterMentionCandidates([karl, noName], 'Karl')).toEqual([karl]);
+    expect(filterMentionCandidates([karl, noName], 'stravu')).toEqual([karl, noName]);
+  });
+
+  it('returns everyone for an empty query and no one for a miss', () => {
+    expect(filterMentionCandidates([karl, noName], '')).toHaveLength(2);
+    expect(filterMentionCandidates([karl, noName], 'nobody')).toEqual([]);
   });
 });

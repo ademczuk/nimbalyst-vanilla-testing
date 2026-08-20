@@ -70,6 +70,8 @@ export interface WindowTopBarProps {
   newSessionControl?: WindowTopBarNewSessionControl;
   /** Root project path, used to resolve which organization's inbox to open. */
   workspacePath?: string | null;
+  /** Switch this project window to its organization messaging mode. */
+  onOpenOrgMode?: () => void;
 }
 
 const GIT_FEEDBACK_MAX_LINES = 6;
@@ -115,7 +117,7 @@ export function clampGitFeedbackMessage(
 }
 
 /**
- * Entry point to the organization inbox, which lives in the org window.
+ * Entry point to the active project's organization inbox in Org mode.
  *
  * Present whenever the project belongs to an organization, not only when
  * something is unread — before this control the only ways in were a menu item
@@ -124,7 +126,13 @@ export function clampGitFeedbackMessage(
  * this project's organization so the badge never refers to an inbox outside the
  * org being worked in.
  */
-function InboxButton({ workspacePath }: { workspacePath?: string | null }) {
+function InboxButton({
+  workspacePath,
+  onOpenOrgMode,
+}: {
+  workspacePath?: string | null;
+  onOpenOrgMode?: () => void;
+}) {
   const { org: projectOrg } = useProjectOrg(workspacePath);
   const unreadCount = useAtomValue(
     orgInboxUnreadCountAtomFamily(projectOrg?.orgId ?? ''),
@@ -141,12 +149,7 @@ function InboxButton({ workspacePath }: { workspacePath?: string | null }) {
       data-testid="window-top-bar-inbox"
       aria-label={label}
       title="Open organization inbox"
-      onClick={() => {
-        void (window as { electronAPI?: any }).electronAPI?.team?.openManagementWindow?.({
-          orgId: projectOrg.orgId,
-          workspacePath: workspacePath ?? undefined,
-        });
-      }}
+      onClick={onOpenOrgMode}
     >
       <span className="relative inline-flex items-center justify-center">
         <MaterialSymbol icon="inbox" size={18} />
@@ -467,6 +470,7 @@ export function WindowTopBar({
   panelControls,
   newSessionControl,
   workspacePath,
+  onOpenOrgMode,
 }: WindowTopBarProps) {
   const trackerDocumentItemId = useAtomValue(trackerModeDocumentItemIdAtom);
   const trackerLayout = useAtomValue(trackerModeLayoutAtom);
@@ -557,7 +561,7 @@ export function WindowTopBar({
             className="window-top-bar__right-actions flex items-center justify-end gap-1"
             data-testid="window-top-bar-right-actions"
           >
-            <InboxButton workspacePath={workspacePath} />
+            <InboxButton workspacePath={workspacePath} onOpenOrgMode={onOpenOrgMode} />
             {newSessionControl && (
               <button
                 type="button"

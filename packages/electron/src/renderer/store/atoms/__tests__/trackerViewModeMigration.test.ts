@@ -9,7 +9,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { store } from '@nimbalyst/runtime/store';
 import {
   initTrackerPanelLayout,
+  toggleTrackerSidebarCollapsedAtom,
   trackerModeLayoutAtom,
+  trackerSidebarCollapsedAtom,
   type TrackerModeLayout,
 } from '../trackers';
 
@@ -90,5 +92,23 @@ describe('tracker view state migration', () => {
       },
     });
     expect(layout).toMatchObject({ groupBy: 'goal', ordering: 'priority' });
+  });
+});
+
+describe('tracker sidebar collapse', () => {
+  it('opens the sidebar for layouts persisted before the key existed', async () => {
+    await loadLayoutWith({ viewMode: 'list', viewModeMigrated: true });
+    expect(store.get(trackerSidebarCollapsedAtom)).toBe(false);
+  });
+
+  it('restores a persisted collapse and toggles back open', async () => {
+    await loadLayoutWith({ viewMode: 'list', viewModeMigrated: true, sidebarCollapsed: true });
+    expect(store.get(trackerSidebarCollapsedAtom)).toBe(true);
+
+    store.set(toggleTrackerSidebarCollapsedAtom);
+    expect(store.get(trackerSidebarCollapsedAtom)).toBe(false);
+
+    store.set(toggleTrackerSidebarCollapsedAtom);
+    expect(store.get(trackerSidebarCollapsedAtom)).toBe(true);
   });
 });

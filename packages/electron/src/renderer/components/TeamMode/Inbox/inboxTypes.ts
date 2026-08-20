@@ -163,6 +163,12 @@ export interface InboxRowView {
    * to the respond surface, not the list.
    */
   awaitsResponse: boolean;
+  /**
+   * The recipient dismissed this delivery. Not a redaction concern — it is
+   * their own act — and it is what partitions the Archived row from every
+   * other one, which all read the live pool.
+   */
+  archived: boolean;
   sourceTitle?: string;
   actor?: InboxActorView;
   preview?: string;
@@ -186,8 +192,22 @@ export interface InboxRowView {
  * The reason axis only. Read state is a separate, independent axis
  * (`unreadOnly`) so "unread mentions" is expressible; when unread was one of
  * these ids, choosing it meant giving up whichever reason you were looking at.
+ *
+ * These are the sidebar's Inbox rows, and each one is a route
+ * (`{ view: 'inbox', filter }`) rather than a chip in the list's filter bar —
+ * so the row and the list cannot disagree, and a command can deep-link one.
+ * `archived` is the dismissed pool, which used to be a state with no way in.
  */
-export type InboxFilterId = 'all' | 'mentions' | 'assigned' | 'follows';
+export type InboxFilterId =
+  | 'all'
+  | 'mentions'
+  | 'assigned'
+  | 'awaiting'
+  | 'follows'
+  | 'archived';
+
+/** Where the Inbox points with nothing else said. */
+export const DEFAULT_INBOX_FILTER: InboxFilterId = 'all';
 
 /** `null` on an axis means "no restriction on this axis". */
 export interface InboxScope {

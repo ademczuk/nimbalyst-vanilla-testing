@@ -1,4 +1,5 @@
 import type { OrgWindowCommand } from '../../../shared/orgWindowCommands';
+import type { OrgModeChrome } from './orgModeTypes';
 
 /**
  * The org window's local resolution of the Messages accelerators.
@@ -23,10 +24,34 @@ export interface OrgWindowKeyEvent {
   altKey: boolean;
 }
 
+/**
+ * Chords the project window already owns, and which Org mode must therefore
+ * never claim: Cmd+K is Agent mode, Cmd+F is Find, Cmd+I is the editor's
+ * italic. The standalone window can bind all three because it has no content
+ * modes and no editor to take them from.
+ */
+const PROJECT_WINDOW_OWNED_COMMANDS: ReadonlySet<OrgWindowCommand> = new Set([
+  'newMessage',
+  'searchMessages',
+  'goToInbox',
+]);
+
 export function resolveOrgWindowCommand(
   event: OrgWindowKeyEvent,
   isMac: boolean = typeof navigator !== 'undefined'
     && navigator.platform.startsWith('Mac'),
+  chrome: OrgModeChrome = 'window',
+): OrgWindowCommand | null {
+  const command = resolveChord(event, isMac);
+  if (command && chrome === 'mode' && PROJECT_WINDOW_OWNED_COMMANDS.has(command)) {
+    return null;
+  }
+  return command;
+}
+
+function resolveChord(
+  event: OrgWindowKeyEvent,
+  isMac: boolean,
 ): OrgWindowCommand | null {
   // The platform's own accelerator modifier, and only it. Cmd+Ctrl+K is a
   // different shortcut than Cmd+K and must not be swallowed here.

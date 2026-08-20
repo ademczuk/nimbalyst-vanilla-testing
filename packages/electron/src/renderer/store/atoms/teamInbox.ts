@@ -2,6 +2,8 @@ import type { TeamInboxSnapshot, TeamPresenceMember } from '@nimbalyst/runtime/s
 import { atom } from 'jotai';
 import { selectAtom } from 'jotai/utils';
 
+import type { InboxFilterId } from '../../components/TeamMode/Inbox/inboxTypes';
+import { inboxNavCount } from '../../components/TeamMode/Inbox/inboxViewModel';
 import {
   inboxUnreadCount,
   unreadCountsByConversation,
@@ -42,6 +44,37 @@ export const orgInboxUnreadCountAtomFamily = atomFamily((orgId: string) =>
     teamInboxSnapshotAtom,
     (snapshot) => inboxUnreadCount(snapshot, orgId),
   ));
+
+/**
+ * The unit separator, which cannot occur in an org id or a filter id — the
+ * family key has to stay a primitive or `atomFamily` falls back to scanning
+ * every member on each lookup.
+ */
+const NAV_COUNT_KEY_SEPARATOR = '\x1f';
+
+export function orgInboxFilterCountKey(
+  orgId: string,
+  filter: InboxFilterId,
+): string {
+  return `${orgId}${NAV_COUNT_KEY_SEPARATOR}${filter}`;
+}
+
+/**
+ * The badge on one Inbox nav row.
+ *
+ * A number per row rather than a record for the column: each row subscribes to
+ * its own, so a delivery that only moves Mentions repaints Mentions — the same
+ * reason route selection is a boolean per row rather than the route itself.
+ */
+export const orgInboxFilterCountAtomFamily = atomFamily((key: string) => {
+  const separator = key.indexOf(NAV_COUNT_KEY_SEPARATOR);
+  const orgId = key.slice(0, separator);
+  const filter = key.slice(separator + 1) as InboxFilterId;
+  return selectAtom(
+    teamInboxSnapshotAtom,
+    (snapshot) => inboxNavCount(snapshot, orgId, filter),
+  );
+});
 
 export const orgUnreadCountsByConversationAtomFamily = atomFamily(
   (orgId: string) => selectAtom(

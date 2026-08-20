@@ -94,15 +94,14 @@ jobs:
     # Bound to the protected environment on the release path only. After the
     # secret migration, the Apple and DigiCert credentials exist ONLY as
     # `electron-release` environment secrets, so this binding is what lets a
-    # release build read them at all -- and what makes it wait for approval
-    # first. A validation dispatch resolves to no environment, runs without
-    # approval, and is genuinely secretless because every credential below is
-    # gated on IS_RELEASE.
+    # release build read them at all. A validation dispatch resolves to no
+    # environment and is genuinely secretless, because every credential below
+    # is gated on IS_RELEASE.
     #
-    # If this expression ever resolves wrong on a tag, the release build fails
-    # to find its secrets rather than running unprotected. Verify both paths
-    # after creating the environment: a tag push must show "Waiting for
-    # review", a `release: false` dispatch must not.
+    # The environment has no required reviewer -- what protects it is the
+    # deployment ref policy (`v*` tags and `main` only), so a release runs
+    # unattended. If this expression ever resolves wrong on a tag, the release
+    # build fails to find its secrets rather than running unprotected.
     environment: ${{ (github.ref_type == 'tag' || inputs.release == true || inputs.release == 'true') && 'electron-release' || '' }}
 
     # Every signing and notarization credential below is gated on this. A

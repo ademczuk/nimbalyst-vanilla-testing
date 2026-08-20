@@ -5,6 +5,7 @@ import {
     type TrackerDeepLinkView,
 } from '../shared/trackerDeepLinks';
 import { parseInviteDeepLink, type InviteDeepLinkTarget } from '../shared/inviteDeepLinks';
+import { resolveOrgMessagingDestination } from '../shared/orgMessagingRouting';
 import { safeHandle, safeOn } from './utils/ipcRegistry';
 import { installMicrophoneGate } from './mediaPermissionGate';
 import { markBootComplete } from './utils/bootState';
@@ -250,9 +251,19 @@ import {
   type InviteDeepLinkOutcome,
 } from './services/TeamService';
 import { registerOrgProjectWalkHandlers } from './services/OrgProjectWalkService';
+import {
+    consumePendingOrgFeedbackLink,
+    queuePendingOrgFeedbackLink,
+} from './services/PendingOrgFeedbackLinks';
 import { registerSignInAttributionHandlers } from './services/SignInAttribution';
 import { registerProjectWalkClaimHandlers } from './services/ProjectWalkClaim';
-import { windowStates, windows, resolveActiveWorkspacePath } from './window/windowState';
+import {
+    getWindowIdForWindow,
+    resolveActiveWorkspacePath,
+    resolveActiveWorkspacePathForWindowId,
+    windowStates,
+    windows,
+} from './window/windowState';
 import { getRecentItems } from './utils/store';
 import { registerTeamCustodyHandlers } from './services/TeamCustodyService';
 import { purgeLegacyKeyFiles } from './services/LegacyKeyFilePurge';
@@ -823,6 +834,19 @@ safeHandle('deep-link:consume-pending-shared-doc', (_event, workspacePath: strin
     return { ...pending, workspacePath };
 });
 
+// Project-org feedback requests land in Org mode. Queued by workspace so a
+// renderer still mounting can consume the same target as a live window; see
+// PendingOrgFeedbackLinks for why the sender's own window decides.
+safeHandle('deep-link:consume-pending-org-feedback-request', (event, workspacePath: string) => {
+    // The sender's path is resolved with the same resolver that keyed the
+    // entry in `openFeedbackRequestFromDeepLink`, so the two sides agree on
+    // what "this window's project" means.
+    const senderWorkspacePath = resolveActiveWorkspacePathForWindowId(
+        getWindowIdForWindow(BrowserWindow.fromWebContents(event.sender)),
+    );
+    return consumePendingOrgFeedbackLink(workspacePath, senderWorkspacePath);
+});
+
 // Same pattern for tracker deep links:
 // nimbalyst://tracker/{trackerId}?orgId=...&view=document
 const pendingTrackerLinks = new Map<string, TrackerDeepLinkTarget>();
@@ -1283,7 +1307,8 @@ async function openSharedFolderFromDeepLink(folderId: string, orgId: string): Pr
 }
 
 /**
- * Route a feedback-request deep link to the organization window's Inbox.
+ * Route a feedback-request deep link to the project's Org mode or the
+ * standalone organization window's Inbox.
  *
  * The destination is a *selected row*, not a tab: the respond card renders
  * inline in the Inbox's context pane, while `virtual://feedback-request/` is the
@@ -1298,11 +1323,53 @@ async function openFeedbackRequestFromDeepLink(
     requestId: string,
     orgId: string,
 ): Promise<boolean> {
-    const reason = !isAuthenticated() ? 'not-authenticated' : 'no-workspace';
-    const workspacePath = isAuthenticated() ? await findWorkspaceForOrgId(orgId) : null;
+    if (!isAuthenticated()) {
+        logger.main.warn('[DeepLink] Cannot route feedback request:', {
+            reason: 'not-authenticated',
+            orgId,
+            requestId,
+        });
+        return false;
+    }
+
+    const focusedWindow = getMostRecentlyFocusedWorkspaceWindow();
+    const focusedWorkspacePath = resolveActiveWorkspacePathForWindowId(
+        getWindowIdForWindow(focusedWindow),
+    );
+    const focusedProjectOrgId = focusedWorkspacePath
+        ? (await findTeamForWorkspace(focusedWorkspacePath))?.orgId
+        : null;
+
+    if (
+        focusedWindow
+        && !focusedWindow.isDestroyed()
+        && focusedWorkspacePath
+        && resolveOrgMessagingDestination(focusedProjectOrgId, orgId) === 'project-mode'
+    ) {
+        queuePendingOrgFeedbackLink(focusedWorkspacePath, { requestId, orgId });
+        if (focusedWindow.isMinimized()) focusedWindow.restore();
+        focusedWindow.focus();
+        focusedWindow.webContents.send('deep-link:open-org-feedback-request', {
+            requestId,
+            orgId,
+            workspacePath: focusedWorkspacePath,
+        });
+        logger.main.info('[DeepLink] Routed feedback request to project Org mode:', {
+            orgId,
+            requestId,
+            workspacePath: focusedWorkspacePath,
+        });
+        return true;
+    }
+
+    const workspacePath = await findWorkspaceForOrgId(orgId);
 
     if (!workspacePath) {
-        logger.main.warn('[DeepLink] Cannot route feedback request:', { reason, orgId, requestId });
+        logger.main.warn('[DeepLink] Cannot route feedback request:', {
+            reason: 'no-workspace',
+            orgId,
+            requestId,
+        });
         return false;
     }
 

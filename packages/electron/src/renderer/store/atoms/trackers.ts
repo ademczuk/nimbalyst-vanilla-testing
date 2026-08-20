@@ -113,6 +113,9 @@ export async function initTrackerPanelLayout(workspacePath: string): Promise<voi
         viewMode: migratedViewMode,
         selectedItemId: savedModeLayout.selectedItemId ?? DEFAULT_MODE_LAYOUT.selectedItemId,
         sidebarWidth: savedModeLayout.sidebarWidth ?? DEFAULT_MODE_LAYOUT.sidebarWidth,
+        sidebarCollapsed: typeof savedModeLayout.sidebarCollapsed === 'boolean'
+          ? savedModeLayout.sidebarCollapsed
+          : DEFAULT_MODE_LAYOUT.sidebarCollapsed,
         detailPanelWidth: savedModeLayout.detailPanelWidth ?? DEFAULT_MODE_LAYOUT.detailPanelWidth,
         typeColumnConfigs,
         typeColumnFilters: savedModeLayout.typeColumnFilters ?? DEFAULT_MODE_LAYOUT.typeColumnFilters,
@@ -244,6 +247,8 @@ export interface TrackerModeLayout {
   selectedItemId: string | null;
   /** Sidebar width in pixels */
   sidebarWidth: number;
+  /** Whether the user has collapsed the tracker sidebar (Cmd+T / gutter re-click). */
+  sidebarCollapsed: boolean;
   /** Detail panel width in pixels */
   detailPanelWidth: number;
   /** Per-type column configuration (keyed by tracker type, 'all' for the all-types view) */
@@ -314,6 +319,7 @@ const DEFAULT_MODE_LAYOUT: TrackerModeLayout = {
   viewMode: 'list',
   selectedItemId: null,
   sidebarWidth: 220,
+  sidebarCollapsed: false,
   detailPanelWidth: 400,
   typeColumnConfigs: {},
   typeColumnFilters: {},
@@ -454,6 +460,11 @@ export const trackerModeSelectedItemIdAtom = atom(
   (get) => get(trackerModeLayoutAtom).selectedItemId
 );
 
+/** Whether the tracker sidebar is collapsed by user preference. */
+export const trackerSidebarCollapsedAtom = atom(
+  (get) => get(trackerModeLayoutAtom).sidebarCollapsed
+);
+
 /** Sidebar ownership groups the user has collapsed. */
 export const trackerSidebarCollapsedSectionsAtom = atom(
   (get) => get(trackerModeLayoutAtom).collapsedOwnershipSections
@@ -490,6 +501,18 @@ export const setTrackerModeLayoutAtom = atom(
     if (currentWorkspacePath) {
       scheduleModeLayoutPersist(currentWorkspacePath, newLayout);
     }
+  }
+);
+
+/**
+ * Toggle the tracker sidebar's collapsed state. Writes the preference even
+ * while document view is force-collapsing the sidebar, so the toggle takes
+ * effect the moment the user leaves the document layout.
+ */
+export const toggleTrackerSidebarCollapsedAtom = atom(
+  null,
+  (get, set) => {
+    set(setTrackerModeLayoutAtom, { sidebarCollapsed: !get(trackerModeLayoutAtom).sidebarCollapsed });
   }
 );
 

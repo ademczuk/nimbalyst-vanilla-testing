@@ -53,6 +53,10 @@ interface KeyboardShortcutsOptions {
   // True when a fullscreen extension panel is covering the content modes.
   isFullscreenPanelActive: boolean;
 
+  // True when the active project belongs to an organization, mirroring the
+  // gutter's gating: without one there is no Org mode to switch to.
+  orgModeAvailable: boolean;
+
   // Clears the active fullscreen extension panel (mirrors the gutter's
   // onExtensionPanelChange(null) so mode-switch shortcuts actually surface).
   exitFullscreenPanel: () => void;
@@ -66,7 +70,8 @@ interface KeyboardShortcutsOptions {
  * - Cmd+E: Switch to Files mode (or toggle sidebar if already in Files mode)
  * - Cmd+K: Switch to Agent mode (or toggle session history if already in Agent mode)
  * - Cmd+Y: Open history dialog (Files mode only)
- * - Cmd+T: Switch to Tracker mode
+ * - Cmd+T: Switch to Tracker mode (or toggle its sidebar if already in Tracker mode)
+ * - Cmd+Alt+M: Switch to Org mode (or toggle its sidebar if already in Org mode)
  * - Cmd+Alt+W: Create new worktree session
  * - Ctrl+`: Toggle Terminal panel
  */
@@ -103,6 +108,7 @@ export function useKeyboardShortcuts({
   openHistoryForCurrentDocument,
   isFullscreenPanelActive,
   exitFullscreenPanel,
+  orgModeAvailable,
 }: KeyboardShortcutsOptions): void {
   // Terminal panel atoms
   const toggleTerminalPanel = useSetAtom(toggleTerminalPanelAtom);
@@ -191,11 +197,17 @@ export function useKeyboardShortcuts({
         }
       }
 
-      // Cmd+T to switch to Tracker mode
+      // Cmd+T for Tracker mode (toggle the sidebar if already in tracker mode)
       if (workspaceMode && isAppModifier && !e.shiftKey && !e.altKey && e.key === 't') {
         e.preventDefault();
-        if (isFullscreenPanelActive) exitFullscreenPanel();
-        setActiveMode('tracker');
+        if (isFullscreenPanelActive) {
+          exitFullscreenPanel();
+          setActiveMode('tracker');
+        } else if (activeMode === 'tracker') {
+          toggleActiveLeftPane();
+        } else {
+          setActiveMode('tracker');
+        }
       }
 
       // Cmd+D to switch to Shared Documents (Collab) mode
@@ -204,6 +216,23 @@ export function useKeyboardShortcuts({
         e.stopPropagation();
         if (isFullscreenPanelActive) exitFullscreenPanel();
         setActiveMode('collab');
+      }
+      // Cmd+Alt+M to switch to Org mode (toggle its sidebar if already there),
+      // only when the project belongs to an organization.
+      // `code` as well as `key`: with Option held, macOS rewrites the character
+      // (Option+M is "µ"), so the letter alone is not enough to match on.
+      if (workspaceMode && orgModeAvailable && isAppModifier && e.altKey && !e.shiftKey
+          && (e.key.toLowerCase() === 'm' || e.code === 'KeyM')) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isFullscreenPanelActive) {
+          exitFullscreenPanel();
+          setActiveMode('org');
+        } else if (activeMode === 'org') {
+          toggleActiveLeftPane();
+        } else {
+          setActiveMode('org');
+        }
       }
       // Cmd+U to switch to PR Review mode (only when the active workspace has a
       // GitHub remote, mirroring the gutter button's visibility).
@@ -344,5 +373,6 @@ export function useKeyboardShortcuts({
     developerMode,
     isFullscreenPanelActive,
     exitFullscreenPanel,
+    orgModeAvailable,
   ]);
 }

@@ -8,9 +8,10 @@ import type { ConversationDirectoryEntry } from '../../../../shared/conversation
 import type { OrgSettings } from '../../../../shared/orgSettings';
 import { conversationDirectoryAtomFamily } from '../../../store/atoms/conversations';
 import { orgSettingsAtomFamily } from '../../../store/atoms/orgSettings';
-import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
-import { TeamMode } from '../TeamMode';
-import { orgWindowRouteAtom } from '../orgWindowState';
+import { OrgModeHost } from '../OrgModeHost';
+import { ORG_WINDOW_SURFACE_ID, orgWindowRouteAtomFamily } from '../orgWindowState';
+
+const orgWindowRouteAtom = orgWindowRouteAtomFamily(ORG_WINDOW_SURFACE_ID);
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
@@ -79,7 +80,6 @@ function installApi(callerRole = 'owner') {
 
 function renderWindow(settings: Partial<OrgSettings['messaging']> = {}) {
   const store = createStore();
-  store.set(selectedOrgIdAtom, 'org-1');
   store.set(conversationDirectoryAtomFamily('org-1'), conversations);
   store.set(orgSettingsAtomFamily('org-1'), {
     version: 1,
@@ -90,7 +90,11 @@ function renderWindow(settings: Partial<OrgSettings['messaging']> = {}) {
       ...settings,
     },
   });
-  render(<Provider store={store}><TeamMode /></Provider>);
+  render(
+    <Provider store={store}>
+      <OrgModeHost orgId="org-1" surfaceId={ORG_WINDOW_SURFACE_ID} chrome="window" />
+    </Provider>,
+  );
   return store;
 }
 
@@ -159,7 +163,7 @@ describe('TeamMode organization settings gating', () => {
       await waitFor(() => screen.getByTestId('org-sidebar'));
       // A deep link or a hand-off left over from before NIM-2322.
       store.set(orgWindowRouteAtom, { view: 'admin', adminTab: 'danger' });
-      await waitFor(() => expect(store.get(orgWindowRouteAtom)).toEqual({ view: 'inbox' }));
+      await waitFor(() => expect(store.get(orgWindowRouteAtom)).toEqual({ view: 'inbox', filter: 'all' }));
     },
   );
 
@@ -175,6 +179,6 @@ describe('TeamMode organization settings gating', () => {
       messaging: { roomsEnabled: false, dmsEnabled: true, roomCreation: 'members' },
     });
 
-    await waitFor(() => expect(store.get(orgWindowRouteAtom)).toEqual({ view: 'inbox' }));
+    await waitFor(() => expect(store.get(orgWindowRouteAtom)).toEqual({ view: 'inbox', filter: 'all' }));
   });
 });

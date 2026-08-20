@@ -2,6 +2,7 @@ import React from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 
 import type { InboxFilterId } from './inboxTypes';
+import { inboxFilterLabel } from './inboxViewModel';
 
 interface EmptyCopy {
   icon: string;
@@ -34,11 +35,21 @@ const FILTER_EMPTY: Record<InboxFilterId, EmptyCopy> = {
     body: 'Tracker assignments and equivalent actionable deliveries collect here.',
     actionLabel: 'Open trackers',
   },
+  awaiting: {
+    icon: 'ballot',
+    title: 'Nobody is waiting on you',
+    body: 'Feedback requests addressed to you collect here until you answer them.',
+  },
   follows: {
     icon: 'visibility',
     title: 'You are not following anything',
     body: 'Posting in a conversation follows it automatically, or you can follow one explicitly.',
     actionLabel: 'Browse rooms',
+  },
+  archived: {
+    icon: 'archive',
+    title: 'Nothing archived',
+    body: 'Dismissing a delivery files it here, out of every other row but still readable.',
   },
 };
 
@@ -90,7 +101,7 @@ export function InboxEmptyState({
       </h3>
       <p className="m-0 max-w-[420px] text-[12px] leading-relaxed text-[var(--nim-text-muted)]">
         {query
-          ? `Nothing in ${filter === 'all' ? 'your inbox' : `the ${filter} filter`} matches “${query}”.`
+          ? `Nothing in ${filter === 'all' ? 'your inbox' : inboxFilterLabel(filter)} matches “${query}”.`
           : copy.body}
       </p>
 

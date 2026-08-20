@@ -1492,20 +1492,26 @@ export async function findPendingInviteForEmail(email: string): Promise<TeamDeta
   }
 }
 
-type FindForWorkspaceResult = { success: true; team: TeamDetails | null };
+/**
+ * `complete: false` carries `WorkspaceTeamResolution`'s meaning to the renderer:
+ * the lookup could not be carried out (no session yet, or the directory fetch
+ * failed), so a `null` team means "ask again later", never "this workspace has
+ * no organization".
+ */
+type FindForWorkspaceResult = { success: true; team: TeamDetails | null; complete: boolean };
 
 async function findTeamOrPendingInviteForWorkspace(workspacePath: string): Promise<FindForWorkspaceResult> {
   // Try active team match first
-  const team = await findTeamForWorkspace(workspacePath);
+  const { team, complete } = await resolveTeamForWorkspace(workspacePath);
   if (team) {
-    return { success: true, team };
+    return { success: true, team, complete: true };
   }
   // Also check for pending invites matching this workspace
   const pendingInvite = await findPendingInviteForWorkspace(workspacePath);
   if (pendingInvite) {
-    return { success: true, team: pendingInvite };
+    return { success: true, team: pendingInvite, complete: true };
   }
-  return { success: true, team: null };
+  return { success: true, team: null, complete };
 }
 
 // Collapses a burst of concurrent `team:find-for-workspace` IPC calls for the
@@ -2515,7 +2521,8 @@ export function registerTeamHandlers(): void {
     try {
       return await findForWorkspaceSingleFlight(workspacePath, () => findTeamOrPendingInviteForWorkspace(workspacePath));
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      // A thrown lookup answered nothing either.
+      return { success: false, complete: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
 

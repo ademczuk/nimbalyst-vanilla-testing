@@ -1,10 +1,32 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { Provider, createStore } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { TeamInboxMaterializedDelivery } from '@nimbalyst/runtime/sync';
 
 import { OrgSidebar } from '../OrgSidebar';
 import type { OrgSidebarModel } from '../orgSidebarViewModel';
+import {
+  EMPTY_TEAM_INBOX_SNAPSHOT,
+  teamInboxSnapshotAtom,
+} from '../../../store/atoms/teamInbox';
+
+function delivery(
+  overrides: Partial<TeamInboxMaterializedDelivery>,
+): TeamInboxMaterializedDelivery {
+  return {
+    id: 'delivery',
+    teamMemberId: 'member-a',
+    orgId: 'org-a',
+    orgName: 'Acme',
+    createdAt: 1,
+    hasUnreadActivity: false,
+    source: { orgId: 'org-a', sourceKind: 'roomMessage', sourceId: 'general', commentId: 'c1' },
+    ...overrides,
+  } as TeamInboxMaterializedDelivery;
+}
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
@@ -27,11 +49,14 @@ const model: OrgSidebarModel = {
 };
 
 describe('OrgSidebar', () => {
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    delete (window as any).electronAPI;
+  });
 
   it('lists rooms and DMs with stable markers, and nothing else', () => {
     const { container } = render(
-      <OrgSidebar model={model} inboxUnread={3} onNavigate={vi.fn()} />,
+      <OrgSidebar model={model} onNavigate={vi.fn()} />,
     );
 
     expect(container.querySelectorAll('.org-room-item')).toHaveLength(2);
@@ -51,7 +76,6 @@ describe('OrgSidebar', () => {
     const { container } = render(
       <OrgSidebar
         model={model}
-        inboxUnread={0}
         onNavigate={vi.fn()}
         bottomContent={<div data-testid="sidebar-footer-probe" />}
       />,
@@ -64,10 +88,55 @@ describe('OrgSidebar', () => {
     expect(container.querySelector('[data-testid="org-sidebar"]')?.lastElementChild).toBe(footer);
   });
 
-  it('shows unread counts on the inbox and on each unread conversation', () => {
-    render(<OrgSidebar model={model} inboxUnread={3} onNavigate={vi.fn()} />);
+  /**
+   * Each Inbox row carries the count for its own reason, read from the fan-in
+   * rather than handed down — so the badges and the list the row navigates to
+   * are answering the same question. Archived is deliberately unbadged.
+   */
+  it('badges each inbox row with its own reason count', () => {
+    const store = createStore();
+    store.set(teamInboxSnapshotAtom, {
+      ...EMPTY_TEAM_INBOX_SNAPSHOT,
+      status: 'ready',
+      deliveries: [
+        delivery({ id: 'd-mention', reason: 'mention' }),
+        delivery({ id: 'd-agent', reason: 'agentMention' }),
+        delivery({ id: 'd-assign', reason: 'assignment' }),
+        delivery({
+          id: 'd-feedback',
+          reason: 'reply',
+          source: { orgId: 'org-a', sourceKind: 'feedbackRequest', sourceId: 'request-1', commentId: '' },
+        }),
+        delivery({ id: 'd-read', reason: 'mention', readAt: 1 }),
+        delivery({ id: 'd-dismissed', reason: 'mention', dismissedAt: 1 }),
+        delivery({ id: 'd-other-org', reason: 'mention', orgId: 'org-b' }),
+      ],
+    });
 
-    expect(screen.getByTestId('team-tab-inbox').textContent).toContain('3');
+    render(
+      <Provider store={store}>
+        <OrgSidebar orgId="org-a" model={model} onNavigate={vi.fn()} />
+      </Provider>,
+    );
+
+    const badge = (testId: string) =>
+      screen.getByTestId(testId).querySelector('.org-unread-pill')?.textContent ?? null;
+
+    // A read delivery, a dismissed one and another organization's are all out.
+    expect(badge('team-tab-inbox')).toBe('4');
+    // An agent mention is a mention: same class, same row.
+    expect(badge('org-inbox-mentions')).toBe('2');
+    expect(badge('org-inbox-assigned')).toBe('1');
+    // The feedback request, and only it — its reason is `reply`, so this row
+    // cannot be reading the reason axis.
+    expect(badge('org-inbox-awaiting')).toBe('1');
+    expect(badge('org-inbox-follows')).toBeNull();
+    expect(badge('org-inbox-archived')).toBeNull();
+  });
+
+  it('shows unread counts on each unread conversation', () => {
+    render(<OrgSidebar model={model} onNavigate={vi.fn()} />);
+
     expect(screen.getByTestId('org-room-item-design').textContent).toContain('1');
     expect(screen.getByTestId('org-room-item-general').getAttribute('data-unread')).toBe('false');
     expect(screen.getByTestId('org-dm-item-dm-1').getAttribute('data-unread')).toBe('true');
@@ -75,7 +144,7 @@ describe('OrgSidebar', () => {
 
   it('navigates by route, not by tab id', () => {
     const onNavigate = vi.fn();
-    render(<OrgSidebar model={model} inboxUnread={0} onNavigate={onNavigate} />);
+    render(<OrgSidebar model={model} onNavigate={onNavigate} />);
 
     fireEvent.click(screen.getByTestId('org-room-item-design'));
     expect(onNavigate).toHaveBeenCalledWith({ view: 'conversation', conversationId: 'design' });
@@ -85,8 +154,11 @@ describe('OrgSidebar', () => {
     fireEvent.click(screen.getByTestId('org-browse-rooms'));
     expect(onNavigate).toHaveBeenCalledWith({ view: 'directory' });
 
+    // Each Inbox row is its own destination, carrying the filter it selects.
     fireEvent.click(screen.getByTestId('team-tab-inbox'));
-    expect(onNavigate).toHaveBeenCalledWith({ view: 'inbox' });
+    expect(onNavigate).toHaveBeenCalledWith({ view: 'inbox', filter: 'all' });
+    fireEvent.click(screen.getByTestId('org-inbox-awaiting'));
+    expect(onNavigate).toHaveBeenCalledWith({ view: 'inbox', filter: 'awaiting' });
     // Nothing in this column can produce an administration route any more.
     expect(onNavigate.mock.calls.every(([route]) => route.view !== 'admin')).toBe(true);
   });
@@ -98,7 +170,6 @@ describe('OrgSidebar', () => {
     render(
       <OrgSidebar
         model={{ ...model, rooms: [], dms: [] }}
-        inboxUnread={0}
         directoryError="Directory unavailable"
         onRetryDirectory={onRetryDirectory}
         onNavigate={vi.fn()}
@@ -121,7 +192,6 @@ describe('OrgSidebar', () => {
     const { container } = render(
       <OrgSidebar
         model={model}
-        inboxUnread={0}
         directoryError="Directory unavailable"
         onNavigate={vi.fn()}
       />,
@@ -134,7 +204,7 @@ describe('OrgSidebar', () => {
   });
 
   it('disables the create controls until they exist', () => {
-    render(<OrgSidebar model={model} inboxUnread={0} onNavigate={vi.fn()} />);
+    render(<OrgSidebar model={model} onNavigate={vi.fn()} />);
 
     // The rooms + opens a menu, so the trigger stays live and the create item
     // inside it carries the restriction.
@@ -149,7 +219,6 @@ describe('OrgSidebar', () => {
     render(
       <OrgSidebar
         model={{ ...model, rooms: [], gating: { ...model.gating, roomsVisible: false, canCreateRoom: false } }}
-        inboxUnread={0}
         onNavigate={vi.fn()}
         onCreateRoom={vi.fn()}
         onCreateDirectMessage={vi.fn()}
@@ -170,7 +239,6 @@ describe('OrgSidebar', () => {
     render(
       <OrgSidebar
         model={{ ...model, dms: [], gating: { ...model.gating, dmsVisible: false, canCreateDirectMessage: false } }}
-        inboxUnread={0}
         onNavigate={vi.fn()}
         onCreateRoom={vi.fn()}
       />,
@@ -184,7 +252,6 @@ describe('OrgSidebar', () => {
     const { rerender } = render(
       <OrgSidebar
         model={{ ...model, rooms: [] }}
-        inboxUnread={0}
         onNavigate={vi.fn()}
         onCreateRoom={vi.fn()}
       />,
@@ -195,7 +262,6 @@ describe('OrgSidebar', () => {
     rerender(
       <OrgSidebar
         model={{ ...model, rooms: [], gating: { ...model.gating, canCreateRoom: false } }}
-        inboxUnread={0}
         onNavigate={vi.fn()}
       />,
     );
@@ -205,7 +271,6 @@ describe('OrgSidebar', () => {
     rerender(
       <OrgSidebar
         model={{ ...model, rooms: [] }}
-        inboxUnread={0}
         directoryLoading
         onNavigate={vi.fn()}
         onCreateRoom={vi.fn()}
@@ -218,7 +283,6 @@ describe('OrgSidebar', () => {
     render(
       <OrgSidebar
         model={{ ...model, dms: [] }}
-        inboxUnread={0}
         onNavigate={vi.fn()}
         onCreateDirectMessage={vi.fn()}
       />,
@@ -231,7 +295,6 @@ describe('OrgSidebar', () => {
     render(
       <OrgSidebar
         model={{ ...model, gating: { ...model.gating, canCreateRoom: false } }}
-        inboxUnread={0}
         onNavigate={vi.fn()}
         onCreateRoom={vi.fn()}
         onCreateDirectMessage={vi.fn()}
@@ -248,5 +311,41 @@ describe('OrgSidebar', () => {
     // Rooms stay readable: only creation is restricted.
     screen.getByTestId('org-room-item-design');
     expect((screen.getByTestId('org-dms-section-add') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  // Folding a section away is a preference, not a mount detail: it goes through
+  // the app-settings store, so it has to survive a fresh mount in a fresh store
+  // rather than only living in the atom the click wrote to.
+  it('remembers a collapsed section through storage, not just the atom', async () => {
+    const invoke = vi.fn(async (_channel: string): Promise<unknown> => undefined);
+    (window as any).electronAPI = { invoke };
+
+    render(
+      <Provider store={createStore()}>
+        <OrgSidebar model={model} onNavigate={vi.fn()} />
+      </Provider>,
+    );
+    fireEvent.click(screen.getByTestId('org-rooms-section-toggle'));
+
+    expect(screen.queryByTestId('org-room-item-design')).toBeNull();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      'app-settings:set',
+      'orgSidebarPreferences',
+      { collapsedSections: ['rooms'] },
+    ));
+    cleanup();
+
+    // A later session reads that back: same fold, no click.
+    invoke.mockImplementation(async (channel: string) => (
+      channel === 'app-settings:get' ? { collapsedSections: ['rooms'] } : undefined
+    ));
+    render(
+      <Provider store={createStore()}>
+        <OrgSidebar model={model} onNavigate={vi.fn()} />
+      </Provider>,
+    );
+    await waitFor(() => expect(screen.queryByTestId('org-room-item-design')).toBeNull());
+    // Only Rooms was folded, so the rest of the column is untouched.
+    screen.getByTestId('org-dm-item-dm-1');
   });
 });

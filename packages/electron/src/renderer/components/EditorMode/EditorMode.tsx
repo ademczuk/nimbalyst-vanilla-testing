@@ -52,6 +52,7 @@ export interface EditorModeRef {
   openHistoryDialog: () => void;
   toggleSidebarCollapsed: () => void;
   toggleAIChatCollapsed: () => void;
+  toggleEditorMaximized: () => void;
   createNewChatSession: () => Promise<void>;
   tabs: {
     addTab: (filePath: string, content?: string) => string | undefined;
@@ -1009,6 +1010,13 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
     },
     toggleSidebarCollapsed,
     toggleAIChatCollapsed,
+    // Menu/shortcut path for the same action as double-clicking a tab. With no
+    // tab open there is nothing to expand into, so only the restore direction
+    // stays live.
+    toggleEditorMaximized: () => {
+      const hasTabs = (tabsRef.current?.getSnapshot()?.tabOrder.length ?? 0) > 0;
+      if (isEditorMaximized || hasTabs) toggleEditorMaximized();
+    },
     createNewChatSession: async () => {
       if (isAIChatCollapsed) {
         setIsAIChatCollapsed(false);
@@ -1076,6 +1084,8 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
     handleTabClose,
     toggleSidebarCollapsed,
     toggleAIChatCollapsed,
+    toggleEditorMaximized,
+    isEditorMaximized,
     isAIChatCollapsed,
     setIsAIChatCollapsed,
   ]);

@@ -4,15 +4,8 @@ import { useAtomValue } from 'jotai';
 import { teamInboxSnapshotAtom } from '../../store/atoms/teamInbox';
 import type { OrgChoice } from './defaultOrg';
 import { activeOrganizations } from './defaultOrg';
-import { inboxUnreadCount } from './orgSidebarViewModel';
+import { inboxUnreadCount, orgInitials } from './orgSidebarViewModel';
 import { isOrgConnectionReady } from './orgWindowRailViewModel';
-
-function orgInitials(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) return 'O';
-  const parts = trimmed.split(/\s+/).filter(Boolean);
-  return parts.slice(0, 2).map((part) => part.slice(0, 1).toUpperCase()).join('');
-}
 
 /**
  * The organization switcher, and only that. The signed-in identity is not here:

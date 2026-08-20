@@ -345,10 +345,6 @@ export const HelpContent: Record<string, HelpEntry> = {
     title: 'Agent Permissions',
     body: 'Configure which tools the AI agent can use. Control file access, command execution, and more.',
   },
-  'gutter-sync-button': {
-    title: 'Session Sync',
-    body: 'Check sync status for this project and manage sync settings.',
-  },
   'gutter-extension-dev-button': {
     title: 'Extension Dev Mode',
     body: 'Open extension development tools, logs, and rebuild options.',
@@ -379,6 +375,11 @@ export const HelpContent: Record<string, HelpEntry> = {
     title: 'Shared Documents',
     body: 'Browse and edit documents shared with your team in real-time. Collaborate on markdown, spreadsheets, and diagrams.',
     shortcut: KeyboardShortcuts.view.collabMode,
+  },
+  'org-mode-button': {
+    title: 'Organization',
+    body: "Your organization's inbox, rooms and direct messages, for the organization this project belongs to.",
+    shortcut: KeyboardShortcuts.view.orgMode,
   },
   'pr-review-mode-button': {
     title: 'Pull Requests',

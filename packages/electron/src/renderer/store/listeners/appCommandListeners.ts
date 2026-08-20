@@ -8,6 +8,7 @@
  * - file-new-mockup -> newMockupRequestAtom
  * - file-new-browser-tab -> newBrowserTabRequestAtom
  * - toggle-ai-chat-panel -> toggleAIChatPanelRequestAtom
+ * - toggle-expanded-tab -> toggleExpandedTabRequestAtom
  *
  * Call initAppCommandListeners() once at app startup.
  */
@@ -35,6 +36,7 @@ import {
   showSessionImportDialogRequestAtom,
   showTrustToastRequestAtom,
   toggleAIChatPanelRequestAtom,
+  toggleExpandedTabRequestAtom,
   unifiedOnboardingRequestAtom,
   windowsClaudeCodeWarningRequestAtom,
   type InstallProgressStage,
@@ -84,6 +86,11 @@ export function initAppCommandListeners(): () => void {
     store.set(toggleAIChatPanelRequestAtom, (v) => v + 1);
   });
   if (typeof u2 === 'function') cleanups.push(u2);
+
+  const uExpandedTab = window.electronAPI?.on?.('toggle-expanded-tab', () => {
+    store.set(toggleExpandedTabRequestAtom, (v) => v + 1);
+  });
+  if (typeof uExpandedTab === 'function') cleanups.push(uExpandedTab);
 
   const u3 = window.electronAPI?.on?.('file-save', () => {
     store.set(fileSaveRequestAtom, (v) => v + 1);

@@ -14,6 +14,13 @@ export interface CollabDocumentState {
   replica?: LocalDocumentReplicaState;
   transport: DocumentSyncStatus;
   outbox: LocalDocumentReplicaOutboxState;
+  /**
+   * A remote update reached this client and was applied to the Y.Doc, but the
+   * editor binding threw while rendering it. The socket stays open and presence
+   * keeps flowing, so without this flag the document reports itself fully
+   * synced while silently showing stale content.
+   */
+  renderFailed?: boolean;
 }
 
 export type CollabProductStatusKind =
@@ -23,6 +30,7 @@ export type CollabProductStatusKind =
   | 'offline-safe'
   | 'replaying'
   | 'access-changed'
+  | 'not-receiving-changes'
   | 'local-copy-damaged'
   | 'local-saving-unavailable';
 
@@ -82,6 +90,20 @@ export function deriveCollabProductStatus(
       severity: 'error',
       showPresence: false,
       showRejectedActions: true,
+    };
+  }
+  // Must outrank the connected/'Synced' branch below. A binding failure leaves
+  // the socket healthy and the outbox clean, so every remaining check would
+  // report this document as fully synced while it silently stops showing other
+  // people's edits, which is the exact way this failure goes unnoticed.
+  if (state.renderFailed) {
+    return {
+      kind: 'not-receiving-changes',
+      label: 'Not showing other people’s changes',
+      detail: 'Edits from collaborators are arriving but cannot be displayed. Reopen this document; if it persists, avoid editing to prevent conflicting with changes you cannot see.',
+      severity: 'error',
+      showPresence: state.transport === 'connected',
+      showRejectedActions: false,
     };
   }
   // Any outbox work while connected is normal in-flight typing: every

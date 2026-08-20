@@ -74,6 +74,7 @@ import {
   type DocumentReplicaCacheListener,
 } from '../../services/DocumentReplicaCache';
 import {
+  markCollabRenderFailed,
   publishCollabTransportState,
   resetCollabDocumentState,
   setCollabOutboxState,
@@ -105,6 +106,7 @@ import type { DocumentSessionActions } from './DocumentSessionControl';
 import {
   CollabDocumentHeaderMeta,
   CollabRecoveryBanner,
+  CollabRenderFailureBanner,
 } from './CollabDocumentHeaderMeta';
 import {
   getSharedDocumentDisplayPath,
@@ -564,6 +566,13 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
             console.warn('[CollaborativeTabEditor] Backup serialization failed:', error);
           }
         },
+        // A remote update applied to the Y.Doc but threw while rendering. The
+        // socket stays open and presence keeps flowing, so nothing else marks
+        // this document as degraded.
+        onEditorBindingError: (error) => {
+          console.error('[CollaborativeTabEditor] Editor binding failed to render a remote update:', error);
+          markCollabRenderFailed(filePath);
+        },
         onStatusChange: (status) => {
           observeHealth(status);
           publishCollabTransportState(filePath, status);
@@ -756,6 +765,12 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
                 console.warn('[CollaborativeTabEditor] Backup serialization failed:', error);
               }
             },
+            // See the sibling handler above: a binding failure is otherwise
+            // invisible because transport and outbox both stay healthy.
+            onEditorBindingError: (error) => {
+              console.error('[CollaborativeTabEditor] Editor binding failed to render a remote update:', error);
+              markCollabRenderFailed(filePath);
+            },
             onLocalUpdate: recordFirstLocalEdit,
             onStatusChange: events.onTransportStateChange,
             onOfflineMetric: recordOfflineMetric,
@@ -909,6 +924,7 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         .map((m) => ({
           userId: m.userId,
           name: teamMemberDisplayName(m),
+          email: m.email,
           personalOrgId: m.personalOrgId,
         }));
     },
@@ -1455,6 +1471,8 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         onCopyCurrentDocument={handleCopyCurrentDocument}
         onDiscardLocalCopy={handleDiscardLocalCopy}
       />
+
+      <CollabRenderFailureBanner filePath={filePath} />
 
       {/* Editor area */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>

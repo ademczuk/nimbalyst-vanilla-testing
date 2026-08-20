@@ -21,9 +21,19 @@ export const ORG_WINDOW_COMMAND_EVENT = 'nimbalyst:org-window-command';
 export { ORG_WINDOW_COMMANDS, isOrgWindowCommand };
 export type { OrgWindowCommand };
 
-export function dispatchOrgWindowCommand(command: OrgWindowCommand): void {
+interface OrgWindowCommandEventDetail {
+  surfaceId: string;
+  command: OrgWindowCommand;
+}
+
+export function dispatchOrgWindowCommand(
+  surfaceId: string,
+  command: OrgWindowCommand,
+): void {
   window.dispatchEvent(
-    new CustomEvent(ORG_WINDOW_COMMAND_EVENT, { detail: command }),
+    new CustomEvent<OrgWindowCommandEventDetail>(ORG_WINDOW_COMMAND_EVENT, {
+      detail: { surfaceId, command },
+    }),
   );
 }
 
@@ -32,11 +42,13 @@ export function dispatchOrgWindowCommand(command: OrgWindowCommand): void {
  * shape `window.electronAPI.on` returns.
  */
 export function subscribeOrgWindowCommand(
+  surfaceId: string,
   command: OrgWindowCommand,
   handler: () => void,
 ): () => void {
   const listener = (event: Event) => {
-    if ((event as CustomEvent<OrgWindowCommand>).detail !== command) return;
+    const detail = (event as CustomEvent<OrgWindowCommandEventDetail>).detail;
+    if (detail.surfaceId !== surfaceId || detail.command !== command) return;
     handler();
   };
   window.addEventListener(ORG_WINDOW_COMMAND_EVENT, listener);
@@ -51,24 +63,32 @@ export function subscribeOrgWindowCommand(
  * therefore latched: a mounted field consumes it immediately, and one that
  * mounts a tick later picks it up on its way in.
  */
-let inboxSearchFocusPending = false;
-const inboxSearchFocusListeners = new Set<() => void>();
+const inboxSearchFocusPending = new Set<string>();
+const inboxSearchFocusListeners = new Map<string, Set<() => void>>();
 
-export function requestInboxSearchFocus(): void {
-  inboxSearchFocusPending = true;
-  for (const listener of inboxSearchFocusListeners) listener();
+export function requestInboxSearchFocus(surfaceId: string): void {
+  inboxSearchFocusPending.add(surfaceId);
+  for (const listener of inboxSearchFocusListeners.get(surfaceId) ?? []) listener();
 }
 
 /** True at most once per request; the caller is expected to focus the field. */
-export function consumeInboxSearchFocusRequest(): boolean {
-  const pending = inboxSearchFocusPending;
-  inboxSearchFocusPending = false;
+export function consumeInboxSearchFocusRequest(surfaceId: string): boolean {
+  const pending = inboxSearchFocusPending.has(surfaceId);
+  inboxSearchFocusPending.delete(surfaceId);
   return pending;
 }
 
-export function subscribeInboxSearchFocus(listener: () => void): () => void {
-  inboxSearchFocusListeners.add(listener);
-  return () => { inboxSearchFocusListeners.delete(listener); };
+export function subscribeInboxSearchFocus(
+  surfaceId: string,
+  listener: () => void,
+): () => void {
+  const listeners = inboxSearchFocusListeners.get(surfaceId) ?? new Set();
+  listeners.add(listener);
+  inboxSearchFocusListeners.set(surfaceId, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) inboxSearchFocusListeners.delete(surfaceId);
+  };
 }
 
 /**
@@ -89,22 +109,35 @@ export interface InboxRowSelectionRequest {
   sourceId: string;
 }
 
-let inboxRowSelectionPending: InboxRowSelectionRequest | null = null;
-const inboxRowSelectionListeners = new Set<() => void>();
+const inboxRowSelectionPending = new Map<string, InboxRowSelectionRequest>();
+const inboxRowSelectionListeners = new Map<string, Set<() => void>>();
 
-export function requestInboxRowSelection(request: InboxRowSelectionRequest): void {
-  inboxRowSelectionPending = request;
-  for (const listener of inboxRowSelectionListeners) listener();
+export function requestInboxRowSelection(
+  surfaceId: string,
+  request: InboxRowSelectionRequest,
+): void {
+  inboxRowSelectionPending.set(surfaceId, request);
+  for (const listener of inboxRowSelectionListeners.get(surfaceId) ?? []) listener();
 }
 
 /** Non-null at most once per request; the caller owns resolving it to a row. */
-export function consumeInboxRowSelectionRequest(): InboxRowSelectionRequest | null {
-  const pending = inboxRowSelectionPending;
-  inboxRowSelectionPending = null;
+export function consumeInboxRowSelectionRequest(
+  surfaceId: string,
+): InboxRowSelectionRequest | null {
+  const pending = inboxRowSelectionPending.get(surfaceId) ?? null;
+  inboxRowSelectionPending.delete(surfaceId);
   return pending;
 }
 
-export function subscribeInboxRowSelection(listener: () => void): () => void {
-  inboxRowSelectionListeners.add(listener);
-  return () => { inboxRowSelectionListeners.delete(listener); };
+export function subscribeInboxRowSelection(
+  surfaceId: string,
+  listener: () => void,
+): () => void {
+  const listeners = inboxRowSelectionListeners.get(surfaceId) ?? new Set();
+  listeners.add(listener);
+  inboxRowSelectionListeners.set(surfaceId, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) inboxRowSelectionListeners.delete(surfaceId);
+  };
 }

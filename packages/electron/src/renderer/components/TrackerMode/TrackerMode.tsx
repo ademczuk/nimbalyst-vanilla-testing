@@ -384,7 +384,8 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
   // stands down for it -- otherwise the focused document competes with two
   // navigation columns. Collapsing it (rather than returning a different tree)
   // keeps the main view -- and the body editor inside it -- mounted across the
-  // presentation switch (plan: tracker-document-mode, checkbox 24).
+  // presentation switch (plan: tracker-document-mode, checkbox 24). The user's
+  // own collapse preference applies everywhere else.
   return (
     <div
       className={`tracker-mode flex-1 flex flex-row overflow-hidden min-h-0${documentItemId ? ' tracker-mode-document' : ''}`}
@@ -396,7 +397,7 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
         minWidth={160}
         maxWidth={350}
         onWidthChange={handleSidebarWidthChange}
-        collapsed={Boolean(documentItemId)}
+        collapsed={Boolean(documentItemId) || modeLayout.sidebarCollapsed}
       />
     </div>
   );

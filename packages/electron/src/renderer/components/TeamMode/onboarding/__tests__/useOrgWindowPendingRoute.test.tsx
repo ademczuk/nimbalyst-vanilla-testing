@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_ORG_WINDOW_ROUTE,
-  orgWindowRouteAtom,
+  ORG_WINDOW_SURFACE_ID,
+  orgWindowRouteAtomFamily,
   routeAfterOrgChange,
 } from '../../orgWindowState';
 import { resetOrgWindowPendingHandoff } from '../pendingRouteHandoff';
@@ -18,6 +19,8 @@ import {
   useAcknowledgeOrgWindowPendingRoute,
   useOrgWindowPendingRoute,
 } from '../useOrgWindowPendingRoute';
+
+const orgWindowRouteAtom = orgWindowRouteAtomFamily(ORG_WINDOW_SURFACE_ID);
 
 function Harness({
   orgId,

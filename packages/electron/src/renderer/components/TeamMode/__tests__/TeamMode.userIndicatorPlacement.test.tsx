@@ -17,8 +17,8 @@ import { Provider, createStore } from 'jotai';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
-import { TeamMode } from '../TeamMode';
+import { OrgModeHost } from '../OrgModeHost';
+import { ORG_WINDOW_SURFACE_ID } from '../orgWindowState';
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
@@ -57,8 +57,11 @@ function installApi(teams: unknown[]) {
 
 function renderWindow() {
   const store = createStore();
-  store.set(selectedOrgIdAtom, 'org-1');
-  return render(<Provider store={store}><TeamMode /></Provider>);
+  return render(
+    <Provider store={store}>
+      <OrgModeHost orgId="org-1" surfaceId={ORG_WINDOW_SURFACE_ID} chrome="window" />
+    </Provider>,
+  );
 }
 
 async function indicator() {

@@ -42,7 +42,7 @@ on:
   workflow_dispatch:
     inputs:
       signed:
-        description: 'Produce a signed release build (requires android-release approval)'
+        description: 'Produce a signed release build (uses android-release keystore secrets)'
         required: false
         default: 'false'
         type: choice

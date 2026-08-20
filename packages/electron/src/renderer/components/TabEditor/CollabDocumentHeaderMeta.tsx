@@ -108,6 +108,29 @@ export const CollabDocumentHeaderMeta: React.FC<{
   );
 };
 
+/**
+ * Shown when remote edits are arriving but cannot be rendered. The sync chip
+ * alone was not enough: a healthy socket and a clean outbox made the document
+ * read as fully synced while it silently stopped showing collaborators' text,
+ * which is why this failure is normally only caught by comparing screens.
+ */
+export const CollabRenderFailureBanner: React.FC<{ filePath: string }> = ({ filePath }) => {
+  const status = useCollabStatus(filePath);
+  if (status.kind !== 'not-receiving-changes') return null;
+
+  return (
+    <div
+      className="collab-render-failure-banner flex min-h-9 items-center gap-2 border-b border-[var(--nim-border)] bg-[var(--nim-bg-secondary)] px-3 py-1 text-xs"
+      data-testid="collab-render-failure-banner"
+      role="alert"
+    >
+      <span className="min-w-0 flex-1 text-[var(--nim-error)]">
+        {status.label}{status.detail ? ` — ${status.detail}` : ''}
+      </span>
+    </div>
+  );
+};
+
 export const CollabRecoveryBanner: React.FC<{
   filePath: string;
   onCopyCurrentDocument: () => Promise<void>;

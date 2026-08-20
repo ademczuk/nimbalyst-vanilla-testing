@@ -43,6 +43,21 @@ describe('resolveOrgWindowCommand', () => {
     expect(resolveOrgWindowCommand(press({ key: 'k', ctrlKey: true }), true)).toBeNull();
   });
 
+  it('yields the chords the project window owns when hosted as a mode', () => {
+    // Cmd+K is Agent mode, Cmd+F is Find and Cmd+I is the editor's italic. The
+    // standalone window can bind all three; a mode inside a project window
+    // cannot, and taking them back would be a silent regression there.
+    for (const key of ['k', 'f', 'i']) {
+      expect(resolveOrgWindowCommand(press({ key, metaKey: true }), true, 'mode')).toBeNull();
+      expect(resolveOrgWindowCommand(press({ key, metaKey: true }), true, 'window')).not.toBeNull();
+    }
+    expect(resolveOrgWindowCommand(
+      press({ key: 'U', metaKey: true, shiftKey: true }),
+      true,
+      'mode',
+    )).toBe('markAllRead');
+  });
+
   it('leaves unmodified and extra-modifier combinations alone', () => {
     expect(resolveOrgWindowCommand(press({ key: 'k' }), true)).toBeNull();
     // Cmd+Alt+I is the devtools shortcut; it must not read as Go to Inbox.

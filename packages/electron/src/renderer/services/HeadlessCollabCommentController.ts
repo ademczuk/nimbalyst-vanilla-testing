@@ -117,6 +117,7 @@ export async function acquireHeadlessCollabCommentController(
         .map((member) => ({
           userId: member.userId,
           name: teamMemberDisplayName(member),
+          email: member.email,
           personalOrgId: member.personalOrgId,
         }));
     const controller = createCollabCommentController({

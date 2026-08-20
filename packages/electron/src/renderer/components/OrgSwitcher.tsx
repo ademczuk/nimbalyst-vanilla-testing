@@ -14,7 +14,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { useAtomValue } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 import {
   useFloating, offset, flip, shift, autoUpdate,
   FloatingPortal, useClick, useDismiss, useRole, useInteractions,
@@ -22,6 +22,7 @@ import {
 import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { activeWorkspacePathAtom } from '../store/atoms/openProjects';
+import { useProjectOrg } from '../hooks/useProjectOrg';
 import { orgProjectWalkAtom } from '../store/atoms/orgProjectWalk';
 import { openOrgProjectWalk } from '../store/listeners/orgProjectWalkListeners';
 import { organizationCreationEnabled } from '../store/atoms/settingsDomains';
@@ -31,6 +32,8 @@ import { dialogRef } from '../contexts/DialogContext';
 import { DIALOG_IDS } from '../dialogs/registry';
 import type { AdminTab } from './TeamMode/orgWindowState';
 import { teamInboxSnapshotAtom } from '../store/atoms/teamInbox';
+import { setWindowModeAtom } from '../store/atoms/windowMode';
+import { resolveOrgMessagingDestination } from '../../shared/orgMessagingRouting';
 import {
   formatUnreadCount,
   selectProjectWindowUnreadSummary,
@@ -58,9 +61,16 @@ export function OrgSwitcher() {
   // These rows open the org's MESSAGES, which is not a way into its project.
   // For a member with nothing bound here, that is the actual dead end.
   const projectWalk = useAtomValue(orgProjectWalkAtom);
+  const setWindowMode = useSetAtom(setWindowModeAtom);
+
+  // The project's organization comes from the shared hook rather than a second
+  // `findForWorkspace` here. This element used to hold the answer in state that
+  // no workspace switch cleared, so the menu rendered — and routed — against
+  // the previous project's org while the new lookup was still in flight.
+  const { org: projectOrg, loading: projectOrgLoading } = useProjectOrg();
+  const activeOrgId = projectOrg?.orgId ?? null;
 
   const [orgs, setOrgs] = useState<OrgEntry[]>([]);
-  const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [pendingInviteCount, setPendingInviteCount] = useState(0);
   const [pendingOrgId, setPendingOrgId] = useState<string | null>(null);
@@ -91,21 +101,14 @@ export function OrgSwitcher() {
           setPendingOrgId(pending[0]?.orgId ?? null);
         }
         if (!cancelled) setOrgs(entries);
-
-        if (activePath) {
-          const found = await api()?.team?.findForWorkspace(activePath);
-          if (!cancelled) setActiveOrgId(found?.team?.orgId ?? null);
-        } else if (!cancelled) {
-          setActiveOrgId(entries[0]?.orgId ?? null);
-        }
       } catch {
-        if (!cancelled) {
-          setOrgs([]);
-          setActiveOrgId(null);
-        }
+        if (!cancelled) setOrgs([]);
       }
     })();
     return () => { cancelled = true; };
+    // The directory is account-scoped, not workspace-scoped, but moving between
+    // projects is also the moment a membership acquired elsewhere should show
+    // up here — so the path stays a refresh trigger even though it is not read.
   }, [activePath, directoryNonce]);
 
   const activeOrg = useMemo(
@@ -137,12 +140,19 @@ export function OrgSwitcher() {
   // the personal org and no teams (keeps the rail clean for solo users).
   if (orgs.length === 0 && pendingInviteCount === 0) return null;
 
-  // The rows above the divider are this menu's unread list: they open the
-  // organization's messages, which is what the organization window now is.
+  // The rows above the divider are this menu's unread list. The project org
+  // stays in this window's Org mode; another org uses the retargetable window.
   const openOrgMessages = (orgId?: string) => {
     setOpen(false);
     const target = orgId ?? activeOrg?.orgId;
     if (!target) return;
+    // An unresolved lookup cannot be read as "this is the project's org". The
+    // window shows any org correctly; the mode would show a different one than
+    // the row the user clicked.
+    if (!projectOrgLoading && resolveOrgMessagingDestination(activeOrgId, target) === 'project-mode') {
+      setWindowMode('org');
+      return;
+    }
     void api()?.team?.openManagementWindow({ orgId: target, workspacePath: activePath ?? undefined });
   };
 

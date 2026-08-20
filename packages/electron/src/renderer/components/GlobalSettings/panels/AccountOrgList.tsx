@@ -12,6 +12,7 @@
  */
 
 import React, { useState } from 'react';
+import { useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 
 import { AlphaBadge } from '../../common/AlphaBadge';
@@ -26,6 +27,9 @@ import {
   readOrgWelcomeDismissed,
 } from '../../TeamMode/onboarding/orgOnboardingStorage';
 import { openOrgProjectWalkFor } from '../../../store/listeners/orgProjectWalkListeners';
+import { useProjectOrg } from '../../../hooks/useProjectOrg';
+import { setWindowModeAtom } from '../../../store/atoms/windowMode';
+import { resolveOrgMessagingDestination } from '../../../../shared/orgMessagingRouting';
 import type { AccountOrganizationEntry, AccountOrganizationGroup } from './accountOrganizations';
 
 /**
@@ -33,8 +37,16 @@ import type { AccountOrganizationEntry, AccountOrganizationGroup } from './accou
  * (NIM-2322). Administration is the dialog below, in whichever window the user
  * already has open.
  */
-function openOrgMessages(orgId?: string) {
-  void window.electronAPI?.team?.openManagementWindow(orgId ? { orgId } : undefined);
+function openOrgMessages(
+  orgId: string,
+  projectOrgId: string | null | undefined,
+  openProjectOrgMode: () => void,
+) {
+  if (resolveOrgMessagingDestination(projectOrgId, orgId) === 'project-mode') {
+    openProjectOrgMode();
+    return;
+  }
+  void window.electronAPI?.team?.openManagementWindow({ orgId });
 }
 
 function openOrgManagement(orgId: string) {
@@ -63,7 +75,15 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
-function AccountOrgRow({ organization }: { organization: AccountOrganizationEntry }) {
+function AccountOrgRow({
+  organization,
+  projectOrgId,
+  openProjectOrgMode,
+}: {
+  organization: AccountOrganizationEntry;
+  projectOrgId: string | null | undefined;
+  openProjectOrgMode: () => void;
+}) {
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,9 +117,10 @@ function AccountOrgRow({ organization }: { organization: AccountOrganizationEntr
         }
         announceOrganizationsChanged();
         // Accepting used to end here, in a settings list. The new member still
-        // lands in the organization's messages on #general — a conversation
-        // destination, so this one keeps opening that window.
-        openOrgMessages(organization.orgId);
+        // lands in the organization's messages on #general. If this project is
+        // already bound to that org, its mode owns the landing; otherwise the
+        // retargetable organization window does.
+        openOrgMessages(organization.orgId, projectOrgId, openProjectOrgMode);
       } else {
         setError(result?.error || 'Could not accept the invitation');
       }
@@ -204,6 +225,8 @@ export function AccountOrgList({
   group: AccountOrganizationGroup;
   indented?: boolean;
 }) {
+  const { org: projectOrg } = useProjectOrg();
+  const setWindowMode = useSetAtom(setWindowModeAtom);
   // Organization creation is disabled while Teams is finished: with no
   // memberships and no creation affordance there is nothing actionable here, so
   // the section disappears entirely.
@@ -215,7 +238,12 @@ export function AccountOrgList({
       data-testid="account-org-list"
     >
       {group.organizations.map((organization) => (
-        <AccountOrgRow key={organization.orgId} organization={organization} />
+        <AccountOrgRow
+          key={organization.orgId}
+          organization={organization}
+          projectOrgId={projectOrg?.orgId}
+          openProjectOrgMode={() => setWindowMode('org')}
+        />
       ))}
       {group.organizations.length === 0 && (
         <p className="account-org-empty m-0 text-[11px] text-[var(--nim-text-muted)]" data-testid="account-org-empty">

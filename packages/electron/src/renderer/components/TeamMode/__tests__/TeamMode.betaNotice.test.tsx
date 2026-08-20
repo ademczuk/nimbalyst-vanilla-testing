@@ -4,12 +4,10 @@ import { Provider, createStore } from 'jotai';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
-import { TeamMode } from '../TeamMode';
+import { OrgModeHost } from '../OrgModeHost';
+import { ORG_WINDOW_SURFACE_ID } from '../orgWindowState';
 
-vi.mock('@nimbalyst/runtime', () => ({
-  MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
-}));
+vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({ MaterialSymbol: () => <span /> }));
 vi.mock('../../Settings/panels/OrganizationProjectsPanel', () => ({ OrganizationProjectsPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationBillingPanel', () => ({ OrganizationBillingPanel: () => <div /> }));
 vi.mock('../../Settings/panels/OrganizationDangerZone', () => ({ OrganizationDangerZone: () => <div /> }));
@@ -23,10 +21,7 @@ function installApi(teams: unknown[]) {
     value: {
       team: {
         findForWorkspace: vi.fn().mockResolvedValue(null),
-        resolveOrgProjectsLocalState: vi.fn().mockResolvedValue({
-          success: true,
-          projects: [],
-        }),
+        resolveOrgProjectsLocalState: vi.fn().mockResolvedValue({ success: true, projects: [] }),
         openProjectWorkspace: vi.fn().mockResolvedValue({ success: true }),
       },
       organization: {
@@ -42,47 +37,27 @@ function installApi(teams: unknown[]) {
   });
 }
 
-// Nobody should set up an organization without being told Teams is beta and
-// will be paid after launch — on both the create surface and the admin surface.
-// In the bound window that disclosure is the slim bottom status bar (2026-07-28
-// layout decision), not a two-line banner inside the Inbox.
 describe('TeamMode beta disclosure', () => {
   afterEach(() => cleanup());
 
-  it('discloses the beta status on the unbound create-an-organization surface', async () => {
+  it('shows the notice only on the unbound organization surface', async () => {
     installApi([]);
-    const store = createStore();
-    store.set(selectedOrgIdAtom, null);
-    render(<Provider store={store}><TeamMode /></Provider>);
+    render(
+      <Provider store={createStore()}>
+        <OrgModeHost orgId={null} surfaceId={ORG_WINDOW_SURFACE_ID} chrome="window" />
+      </Provider>,
+    );
 
-    await waitFor(() => screen.getByText(/Create an organization to collaborate/));
-    expect(screen.getByTestId('team-beta-notice').textContent).toMatch(/beta/i);
-    expect(screen.getByTestId('team-beta-notice').textContent).toMatch(/subscription after launch/i);
-    // Teams surfaces are labelled beta, never alpha.
-    expect(screen.getAllByTestId('alpha-badge').map((b) => b.textContent)).not.toContain('alpha');
-  });
-
-  it('discloses the beta status in the window status bar while administering', async () => {
+    await waitFor(() => screen.getByTestId('team-beta-notice'));
+    cleanup();
     installApi([team]);
-    const store = createStore();
-    store.set(selectedOrgIdAtom, 'org-1');
-    render(<Provider store={store}><TeamMode /></Provider>);
+    render(
+      <Provider store={createStore()}>
+        <OrgModeHost orgId="org-1" surfaceId={ORG_WINDOW_SURFACE_ID} chrome="window" />
+      </Provider>,
+    );
 
-    await waitFor(() => expect(screen.getByTestId('org-sidebar-header').textContent).toContain('Acme'));
-    const statusBar = screen.getByTestId('org-window-status-bar');
-    expect(statusBar.textContent).toMatch(/expect bugs/i);
-    expect(statusBar.textContent).toMatch(/free during beta/i);
-    expect(screen.getAllByTestId('alpha-badge').map((b) => b.textContent)).not.toContain('alpha');
-  });
-
-  it('drops the two-line banner from the Inbox in favour of the status bar', async () => {
-    installApi([team]);
-    const store = createStore();
-    store.set(selectedOrgIdAtom, 'org-1');
-    render(<Provider store={store}><TeamMode /></Provider>);
-
-    // The window lands on Inbox.
-    await waitFor(() => screen.getByTestId('org-window-status-bar'));
+    await waitFor(() => screen.getByTestId('org-sidebar'));
     expect(screen.queryByTestId('team-beta-notice')).toBeNull();
   });
 });

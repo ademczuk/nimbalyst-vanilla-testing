@@ -84,6 +84,7 @@ export interface CollabModeRef {
   getActiveDocumentPath: () => string | null;
   toggleSidebarCollapsed: () => void;
   toggleChatCollapsed: () => void;
+  toggleEditorMaximized: () => void;
   createNewChatSession: () => Promise<void>;
 }
 
@@ -759,6 +760,12 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
     },
     toggleSidebarCollapsed,
     toggleChatCollapsed,
+    // Menu/shortcut path for the same action as double-clicking a tab. With no
+    // tab open there is nothing to expand into, so only the restore direction
+    // stays live.
+    toggleEditorMaximized: () => {
+      if (isEditorMaximized || tabs.length > 0) toggleEditorMaximized();
+    },
     createNewChatSession: async () => {
       if (chatCollapsed) {
         setChatCollapsed(false);
@@ -771,6 +778,8 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
     tabsActions,
     toggleSidebarCollapsed,
     toggleChatCollapsed,
+    toggleEditorMaximized,
+    isEditorMaximized,
     chatCollapsed,
   ]);
 

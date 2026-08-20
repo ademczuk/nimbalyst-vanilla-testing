@@ -189,7 +189,11 @@ describe('team:find-for-workspace single-flight (RC4)', () => {
     expect(gitRemoteMock).toHaveBeenCalledTimes(1);
     expect(apiTeamsFetchCallCount()).toBe(1);
     for (const result of results) {
-      expect(result).toEqual({ success: true, team: expect.objectContaining({ orgId: 'org-1' }) });
+      expect(result).toEqual({
+        success: true,
+        team: expect.objectContaining({ orgId: 'org-1' }),
+        complete: true,
+      });
     }
   });
 

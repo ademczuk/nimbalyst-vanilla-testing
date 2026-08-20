@@ -156,9 +156,11 @@ describe('gateOrgWindowRoute', () => {
       .toEqual({ view: 'directory' });
   });
 
+  // The landing view is a row now — All — so a revoked destination lands on a
+  // row the sidebar can actually show as selected, not on a filter-less inbox.
   it('sends the rooms directory back to the inbox when rooms are off', () => {
     expect(gateOrgWindowRoute({ view: 'directory' }, roomsOff, conversations))
-      .toEqual({ view: 'inbox' });
+      .toEqual({ view: 'inbox', filter: 'all' });
   });
 
   it('sends an open room or DM back to the inbox when its kind is off', () => {
@@ -166,12 +168,12 @@ describe('gateOrgWindowRoute', () => {
       { view: 'conversation', conversationId: 'design' },
       roomsOff,
       conversations,
-    )).toEqual({ view: 'inbox' });
+    )).toEqual({ view: 'inbox', filter: 'all' });
     expect(gateOrgWindowRoute(
       { view: 'conversation', conversationId: 'dm-1' },
       dmsOff,
       conversations,
-    )).toEqual({ view: 'inbox' });
+    )).toEqual({ view: 'inbox', filter: 'all' });
   });
 
   it('leaves a conversation the directory has not loaded alone', () => {
@@ -182,14 +184,16 @@ describe('gateOrgWindowRoute', () => {
     expect(gateOrgWindowRoute(route, roomsOff, [])).toBe(route);
   });
 
-  it('never gates the inbox, and sends administration out of the window', () => {
-    expect(gateOrgWindowRoute({ view: 'inbox' }, roomsOff, conversations))
-      .toEqual({ view: 'inbox' });
+  it('never gates the inbox, whichever row it is on', () => {
+    // Every Inbox row survives every gating: the Inbox also carries tracker and
+    // document activity, which is not chat.
+    const awaiting = { view: 'inbox' as const, filter: 'awaiting' as const };
+    expect(gateOrgWindowRoute(awaiting, roomsOff, conversations)).toBe(awaiting);
     // Administration is the ORG_MANAGEMENT dialog now, so its old route lands
     // on the inbox rather than on an empty content region.
     const admin = { view: 'admin' as const, adminTab: 'settings' as const };
     expect(gateOrgWindowRoute(admin, roomsOff, conversations))
-      .toEqual({ view: 'inbox' });
+      .toEqual({ view: 'inbox', filter: 'all' });
   });
 });
 

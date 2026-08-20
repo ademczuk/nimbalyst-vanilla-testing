@@ -131,6 +131,22 @@ describe('deriveCollabProductStatus', () => {
     expect(status.showRejectedActions).toBe(true);
   });
 
+  // The regression this guards is invisible on screen: every other signal on a
+  // render-failed document reads healthy, so the status must be derived from
+  // renderFailed rather than from transport.
+  it('reports a render failure instead of Synced on an otherwise healthy document', () => {
+    const healthy = {
+      replica: 'ready',
+      transport: 'connected',
+      outbox: 'clean',
+    } as const;
+    expect(deriveCollabProductStatus(healthy).kind).toBe('synced');
+
+    const status = deriveCollabProductStatus({ ...healthy, renderFailed: true });
+    expect(status.kind).toBe('not-receiving-changes');
+    expect(status.severity).toBe('error');
+  });
+
   it('keeps the legacy single status honest about durable outbox work', () => {
     expect(deriveLegacyDocumentSyncStatus({
       replica: 'ready',

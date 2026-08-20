@@ -1,11 +1,23 @@
+// @vitest-environment node
+import { createStore } from 'jotai';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { InboxProvider } from '../Inbox/inboxProvider';
 import type { InboxRowView } from '../Inbox/inboxTypes';
+import { DEFAULT_INBOX_FILTER } from '../Inbox/inboxTypes';
+import { INBOX_FILTERS } from '../Inbox/inboxViewModel';
 import {
   DEFAULT_ORG_WINDOW_ROUTE,
+  INBOX_ROUTE,
+  INBOX_VIEW_ROUTE,
   gateOrgWindowRoute,
+  inboxRoute,
   isRouteSelected,
+  orgWindowRouteAtomFamily,
+  orgWindowRouteKey,
+  orgWindowRouteSelectedAtomFamily,
+  orgWindowRouteSelectionKey,
+  resolveOrgWindowRoute,
   routeForInboxRow,
   withOrgWindowRouting,
 } from '../orgWindowState';
@@ -51,6 +63,75 @@ describe('org window routes', () => {
       { view: 'admin', adminTab: 'members' },
       { view: 'admin', adminTab: 'projects' },
     )).toBe(false);
+  });
+
+  it('keeps navigation isolated between mounted surfaces', () => {
+    const store = createStore();
+    const windowRoute = orgWindowRouteAtomFamily('window-surface');
+    const modeRoute = orgWindowRouteAtomFamily('mode-surface');
+
+    store.set(windowRoute, { view: 'conversation', conversationId: 'general' });
+
+    expect(store.get(windowRoute)).toEqual({
+      view: 'conversation',
+      conversationId: 'general',
+    });
+    expect(store.get(modeRoute)).toEqual(DEFAULT_ORG_WINDOW_ROUTE);
+    expect(store.get(orgWindowRouteSelectedAtomFamily(
+      orgWindowRouteSelectionKey('mode-surface', 'inbox:all'),
+    ))).toBe(true);
+    expect(store.get(orgWindowRouteSelectedAtomFamily(
+      orgWindowRouteSelectionKey('window-surface', 'conversation:general'),
+    ))).toBe(true);
+
+    store.set(modeRoute, { view: 'directory' });
+
+    expect(store.get(windowRoute)).toEqual({
+      view: 'conversation',
+      conversationId: 'general',
+    });
+    expect(store.get(modeRoute)).toEqual({ view: 'directory' });
+  });
+});
+
+/**
+ * The Inbox is six destinations now, and each sidebar row derives its own
+ * selection from the route key. If the key ignored the filter, every Inbox row
+ * would light up at once — which is exactly what a bare `'inbox'` key did.
+ */
+describe('inbox routes', () => {
+  it('keys each Inbox row apart, so only one can be selected', () => {
+    const keys = INBOX_FILTERS.map(({ id }) => orgWindowRouteKey(inboxRoute(id)));
+    expect(new Set(keys).size).toBe(INBOX_FILTERS.length);
+    expect(orgWindowRouteKey(inboxRoute('awaiting'))).toBe('inbox:awaiting');
+  });
+
+  it('reads a filter-less inbox route as the landing row', () => {
+    // Older stored routes and every `{ view: 'inbox' }` call site normalize
+    // here rather than matching no row at all.
+    expect(orgWindowRouteKey({ view: 'inbox' })).toBe('inbox:all');
+    expect(orgWindowRouteKey(INBOX_ROUTE)).toBe('inbox:all');
+    expect(isRouteSelected({ view: 'inbox' }, INBOX_ROUTE)).toBe(true);
+    expect(isRouteSelected(inboxRoute('mentions'), INBOX_ROUTE)).toBe(false);
+    expect(isRouteSelected(inboxRoute('mentions'), inboxRoute('mentions'))).toBe(true);
+  });
+
+  it('hands the same route object back per filter, so a memoized row holds', () => {
+    expect(inboxRoute('mentions')).toBe(inboxRoute('mentions'));
+    expect(inboxRoute(DEFAULT_INBOX_FILTER)).toBe(INBOX_ROUTE);
+  });
+
+  it('lets a filter-less destination keep the row already in force', () => {
+    // Opening a feedback request answers it in place. Snapping the list to All
+    // mid-click would move the row the user just clicked out from under them.
+    expect(resolveOrgWindowRoute(inboxRoute('mentions'), INBOX_VIEW_ROUTE))
+      .toBe(inboxRoute('mentions'));
+    // From anywhere else there is no row to keep, so it lands on the default.
+    expect(resolveOrgWindowRoute({ view: 'directory' }, INBOX_VIEW_ROUTE))
+      .toBe(INBOX_ROUTE);
+    // A named row is always the destination verbatim.
+    expect(resolveOrgWindowRoute(inboxRoute('mentions'), inboxRoute('archived')))
+      .toBe(inboxRoute('archived'));
   });
 });
 

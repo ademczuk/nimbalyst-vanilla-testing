@@ -10,12 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- The tracker sidebar collapses and reopens the way every other mode's does — click the Tracker icon again, press Cmd+T, or use the title-bar control.
+- Expand the active tab to fill the window from View > Toggle Expanded Tab or with Shift+Escape, in any view mode.
+- Your organization's inbox, rooms, and direct messages open in the project window as an Organization mode, with mentions, work assigned to you, and replies you owe as their own navigation rows.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
 <!-- Bug fixes go here -->
+- A shared document that can no longer display collaborators' changes now says so, instead of continuing to report itself as synced.
+- Typing @ in a document comment finds people again when the team list arrives late, and now matches on either a person's name or their email address.
+- A tracker item shows its number as soon as it is created, instead of staying blank until the list is refreshed.
+- A project that belongs to no organization now offers to add it to one you pick, or to a new one, instead of suggesting a single organization at random.
+- The organization inbox no longer comes up empty when the app starts up faster than it can sign you in.
 
 ### Removed
 <!-- Removed features go here -->

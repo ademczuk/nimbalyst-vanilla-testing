@@ -11,10 +11,11 @@
  * - agent: Agentic coding panel
  * - tracker: Tracker (bug/decision) items view
  * - collab: Shared documents
+ * - org: The project organization's inbox, rooms and direct messages
  * - pr-review: GitHub pull request review panel (issue #307)
  * - settings: Settings view
  *
- * Note: org/team management is a dedicated OS window (?mode=team-management),
- * not a content mode in the project window (2026-07-17 decision-log correction).
+ * The standalone organization window (?mode=team-management) still exists as
+ * the cross-org surface; `org` is the project's own organization, hosted here.
  */
-export type ContentMode = 'files' | 'agent' | 'tracker' | 'collab' | 'pr-review' | 'settings';
+export type ContentMode = 'files' | 'agent' | 'tracker' | 'collab' | 'org' | 'pr-review' | 'settings';

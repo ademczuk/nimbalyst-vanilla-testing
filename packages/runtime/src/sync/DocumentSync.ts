@@ -1102,6 +1102,23 @@ export class DocumentSyncProvider {
     // Reconnect replay (docSyncResponse) has always applied this user's own
     // rows with no such filter.
     let updateBytes: Uint8Array;
+    // Inbound delivery diagnostics. The handoffs between "bytes on the socket"
+    // and "text in the editor" were unobservable, so an update that went
+    // missing left no trace at all: both logged failure branches below can be
+    // negative on a receiving machine while the update still never paints.
+    // `ivLength` is recorded because a non-empty iv is the single bit
+    // `decryptFromWire` uses to reject a row as pre-cutover.
+    if (COLLAB_CONNECTION_DIAGNOSTICS_COMPILED) {
+      emitCollabConnectionEvent(this, 'DocumentSyncProvider', 'inbound-broadcast', {
+        sequence: msg.sequence,
+        ivLength: msg.iv?.length ?? 0,
+        encryptedLength: msg.encryptedUpdate?.length ?? 0,
+        viaReplica: Boolean(this.config.replica),
+      });
+    }
+    const stateBefore = COLLAB_CONNECTION_DIAGNOSTICS_COMPILED
+      ? Y.encodeStateVector(this.ydoc)
+      : null;
     try {
       updateBytes = await this.decryptFromWire(
         msg.encryptedUpdate,
@@ -1136,7 +1153,26 @@ export class DocumentSyncProvider {
           this.config.onEditorBindingError?.(outcome.error);
         }
       }
+      // Proves handoff 2: the bytes decrypted AND the shared Y.Doc actually
+      // moved. `docChanged: false` means the update was a no-op here, which
+      // points downstream at the editor-doc bridge rather than at transport.
+      if (COLLAB_CONNECTION_DIAGNOSTICS_COMPILED && stateBefore) {
+        const stateAfter = Y.encodeStateVector(this.ydoc);
+        emitCollabConnectionEvent(this, 'DocumentSyncProvider', 'inbound-applied', {
+          sequence: msg.sequence,
+          decryptedBytes: updateBytes.length,
+          docChanged: stateBefore.length !== stateAfter.length
+            || stateAfter.some((byte, index) => byte !== stateBefore[index]),
+        });
+      }
     } catch (err) {
+      if (COLLAB_CONNECTION_DIAGNOSTICS_COMPILED) {
+        emitCollabConnectionEvent(this, 'DocumentSyncProvider', 'inbound-skipped', {
+          sequence: msg.sequence,
+          ivLength: msg.iv?.length ?? 0,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
       // Skip only this broadcast (a pre-cutover client-encrypted row, corrupt
       // bytes, or a replica persistence failure); never abort sync. Apply-time
       // listener failures are handled above and never reach here. See NIM-878.

@@ -36,8 +36,8 @@ permissions:
 
 jobs:
   # Verification and the dry-run path, split out of `publish` so checking a
-  # release candidate does not require an environment approval. This job holds
-  # no publish authority: no environment, no id-token.
+  # release candidate never runs with publish authority. This job holds none:
+  # no environment, no id-token.
   verify:
     name: Verify @nimbalyst/extension-sdk
     runs-on: ubuntu-latest

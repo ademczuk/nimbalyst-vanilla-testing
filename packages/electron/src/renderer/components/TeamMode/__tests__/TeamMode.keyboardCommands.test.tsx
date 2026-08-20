@@ -8,12 +8,13 @@ import type { ConversationDirectoryEntry } from '../../../../shared/conversation
 import { ORG_WINDOW_COMMAND_CHANNEL } from '../../../../shared/orgWindowCommands';
 import { conversationDirectoryAtomFamily } from '../../../store/atoms/conversations';
 import { orgSettingsAtomFamily } from '../../../store/atoms/orgSettings';
-import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
 import { teamInboxSnapshotAtom } from '../../../store/atoms/teamInbox';
-import { TeamMode } from '../TeamMode';
-import { orgWindowRouteAtom } from '../orgWindowState';
+import { OrgModeHost } from '../OrgModeHost';
+import { ORG_WINDOW_SURFACE_ID, orgWindowRouteAtomFamily } from '../orgWindowState';
 import { consumeInboxSearchFocusRequest } from '../orgWindowCommandBus';
 import { useOrgWindowCommandSource } from '../useOrgWindowCommandSource';
+
+const orgWindowRouteAtom = orgWindowRouteAtomFamily(ORG_WINDOW_SURFACE_ID);
 
 /**
  * The org window's keyboard-first messaging path, end to end inside the
@@ -115,13 +116,12 @@ function installApi() {
 
 /** Stands in for TeamManagementApp, which is where the source hook is mounted. */
 function CommandSource() {
-  useOrgWindowCommandSource();
+  useOrgWindowCommandSource(ORG_WINDOW_SURFACE_ID);
   return null;
 }
 
 function renderWindow(deliveries: unknown[] = []) {
   const store = createStore();
-  store.set(selectedOrgIdAtom, 'org-1');
   store.set(conversationDirectoryAtomFamily('org-1'), conversations);
   store.set(orgSettingsAtomFamily('org-1'), {
     version: 1,
@@ -138,7 +138,7 @@ function renderWindow(deliveries: unknown[] = []) {
   render(
     <Provider store={store}>
       <CommandSource />
-      <TeamMode />
+      <OrgModeHost orgId="org-1" surfaceId={ORG_WINDOW_SURFACE_ID} chrome="window" />
     </Provider>,
   );
   return store;
@@ -153,7 +153,7 @@ describe('org window keyboard messaging commands', () => {
     cleanup();
     markRead.mockClear();
     // The focus latch is module state; a leftover request would leak forward.
-    consumeInboxSearchFocusRequest();
+    consumeInboxSearchFocusRequest(ORG_WINDOW_SURFACE_ID);
   });
 
   it('opens the compose destination picker on Cmd+K', async () => {
@@ -215,7 +215,7 @@ describe('org window keyboard messaging commands', () => {
 
     pressKey({ key: 'i', metaKey: true });
 
-    await waitFor(() => expect(store.get(orgWindowRouteAtom)).toEqual({ view: 'inbox' }));
+    await waitFor(() => expect(store.get(orgWindowRouteAtom)).toEqual({ view: 'inbox', filter: 'all' }));
   });
 
   it('routes to the inbox and latches a search-focus request on Cmd+F', async () => {
@@ -226,10 +226,10 @@ describe('org window keyboard messaging commands', () => {
 
     pressKey({ key: 'f', metaKey: true });
 
-    await waitFor(() => expect(store.get(orgWindowRouteAtom)).toEqual({ view: 'inbox' }));
+    await waitFor(() => expect(store.get(orgWindowRouteAtom)).toEqual({ view: 'inbox', filter: 'all' }));
     // The Inbox is mocked out here, so nothing consumed the request; the real
     // surface picks it up on mount.
-    expect(consumeInboxSearchFocusRequest()).toBe(true);
+    expect(consumeInboxSearchFocusRequest(ORG_WINDOW_SURFACE_ID)).toBe(true);
   });
 
   it('marks every unread delivery in the organization read on Cmd+Shift+U', async () => {

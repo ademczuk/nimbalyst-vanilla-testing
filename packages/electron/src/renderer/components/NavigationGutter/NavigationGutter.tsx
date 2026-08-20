@@ -34,9 +34,8 @@ import { workspaceHasTeamAtom } from '../../store/atoms/collabDocuments';
 import { stytchIsSignedInAtom } from '../../store/atoms/stytchAuth';
 import { personalAccountsAtom } from '../../store/atoms/settingsDomains';
 import { orgInboxUnreadCountAtomFamily } from '../../store/atoms/teamInbox';
+import { formatUnreadCount } from '../../store/projectWindowUnreadViewModel';
 import { useProjectOrg } from '../../hooks/useProjectOrg';
-import { orgProjectWalkAtom } from '../../store/atoms/orgProjectWalk';
-import { openOrgProjectWalk } from '../../store/listeners/orgProjectWalkListeners';
 import { AlphaBadge } from '../common/AlphaBadge';
 import { AccountInspectorPopover } from '../Accounts/AccountInspectorPopover';
 import { GutterContextMenu } from './GutterContextMenu';
@@ -86,6 +85,10 @@ interface NavigationGutterProps {
   onToggleAgentCollapsed?: () => void;
   /** Callback to toggle Collab mode (Shared Docs) sidebar collapsed state */
   onToggleCollabCollapsed?: () => void;
+  /** Callback to toggle Tracker mode sidebar collapsed state */
+  onToggleTrackerCollapsed?: () => void;
+  /** Callback to toggle Org mode sidebar collapsed state */
+  onToggleOrgCollapsed?: () => void;
   /** Currently active extension bottom panel ID */
   activeExtensionBottomPanel?: string | null;
   /** Callback when an extension bottom panel is toggled */
@@ -114,6 +117,8 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
   onToggleFilesCollapsed,
   onToggleAgentCollapsed,
   onToggleCollabCollapsed,
+  onToggleTrackerCollapsed,
+  onToggleOrgCollapsed,
   activeExtensionBottomPanel,
   onExtensionBottomPanelChange,
 }) => {
@@ -135,10 +140,6 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
   const projectOrgUnread = useAtomValue(
     orgInboxUnreadCountAtomFamily(projectOrg?.orgId ?? ''),
   );
-  // An org the account belongs to with nothing bound here yet. Replaces the
-  // "No organization" row, which is a lie for an actual member.
-  const projectWalk = useAtomValue(orgProjectWalkAtom);
-
   // Global gutter customization (visibility + per-section order).
   const hiddenItems = useAtomValue(hiddenGutterItemsAtom);
   const sectionOrder = useAtomValue(gutterItemOrderAtom);
@@ -348,6 +349,7 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
         icon: 'assignment',
         label: `Tracker (${getShortcutDisplay(KeyboardShortcuts.view.trackerMode)})`,
         contentMode: 'tracker', testId: 'tracker-mode-button',
+        onReclick: () => onToggleTrackerCollapsed?.(),
       }),
     },
     ...(hasPrRemote ? [{
@@ -366,6 +368,37 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
         contentMode: 'collab', testId: 'collab-mode-button',
         onReclick: () => onToggleCollabCollapsed?.(),
         decoration: <AlphaBadge size="dot" className="absolute top-0 right-0.5 pointer-events-none" />,
+      }),
+    }] : []),
+    // Org mode is gated on the project actually belonging to an organization,
+    // the same rule Shared Docs uses. Without one there is no inbox to show.
+    ...(projectOrg ? [{
+      id: 'org', section: 'modes' as GutterSection, icon: 'forum', label: 'Organization', hideable: true,
+      render: () => renderModeButton({
+        icon: 'forum',
+        label: `Organization (${getShortcutDisplay(KeyboardShortcuts.view.orgMode)})${
+          projectOrgUnread > 0 ? `, ${projectOrgUnread} unread` : ''
+        }`,
+        contentMode: 'org', testId: 'org-mode-button',
+        onReclick: () => onToggleOrgCollapsed?.(),
+        decoration: (
+          <>
+            <AlphaBadge size="dot" className="absolute top-0 right-0.5 pointer-events-none" />
+            {projectOrgUnread > 0 && (
+              // Same bubble the Agent gutter button uses, moved to the lower
+              // corner so it does not sit on top of the beta dot. The count is
+              // the mode's whole discoverability story, so it lives here rather
+              // than only inside a popover.
+              <span
+                className="org-mode-unread-bubble absolute -bottom-1.5 -right-1.5 z-10 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-[var(--nim-bg-secondary)] bg-nim-error px-1 text-[10px] font-bold leading-none text-white shadow-sm pointer-events-none"
+                aria-hidden="true"
+                data-testid="org-mode-unread"
+              >
+                {formatUnreadCount(projectOrgUnread)}
+              </span>
+            )}
+          </>
+        ),
       }),
     }] : []),
   ];
@@ -539,10 +572,9 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
               accounts={accounts}
               projectOrg={projectOrg}
               projectOrgLoading={projectOrgLoading}
-              enterableOrgs={projectWalk.enterableOrgs}
-              onJoinOrganizationProject={() => {
+              onAddProjectToOrganization={() => {
                 setUserMenuOpen(false);
-                openOrgProjectWalk();
+                handleNavigateSettings('project', 'project-sharing');
               }}
               anchorEl={userMenuButtonRef.current}
               onClose={() => setUserMenuOpen(false)}
@@ -565,10 +597,9 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
               messagesUnreadCount={projectOrgUnread}
               onOpenMessages={(orgId) => {
                 setUserMenuOpen(false);
-                void window.electronAPI?.team?.openManagementWindow?.({
-                  orgId,
-                  workspacePath: workspacePath ?? undefined,
-                });
+                if (projectOrg?.orgId === orgId) {
+                  onContentModeChange('org');
+                }
               }}
             />
           )}

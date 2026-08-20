@@ -10,7 +10,7 @@ import {
 } from './orgWindowCommandBus';
 import { adjacentConversationId, type OrgSidebarModel } from './orgSidebarViewModel';
 import {
-  INBOX_ROUTE,
+  INBOX_VIEW_ROUTE,
   conversationRoute,
   type OrgWindowRoute,
 } from './orgWindowState';
@@ -29,6 +29,7 @@ import {
  * an open dialog or routing where you already are must be a no-op.
  */
 export function OrgWindowCommandBridge({
+  surfaceId,
   orgId,
   route,
   sidebar,
@@ -36,6 +37,7 @@ export function OrgWindowCommandBridge({
   onRoute,
   onCompose,
 }: {
+  surfaceId: string;
   orgId: string;
   route: OrgWindowRoute;
   sidebar: OrgSidebarModel;
@@ -55,31 +57,33 @@ export function OrgWindowCommandBridge({
 
   useEffect(() => {
     if (!onCompose) return;
-    return subscribeOrgWindowCommand('newMessage', onCompose);
-  }, [onCompose]);
+    return subscribeOrgWindowCommand(surfaceId, 'newMessage', onCompose);
+  }, [onCompose, surfaceId]);
 
   useEffect(() => (
-    subscribeOrgWindowCommand('goToInbox', () => onRoute(INBOX_ROUTE))
-  ), [onRoute]);
+    // The Inbox, not a particular row: from a room this lands on the landing
+    // row, and from inside the Inbox it is a no-op rather than a re-filter.
+    subscribeOrgWindowCommand(surfaceId, 'goToInbox', () => onRoute(INBOX_VIEW_ROUTE))
+  ), [onRoute, surfaceId]);
 
   useEffect(() => (
-    subscribeOrgWindowCommand('searchMessages', () => {
+    subscribeOrgWindowCommand(surfaceId, 'searchMessages', () => {
       // The field lives on the Inbox, so the command has to land there first;
       // the focus request is latched for the mount that follows.
-      onRoute(INBOX_ROUTE);
-      requestInboxSearchFocus();
+      onRoute(INBOX_VIEW_ROUTE);
+      requestInboxSearchFocus(surfaceId);
     })
-  ), [onRoute]);
+  ), [onRoute, surfaceId]);
 
   useEffect(() => (
-    subscribeOrgWindowCommand('markAllRead', () => {
+    subscribeOrgWindowCommand(surfaceId, 'markAllRead', () => {
       const unread = unreadDeliveryIdsForOrg(inboxSnapshot, orgId);
       if (unread.length === 0) return;
       void inboxProvider.markRead(unread).catch(() => {
         // The snapshot keeps them unread, so the next invocation retries.
       });
     })
-  ), [inboxProvider, inboxSnapshot, orgId]);
+  ), [inboxProvider, inboxSnapshot, orgId, surfaceId]);
 
   const currentConversationId = route.view === 'conversation'
     ? route.conversationId
@@ -90,10 +94,10 @@ export function OrgWindowCommandBridge({
       const next = adjacentConversationId(sidebar, currentConversationId, direction);
       if (next) onRoute(conversationRoute(next));
     };
-    const offNext = subscribeOrgWindowCommand('nextConversation', step(1));
-    const offPrevious = subscribeOrgWindowCommand('previousConversation', step(-1));
+    const offNext = subscribeOrgWindowCommand(surfaceId, 'nextConversation', step(1));
+    const offPrevious = subscribeOrgWindowCommand(surfaceId, 'previousConversation', step(-1));
     return () => { offNext(); offPrevious(); };
-  }, [currentConversationId, onRoute, sidebar]);
+  }, [currentConversationId, onRoute, sidebar, surfaceId]);
 
   return null;
 }

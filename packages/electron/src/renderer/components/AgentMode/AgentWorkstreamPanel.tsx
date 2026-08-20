@@ -111,6 +111,7 @@ import { defaultAgentModelAtom } from '../../store/atoms/appSettings';
 
 export interface AgentWorkstreamPanelRef {
   closeActiveTab: () => void;
+  toggleEditorMaximized: () => void;
 }
 
 export interface AgentWorkstreamPanelProps {
@@ -1544,8 +1545,15 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
         editorTabsRef.current.closeActiveTab();
       }
       // If transcript has focus, do nothing - we don't want to close AI sessions with CMD+W
-    }
-  }), []);
+    },
+    // Menu/shortcut path for the same action as double-clicking a tab. With no
+    // editor tab open, maximizing would force layoutMode 'editor' only for the
+    // auto-collapse effect to bounce it back to the transcript, so only the
+    // restore direction stays live.
+    toggleEditorMaximized: () => {
+      if (isEditorMaximized || hasTabs) toggleEditorMaximized();
+    },
+  }), [isEditorMaximized, hasTabs, toggleEditorMaximized]);
 
   return (
     <div ref={panelRef} className="agent-workstream-panel flex flex-row h-full overflow-hidden">

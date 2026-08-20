@@ -12,7 +12,10 @@
 import { useEffect } from 'react';
 import { useSetAtom } from 'jotai';
 
-import { orgWindowRouteAtom } from '../orgWindowState';
+import {
+  ORG_WINDOW_SURFACE_ID,
+  orgWindowRouteAtomFamily,
+} from '../orgWindowState';
 import {
   acknowledgeOrgWindowPendingRoute,
   readOrgWindowPendingRoute,
@@ -27,8 +30,9 @@ export function useOrgWindowPendingRoute(
   orgId: string | null | undefined,
   /** Bumped when the window is retargeted, so the hand-off is re-checked. */
   nonce: number = 0,
+  surfaceId: string = ORG_WINDOW_SURFACE_ID,
 ): void {
-  const setRoute = useSetAtom(orgWindowRouteAtom);
+  const setRoute = useSetAtom(orgWindowRouteAtomFamily(surfaceId));
 
   useEffect(() => {
     if (!orgId) return;

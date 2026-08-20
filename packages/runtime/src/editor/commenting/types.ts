@@ -15,6 +15,13 @@ export interface CommentMember {
   userId: string;
   /** Display name shown in the mention picker. */
   name: string;
+  /**
+   * Address shown beneath the display name and also matched against while
+   * typing. `name` collapses to the email only when a member has no display
+   * name, so without this a roster of real names cannot be searched by the
+   * address people actually know each other by.
+   */
+  email?: string | null;
   /** The member's personal org id, when the roster carries one. */
   personalOrgId?: string | null;
 }

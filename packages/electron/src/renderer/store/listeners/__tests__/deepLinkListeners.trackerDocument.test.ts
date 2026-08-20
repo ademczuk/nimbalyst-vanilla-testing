@@ -12,6 +12,14 @@ import {
 import { windowModeAtom } from '../../atoms/windowMode';
 import { initDeepLinkListeners } from '../deepLinkListeners';
 import { normalizeSettingsDestination } from '../../../components/Settings/settingsRoutes';
+import {
+  consumeInboxRowSelectionRequest,
+} from '../../../components/TeamMode/orgWindowCommandBus';
+import {
+  conversationRoute,
+  PROJECT_ORG_MODE_SURFACE_ID,
+  orgWindowRouteAtomFamily,
+} from '../../../components/TeamMode/orgWindowState';
 
 /** What App.tsx actually navigates to for the currently-queued settings command. */
 function resolvedSettingsDestination() {
@@ -31,6 +39,11 @@ describe('tracker deep-link routing', () => {
     store.set(activeWorkspacePathAtom, '/workspace/source');
     store.set(windowModeAtom, 'files');
     store.set(pendingCollabDocumentAtom, null);
+    store.set(
+      orgWindowRouteAtomFamily(PROJECT_ORG_MODE_SURFACE_ID),
+      conversationRoute('conversation-before-link'),
+    );
+    consumeInboxRowSelectionRequest(PROJECT_ORG_MODE_SURFACE_ID);
     store.set(trackerModeLayoutAtom, {
       ...store.get(trackerModeLayoutAtom),
       selectedType: 'plan',
@@ -64,6 +77,7 @@ describe('tracker deep-link routing', () => {
     store.set(activeWorkspacePathAtom, null);
     store.set(windowModeAtom, 'files');
     store.set(pendingCollabDocumentAtom, null);
+    consumeInboxRowSelectionRequest(PROJECT_ORG_MODE_SURFACE_ID);
   });
 
   it('binds a shared-document link to the workspace scope selected by the desktop host', () => {
@@ -122,6 +136,29 @@ describe('tracker deep-link routing', () => {
       selectedType: 'all',
       selectedItemId: 'tracker-document',
       itemViews: { 'tracker-document': 'document' },
+    });
+  });
+
+  it('opens a project-org feedback request in Org mode with its Inbox row latched', () => {
+    cleanup = initDeepLinkListeners();
+
+    handlers['deep-link:open-org-feedback-request']({
+      requestId: 'request-target',
+      orgId: 'org-project',
+      workspacePath: '/workspace/target',
+    });
+
+    expect(store.get(activeWorkspacePathAtom)).toBe('/workspace/target');
+    expect(store.get(windowModeAtom)).toBe('org');
+    // "Awaiting my reply" is the row a feedback request belongs to, and the
+    // reason axis is navigation now — landing on All would show the recipient
+    // every delivery except, potentially, the one they clicked a link for.
+    expect(store.get(orgWindowRouteAtomFamily(PROJECT_ORG_MODE_SURFACE_ID)))
+      .toEqual({ view: 'inbox', filter: 'awaiting' });
+    expect(consumeInboxRowSelectionRequest(PROJECT_ORG_MODE_SURFACE_ID)).toEqual({
+      orgId: 'org-project',
+      sourceKind: 'feedbackRequest',
+      sourceId: 'request-target',
     });
   });
 });

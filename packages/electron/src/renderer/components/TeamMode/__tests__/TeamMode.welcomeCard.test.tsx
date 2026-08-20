@@ -5,13 +5,14 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ConversationDirectoryEntry } from '../../../../shared/conversationDirectory';
-import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
 import {
   conversationDirectoryAtomFamily,
   conversationDirectoryLoadStateAtomFamily,
 } from '../../../store/atoms/conversations';
-import { orgWindowRouteAtom } from '../orgWindowState';
-import { TeamMode } from '../TeamMode';
+import { ORG_WINDOW_SURFACE_ID, orgWindowRouteAtomFamily } from '../orgWindowState';
+import { OrgModeHost } from '../OrgModeHost';
+
+const orgWindowRouteAtom = orgWindowRouteAtomFamily(ORG_WINDOW_SURFACE_ID);
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
@@ -92,10 +93,13 @@ function installApi() {
 function renderWindow() {
   installApi();
   const store = createStore();
-  store.set(selectedOrgIdAtom, 'org-1');
   store.set(conversationDirectoryAtomFamily('org-1'), [room('general', 'General'), room('design', 'Design')]);
   store.set(conversationDirectoryLoadStateAtomFamily('org-1'), { status: 'ready' });
-  render(<Provider store={store}><TeamMode /></Provider>);
+  render(
+    <Provider store={store}>
+      <OrgModeHost orgId="org-1" surfaceId={ORG_WINDOW_SURFACE_ID} chrome="window" />
+    </Provider>,
+  );
   return store;
 }
 

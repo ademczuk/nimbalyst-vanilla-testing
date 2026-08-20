@@ -2,19 +2,48 @@
 import { describe, expect, it, vi } from 'vitest';
 import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 
+import type { TeamInboxSnapshot } from '@nimbalyst/runtime/sync';
+
 import { createInboxFixtures } from '../inboxFixtures';
 import {
   deriveScopeOptions,
   groupRows,
+  inboxNavCount,
   openRow,
   selectRows,
   toRowView,
   toggleScopeValue,
   typeIdentity,
 } from '../inboxViewModel';
+import { inboxUnreadCount } from '../../orgSidebarViewModel';
 import { EMPTY_INBOX_SCOPE, type HydratedInboxDelivery, type InboxRowView } from '../inboxTypes';
 
 const NOW = Date.parse('2026-07-26T18:00:00.000Z');
+
+/**
+ * The fixtures carry no feedback request, and it is the one source kind the
+ * Awaiting my reply row is about. Its reason is deliberately `reply` — a reason
+ * no filter admits — so nothing can pass that test by reading the reason axis.
+ */
+function withFeedbackRequest(): HydratedInboxDelivery[] {
+  const fixtures = createInboxFixtures({ now: NOW });
+  return [
+    {
+      ...fixtures[0],
+      id: 'delivery-feedback',
+      reason: 'reply',
+      readAt: undefined,
+      subscription: undefined,
+      source: {
+        orgId: fixtures[0].orgId,
+        sourceKind: 'feedbackRequest',
+        sourceId: 'request-1',
+        commentId: '',
+      },
+    },
+    ...fixtures,
+  ];
+}
 
 function select(overrides: Partial<Parameters<typeof selectRows>[0]> = {}) {
   return selectRows({
@@ -235,42 +264,94 @@ describe('filters', () => {
     expect(unreadMentions.rows.length).toBeLessThanOrEqual(mentions.rows.length);
   });
 
-  it('drops dismissed deliveries from every filter', () => {
+  it('Awaiting my reply admits what wants an answer, whatever the reason says', () => {
+    // Its reason is `reply`, which no reason filter admits — the row is defined
+    // by `awaitsResponse`, not by the reason axis.
+    const { rows } = select({ deliveries: withFeedbackRequest(), filter: 'awaiting' });
+    expect(rows.map((row) => row.id)).toEqual(['delivery-feedback']);
+    expect(rows.every((row) => row.awaitsResponse)).toBe(true);
+  });
+
+  it('files a dismissed delivery under Archived and nowhere else', () => {
     const deliveries = createInboxFixtures({ now: NOW }).map((delivery) =>
       delivery.id === 'delivery-mention-room' ? { ...delivery, dismissedAt: NOW } : delivery);
-    const { rows } = select({ deliveries });
-    expect(rows.map((row) => row.id)).not.toContain('delivery-mention-room');
+
+    for (const filter of ['all', 'mentions', 'follows'] as const) {
+      expect(select({ deliveries, filter }).rows.map((row) => row.id))
+        .not.toContain('delivery-mention-room');
+    }
+
+    // Archived used to be a state with no way into it: dismissing was the only
+    // exit from a row and there was no list that still held it.
+    const archived = select({ deliveries, filter: 'archived' }).rows;
+    expect(archived.map((row) => row.id)).toEqual(['delivery-mention-room']);
+    expect(archived.every((row) => row.archived)).toBe(true);
+    // It had no read receipt, but dismissal already answered "still waiting?".
+    // A row reading unread here would put a count in the header that the nav
+    // row, which never badges Archived, contradicts on the same screen.
+    expect(archived[0].unread).toBe(false);
+    expect(select({ deliveries, filter: 'archived' }).unreadInScope).toBe(0);
+  });
+
+  it('keeps a dismissed delivery out of the live pool it was counted in', () => {
+    const deliveries = createInboxFixtures({ now: NOW }).map((delivery) =>
+      delivery.id === 'delivery-mention-room' ? { ...delivery, dismissedAt: NOW } : delivery);
+    // Both are unread, so only the pool partition can separate them.
+    expect(select({ deliveries }).unreadInScope)
+      .toBe(select().unreadInScope - 1);
+  });
+});
+
+describe('inboxNavCount', () => {
+  function snapshot(deliveries: HydratedInboxDelivery[]): TeamInboxSnapshot {
+    return {
+      status: 'ready',
+      organizations: [],
+      deliveries: deliveries.map((delivery) => ({
+        ...delivery,
+        hasUnreadActivity: !!delivery.hasUnreadActivity,
+      })) as unknown as TeamInboxSnapshot['deliveries'],
+    };
+  }
+
+  it('badges each row with the unread deliveries its own filter admits', () => {
+    const value = snapshot(withFeedbackRequest());
+    const rows = select({ deliveries: withFeedbackRequest() }).rows.filter((row) => row.unread);
+
+    expect(inboxNavCount(value, 'org-acme', 'all'))
+      .toBe(rows.filter((row) => row.orgId === 'org-acme').length);
+    expect(inboxNavCount(value, 'org-acme', 'mentions'))
+      .toBe(rows.filter((row) => row.orgId === 'org-acme' && (row.reason === 'mention' || row.reason === 'agentMention')).length);
+    expect(inboxNavCount(value, 'org-acme', 'assigned')).toBe(1);
+    expect(inboxNavCount(value, 'org-acme', 'awaiting')).toBe(1);
+    // Another organization's fan-in never reaches this organization's nav.
+    expect(inboxNavCount(value, 'org-nothing', 'all')).toBe(0);
+  });
+
+  it('counts a dismissed delivery nowhere, Archived included', () => {
+    // Unread and dismissed at once: only reading dismissal as "no longer
+    // waiting" keeps it out of both its old row and its new one. A pill on
+    // Archived would re-nag the reader for having said they were done.
+    const dismissed = withFeedbackRequest().map((delivery) =>
+      delivery.id === 'delivery-feedback'
+        ? { ...delivery, dismissedAt: NOW, readAt: undefined }
+        : delivery);
+
+    expect(inboxNavCount(snapshot(dismissed), 'org-acme', 'archived')).toBe(0);
+    expect(inboxNavCount(snapshot(dismissed), 'org-acme', 'awaiting')).toBe(0);
+    expect(inboxNavCount(snapshot(dismissed), 'org-acme', 'all'))
+      .toBe(inboxNavCount(snapshot(withFeedbackRequest()), 'org-acme', 'all') - 1);
+  });
+
+  it('agrees with the org-wide unread count the gutter badge already uses', () => {
+    // Two derivations of "how much is waiting" in one column would drift.
+    const value = snapshot(createInboxFixtures({ now: NOW }));
+    expect(inboxNavCount(value, 'org-acme', 'all'))
+      .toBe(inboxUnreadCount(value, 'org-acme'));
   });
 });
 
 describe('counts', () => {
-  it('counts unread within each filter, from the same rows the list renders', () => {
-    const { counts, rows } = select({ filter: 'all' });
-    const unreadRows = rows.filter((row) => row.unread);
-
-    expect(counts.all).toBe(unreadRows.length);
-    expect(counts.mentions).toBe(unreadRows.filter((row) => row.reason === 'mention' || row.reason === 'agentMention').length);
-    expect(counts.assigned).toBe(1);
-    expect(counts.follows).toBe(unreadRows.filter((row) => row.subscription === 'following').length);
-  });
-
-  it('leaves the reason counts alone when the unread toggle is on', () => {
-    // The toggle refines what the list shows; it must not restate the badges as
-    // "unread among the unread", which would make every badge equal its filter.
-    expect(select({ unreadOnly: true }).counts).toEqual(select().counts);
-  });
-
-  it('narrows counts with the scope but not with the search query', () => {
-    const scoped = select({ scope: { ...EMPTY_INBOX_SCOPE, orgIds: ['org-acme'] } });
-    const searched = select({ query: 'zzz-no-match' });
-    const unscoped = select();
-
-    expect(scoped.counts.all).toBeLessThan(unscoped.counts.all);
-    expect(searched.rows).toHaveLength(0);
-    // Search refines a filter; it does not redefine how much is waiting in it.
-    expect(searched.counts).toEqual(unscoped.counts);
-  });
-
   it('marks the followed-watermark row unread even though it has a read receipt', () => {
     const { rows } = select();
     const row = rows.find((entry) => entry.id === 'delivery-follow-watermark');
@@ -318,6 +399,50 @@ describe('search', () => {
     }).rows;
     expect(rows.every((row) => row.orgId === 'org-northwind')).toBe(true);
     expect(rows.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Org mode renders the Inbox inside a project window, under one organization's
+ * header, and its rows open into that project's context. The standalone
+ * organization window is the cross-org surface and keeps the whole fan-in — so
+ * these two must be shown to differ, not just to work.
+ */
+describe('pinned to one organization', () => {
+  it('shows only the pinned organization, while the window still shows every one', () => {
+    const deliveries = createInboxFixtures({ now: NOW });
+    const orgIdsIn = (rows: InboxRowView[]) => [...new Set(rows.map((row) => row.orgId))].sort();
+
+    const pinned = select({ deliveries, restrictToOrgId: 'org-northwind' });
+    expect(orgIdsIn(pinned.rows)).toEqual(['org-northwind']);
+    expect(pinned.rows.length).toBeGreaterThan(0);
+
+    const standalone = select({ deliveries });
+    expect(orgIdsIn(standalone.rows)).toEqual(['org-acme', 'org-northwind']);
+
+    // The counts the surface reports are derived from the same pool, so the
+    // header can never promise rows the list refuses to show.
+    expect(pinned.unreadInScope).toBeLessThan(standalone.unreadInScope);
+    expect(pinned.unreadInScope).toBe(
+      pinned.scoped.filter((row) => row.unread).length,
+    );
+  });
+
+  it('ignores a stored scope that names a different organization', () => {
+    const deliveries = createInboxFixtures({ now: NOW });
+    // What the organization window persists after narrowing to Acme. The scope
+    // is stored per user, not per surface, so it arrives here verbatim.
+    const storedScope = { ...EMPTY_INBOX_SCOPE, orgIds: ['org-acme'], projectIds: ['proj-editor'] };
+
+    const pinned = select({ deliveries, scope: storedScope, restrictToOrgId: 'org-northwind' });
+    expect(pinned.rows.length).toBeGreaterThan(0);
+    expect(pinned.rows.every((row) => row.orgId === 'org-northwind')).toBe(true);
+
+    // And the control cannot offer its way back: the axis that stored value
+    // belongs to is not on this surface at all.
+    const options = deriveScopeOptions(deliveries, 'org-northwind');
+    expect(options.orgs.map((org) => org.id)).toEqual(['org-northwind']);
+    expect(options.projects.map((project) => project.id)).not.toContain('proj-editor');
   });
 });
 

@@ -7,6 +7,7 @@ import {
   feedbackRequestConsoleUrl,
   parseFeedbackRequestDeepLink,
 } from '../feedbackRequestLinks';
+import { resolveOrgMessagingDestination } from '../orgMessagingRouting';
 
 /**
  * The pasteable link is the delivery mechanism for this whole feature: a
@@ -16,6 +17,18 @@ import {
  * console actually routes, and that the app-scheme half round-trips.
  */
 describe('feedback request links', () => {
+  it('routes the project org to its mode and every other org to the window', () => {
+    expect(resolveOrgMessagingDestination('org-project', 'org-project')).toBe('project-mode');
+    expect(resolveOrgMessagingDestination('org-project', 'org-other')).toBe('org-window');
+    expect(resolveOrgMessagingDestination(null, 'org-other')).toBe('org-window');
+    // Both sides absent is the shape that reaches this from an IPC or API
+    // boundary, where the types are not enforced. A missing target is not the
+    // project's own org, so it must not be handed the project's mode.
+    expect(resolveOrgMessagingDestination(null, null)).toBe('org-window');
+    expect(resolveOrgMessagingDestination(undefined, undefined)).toBe('org-window');
+    expect(resolveOrgMessagingDestination('org-project', null)).toBe('org-window');
+  });
+
   it('builds the console URL from the configured origin', () => {
     const url = feedbackRequestConsoleUrl('org-a', 'request-1');
 

@@ -4,17 +4,18 @@ import { Provider, createStore } from 'jotai';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
 import {
   conversationDirectoryAtomFamily,
   conversationDirectoryLoadStateAtomFamily,
 } from '../../../store/atoms/conversations';
-import { orgWindowRouteAtom } from '../orgWindowState';
+import { ORG_WINDOW_SURFACE_ID, orgWindowRouteAtomFamily } from '../orgWindowState';
 import {
   recordOrgWindowPendingHandoff,
   resetOrgWindowPendingHandoff,
 } from '../onboarding/pendingRouteHandoff';
-import { TeamMode } from '../TeamMode';
+import { OrgModeHost } from '../OrgModeHost';
+
+const orgWindowRouteAtom = orgWindowRouteAtomFamily(ORG_WINDOW_SURFACE_ID);
 
 vi.mock('@nimbalyst/runtime', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
@@ -81,14 +82,17 @@ describe('TeamMode directory load failure', () => {
     const invoke = vi.fn().mockResolvedValue([]);
     installApi(invoke);
     const store = createStore();
-    store.set(selectedOrgIdAtom, 'org-1');
     store.set(conversationDirectoryAtomFamily('org-1'), []);
     store.set(conversationDirectoryLoadStateAtomFamily('org-1'), {
       status: 'error',
       error: 'Conversation directory unavailable',
     });
 
-    render(<Provider store={store}><TeamMode /></Provider>);
+    render(
+      <Provider store={store}>
+        <OrgModeHost orgId="org-1" surfaceId={ORG_WINDOW_SURFACE_ID} chrome="window" />
+      </Provider>,
+    );
 
     await waitFor(() => screen.getByTestId('org-rooms-error'));
     expect(screen.queryByTestId('org-rooms-empty')).toBeNull();
@@ -107,7 +111,6 @@ describe('TeamMode directory load failure', () => {
     installApi(invoke);
     const store = createStore();
     const route = { view: 'conversation' as const, conversationId: 'general' };
-    store.set(selectedOrgIdAtom, 'org-1');
     store.set(orgWindowRouteAtom, route);
     store.set(conversationDirectoryAtomFamily('org-1'), []);
     store.set(conversationDirectoryLoadStateAtomFamily('org-1'), {
@@ -116,7 +119,11 @@ describe('TeamMode directory load failure', () => {
     });
     recordOrgWindowPendingHandoff('org-1', route);
 
-    render(<Provider store={store}><TeamMode /></Provider>);
+    render(
+      <Provider store={store}>
+        <OrgModeHost orgId="org-1" surfaceId={ORG_WINDOW_SURFACE_ID} chrome="window" />
+      </Provider>,
+    );
 
     await waitFor(() => expect(invoke).toHaveBeenCalledWith(
       'conversation:directory:list',

@@ -132,7 +132,7 @@ export async function initWindowMode(workspacePath: string): Promise<void> {
         workspacePath
       );
 
-      const validModes: ContentMode[] = ['files', 'agent', 'tracker', 'collab', 'pr-review', 'settings'];
+      const validModes: ContentMode[] = ['files', 'agent', 'tracker', 'collab', 'org', 'pr-review', 'settings'];
       const restoredMode = validModes.includes(workspaceState?.activeMode)
         ? workspaceState.activeMode as ContentMode
         : 'files';

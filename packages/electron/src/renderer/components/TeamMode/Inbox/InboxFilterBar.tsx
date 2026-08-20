@@ -1,47 +1,41 @@
 import React from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 
-import { INBOX_FILTERS, SOURCE_KIND_LABELS, hasScopeChoices, toggleScopeValue, typeIdentity } from './inboxViewModel';
+import { SOURCE_KIND_LABELS, hasScopeChoices, toggleScopeValue, typeIdentity } from './inboxViewModel';
 import { InboxScopeMenu } from './InboxScopeMenu';
-import type { InboxFilterId, InboxScope, InboxScopeOptions, InboxSourceKind } from './inboxTypes';
+import type { InboxScope, InboxScopeOptions, InboxSourceKind } from './inboxTypes';
 
 /**
- * Three independent axes, all visible, all composable.
+ * The axes the sidebar does not own, all visible, all composable.
  *
- * - **Reason** — single-select, because a delivery arrives for exactly one.
- * - **Unread** — its own toggle. It used to be a fifth reason chip, which made
- *   read state mutually exclusive with the reason you were reading: choosing
- *   "Unread" silently threw away "Mentions". "Unread mentions" is the single
- *   most useful triage query on this surface and it was unexpressible.
+ * - **Unread** — its own toggle rather than a reason. Read state was once a
+ *   fifth reason chip, which made it mutually exclusive with the reason you
+ *   were reading: choosing "Unread" silently threw away "Mentions". "Unread
+ *   mentions" is the single most useful triage query on this surface and it was
+ *   unexpressible.
  * - **Type** — multi-select chips over the source kinds actually present.
+ * - **Scope** — organization and project.
  *
- * Reason counts are unread-within-reason, taken from the same normalized rows
- * the list renders (inside the active scope, independent of the search query
- * and of the unread toggle — both refine a filter; neither changes how much is
- * waiting in it).
+ * The **reason** axis is not here any more: All / Mentions / Assigned to me /
+ * Awaiting my reply / Following / Archived are the sidebar's Inbox rows, and
+ * each one is a route. A chip and a nav row for the same thing could disagree.
  */
 export function InboxFilterBar({
-  filter,
-  counts,
   unreadOnly,
   unreadCount,
   typeCounts,
   scope,
   scopeOptions,
   disabled,
-  onFilterChange,
   onUnreadOnlyChange,
   onScopeChange,
 }: {
-  filter: InboxFilterId;
-  counts: Record<InboxFilterId, number>;
   unreadOnly: boolean;
   unreadCount: number;
   typeCounts: Partial<Record<InboxSourceKind, number>>;
   scope: InboxScope;
   scopeOptions: InboxScopeOptions;
   disabled: boolean;
-  onFilterChange: (filter: InboxFilterId) => void;
   onUnreadOnlyChange: (unreadOnly: boolean) => void;
   onScopeChange: (scope: InboxScope) => void;
 }) {
@@ -55,48 +49,8 @@ export function InboxFilterBar({
       <div
         className="inbox-filter-reasons flex flex-wrap items-center gap-2"
         data-testid="inbox-filter-bar"
-        role="tablist"
         aria-label="Inbox filters"
       >
-        {INBOX_FILTERS.map(({ id, label }) => {
-          const isActive = filter === id;
-          const count = counts[id] ?? 0;
-          return (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              disabled={disabled}
-              aria-selected={isActive}
-              data-testid={`inbox-filter-${id}`}
-              onClick={() => onFilterChange(id)}
-              className={`inbox-filter-chip org-window-no-drag flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] ${
-                disabled
-                  ? 'cursor-not-allowed bg-transparent text-[var(--nim-text-disabled)]'
-                  : isActive
-                    ? 'bg-[var(--nim-primary)] font-medium text-[var(--nim-on-primary)]'
-                    : 'bg-[var(--nim-bg-tertiary)] text-[var(--nim-text-muted)] hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)]'
-              }`}
-            >
-              {label}
-              {count > 0 && (
-                <span
-                  className={`inbox-filter-count rounded-full px-1.5 text-[10px] font-semibold leading-4 ${
-                    isActive
-                      ? 'bg-[color-mix(in_srgb,var(--nim-on-primary)_25%,transparent)] text-[var(--nim-on-primary)]'
-                      : 'bg-[var(--nim-bg-active)] text-[var(--nim-text-muted)]'
-                  }`}
-                  data-testid={`inbox-filter-count-${id}`}
-                >
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-
-        <span className="inbox-filter-divider mx-1 h-5 w-px shrink-0 bg-[var(--nim-border)]" aria-hidden="true" />
-
         <button
           type="button"
           role="switch"

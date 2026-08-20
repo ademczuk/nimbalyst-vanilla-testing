@@ -13,7 +13,12 @@ import {
   defaultTrackerTypeColor,
   defaultTrackerTypeIcon,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerTypeIdentity';
+import type {
+  TeamInboxMaterializedDelivery,
+  TeamInboxSnapshot,
+} from '@nimbalyst/runtime/sync';
 
+import { isUnreadDelivery } from '../../../store/conversationDirectoryViewModel';
 import type {
   HydratedInboxDelivery,
   InboxActorView,
@@ -23,19 +28,29 @@ import type {
   InboxScope,
   InboxScopeOptions,
   InboxSourceKind,
+  InboxSubscriptionState,
   InboxTypeIdentity,
 } from './inboxTypes';
 
 /** Previews are bounded by contract; enforce it at render time too. */
 export const INBOX_PREVIEW_MAX_CHARS = 180;
 
-/** The reason axis. Read state and source type are their own axes. */
+/**
+ * The reason axis, in the order the sidebar lists it. Read state and source
+ * type are their own axes and stay in the list's own filter bar.
+ */
 export const INBOX_FILTERS: ReadonlyArray<{ id: InboxFilterId; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'mentions', label: 'Mentions' },
-  { id: 'assigned', label: 'Assigned' },
-  { id: 'follows', label: 'Follows' },
+  { id: 'assigned', label: 'Assigned to me' },
+  { id: 'awaiting', label: 'Awaiting my reply' },
+  { id: 'follows', label: 'Following' },
+  { id: 'archived', label: 'Archived' },
 ];
+
+export function inboxFilterLabel(filter: InboxFilterId): string {
+  return INBOX_FILTERS.find((entry) => entry.id === filter)?.label ?? 'All';
+}
 
 const REASON_LABELS: Record<string, string> = {
   mention: 'Mentioned you',
@@ -292,13 +307,18 @@ export function toRowView(delivery: HydratedInboxDelivery, options: { now: numbe
     // Redacted with the source kind: a revoked row must not disclose that
     // someone was waiting on an answer from this reader.
     awaitsResponse: awaitsResponse(sourceKind),
+    archived: !!delivery.dismissedAt,
     sourceTitle,
     actor,
     preview,
     previewStale: stalePreviews && !!preview,
     createdAt: delivery.createdAt,
     timestampLabel: formatRelativeTimestamp(delivery.createdAt, now),
-    unread: !delivery.readAt || !!delivery.hasUnreadActivity,
+    // Same rule `isUnreadDelivery` applies to the fan-in, dismissal included —
+    // now that Archived is a list you can stand in, a row that still read as
+    // unread there would put a count in the header the nav row denies.
+    unread: !delivery.dismissedAt
+      && (!delivery.readAt || !!delivery.hasUnreadActivity),
     // An unavailable row is otherwise a dead end — dismissal is the only way to
     // clear it, so it must always be offered.
     dismissible: true,
@@ -309,7 +329,29 @@ export function toRowView(delivery: HydratedInboxDelivery, options: { now: numbe
   };
 }
 
-export function matchesFilter(row: InboxRowView, filter: InboxFilterId): boolean {
+/**
+ * The four facts every reason filter reads.
+ *
+ * Deliberately structural rather than `InboxRowView`: the sidebar's nav counts
+ * run the same predicate over the raw fan-in, which never becomes a row view.
+ * One predicate, two callers — the alternative is two definitions of "Mentions"
+ * that can drift, with the badge and the list disagreeing about the same word.
+ */
+export interface InboxFilterSubject {
+  reason?: string;
+  subscription?: InboxSubscriptionState;
+  /** From `awaitsResponse()`; redacted along with the source kind. */
+  awaitsResponse: boolean;
+  /** Dismissed. The Archived row's pool, and nobody else's. */
+  archived: boolean;
+}
+
+export function matchesFilter(row: InboxFilterSubject, filter: InboxFilterId): boolean {
+  // Archived is a state, not a reason: a dismissed delivery belongs to exactly
+  // one row, and every other row reads the live pool. Without this, dismissing
+  // something would only hide it from All.
+  if (row.archived) return filter === 'archived';
+
   switch (filter) {
     case 'all':
       return true;
@@ -320,11 +362,115 @@ export function matchesFilter(row: InboxRowView, filter: InboxFilterId): boolean
       return row.reason === 'mention' || row.reason === 'agentMention';
     case 'assigned':
       return row.reason === 'assignment';
+    case 'awaiting':
+      // The feedback row. `awaitsResponse` is the single definition of "this
+      // wants something back from you"; it must not be restated here.
+      return row.awaitsResponse;
     case 'follows':
       return row.subscription === 'following';
-    default:
+    case 'archived':
+      return false;
+    default: {
+      const unhandled: never = filter;
+      void unhandled;
       return true;
+    }
   }
+}
+
+/**
+ * One delivery from the org fan-in, as the reason filters read it.
+ *
+ * Mirrors `toRowView`'s redaction: an unavailable delivery discloses no source
+ * kind, so it can never land in Awaiting my reply.
+ */
+function deliveryFilterSubject(
+  delivery: TeamInboxMaterializedDelivery,
+): InboxFilterSubject {
+  const source = delivery.unavailable ? undefined : delivery.source;
+  const sourceKind = source && 'sourceKind' in source ? source.sourceKind : undefined;
+  return {
+    reason: delivery.reason,
+    subscription: delivery.subscription,
+    awaitsResponse: awaitsResponse(sourceKind),
+    archived: !!delivery.dismissedAt,
+  };
+}
+
+/**
+ * The badge on one Inbox nav row: unread deliveries in this organization that
+ * the row's filter admits.
+ *
+ * Deliberately org-scoped and independent of the list's own scope, unread
+ * toggle and search — those refine what you are looking at; the nav says how
+ * much is waiting.
+ *
+ * Archived is structurally unbadged rather than special-cased: dismissing is
+ * what `isUnreadDelivery` reads as "no longer waiting", so the one pool that
+ * holds dismissed deliveries can never contribute to a count. Which is the
+ * behaviour we want — a pill there would re-nag the reader for having said
+ * they were done.
+ */
+export function inboxNavCount(
+  snapshot: TeamInboxSnapshot,
+  orgId: string,
+  filter: InboxFilterId,
+): number {
+  let count = 0;
+  for (const delivery of snapshot.deliveries) {
+    if (delivery.orgId !== orgId) continue;
+    // Shared with the sidebar's conversation counts and the mark-read-on-open
+    // path, so the two can never disagree about what "unread" means.
+    if (!isUnreadDelivery(delivery)) continue;
+    if (matchesFilter(deliveryFilterSubject(delivery), filter)) count += 1;
+  }
+  return count;
+}
+
+/**
+ * Deliveries a surface pinned to one organization is allowed to see.
+ *
+ * The fan-in behind the Inbox is deliberately multi-org, and the standalone
+ * organization window is the surface that wants it that way. A surface embedded
+ * in a project window is not: it renders under one organization's header, and
+ * its rows open into that project's window — so a row from another organization
+ * there both discloses that organization's activity under the wrong name and
+ * lies about where opening it lands.
+ */
+export function deliveriesInOrg<T extends { orgId: string }>(
+  deliveries: T[],
+  restrictToOrgId?: string,
+): T[] {
+  if (!restrictToOrgId) return deliveries;
+  return deliveries.filter((delivery) => delivery.orgId === restrictToOrgId);
+}
+
+/**
+ * The scope a pinned surface actually applies.
+ *
+ * `inboxPreferences` stores one scope per user, not one per surface, so a
+ * narrowing made in the organization window — "only Acme" — arrives here
+ * verbatim. Applied as stored on a surface pinned to a different organization
+ * it empties the list with no visible cause and no way back: the org axis is
+ * not even offered once there is only one organization to offer. So the org
+ * axis is dropped rather than honored — the pin *is* the org restriction, and
+ * the stored one has nothing left to say. A stored project belonging to some
+ * other organization goes the same way, for the same reason.
+ */
+export function scopeWithinOrg(
+  scope: InboxScope,
+  restrictToOrgId: string | undefined,
+  deliveries: ReadonlyArray<{ orgId: string; projectId?: string }>,
+): InboxScope {
+  if (!restrictToOrgId) return scope;
+  const projectIds = scope.projectIds?.filter((projectId) => deliveries.some(
+    (delivery) => delivery.orgId === restrictToOrgId && delivery.projectId === projectId,
+  )) ?? null;
+  return {
+    orgIds: null,
+    sourceKinds: scope.sourceKinds,
+    projectIds: projectIds && projectIds.length > 0 ? projectIds : null,
+  };
 }
 
 export function matchesScope(row: InboxRowView, scope: InboxScope): boolean {
@@ -361,6 +507,12 @@ export interface SelectRowsInput {
   query: string;
   now: number;
   stalePreviews?: boolean;
+  /**
+   * Pin the list to one organization. Set by a surface that belongs to a single
+   * organization (the project window's Org mode); absent in the standalone
+   * organization window, which is the cross-org surface by design.
+   */
+  restrictToOrgId?: string;
 }
 
 export interface SelectRowsResult {
@@ -372,36 +524,38 @@ export interface SelectRowsResult {
   scoped: InboxRowView[];
   /** Rows the list renders: every axis plus the query. */
   rows: InboxRowView[];
-  /** Unread count per reason filter, within the active scope. */
-  counts: Record<InboxFilterId, number>;
-  /** Unread count within the active scope, across every reason. */
+  /**
+   * Unread count within the active scope, across every reason. Per-reason
+   * counts belong to the sidebar's nav rows now (`inboxNavCount`), which are
+   * org-scoped and independent of what the list is narrowed to.
+   */
   unreadInScope: number;
   /** Type counts within the active scope, for the type chips. */
   typeCounts: Partial<Record<InboxSourceKind, number>>;
 }
 
 export function selectRows(input: SelectRowsInput): SelectRowsResult {
-  const { deliveries, filter, unreadOnly = false, scope, query, now, stalePreviews } = input;
+  const { deliveries, filter, unreadOnly = false, query, now, stalePreviews, restrictToOrgId } = input;
 
-  const all = deliveries
-    .filter((delivery) => !delivery.dismissedAt)
+  // The pin is applied to the pool itself rather than as one more scope axis:
+  // it is not the user's to turn off, and every count below is derived from the
+  // pool, so nothing downstream can promise a row the list refuses to show.
+  const pool = deliveriesInOrg(deliveries, restrictToOrgId);
+  const scope = scopeWithinOrg(input.scope, restrictToOrgId, pool);
+
+  const all = pool
     .map((delivery) => toRowView(delivery, { now, stalePreviews }))
     .sort((a, b) => b.createdAt - a.createdAt);
 
-  const inScope = all.filter((row) => matchesScope(row, scope));
+  // The archived and live pools are disjoint, and only the active filter's pool
+  // is in scope — so a dismissed delivery cannot inflate the live inbox's
+  // unread count or its type chips, and the Archived row shows nothing else.
+  const inPool = all.filter((row) => row.archived === (filter === 'archived'));
+  const inScope = inPool.filter((row) => matchesScope(row, scope));
   const scoped = inScope
     .filter((row) => matchesFilter(row, filter))
     .filter((row) => !unreadOnly || row.unread);
   const rows = scoped.filter((row) => matchesQuery(row, query));
-
-  // Badges show what is actionable — unread within each reason — computed from
-  // the same normalized rows the list renders, inside the active scope but
-  // independent of the search query and of the unread toggle (both refine a
-  // filter; neither redefines how much is waiting in it).
-  const counts = INBOX_FILTERS.reduce((acc, { id }) => {
-    acc[id] = inScope.filter((row) => matchesFilter(row, id) && row.unread).length;
-    return acc;
-  }, {} as Record<InboxFilterId, number>);
 
   // The type axis counts everything in scope, not just unread: the chips are a
   // "how much of each kind is here" control, and a zeroed chip for a type that
@@ -415,7 +569,6 @@ export function selectRows(input: SelectRowsInput): SelectRowsResult {
   return {
     scoped,
     rows,
-    counts,
     unreadInScope: inScope.filter((row) => row.unread).length,
     typeCounts,
   };
@@ -446,13 +599,21 @@ export function groupRows(rows: InboxRowView[], now: number): InboxRowGroup[] {
   return buckets.filter((bucket) => bucket.rows.length > 0);
 }
 
-/** Everything the scope control can offer, derived from the loaded rows. */
-export function deriveScopeOptions(deliveries: HydratedInboxDelivery[]): InboxScopeOptions {
+/**
+ * Everything the scope control can offer, derived from the loaded rows — and,
+ * on a pinned surface, only from the rows that surface can show. A control that
+ * offered another organization's projects would be the leak the list no longer
+ * is.
+ */
+export function deriveScopeOptions(
+  deliveries: HydratedInboxDelivery[],
+  restrictToOrgId?: string,
+): InboxScopeOptions {
   const orgs = new Map<string, string>();
   const projects = new Map<string, string>();
   const sourceKinds = new Set<InboxSourceKind>();
 
-  for (const delivery of deliveries) {
+  for (const delivery of deliveriesInOrg(deliveries, restrictToOrgId)) {
     orgs.set(delivery.orgId, delivery.orgName);
     // A revoked delivery must not contribute its former project or source type
     // to the scope control, or the control itself becomes the leak.

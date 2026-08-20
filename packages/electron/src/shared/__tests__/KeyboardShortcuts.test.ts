@@ -85,6 +85,28 @@ describe('getShortcutDisplay', () => {
   });
 });
 
+describe('toggleExpandedTab binding', () => {
+  // Electron silently lets a later menu accelerator shadow an earlier one, so a
+  // collision would show up only as "the shortcut stopped working". Shift+Escape
+  // is deliberately modifier-light; guard it against future bindings.
+  it('does not collide with any other application shortcut', () => {
+    const others = Object.entries(KeyboardShortcuts).flatMap(([group, shortcuts]) =>
+      Object.entries(shortcuts)
+        .filter(([name]) => !(group === 'view' && name === 'toggleExpandedTab'))
+        .map(([name, accelerator]) => `${group}.${name}=${accelerator}`),
+    );
+
+    expect(
+      others.filter((entry) => entry.endsWith(`=${KeyboardShortcuts.view.toggleExpandedTab}`)),
+    ).toEqual([]);
+  });
+
+  it('survives accelerator conversion unchanged (no Cmd to remap)', () => {
+    expect(getElectronAccelerator(KeyboardShortcuts.view.toggleExpandedTab))
+      .toBe(KeyboardShortcuts.view.toggleExpandedTab);
+  });
+});
+
 describe('getElectronAccelerator', () => {
   it('rewrites Cmd to CmdOrCtrl so Electron handles platform mapping', () => {
     expect(getElectronAccelerator('Cmd+S')).toBe('CmdOrCtrl+S');

@@ -11,7 +11,7 @@ import { act, cleanup, render, waitFor } from '@testing-library/react';
  * have switched the window elsewhere with the in-window switcher since.
  */
 
-vi.mock('../TeamMode', () => ({ TeamMode: () => <div data-testid="team-mode" /> }));
+vi.mock('../OrgModeHost', () => ({ OrgModeHost: () => <div data-testid="team-mode" /> }));
 vi.mock('../../../contexts/DialogContext', () => ({
   DialogProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -19,12 +19,14 @@ vi.mock('../../../contexts/DialogContext', () => ({
 import { TeamManagementApp } from '../TeamManagementApp';
 import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
 import { consumeInboxRowSelectionRequest } from '../orgWindowCommandBus';
-import { orgWindowRouteAtom } from '../orgWindowState';
+import { ORG_WINDOW_SURFACE_ID, orgWindowRouteAtomFamily } from '../orgWindowState';
 import { LAST_SELECTED_ORG_SETTING_KEY } from '../defaultOrg';
 import {
   ORG_WINDOW_PENDING_ROUTE_SETTING_KEY,
   pendingGeneralRoute,
 } from '../onboarding/orgWelcomeModel';
+
+const orgWindowRouteAtom = orgWindowRouteAtomFamily(ORG_WINDOW_SURFACE_ID);
 
 let setTargetHandler: ((payload: { orgId?: string | null; workspacePath?: string | null }) => void) | null = null;
 const settings = new Map<string, unknown>();
@@ -77,7 +79,7 @@ describe('TeamManagementApp retargeting', () => {
     window.history.replaceState({}, '', '/');
     // The selection latch is a module singleton; a request left pending would
     // be picked up by the next test's Inbox.
-    consumeInboxRowSelectionRequest();
+    consumeInboxRowSelectionRequest(ORG_WINDOW_SURFACE_ID);
   });
 
   /**
@@ -96,7 +98,7 @@ describe('TeamManagementApp retargeting', () => {
     render(<Provider store={store}><TeamManagementApp /></Provider>);
 
     await waitFor(() => expect(store.get(orgWindowRouteAtom).view).toBe('inbox'));
-    expect(consumeInboxRowSelectionRequest()).toEqual({
+    expect(consumeInboxRowSelectionRequest(ORG_WINDOW_SURFACE_ID)).toEqual({
       orgId: 'org-a',
       sourceKind: 'feedbackRequest',
       sourceId: 'request-1',
@@ -108,7 +110,7 @@ describe('TeamManagementApp retargeting', () => {
     retarget({ orgId: 'org-a', feedbackRequestId: 'request-2' });
 
     await waitFor(() => expect(store.get(orgWindowRouteAtom).view).toBe('inbox'));
-    expect(consumeInboxRowSelectionRequest()).toMatchObject({ sourceId: 'request-2' });
+    expect(consumeInboxRowSelectionRequest(ORG_WINDOW_SURFACE_ID)).toMatchObject({ sourceId: 'request-2' });
   });
 
   it('re-seeds the atom when retargeted at the org it was opened with', async () => {

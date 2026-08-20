@@ -88,30 +88,51 @@ export type AccountOrgRow =
   | { kind: 'loading' }
   /** The workspace resolved to an organization — administer it. */
   | { kind: 'organization'; org: ProjectWalkOrg }
-  /** A member with nothing bound yet — resume the walk. */
-  | { kind: 'joinProject'; org: ProjectWalkOrg }
-  /** Genuinely no organization — offer to create one. */
-  | { kind: 'setUp' };
+  /** No organization for this project — go put it in one. */
+  | { kind: 'addToOrganization' };
 
 /**
- * `setUp` is reserved for an account with no memberships at all. Offering org
- * creation to someone who is already a member is the dead end this row is here
- * to avoid, so anything enterable outranks it.
+ * Three states, because a project with no organization has exactly one useful
+ * next step and it is the same one whether or not the account has memberships:
+ * put this project in an organization. Project Settings → Sharing already asks
+ * which — an existing one or a new one — so the row only has to get there.
  *
- * With several enterable organizations the row names the first; Settings →
- * Account lists them all, and is the surface for choosing between them.
+ * Naming a membership here is what this row previously did, and it answered a
+ * question nobody asked: "Join {first org} project" walks the user *out* of the
+ * open folder and into a different project of an arbitrarily-chosen org, with
+ * no way to pick another and no way to create one. That entry point belongs to
+ * the organization switcher, which can list every membership.
  */
 export function resolveAccountOrgRow(input: {
   projectOrg: ProjectWalkOrg | null;
   projectOrgLoading: boolean;
-  /** Unbound organizations from `resolveProjectWalkPresentation`. */
-  enterableOrgs: readonly ProjectWalkOrg[];
 }): AccountOrgRow {
   if (input.projectOrgLoading) return { kind: 'loading' };
   if (input.projectOrg) return { kind: 'organization', org: input.projectOrg };
-  const org = input.enterableOrgs[0];
-  if (org) return { kind: 'joinProject', org };
-  return { kind: 'setUp' };
+  return { kind: 'addToOrganization' };
+}
+
+/**
+ * Whether a window sitting in Org mode has to fall back to Files.
+ *
+ * A restored mode outlives the project's organization (left the org, signed
+ * out, switched to a project without one), and Org mode's gutter item goes with
+ * it, so a window left there would have no way back out.
+ *
+ * Leaving a mode the user chose is destructive, though, so it takes a resolved
+ * answer: an organization lookup that has not landed yet reads exactly like a
+ * project that has none. Trusting one of those was what sent every click on the
+ * gutter's Organization item straight back to Files -- the lookup ran before
+ * the auth session loaded, and the `null` it produced never re-resolved.
+ */
+export function shouldLeaveOrgMode(input: {
+  activeMode: string;
+  projectOrg: ProjectWalkOrg | null;
+  projectOrgLoading: boolean;
+}): boolean {
+  if (input.activeMode !== 'org') return false;
+  if (input.projectOrgLoading) return false;
+  return !input.projectOrg;
 }
 
 export interface ProjectFolderFacts {

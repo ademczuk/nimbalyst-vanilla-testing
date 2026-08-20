@@ -729,6 +729,18 @@ export async function createApplicationMenu() {
                         }
                     }
                 },
+                {
+                    // Same action as double-clicking a tab: collapse the active
+                    // mode's surrounding panels so the editor fills the window.
+                    label: 'Toggle Expanded Tab',
+                    accelerator: KeyboardShortcuts.view.toggleExpandedTab,
+                    click: async () => {
+                        const focused = getFocusedWindow();
+                        if (focused) {
+                            focused.webContents.send('toggle-expanded-tab');
+                        }
+                    }
+                },
                 { type: 'separator' },
                 // Navigation
                 {

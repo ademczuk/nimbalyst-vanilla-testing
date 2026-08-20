@@ -16,6 +16,8 @@ import { isLocalIssueKey } from '../../../shared/localIssueKey';
 import { applyHeadlessBodyMarkdown } from '../../services/MainBodyDocService';
 import { applyRelationshipFieldWrites } from '../../services/tracker/relationshipFieldWrite';
 import { appendActivity } from '../../services/tracker/trackerActivity';
+import { assignLocalKeysToRows } from '../../services/tracker/localKeyAllocator';
+import { workspaceLocalKeyStore } from '../../services/tracker/workspaceLocalKeyStore';
 import { extractItemCustomFields } from '../../services/tracker/trackerRowCustomFields';
 import { nestRelationshipFieldsIntoCustomFields, readStoredFieldValue, writeStoredFieldValue } from '../../services/tracker/relationshipFieldStorage';
 import { isRelationshipField, matchesFilterSet, isUntriaged } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
@@ -330,6 +332,9 @@ export function rowToTrackerItem(row: any): any {
       : row.id,
     issueNumber: row.issue_number ?? undefined,
     issueKey: row.issue_key ?? undefined,
+    // `getTrackerDisplayRef` falls back to the raw id without this, so an
+    // unpublished item reports a uuid to the agent instead of its number.
+    localKey: row.local_key ?? undefined,
     type: row.type,
     typeTags,
     title: data.title || row.title,
@@ -1664,6 +1669,18 @@ export async function handleTrackerCreate(
       ) VALUES ($1, $2, $3, $4, $5, '', NULL, NOW(), NOW(), NOW(), $6, $7, FALSE, $8, $9)`,
       [id, args.type, typeTags, JSON.stringify(data), workspacePath, syncStatus, contentJson, originSource, originSourceRef]
     );
+
+    // Number the row before it is read back, so an agent-created item reports
+    // its key in this tool's own result rather than only after the next list
+    // sweep. Failure is not fatal -- an unnumbered item still works, and the
+    // list will pick it up.
+    if (workspacePath) {
+      try {
+        await assignLocalKeysToRows(db, workspaceLocalKeyStore, workspacePath, [id]);
+      } catch (error) {
+        console.error('[MCP Server] tracker_create local number assignment failed:', error);
+      }
+    }
 
     let createdRow = await resolveTrackerRowByReference(db, id, workspacePath);
     let createdItem = createdRow ? rowToTrackerItem(createdRow) : null;

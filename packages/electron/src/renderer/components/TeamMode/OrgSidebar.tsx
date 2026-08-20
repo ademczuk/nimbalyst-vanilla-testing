@@ -1,25 +1,46 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
-import { useAtomValue } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 
-import { HelpTooltip } from '../../help';
-import { FloatingPortal, useFloatingMenu } from '../../hooks/useFloatingMenu';
-import type { OrgSidebarItem, OrgSidebarModel } from './orgSidebarViewModel';
+import { SidebarSection } from '../common/SidebarSection';
+import { OrgSidebarHeader } from './OrgSidebarHeader';
+import {
+  OrgConversationRow,
+  OrgDirectoryLoadError,
+  OrgInboxNavRow,
+  OrgSidebarSectionNote,
+} from './OrgSidebarRows';
+import { OrgSidebarSectionAdd } from './OrgSidebarSectionMenu';
+import {
+  hydrateOrgSidebarPreferencesAtom,
+  orgSidebarCollapsedSectionsAtom,
+  toggleOrgSidebarSectionAtom,
+  type OrgSidebarSectionId,
+} from './orgSidebarPreferences';
+import type { InboxFilterId } from './Inbox/inboxTypes';
+import { INBOX_FILTERS } from './Inbox/inboxViewModel';
+import type { OrgModeChrome } from './orgModeTypes';
+import type { OrgSidebarModel } from './orgSidebarViewModel';
+import { filterOrgSidebarModel, matchesOrgSidebarQuery } from './orgSidebarViewModel';
 import type { OrgWindowRoute } from './orgWindowState';
 import {
   DIRECTORY_ROUTE,
-  INBOX_ROUTE,
-  conversationRoute,
-  orgWindowRouteKey,
-  orgWindowRouteSelectedAtomFamily,
+  ORG_WINDOW_SURFACE_ID,
 } from './orgWindowState';
 
 /**
- * The window's navigation column — messaging only.
+ * The organization's navigation column, in both surfaces: the standalone window
+ * and Org mode inside a project window.
+ *
+ * Shaped like every other mode's sidebar — org summary header, one search field,
+ * then collapsible sections over a pinned identity footer — rather than the
+ * bespoke column the window used to carry. Collapse survives a remount
+ * (`orgSidebarPreferences`); collapsing the whole column is the gutter's job,
+ * and the host simply stops rendering this.
  *
  * The Admin group it used to end with is gone: administration is the
- * `ORG_MANAGEMENT` dialog, reached from the profile menu below rather than from
- * a row here (Greg, NIM-2322: the sidebar stays purely messaging).
+ * `ORG_MANAGEMENT` dialog, reached from the profile menu in the footer below
+ * rather than from a row here (Greg, NIM-2322: the sidebar stays messaging).
  *
  * Memoized, and deliberately not given the active route: a navigation must not
  * repaint the whole column. Each row subscribes to its own
@@ -28,8 +49,11 @@ import {
  * every prop here stable in the host, or the memo is decorative.
  */
 export const OrgSidebar = React.memo(function OrgSidebar({
+  surfaceId = ORG_WINDOW_SURFACE_ID,
+  chrome = 'mode',
+  orgId,
+  orgName,
   model,
-  inboxUnread,
   directoryLoading = false,
   directoryError,
   onRetryDirectory,
@@ -39,8 +63,13 @@ export const OrgSidebar = React.memo(function OrgSidebar({
   projectsContent,
   bottomContent,
 }: {
+  surfaceId?: string;
+  /** The window draws its own title bar and rail; the mode draws neither. */
+  chrome?: OrgModeChrome;
+  /** Scopes the Inbox rows' counts; absent on a surface with no organization. */
+  orgId?: string;
+  orgName?: string;
   model: OrgSidebarModel;
-  inboxUnread: number;
   directoryLoading?: boolean;
   /**
    * Set when the last directory read failed. An empty list then means "we do
@@ -57,9 +86,9 @@ export const OrgSidebar = React.memo(function OrgSidebar({
   onCreateRoom?: () => void;
   onCreateDirectMessage?: () => void;
   /**
-   * The Projects section, scrolling with the rest of the sidebar between the
-   * conversation sections and Admin. Passed in rather than built here because
-   * it reads main-process project state this component knows nothing about.
+   * The Projects section, scrolling with the rest of the sidebar below the
+   * conversation sections. Passed in rather than built here because it reads
+   * main-process project state this component knows nothing about.
    */
   projectsContent?: React.ReactNode;
   /** Pinned footer below the scrolling sections — the signed-in identity. */
@@ -68,124 +97,194 @@ export const OrgSidebar = React.memo(function OrgSidebar({
   // Presentation gating only: an organization that turned rooms or DMs off
   // loses the sections, and the server rejects the disabled kinds regardless.
   const { gating } = model;
+  const [query, setQuery] = useState('');
+  const searching = query.trim().length > 0;
+  const filtered = useMemo(() => filterOrgSidebarModel(model, query), [model, query]);
+
+  const collapsedSections = useAtomValue(orgSidebarCollapsedSectionsAtom);
+  const toggleSection = useSetAtom(toggleOrgSidebarSectionAtom);
+  const hydratePreferences = useSetAtom(hydrateOrgSidebarPreferencesAtom);
+  useEffect(() => { void hydratePreferences(); }, [hydratePreferences]);
+  // A search reaches into folded sections rather than pretending they are empty,
+  // and does it without disturbing what the user chose to keep folded.
+  const isCollapsed = (sectionId: OrgSidebarSectionId) =>
+    !searching && collapsedSections.includes(sectionId);
+
+  const inboxRows = INBOX_NAV_ROWS.filter((row) => matchesOrgSidebarQuery(row.label, query));
 
   return (
     <nav
-      className="org-sidebar org-window-drag-region flex w-[220px] shrink-0 flex-col overflow-hidden border-r border-[var(--nim-border)]"
+      className={`org-sidebar flex w-[248px] shrink-0 flex-col overflow-hidden border-r border-nim bg-nim-secondary ${
+        chrome === 'window' ? 'org-window-drag-region' : ''
+      }`}
       data-testid="org-sidebar"
       data-component="OrgSidebar"
-      data-window-drag-region="true"
+      data-window-drag-region={chrome === 'window' ? 'true' : undefined}
       aria-label="Organization"
     >
-      {/* The scroll container covers the whole nav, and `-webkit-app-region`
-          does not inherit, so it declares the drag itself rather than relying
-          on the rectangle behind it. */}
-      <div className="org-sidebar-scroll org-window-drag-region min-h-0 flex-1 overflow-y-auto p-3">
-        <SidebarRow
-          className="org-inbox-item"
-          testId="team-tab-inbox"
-          icon="inbox"
-          label="Inbox"
-          badge={inboxUnread}
-          route={INBOX_ROUTE}
-          onNavigate={onNavigate}
-        />
+      <OrgSidebarHeader orgId={orgId} orgName={orgName} chrome={chrome} />
 
-      {gating.roomsVisible && (
-        <>
-          {/* The directory used to have its own row under the list. It is a
-              rare, one-off action, so it lives in the section's + menu next to
-              the create it belongs with rather than costing a permanent row. */}
-          <SidebarSectionHeader
+      {/* One field over the whole column. Message bodies are the Inbox's own
+          search — this one matches what is on screen here. */}
+      <div className="org-sidebar-search shrink-0 px-2.5 py-2">
+        <div className="flex items-center gap-2 rounded-md border border-nim bg-nim px-2 py-1 focus-within:border-nim-focus">
+          <MaterialSymbol icon="search" size={14} className="shrink-0 text-nim-faint" />
+          <input
+            type="text"
+            value={query}
+            data-testid="org-sidebar-search-input"
+            aria-label="Search conversations"
+            placeholder="Search conversations"
+            className="org-sidebar-search-input org-window-no-drag min-w-0 flex-1 select-text border-none bg-transparent text-[12px] text-nim outline-none placeholder:text-nim-faint"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {searching && (
+            <button
+              type="button"
+              className="org-sidebar-search-clear org-window-no-drag shrink-0 rounded p-0.5 text-nim-faint hover:bg-nim-hover hover:text-nim"
+              data-testid="org-sidebar-search-clear"
+              aria-label="Clear search"
+              onClick={() => setQuery('')}
+            >
+              <MaterialSymbol icon="close" size={12} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="org-sidebar-scroll min-h-0 flex-1 overflow-y-auto pb-2">
+        <SidebarSection
+          sectionId="inbox"
+          title="Inbox"
+          testId="org-inbox-section"
+          collapsed={isCollapsed('inbox')}
+          onToggleCollapsed={() => toggleSection('inbox')}
+        >
+          {inboxRows.map((row) => (
+            <OrgInboxNavRow
+              key={row.id}
+              surfaceId={surfaceId}
+              orgId={orgId}
+              filter={row.id}
+              testId={row.testId}
+              icon={row.icon}
+              label={row.label}
+              onNavigate={onNavigate}
+            />
+          ))}
+        </SidebarSection>
+
+        {gating.roomsVisible && (
+          <SidebarSection
+            sectionId="rooms"
             title="Rooms"
-            addLabel="Room actions"
             testId="org-rooms-section"
-            menuItems={[
-              {
-                testId: 'org-create-room',
-                label: 'New room',
-                icon: 'add',
-                onSelect: gating.canCreateRoom ? onCreateRoom : undefined,
-                disabledLabel: 'Only organization admins can create rooms',
-              },
-              {
-                testId: 'org-browse-rooms',
-                label: 'Browse rooms',
-                icon: 'search',
-                // The menu only exists while it is open, so reading the route
-                // here costs nothing between openings.
-                routeKey: 'directory',
-                onSelect: () => onNavigate(DIRECTORY_ROUTE),
-              },
-            ]}
-          />
-          {model.rooms.map((item) => (
-            <ConversationRow
-              key={item.conversationId}
-              item={item}
-              onNavigate={onNavigate}
-            />
-          ))}
-          {directoryError
-            ? (
-              <DirectoryLoadError
-                subject="rooms"
-                testId="org-rooms-error"
-                onRetry={onRetryDirectory}
+            collapsed={isCollapsed('rooms')}
+            onToggleCollapsed={() => toggleSection('rooms')}
+            actions={
+              /* The directory used to have its own row under the list. It is a
+                 rare, one-off action, so it lives in the section's + menu next
+                 to the create it belongs with rather than costing a row. */
+              <OrgSidebarSectionAdd
+                surfaceId={surfaceId}
+                testId="org-rooms-section"
+                addLabel="Room actions"
+                menuItems={[
+                  {
+                    testId: 'org-create-room',
+                    label: 'New room',
+                    icon: 'add',
+                    onSelect: gating.canCreateRoom ? onCreateRoom : undefined,
+                    disabledLabel: 'Only organization admins can create rooms',
+                  },
+                  {
+                    testId: 'org-browse-rooms',
+                    label: 'Browse rooms',
+                    icon: 'search',
+                    // The menu only exists while it is open, so reading the
+                    // route here costs nothing between openings.
+                    routeKey: 'directory',
+                    onSelect: () => onNavigate(DIRECTORY_ROUTE),
+                  },
+                ]}
               />
-            )
-            : model.rooms.length === 0 && (
-              <p
-                className="org-rooms-empty m-0 px-3 py-1 text-[11px] leading-relaxed text-[var(--nim-text-faint)]"
-                data-testid="org-rooms-empty"
-              >
-                {directoryLoading
-                  ? 'Loading rooms…'
-                  : gating.canCreateRoom
-                    ? 'No rooms yet. Create one with + or browse the directory.'
-                    : 'No rooms yet. Use + to browse the directory for one to join.'}
-              </p>
-            )}
-        </>
-      )}
+            }
+          >
+            {filtered.rooms.map((item) => (
+              <OrgConversationRow
+                key={item.conversationId}
+                surfaceId={surfaceId}
+                item={item}
+                onNavigate={onNavigate}
+              />
+            ))}
+            {directoryError
+              ? (
+                <OrgDirectoryLoadError
+                  subject="rooms"
+                  testId="org-rooms-error"
+                  onRetry={onRetryDirectory}
+                />
+              )
+              : filtered.rooms.length === 0 && (
+                <OrgSidebarSectionNote testId="org-rooms-empty" className="org-rooms-empty">
+                  {searching
+                    ? 'No rooms match that search.'
+                    : directoryLoading
+                      ? 'Loading rooms…'
+                      : gating.canCreateRoom
+                        ? 'No rooms yet. Create one with + or browse the directory.'
+                        : 'No rooms yet. Use + to browse the directory for one to join.'}
+                </OrgSidebarSectionNote>
+              )}
+          </SidebarSection>
+        )}
 
-      {gating.dmsVisible && (
-        <>
-          <SidebarSectionHeader
+        {gating.dmsVisible && (
+          <SidebarSection
+            sectionId="dms"
             title="Direct messages"
-            addLabel="New direct message"
-            onAdd={onCreateDirectMessage}
             testId="org-dms-section"
-          />
-          {model.dms.map((item) => (
-            <ConversationRow
-              key={item.conversationId}
-              item={item}
-              onNavigate={onNavigate}
-            />
-          ))}
-          {directoryError
-            ? (
-              <DirectoryLoadError
-                subject="direct messages"
-                testId="org-dms-error"
-                onRetry={onRetryDirectory}
+            collapsed={isCollapsed('dms')}
+            onToggleCollapsed={() => toggleSection('dms')}
+            actions={
+              <OrgSidebarSectionAdd
+                surfaceId={surfaceId}
+                testId="org-dms-section"
+                addLabel="New direct message"
+                onAdd={onCreateDirectMessage}
               />
-            )
-            : model.dms.length === 0 && (
-              <p
-                className="org-dms-empty m-0 px-3 py-1 text-[11px] leading-relaxed text-[var(--nim-text-faint)]"
-                data-testid="org-dms-empty"
-              >
-                {gating.canCreateDirectMessage
-                  ? 'No direct messages yet. Start one with +.'
-                  : 'No direct messages yet.'}
-              </p>
-            )}
-        </>
-      )}
+            }
+          >
+            {filtered.dms.map((item) => (
+              <OrgConversationRow
+                key={item.conversationId}
+                surfaceId={surfaceId}
+                item={item}
+                onNavigate={onNavigate}
+              />
+            ))}
+            {directoryError
+              ? (
+                <OrgDirectoryLoadError
+                  subject="direct messages"
+                  testId="org-dms-error"
+                  onRetry={onRetryDirectory}
+                />
+              )
+              : filtered.dms.length === 0 && (
+                <OrgSidebarSectionNote testId="org-dms-empty" className="org-dms-empty">
+                  {searching
+                    ? 'No direct messages match that search.'
+                    : gating.canCreateDirectMessage
+                      ? 'No direct messages yet. Start one with +.'
+                      : 'No direct messages yet.'}
+                </OrgSidebarSectionNote>
+              )}
+          </SidebarSection>
+        )}
 
-      {projectsContent}
+        {projectsContent}
       </div>
       {bottomContent}
     </nav>
@@ -193,269 +292,27 @@ export const OrgSidebar = React.memo(function OrgSidebar({
 });
 
 /**
- * Shown in place of a section's empty state when the directory read failed —
- * a stale main process or a dropped connection must not read as "this
- * organization has no rooms". Retry runs the same refresh the freshness
- * listener does, so a recovered main process fills the sidebar in.
- */
-function DirectoryLoadError({
-  subject,
-  testId,
-  onRetry,
-}: {
-  subject: string;
-  testId: string;
-  onRetry?: () => void;
-}) {
-  return (
-    <div
-      className="org-directory-error m-0 flex items-center gap-1.5 px-3 py-1 text-[11px] leading-relaxed text-[var(--nim-text-muted)]"
-      data-testid={testId}
-      role="status"
-    >
-      <MaterialSymbol icon="error" size={12} className="shrink-0" />
-      <span className="min-w-0 flex-1">Couldn&rsquo;t load {subject}.</span>
-      {onRetry && (
-        <button
-          type="button"
-          className="org-directory-retry org-window-no-drag shrink-0 rounded px-1 text-[11px] text-[var(--nim-link)] hover:bg-[var(--nim-bg-hover)]"
-          data-testid={`${testId}-retry`}
-          onClick={onRetry}
-        >
-          Retry
-        </button>
-      )}
-    </div>
-  );
-}
-
-interface SectionMenuItem {
-  testId: string;
-  label: string;
-  icon: string;
-  /** Absent when the viewer may not run the action — the row renders disabled. */
-  onSelect?: () => void;
-  /** Why the item is disabled, shown in place of the label's tooltip. */
-  disabledLabel?: string;
-  /** Set when the item is a destination — it then shows its own selection. */
-  routeKey?: string;
-}
-
-function SidebarSectionHeader({
-  title,
-  addLabel,
-  onAdd,
-  disabledLabel,
-  testId,
-  menuItems,
-}: {
-  title: string;
-  addLabel: string;
-  onAdd?: () => void;
-  /** Why the add control is disabled, shown as its tooltip. */
-  disabledLabel?: string;
-  testId: string;
-  /**
-   * When present the [+] opens this menu instead of running a single action.
-   * The trigger stays enabled even if every item is not: a member who may not
-   * create rooms can still reach the directory through it.
-   */
-  menuItems?: SectionMenuItem[];
-}) {
-  const menu = useFloatingMenu({ placement: 'bottom-end' });
-  const hasMenu = Boolean(menuItems && menuItems.length > 0);
-
-  return (
-    <div
-      className="org-sidebar-section mt-2 flex items-center gap-1 px-3 py-1"
-      data-testid={testId}
-    >
-      <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wide text-[var(--nim-text-faint)]">
-        {title}
-      </span>
-      <HelpTooltip testId={`${testId}-add`} disabled={!hasMenu && !onAdd}>
-        <button
-          type="button"
-          ref={hasMenu ? menu.refs.setReference : undefined}
-          {...(hasMenu ? menu.getReferenceProps() : {})}
-          className="org-sidebar-section-add org-window-no-drag flex size-5 items-center justify-center rounded text-[var(--nim-text-muted)] hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)] disabled:cursor-not-allowed disabled:text-[var(--nim-text-disabled)]"
-          data-testid={`${testId}-add`}
-          title={hasMenu || onAdd ? addLabel : disabledLabel ?? addLabel}
-          aria-label={addLabel}
-          aria-haspopup={hasMenu ? 'menu' : undefined}
-          aria-expanded={hasMenu ? menu.isOpen : undefined}
-          disabled={!hasMenu && !onAdd}
-          onClick={hasMenu ? () => menu.setIsOpen(!menu.isOpen) : onAdd}
-        >
-          <MaterialSymbol icon="add" size={14} />
-        </button>
-      </HelpTooltip>
-      {hasMenu && menu.isOpen && (
-        <FloatingPortal>
-          <div
-            ref={menu.refs.setFloating}
-            style={menu.floatingStyles}
-            {...menu.getFloatingProps()}
-            data-testid={`${testId}-menu`}
-            className="org-sidebar-section-menu org-window-no-drag z-[10000] min-w-[180px] overflow-y-auto rounded-md border border-[var(--nim-border)] bg-[var(--nim-bg)] p-1 shadow-[0_4px_12px_rgba(0,0,0,0.18)]"
-          >
-            {menuItems!.map((item) => (
-              <SectionMenuItemButton
-                key={item.testId}
-                item={item}
-                onClose={() => menu.setIsOpen(false)}
-              />
-            ))}
-          </div>
-        </FloatingPortal>
-      )}
-    </div>
-  );
-}
-
-/** A destination inside a section's [+] menu, showing its own selection. */
-function SectionMenuItemButton({
-  item,
-  onClose,
-}: {
-  item: SectionMenuItem;
-  onClose: () => void;
-}) {
-  // No route key means the item is an action rather than a destination; the
-  // empty key matches no route, so it is never marked selected.
-  const selected = useAtomValue(
-    orgWindowRouteSelectedAtomFamily(item.routeKey ?? ''),
-  );
-  return (
-    <button
-      type="button"
-      data-testid={item.testId}
-      className={`org-sidebar-section-menu-item flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] ${
-        item.onSelect
-          ? selected
-            ? 'bg-[var(--nim-bg-active)] text-[var(--nim-text)]'
-            : 'text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)]'
-          : 'cursor-not-allowed text-[var(--nim-text-disabled)]'
-      }`}
-      title={item.onSelect ? undefined : item.disabledLabel}
-      aria-current={selected ? 'page' : undefined}
-      disabled={!item.onSelect}
-      onClick={() => {
-        onClose();
-        item.onSelect?.();
-      }}
-    >
-      <MaterialSymbol icon={item.icon} size={16} />
-      {item.label}
-    </button>
-  );
-}
-
-const ConversationRow = React.memo(function ConversationRow({
-  item,
-  onNavigate,
-}: {
-  item: OrgSidebarItem;
-  onNavigate: (route: OrgWindowRoute) => void;
-}) {
-  const room = item.kind === 'orgRoom';
-  return (
-    <SidebarRow
-      className={room ? 'org-room-item' : 'org-dm-item'}
-      testId={`${room ? 'org-room-item' : 'org-dm-item'}-${item.conversationId}`}
-      icon={room ? (item.isPrivate ? 'lock' : 'tag') : 'person'}
-      label={item.label}
-      badge={item.unreadCount}
-      presenceStatus={!room ? item.presenceStatus : undefined}
-      route={conversationRoute(item.conversationId)}
-      onNavigate={onNavigate}
-    />
-  );
-});
-
-/**
- * One navigation row, which reads its own selection rather than being told.
+ * The Inbox section's rows: the reason axis, promoted out of the list's filter
+ * chips so a row and the list it drives cannot disagree.
  *
- * `orgWindowRouteSelectedAtomFamily` yields a boolean per destination, and a
- * derived boolean that stays false notifies nobody — so a route change wakes
- * only the row being left and the row being entered.
+ * Derived from `INBOX_FILTERS` rather than restated, so the nav and the
+ * predicate that fills it can only ever list the same six things.
  */
-const SidebarRow = React.memo(function SidebarRow({
-  className,
-  testId,
-  icon,
-  label,
-  badge = 0,
-  presenceStatus,
-  route,
-  onNavigate,
-}: {
-  className: string;
-  testId: string;
-  icon: string;
-  label: string;
-  badge?: number;
-  presenceStatus?: 'online' | 'away' | 'offline';
-  route: OrgWindowRoute;
-  onNavigate: (route: OrgWindowRoute) => void;
-}) {
-  const selected = useAtomValue(
-    orgWindowRouteSelectedAtomFamily(orgWindowRouteKey(route)),
-  );
-  const onSelect = () => onNavigate(route);
-  return (
-    <button
-      type="button"
-      className={`${className} org-window-no-drag flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm ${
-        selected
-          ? 'bg-[var(--nim-bg-active)] font-medium text-[var(--nim-text)]'
-          : badge > 0
-            ? 'bg-transparent font-medium text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)]'
-            : 'bg-transparent text-[var(--nim-text-muted)] hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)]'
-      }`}
-      data-testid={testId}
-      data-unread={badge > 0 ? 'true' : 'false'}
-      aria-current={selected ? 'page' : undefined}
-      onClick={onSelect}
-    >
-      <span className="relative flex size-[18px] shrink-0 items-center justify-center">
-        <MaterialSymbol icon={icon} size={18} fill={selected} />
-        {presenceStatus && (
-          <PresenceDot
-            status={presenceStatus}
-            className="absolute -bottom-0.5 -right-0.5 border-[var(--nim-bg-secondary)]"
-          />
-        )}
-      </span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {badge > 0 && (
-        <span
-          className="org-unread-pill shrink-0 rounded-full bg-[var(--nim-primary)] px-1.5 text-[10px] font-semibold leading-4 text-[var(--nim-on-primary)]"
-          aria-label={`${badge} unread`}
-        >
-          {badge}
-        </span>
-      )}
-    </button>
-  );
-});
+const INBOX_NAV_ICONS: Record<InboxFilterId, string> = {
+  all: 'inbox',
+  mentions: 'alternate_email',
+  assigned: 'assignment_ind',
+  // Same glyph the feedback-request source identity uses on the row itself.
+  awaiting: 'ballot',
+  follows: 'visibility',
+  archived: 'archive',
+};
 
-function PresenceDot({
-  status,
-  className = '',
-}: {
-  status: 'online' | 'away' | 'offline';
-  className?: string;
-}) {
-  const color = status === 'online'
-    ? 'bg-[var(--nim-success)]'
-    : status === 'away'
-      ? 'bg-[var(--nim-warning)]'
-      : 'bg-[var(--nim-text-disabled)]';
-  return (
-    <span
-      className={`org-presence-dot size-2 rounded-full border ${color} ${className}`}
-      aria-label={status}
-    />
-  );
-}
+const INBOX_NAV_ROWS = INBOX_FILTERS.map(({ id, label }) => ({
+  id,
+  label,
+  icon: INBOX_NAV_ICONS[id],
+  // All keeps the historical marker: it is the Inbox landing row, and help
+  // content and existing coverage are keyed on it.
+  testId: id === 'all' ? 'team-tab-inbox' : `org-inbox-${id}`,
+}));

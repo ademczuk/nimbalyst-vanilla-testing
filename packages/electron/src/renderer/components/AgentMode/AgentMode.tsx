@@ -87,6 +87,7 @@ export interface AgentModeRef {
   previousTab: () => void;
   toggleRightPanel: () => void;
   showRightPanel: (mode: AgentRightPanelMode) => void;
+  toggleEditorMaximized: () => void;
 }
 
 export interface AgentModePanelState {
@@ -577,6 +578,10 @@ export const AgentMode = forwardRef<AgentModeRef, AgentModeProps>(function Agent
           toggleFilesSidebar(selectedWorkstreamId);
         }
       }
+    },
+    toggleEditorMaximized: () => {
+      // The maximize state lives with the workstream panel that owns the tabs.
+      workstreamPanelRef.current?.toggleEditorMaximized();
     },
   }), [
     dispatchCreateNewSession,

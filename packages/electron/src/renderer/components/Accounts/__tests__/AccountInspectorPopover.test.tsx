@@ -68,8 +68,15 @@ describe('AccountInspectorPopover', () => {
     expect(onOpenProjectSettings).toHaveBeenCalledTimes(1);
   });
 
-  it('invites sign-in when signed out and offers org setup when the project has none', () => {
+  // The reported bug: when the project had no org the row named one of the
+  // account's organizations at random and offered only that one's project walk
+  // — a flow that leads *away* from the open project. There was no way to pick
+  // a different organization, and no way to create one. It now leads to the
+  // sharing flow, which asks which, and must do so for a member of several orgs
+  // just as much as for an account with none.
+  it('routes an org-less project to the sharing flow rather than naming an arbitrary org', () => {
     const onManageOrganization = vi.fn();
+    const onAddProjectToOrganization = vi.fn();
     render(
       <AccountInspectorPopover
         accounts={[]}
@@ -78,43 +85,15 @@ describe('AccountInspectorPopover', () => {
         onClose={vi.fn()}
         onOpenAccount={vi.fn()}
         onManageOrganization={onManageOrganization}
+        onAddProjectToOrganization={onAddProjectToOrganization}
         onOpenApplicationSettings={vi.fn()}
         onOpenProjectSettings={vi.fn()}
       />,
     );
 
     screen.getByText('Sign in');
-    screen.getByText('No organization');
-
-    // With no project org, the org row opens the window with no target (create flow).
-    fireEvent.click(screen.getByTestId('account-inspector-organization-row'));
-    expect(onManageOrganization).toHaveBeenCalledWith(undefined);
-  });
-
-  // The reported bug: an active member whose open folder matches no project
-  // was told to set up an organization they were already in. The walk's entry
-  // point takes that row over, and must not be mistaken for org creation.
-  it('offers the project walk instead of org setup to a member with nothing bound', () => {
-    const onManageOrganization = vi.fn();
-    const onJoinOrganizationProject = vi.fn();
-    render(
-      <AccountInspectorPopover
-        accounts={[]}
-        projectOrg={null}
-        enterableOrgs={[{ orgId: 'org-acme', name: 'Acme Corp' }]}
-        anchorEl={anchor()}
-        onClose={vi.fn()}
-        onOpenAccount={vi.fn()}
-        onManageOrganization={onManageOrganization}
-        onJoinOrganizationProject={onJoinOrganizationProject}
-        onOpenApplicationSettings={vi.fn()}
-        onOpenProjectSettings={vi.fn()}
-      />,
-    );
-
-    expect(screen.queryByText('No organization')).toBeNull();
-    fireEvent.click(screen.getByTestId('account-inspector-join-project-row'));
-    expect(onJoinOrganizationProject).toHaveBeenCalledWith('org-acme');
+    fireEvent.click(screen.getByTestId('account-inspector-add-to-organization-row'));
+    expect(onAddProjectToOrganization).toHaveBeenCalledTimes(1);
     expect(onManageOrganization).not.toHaveBeenCalled();
   });
 

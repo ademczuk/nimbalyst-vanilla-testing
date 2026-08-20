@@ -1,7 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
+import { useAtomValue, useSetAtom } from 'jotai';
 
 import { HelpTooltip } from '../../help';
+import { SidebarSection } from '../common/SidebarSection';
+import {
+  orgSidebarCollapsedSectionsAtom,
+  toggleOrgSidebarSectionAtom,
+} from './orgSidebarPreferences';
 import type { ConversationDirectoryEntry } from '../../../shared/conversationDirectory';
 
 export interface OrgProjectLocalState {
@@ -86,6 +92,8 @@ export function OrgProjectsSidebarSection({
   onReload: () => void;
 }) {
   const [openError, setOpenError] = useState<string | null>(null);
+  const collapsed = useAtomValue(orgSidebarCollapsedSectionsAtom);
+  const toggleSection = useSetAtom(toggleOrgSidebarSectionAtom);
 
   const openProject = useCallback((workspacePath: string | null) => {
     if (!workspacePath) return;
@@ -122,40 +130,39 @@ export function OrgProjectsSidebarSection({
 
   return (
     // A section of the sidebar rather than a panel pinned under it: Projects
-    // scrolls with Rooms, Direct messages and Admin instead of permanently
-    // taking the bottom of the window.
-    <section
+    // scrolls and folds away with Rooms and Direct messages instead of
+    // permanently taking the bottom of the window.
+    <SidebarSection
+      sectionId="projects"
+      title="Projects"
+      testId="org-projects-sidebar-section"
       className="org-projects-sidebar-section"
-      data-testid="org-projects-sidebar-section"
-      data-component="OrgProjectsSidebarSection"
-      data-org-id={orgId}
+      collapsed={collapsed.includes('projects')}
+      onToggleCollapsed={() => toggleSection('projects')}
+      actions={error && (
+        <button
+          type="button"
+          className="org-projects-sidebar-retry org-window-no-drag shrink-0 rounded px-1 text-[11px] text-nim-link hover:bg-nim-hover"
+          data-testid="org-projects-sidebar-retry"
+          onClick={onReload}
+        >
+          Retry
+        </button>
+      )}
     >
-      <div className="org-projects-sidebar-heading mt-2 flex items-center gap-1 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--nim-text-faint)]">
-        <span className="min-w-0 flex-1 truncate">Projects</span>
-        {error && (
-          <button
-            type="button"
-            className="org-projects-sidebar-retry org-window-no-drag rounded px-1 text-[11px] normal-case tracking-normal text-[var(--nim-link)] hover:bg-[var(--nim-bg-hover)]"
-            data-testid="org-projects-sidebar-retry"
-            onClick={onReload}
-          >
-            Retry
-          </button>
-        )}
-      </div>
-      <div className="org-projects-sidebar-list flex flex-col" data-testid="org-projects-sidebar-list">
+      <div className="org-projects-sidebar-list flex flex-col" data-testid="org-projects-sidebar-list" data-org-id={orgId}>
         {loading && (
-          <div className="org-projects-sidebar-loading px-3 py-1 text-[11px] text-[var(--nim-text-muted)]">
+          <div className="org-projects-sidebar-loading px-3 py-1 text-[11px] text-nim-muted">
             Loading projects…
           </div>
         )}
         {!loading && !error && projects.length === 0 && (
-          <div className="org-projects-sidebar-empty px-3 py-1 text-[11px] text-[var(--nim-text-muted)]">
+          <div className="org-projects-sidebar-empty px-3 py-1 text-[11px] text-nim-muted">
             No projects yet.
           </div>
         )}
         {!loading && error && (
-          <div className="org-projects-sidebar-error px-3 py-1 text-[11px] text-[var(--nim-error)]">
+          <div className="org-projects-sidebar-error px-3 py-1 text-[11px] text-nim-error">
             Couldn't load projects.
           </div>
         )}
@@ -169,14 +176,14 @@ export function OrgProjectsSidebarSection({
         ))}
         {openError && (
           <div
-            className="org-projects-sidebar-open-error px-3 py-1 text-[11px] text-[var(--nim-error)]"
+            className="org-projects-sidebar-open-error px-3 py-1 text-[11px] text-nim-error"
             data-testid="org-projects-sidebar-open-error"
           >
             {openError}
           </div>
         )}
       </div>
-    </section>
+    </SidebarSection>
   );
 }
 
@@ -204,18 +211,18 @@ function ProjectRow({
         ? 'Choose a folder for this project'
         : 'Not local';
   const dotClass = project.localStatus === 'open'
-    ? 'bg-[var(--nim-success)] border-[var(--nim-success)]'
+    ? 'bg-nim-success border-nim-success'
     : project.localStatus === 'closed'
-      ? 'bg-transparent border-[var(--nim-success)]'
-      : 'bg-transparent border-[var(--nim-text-faint)] border-dashed';
+      ? 'bg-transparent border-nim-success'
+      : 'bg-transparent border-nim-text-faint border-dashed';
 
   const button = (
     <button
       type="button"
-      className={`org-projects-sidebar-row org-window-no-drag group flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left ${
+      className={`org-projects-sidebar-row org-window-no-drag group mx-1.5 flex items-center gap-2 rounded-md px-2 py-1 text-left ${
         disabled
-          ? 'cursor-not-allowed text-[var(--nim-text-disabled)]'
-          : 'text-[var(--nim-text-muted)] hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)]'
+          ? 'cursor-not-allowed text-nim-disabled'
+          : 'text-nim-muted hover:bg-nim-hover hover:text-nim'
       }`}
       data-testid="org-projects-sidebar-row"
       data-project-id={project.projectId}
@@ -228,9 +235,9 @@ function ProjectRow({
     >
       <span className={`org-projects-sidebar-dot size-2 shrink-0 rounded-full border ${dotClass}`} aria-hidden="true" />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[12px]">{name}</span>
+        <span className="block truncate text-[12.5px]">{name}</span>
         {project.localStatus === 'notLocal' && (
-          <span className="block truncate text-[10px] text-[var(--nim-text-faint)]">
+          <span className="block truncate text-[10px] text-nim-faint">
             {canAttachFolder ? 'open locally…' : 'not local'}
           </span>
         )}

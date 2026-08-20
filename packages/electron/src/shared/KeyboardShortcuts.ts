@@ -50,8 +50,16 @@ export const KeyboardShortcuts = {
     toggleCliTerminalDrawer: 'Ctrl+Shift+`',
     trackerMode: 'Cmd+T',
     collabMode: 'Cmd+D',
+    // The project's organization: inbox, rooms and direct messages. Every plain
+    // Cmd+letter is already spoken for, and this keeps the organization family
+    // together with `window.organizationManager` (Cmd+Alt+O), which still opens
+    // the standalone cross-organization window.
+    orgMode: 'Cmd+Alt+M',
     prReviewMode: 'Cmd+U',
     toggleSidebar: 'Cmd+B',
+    // Expand the active editor tab to fill the window (same action as
+    // double-clicking a tab). Matches Zed's workspace::ToggleZoom binding.
+    toggleExpandedTab: 'Shift+Escape',
 
     // Navigation
     navigateBack: 'Cmd+[',

@@ -78,26 +78,21 @@ describe('resolveProjectWalkPresentation', () => {
 });
 
 describe('resolveAccountOrgRow', () => {
-  it('offers to join the project instead of setting up an org the user already has', () => {
-    expect(resolveAccountOrgRow({
-      projectOrg: null,
-      projectOrgLoading: false,
-      enterableOrgs: [ACME],
-    })).toEqual({ kind: 'joinProject', org: ACME });
-  });
-
-  it('still offers setup to an account with no organizations', () => {
-    expect(resolveAccountOrgRow({ projectOrg: null, projectOrgLoading: false, enterableOrgs: [] }))
-      .toEqual({ kind: 'setUp' });
+  // The row used to name `enterableOrgs[0]` and offer only that org's project
+  // walk, so a member of several was shown one at random and had no way to add
+  // the open project to a different one — or to a new one.
+  it('routes an org-less project to the sharing flow regardless of membership', () => {
+    expect(resolveAccountOrgRow({ projectOrg: null, projectOrgLoading: false }))
+      .toEqual({ kind: 'addToOrganization' });
   });
 
   it('shows the resolved organization once the workspace matches one', () => {
-    expect(resolveAccountOrgRow({ projectOrg: ACME, projectOrgLoading: false, enterableOrgs: [] }))
+    expect(resolveAccountOrgRow({ projectOrg: ACME, projectOrgLoading: false }))
       .toEqual({ kind: 'organization', org: ACME });
   });
 
   it('reports an unfinished lookup rather than guessing at it', () => {
-    expect(resolveAccountOrgRow({ projectOrg: null, projectOrgLoading: true, enterableOrgs: [ACME] }))
+    expect(resolveAccountOrgRow({ projectOrg: null, projectOrgLoading: true }))
       .toEqual({ kind: 'loading' });
   });
 });

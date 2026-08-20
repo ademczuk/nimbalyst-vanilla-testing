@@ -39,6 +39,19 @@ export function setCollabOutboxState(
   store.set(atom, { ...store.get(atom), outbox });
 }
 
+/**
+ * Latch a render failure for this document. Not debounced and never cleared
+ * here: a binding that threw once cannot be assumed healthy again until the
+ * document is reopened, and the whole point of the flag is that nothing else
+ * in the state makes the failure visible.
+ */
+export function markCollabRenderFailed(filePath: string): void {
+  const atom = collabDocumentStateAtom(filePath);
+  const current = store.get(atom);
+  if (current.renderFailed) return;
+  store.set(atom, { ...current, renderFailed: true });
+}
+
 /** Debounces transport-only flaps while replica/outbox safety remains immediate. */
 export function publishCollabTransportState(
   filePath: string,

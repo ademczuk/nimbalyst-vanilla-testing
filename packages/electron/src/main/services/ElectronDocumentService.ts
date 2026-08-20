@@ -2845,6 +2845,9 @@ export class ElectronDocumentService implements DocumentService {
       return { item: null, skipped: false, error: 'Failed to read back created item' };
     }
 
+    // Same reason as createTrackerItem: number the row before it is broadcast.
+    await this.assignLocalKeysFrom(result.rows);
+
     const created = this.rowToTrackerItem(result.rows[0]);
 
     // Notify watchers
@@ -3024,6 +3027,11 @@ export class ElectronDocumentService implements DocumentService {
     if (result.rows.length === 0) {
       throw new Error(`Failed to create tracker item ${payload.id}`);
     }
+
+    // The insert leaves `local_key` NULL. Sweep before mapping, so the item
+    // handed to the watcher -- which the renderer inserts optimistically --
+    // carries its number instead of rendering keyless until the next re-list.
+    await this.assignLocalKeysFrom(result.rows);
 
     const created = this.rowToTrackerItem(result.rows[0]);
 

@@ -26,6 +26,7 @@ const {
   mockGlobalRegistryGet,
   mockIpcHandlers,
   mockSafeHandle,
+  mockAssignLocalKeysToRows,
 } = vi.hoisted(() => ({
   mockQuery: vi.fn(),
   mockSyncTrackerItem: vi.fn(),
@@ -35,6 +36,7 @@ const {
   mockGlobalRegistryGet: vi.fn((..._args: any[]) => undefined as any),
   mockIpcHandlers: new Map<string, (...args: any[]) => any>(),
   mockSafeHandle: vi.fn(),
+  mockAssignLocalKeysToRows: vi.fn(async (..._args: any[]) => new Map<string, string>()),
 }));
 
 mockSafeHandle.mockImplementation((channel: string, handler: (...args: any[]) => any) => {
@@ -69,6 +71,12 @@ vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel', () =
   globalRegistry: {
     get: mockGlobalRegistryGet,
   },
+}));
+
+// Counter behaviour is covered in tracker/__tests__/localKeyAllocator.test.ts.
+// Here we only care that the create paths sweep themselves.
+vi.mock('../tracker/localKeyAllocator', () => ({
+  assignLocalKeysToRows: mockAssignLocalKeysToRows,
 }));
 
 import { trackerItemToRecord } from '@nimbalyst/runtime/core/TrackerRecord';
@@ -137,6 +145,7 @@ beforeEach(async () => {
   mockQuery.mockReset();
   mockGetWorkspaceState.mockReturnValue({});
   mockGlobalRegistryGet.mockReturnValue(undefined);
+  mockAssignLocalKeysToRows.mockImplementation(async (..._args: any[]) => new Map<string, string>());
   tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-sync-test-'));
   service = new ElectronDocumentService(tempDir);
 });
@@ -512,6 +521,39 @@ describe('createTrackerItem sync status policy', () => {
     // INSERT is the second query (index 1) after kanbanSortOrder; sync_status
     // is the 6th INSERT param ($6) -- after id, type, type_tags, data, workspace.
     expect(mockQuery.mock.calls[1]?.[1]?.[5]).toBe('pending');
+  });
+
+  // The insert leaves `local_key` NULL, and numbers used to be minted only by
+  // the list query. The item this returns is what the renderer inserts
+  // optimistically, so without a sweep here it renders "No key yet" until the
+  // next full re-list (NIM.2842).
+  it('numbers a newly created personal item before returning it', async () => {
+    mockGlobalRegistryGet.mockReturnValue({ sharing: 'personal', draftByDefault: false });
+    mockIsTrackerSyncActive.mockReturnValue(false);
+    mockAssignLocalKeysToRows.mockResolvedValue(new Map([['bug-local', 'NIM.42']]));
+
+    mockQuery.mockResolvedValueOnce({ rows: [{ min_key: null }] }); // kanbanSortOrder MIN
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // INSERT
+    mockQuery.mockResolvedValueOnce({
+      rows: [makeTrackerRow({ id: 'bug-local', sync_status: 'local', local_key: null })],
+    }); // read-back
+
+    const created = await service.createTrackerItem({
+      id: 'bug-local',
+      type: 'bug',
+      title: 'Local bug',
+      status: 'to-do',
+      priority: 'high',
+      workspace: WORKSPACE,
+    });
+
+    expect(mockAssignLocalKeysToRows).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      tempDir,
+      ['bug-local'],
+    );
+    expect(created.localKey).toBe('NIM.42');
   });
 });
 

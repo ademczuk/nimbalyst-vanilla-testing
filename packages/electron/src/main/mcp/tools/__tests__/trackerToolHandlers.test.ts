@@ -168,6 +168,12 @@ vi.mock('../../../services/MainBodyDocService', () => ({
   applyHeadlessBodyMarkdown: mockApplyHeadlessBodyMarkdown,
 }));
 
+// Counter behaviour lives in tracker/__tests__/localKeyAllocator.test.ts; the
+// create path only has to sweep itself.
+vi.mock('../../../services/tracker/localKeyAllocator', () => ({
+  assignLocalKeysToRows: vi.fn(async () => new Map<string, string>()),
+}));
+
 import {
   createBidirectionalLink,
   handleTrackerCreate,
@@ -185,6 +191,7 @@ import {
   rowToTrackerItem,
 } from '../trackerToolHandlers';
 import { isTrackerSyncActive, syncTrackerItem } from '../../../services/TrackerSyncManager';
+import { assignLocalKeysToRows } from '../../../services/tracker/localKeyAllocator';
 import { getEffectiveTrackerSharingPolicy, shouldSyncTrackerItem } from '../../../services/TrackerPolicyService';
 import { resolveTrackerPromotionEligibility } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerLifecycle';
 
@@ -389,6 +396,39 @@ describe('handleTrackerCreate issue-key timing', () => {
     expect(summary).toContain('This item has no key until it is published.');
     expect(mockAwaitServerIssueKey).not.toHaveBeenCalled();
     expect(mockQuery.mock.calls.some(([sql]) => /UPDATE tracker_items[\s\S]*SET[\s\S]*issue_key|MAX\(issue_number\)|LC-/.test(String(sql)))).toBe(false);
+  });
+
+  // Without the sweep + the `local_key` mapping in `rowToTrackerItem`, an
+  // unpublished item reports its uuid to the agent: it has no team key, and
+  // its number was only minted by a later list (NIM.2842).
+  it('reports the local number as the ref for an unpublished item', async () => {
+    vi.mocked(isTrackerSyncActive).mockReturnValue(false);
+    vi.mocked(shouldSyncTrackerItem).mockReturnValue(false);
+    const numbered = makeRow({
+      id: 'bug_test',
+      workspace: '/tmp/ws',
+      issue_key: null,
+      issue_number: null,
+      local_key: 'NIM.7',
+    });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })         // INSERT
+      .mockResolvedValueOnce({ rows: [numbered] }) // resolve created
+      .mockResolvedValueOnce({ rows: [numbered] }); // notifyTrackerItemAdded
+
+    const result = await handleTrackerCreate({ type: 'bug', title: 'Personal bug' }, '/tmp/ws');
+    const { structured, summary } = parseResult(result);
+
+    // The handler mints the id, so match the shape rather than a literal.
+    expect(assignLocalKeysToRows).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      '/tmp/ws',
+      [expect.any(String)],
+    );
+    expect(summary).toContain('**Ref**: NIM.7');
+    // A local number is still not a key: publishing is what assigns one.
+    expect(structured.item.issueKeyStatus).toBe('unassigned');
   });
 
   it('leaves a team draft without any key', async () => {
