@@ -16,15 +16,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
-- Nimbalyst never sets an existing database aside on its own: if it will not start, you are shown the backups that exist and asked, instead of being handed an empty app that looks fine.
-- A crash while a file is being saved no longer leaves it empty, and autosave will not blank a file that still has content — clearing a file now takes a save you make yourself.
-- Moving to the faster storage engine stops when the database it would copy looks like it has already lost data, and points you at your backups instead of making the loss permanent.
-- A question, plan approval, or commit proposal you take more than two minutes to answer stays answerable, instead of losing its buttons and then timing out.
-- Windows open in your theme's own background colour instead of flashing white first, including on themes that come from extensions.
-- Your trackers list your items again instead of coming up empty once your organization has loaded.
-- A background session that marks itself complete still shows as unread in the sessions popover and the menu bar, instead of disappearing before you have read it.
-- A tracker item that has only its own local number now shows that number in agent results and the `nim` command, instead of reporting no key at all and pointing you at a Publish action that a personal tracker refuses and a project with no team cannot complete.
-- Opening a project gives every one of its tracker items a number, instead of only the ones a list happened to load.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.74.3] - 2026-08-21
+
+
+### Added
+<!-- New features go here -->
+- Shared Docs navigation now shows an unread badge.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Inbox access now lives in the left navigation.
+- Account sync settings now call cross-device synchronization “Mobile Sync.”
+
+### Fixed
+<!-- Bug fixes go here -->
+- Existing databases are never set aside without confirmation, and unsafe storage migrations stop before copying lost data.
+- Interrupted saves no longer empty files, while explicit saves can still clear them.
+- Questions, plan approvals, and commit proposals remain answerable after the agent moves on.
+- Windows and Teams surfaces use the active theme background instead of flashing or staying white.
+- Trackers load after organization initialization and reliably show or allocate local item numbers.
+- Completed background sessions remain unread until you view them.
 
 ### Removed
 <!-- Removed features go here -->
