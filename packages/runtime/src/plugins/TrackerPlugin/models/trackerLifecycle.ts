@@ -20,10 +20,28 @@ import type { TrackerDataModel } from './TrackerDataModel';
 
 /**
  * The settled wording for an item that has no key yet. An unkeyed draft is
- * normal and intentional, not a failure -- this sentence is what says so, and
- * it is shared verbatim with the agent tools and the CLI.
+ * normal and intentional, not a failure -- this sentence is what says so.
+ *
+ * This module is the single source for all four sentences below. The agent
+ * tools import them directly; the CLI cannot (it vendors rather than depending
+ * on the runtime, see `packages/cli/src/vendor/trackerRecord.ts`) and carries a
+ * marked copy. Two hand-copies previously drifted here: only this file grew
+ * `TRACKER_LOCAL_ISSUE_KEY_MESSAGE`, so the tools and the CLI kept telling a
+ * numbered personal item it had "no key until it is published" -- on trackers
+ * where publishing is refused outright (#1346, #1243).
  */
 export const TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE = 'This item has no key until it is published.';
+
+/**
+ * The settled wording for a workspace that has no team to mint keys.
+ *
+ * "Publish it" is the advice the other messages imply, and it is a dead end
+ * here: publication succeeds locally and then waits on a room that does not
+ * exist. Saying so is the whole point -- #1346 sat for nine days because the
+ * app reported a pending key instead of an absent room.
+ */
+export const TRACKER_NO_TEAM_ISSUE_KEY_MESSAGE =
+  'This workspace has no team, so no shared issue key can be issued — publishing will not produce one.';
 
 /**
  * The settled wording for this machine's private number. The point it has to

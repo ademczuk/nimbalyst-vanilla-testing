@@ -240,6 +240,7 @@ import {
 } from './services/StytchAuthService';
 import { requestMobilePush } from './services/ai/mobilePushRequest';
 import { registerTrackerSyncHandlers, initializeTrackerSync } from './services/TrackerSyncManager';
+import { ensureWorkspaceLocalNumbersInBackground } from './services/tracker/ensureWorkspaceLocalNumbers';
 import { initTrackerSchemaService, updateTrackerSchemaWorkspace } from './services/TrackerSchemaService';
 import { registerTrackerLifecycleIpc } from './services/tracker/trackerLifecycleService';
 import { initTrackerNavigationService } from './services/TrackerNavigationService';
@@ -3087,6 +3088,10 @@ app.whenReady().then(async () => {
             // inherit synchronous git/process work on the startup tick.
             void autoMatchTeamForWorkspace(workspacePath).catch(() => {});
             void initializeTrackerSync(workspacePath).catch(() => {});
+            // Sibling, not a step inside tracker sync: that path returns early
+            // for a workspace with no team, which is exactly the workspace whose
+            // items have nothing but a local number.
+            ensureWorkspaceLocalNumbersInBackground(workspacePath);
             updateTrackerSchemaWorkspace(workspacePath);
         }, 0);
 

@@ -25,6 +25,7 @@ CREATE TABLE tracker_items (
   id TEXT PRIMARY KEY,
   issue_number INTEGER,
   issue_key TEXT,
+  local_key TEXT,
   type TEXT NOT NULL,
   data TEXT NOT NULL,
   workspace TEXT NOT NULL,
@@ -74,22 +75,23 @@ let dbPath: string;
 function seed(row: {
   id: string; issueKey?: string; issueNumber?: number; type: string;
   data: Record<string, unknown>; syncStatus?: string; syncId?: number | null;
-  bodyVersion?: number;
+  bodyVersion?: number; localKey?: string; workspace?: string;
 }): void {
   const db = openDatabase(dbPath);
   const iso = new Date().toISOString();
   db.prepare(
-    `INSERT INTO tracker_items (id, issue_key, issue_number, type, data, workspace, document_path,
+    `INSERT INTO tracker_items (id, issue_key, local_key, issue_number, type, data, workspace, document_path,
        type_tags, sync_status, sync_id, body_version, created, updated)
-     VALUES (@id, @issueKey, @issueNumber, @type, @data, @workspace, '',
+     VALUES (@id, @issueKey, @localKey, @issueNumber, @type, @data, @workspace, '',
        @typeTags, @syncStatus, @syncId, @bodyVersion, @created, @updated)`,
   ).run({
     id: row.id,
     issueKey: row.issueKey ?? null,
+    localKey: row.localKey ?? null,
     issueNumber: row.issueNumber ?? null,
     type: row.type,
     data: JSON.stringify(row.data),
-    workspace: WORKSPACE,
+    workspace: row.workspace ?? WORKSPACE,
     typeTags: JSON.stringify([row.type]),
     syncStatus: row.syncStatus ?? 'local',
     syncId: row.syncId ?? null,
@@ -168,6 +170,47 @@ describe('DirectGateway offline writes', () => {
     expect(json.issueKeyMessage).toBe('This item has no key until it is published.');
     expect(renderRecord(rec, undefined, {})).toContain('This item has no key until it is published.');
     expect(renderList([rec], {})).toContain('This item has no key until it is published.');
+  });
+
+  /**
+   * The CLI reads the same rows the app displays. It used to print the literal
+   * word "unassigned" in the key column for items the tracker grid labelled
+   * `NIM.75`, and refuse to resolve that number when handed back (#1346).
+   */
+  it('shows a local number as the key and resolves a dotted reference within the workspace', async () => {
+    seed({ id: 'numbered', localKey: 'NIM.75', type: 'bug', data: { title: 'Numbered', status: 'to-do' } });
+
+    const gw = new DirectGateway(dbPath);
+    const rec = await gw.getTracker(WORKSPACE, 'NIM.75');
+    gw.close();
+
+    expect(rec?.id).toBe('numbered');
+    expect(rec?.localKey).toBe('NIM.75');
+    expect(rec?.issueKey).toBeUndefined();
+
+    const json = JSON.parse(renderRecord(rec!, undefined, { json: true }));
+    expect(json.issueKeyStatus).toBe('local');
+    expect(json.localKey).toBe('NIM.75');
+    expect(json.issueKeyMessage).toMatch(/private to this project/);
+
+    // The key column, and the footnote that explains what kind of key it is.
+    expect(renderList([rec!], {})).toContain('NIM.75');
+    expect(renderList([rec!], {})).not.toContain('until it is published');
+  });
+
+  it('refuses to resolve a dotted number from another workspace', async () => {
+    // Every project on the machine has a `.4`, and this table holds them all.
+    // A cross-workspace match would confidently return the wrong item.
+    seed({
+      id: 'elsewhere', localKey: 'NIM.4', type: 'bug',
+      workspace: '/tmp/some-other-project', data: { title: 'Other project', status: 'to-do' },
+    });
+
+    const gw = new DirectGateway(dbPath);
+    const rec = await gw.getTracker(WORKSPACE, 'NIM.4');
+    gw.close();
+
+    expect(rec).toBeNull();
   });
 
   it('creates a room-owned workspace item without a provisional key or number', async () => {

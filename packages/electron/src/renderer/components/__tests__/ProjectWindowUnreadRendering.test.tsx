@@ -8,7 +8,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 
 import { OrgSwitcher } from '../OrgSwitcher';
 import { AccountInspectorPopover } from '../Accounts/AccountInspectorPopover';
-import { WindowTopBar } from '../WindowTopBar';
 import { dialogRef } from '../../contexts/DialogContext';
 import { DIALOG_IDS } from '../../dialogs/registry';
 import { activeWorkspacePathAtom } from '../../store/atoms/openProjects';
@@ -117,75 +116,6 @@ describe('project window unread rendering', () => {
       orgId: 'org-b',
       workspacePath: '/workspace/acme',
     });
-  });
-
-  // The top-bar badge counts only the project's own organization, so it can
-  // never report unread that belongs to an inbox the user isn't working in.
-  it('badges the top-bar inbox with the project org count and switches to Org mode', async () => {
-    installApi();
-    findForWorkspace.mockResolvedValue({ team: { orgId: 'org-b', name: 'Beta' } });
-    const onOpenOrgMode = vi.fn();
-
-    renderWithStore(
-      <WindowTopBar
-        workspaceName="Repo"
-        activeModeLabel="Files"
-        gitStatus={null}
-        gitActions={{ onPull: () => {}, onPush: () => {}, onOpenLog: () => {} }}
-        workspacePath="/workspace/window-root"
-        onOpenOrgMode={onOpenOrgMode}
-      />,
-      snapshot([
-        delivery('a-1', 'org-a', 'Acme'),
-        delivery('a-2', 'org-a', 'Acme'),
-        delivery('b-1', 'org-b', 'Beta'),
-      ]),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByTestId('window-top-bar-inbox-unread').textContent).toBe('1');
-    });
-    expect(findForWorkspace).toHaveBeenCalledWith('/workspace/acme');
-
-    fireEvent.click(screen.getByTestId('window-top-bar-inbox'));
-
-    expect(onOpenOrgMode).toHaveBeenCalledTimes(1);
-    expect(openManagementWindow).not.toHaveBeenCalled();
-  });
-
-  it('keeps the top-bar inbox with no badge at zero unread, and drops it without an org', async () => {
-    installApi();
-    findForWorkspace.mockResolvedValue({ team: { orgId: 'org-b', name: 'Beta' } });
-
-    const withOrg = renderWithStore(
-      <WindowTopBar
-        workspaceName="Repo"
-        activeModeLabel="Files"
-        gitStatus={null}
-        gitActions={{ onPull: () => {}, onPush: () => {}, onOpenLog: () => {} }}
-        workspacePath="/workspace/window-root"
-      />,
-      snapshot([delivery('b-read', 'org-b', 'Beta', { readAt: 12 })]),
-    );
-
-    await waitFor(() => screen.getByTestId('window-top-bar-inbox'));
-    expect(screen.queryByTestId('window-top-bar-inbox-unread')).toBeNull();
-    withOrg.unmount();
-
-    findForWorkspace.mockResolvedValue({ team: null });
-    renderWithStore(
-      <WindowTopBar
-        workspaceName="Repo"
-        activeModeLabel="Files"
-        gitStatus={null}
-        gitActions={{ onPull: () => {}, onPush: () => {}, onOpenLog: () => {} }}
-        workspacePath="/workspace/window-root"
-      />,
-      snapshot([]),
-    );
-
-    await waitFor(() => expect(findForWorkspace).toHaveBeenCalledTimes(2));
-    expect(screen.queryByTestId('window-top-bar-inbox')).toBeNull();
   });
 
   // The rows above are the menu's unread list, so they open the messages

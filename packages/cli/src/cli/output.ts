@@ -9,6 +9,12 @@ import type {
   ImportResult,
   ResnapshotResult,
 } from '../gateway/types.js';
+import {
+  isLegacyLocalIssueKey,
+  resolveDisplayIssueKey,
+  TRACKER_LOCAL_ISSUE_KEY_MESSAGE,
+  TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE,
+} from '../vendor/localIssueKey.js';
 import { bold, dim, colorStatus, gray } from './colors.js';
 import { relativeFromNow } from './time.js';
 
@@ -20,29 +26,47 @@ export interface OutputOptions {
 }
 
 const DEFAULT_COLUMNS = ['key', 'type', 'status', 'title', 'updated'];
-export const UNASSIGNED_ISSUE_KEY_MESSAGE = 'This item has no key until it is published.';
-const LEGACY_LOCAL_ISSUE_KEY_PATTERN = /^LC-\d+$/;
+export const UNASSIGNED_ISSUE_KEY_MESSAGE = TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE;
+
+type IssueKeyRef = Pick<TrackerRecord, 'issueKey' | 'localKey'>;
+
+/**
+ * Three states, matching the agent tools exactly. `local` is not a lesser
+ * `assigned`: the number is real and stable, but it resolves only in this
+ * project on this machine, so a consumer must not treat it as shareable.
+ * Reporting one as `unassigned` is what made `nim` disagree with the app about
+ * whether an item had a number at all (#1346).
+ */
+export type IssueKeyStatus = 'assigned' | 'local' | 'unassigned';
 
 /** Legacy provisional LC keys remain stored but are not stable identifiers. */
 export function getAssignedIssueKey(record: Pick<TrackerRecord, 'issueKey'>): string | undefined {
   const issueKey = record.issueKey?.trim();
-  return issueKey && !LEGACY_LOCAL_ISSUE_KEY_PATTERN.test(issueKey) ? issueKey : undefined;
+  return issueKey && !isLegacyLocalIssueKey(issueKey) ? issueKey : undefined;
 }
 
-export function getTrackerDisplayRef(record: Pick<TrackerRecord, 'id' | 'issueKey'>): string {
-  return getAssignedIssueKey(record) ?? record.id;
+export function issueKeyStatus(record: IssueKeyRef): IssueKeyStatus {
+  if (getAssignedIssueKey(record)) return 'assigned';
+  return record.localKey ? 'local' : 'unassigned';
+}
+
+export function getTrackerDisplayRef(record: Pick<TrackerRecord, 'id' | 'issueKey' | 'localKey'>): string {
+  return resolveDisplayIssueKey(record) ?? record.id;
 }
 
 function recordForJson(record: TrackerRecord): TrackerRecord & {
-  issueKeyStatus: 'assigned' | 'unassigned';
+  issueKeyStatus: IssueKeyStatus;
   issueKeyMessage?: string;
 } {
-  const issueKey = getAssignedIssueKey(record);
+  const status = issueKeyStatus(record);
+  const message = status === 'local'
+    ? TRACKER_LOCAL_ISSUE_KEY_MESSAGE
+    : status === 'unassigned' ? UNASSIGNED_ISSUE_KEY_MESSAGE : undefined;
   return {
     ...record,
-    issueKey,
-    issueKeyStatus: issueKey ? 'assigned' : 'unassigned',
-    ...(!issueKey ? { issueKeyMessage: UNASSIGNED_ISSUE_KEY_MESSAGE } : {}),
+    issueKey: getAssignedIssueKey(record),
+    issueKeyStatus: status,
+    ...(message ? { issueKeyMessage: message } : {}),
   };
 }
 
@@ -50,7 +74,10 @@ function recordForJson(record: TrackerRecord): TrackerRecord & {
 function columnValue(r: TrackerRecord, col: string): string {
   switch (col) {
     case 'key':
-      return getAssignedIssueKey(r) ?? 'unassigned';
+      // The local number belongs here. Printing the literal word "unassigned"
+      // beside a row the tracker grid labels `NIM.75` is how the CLI came to
+      // contradict the database it reads from.
+      return resolveDisplayIssueKey(r) ?? 'unassigned';
     case 'id':
       return r.id;
     case 'type':
@@ -88,9 +115,16 @@ export function renderList(records: TrackerRecord[], opts: OutputOptions): strin
     return renderCsv(records, opts.columns ?? DEFAULT_COLUMNS);
   }
   const table = renderTable(records, opts.columns ?? DEFAULT_COLUMNS);
-  return records.some((record) => !getAssignedIssueKey(record))
-    ? `${table}\n\n${dim(UNASSIGNED_ISSUE_KEY_MESSAGE)}`
-    : table;
+  // Two different footnotes, because the rows they explain are different. A
+  // keyless row genuinely has nothing; a numbered row has a reference that is
+  // real but must not leave this machine. One sentence covering both would have
+  // to be vague about the part that matters.
+  const statuses = new Set(records.map(issueKeyStatus));
+  const footnotes = [
+    ...(statuses.has('unassigned') ? [UNASSIGNED_ISSUE_KEY_MESSAGE] : []),
+    ...(statuses.has('local') ? [TRACKER_LOCAL_ISSUE_KEY_MESSAGE] : []),
+  ];
+  return footnotes.length > 0 ? `${table}\n\n${dim(footnotes.join('\n'))}` : table;
 }
 
 export function renderRecord(record: TrackerRecord, body: string | undefined, opts: OutputOptions): string {
@@ -160,7 +194,7 @@ function renderCsv(records: TrackerRecord[], columns: string[]): string {
 function rawColumnValue(r: TrackerRecord, col: string): string {
   switch (col) {
     case 'key':
-      return getAssignedIssueKey(r) ?? 'unassigned';
+      return resolveDisplayIssueKey(r) ?? 'unassigned';
     case 'updated':
       return r.system.updatedAt ?? '';
     case 'created':
@@ -172,10 +206,11 @@ function rawColumnValue(r: TrackerRecord, col: string): string {
 
 function renderDetail(record: TrackerRecord, body: string | undefined): string {
   const lines: string[] = [];
-  const issueKey = getAssignedIssueKey(record);
-  const key = issueKey ?? record.id;
+  const status = issueKeyStatus(record);
+  const key = resolveDisplayIssueKey(record) ?? record.id;
   lines.push(`${bold(key)}  ${dim(record.primaryType)}`);
-  if (!issueKey) lines.push(`${bold('Issue key')}  ${UNASSIGNED_ISSUE_KEY_MESSAGE}`);
+  if (status === 'unassigned') lines.push(`${bold('Issue key')}  ${UNASSIGNED_ISSUE_KEY_MESSAGE}`);
+  if (status === 'local') lines.push(`${bold('Issue key')}  ${TRACKER_LOCAL_ISSUE_KEY_MESSAGE}`);
   lines.push('');
   lines.push(`${bold('Title')}    ${record.fields.title ?? ''}`);
   lines.push(`${bold('Status')}   ${colorStatus(record.fields.status as string)}`);

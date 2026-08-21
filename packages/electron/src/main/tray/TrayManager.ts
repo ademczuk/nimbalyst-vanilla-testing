@@ -137,8 +137,10 @@ function toPanelSession(session: TraySessionInfo, hasPendingPrompt: boolean): Tr
 /**
  * Classify cached sessions into the three attention buckets.
  *
- * Deliberately mirrors `agentSessionAttentionAtom` in the renderer: archived and
- * `phase === 'complete'` sessions are excluded, and each session lands in exactly
+ * Deliberately mirrors `agentSessionAttentionAtom` in the renderer: archived
+ * sessions are excluded, `phase === 'complete'` only suppresses the running
+ * bucket (an agent sets that phase just before its closing output, so it must
+ * not hide an unread or prompting session), and each session lands in exactly
  * one bucket by priority. It diverges in two intended ways — the scope is every
  * workspace (the menu bar is global), and `status === 'error'` counts as needing
  * attention, which the in-app popover has no equivalent for.
@@ -153,14 +155,16 @@ export function groupTraySessions(sessions: Iterable<TraySessionInfo>): TrayPane
   const feed: TrayPanelFeed = { needsAttention: [], running: [], unread: [] };
 
   const visible = Array.from(sessions)
-    .filter((session) => !session.isArchived && session.phase !== 'complete')
+    .filter((session) => !session.isArchived)
     .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 
   for (const session of visible) {
     if (session.hasPendingPrompt || session.status === 'error') {
       feed.needsAttention.push(toPanelSession(session, session.hasPendingPrompt));
     } else if (session.status === 'running') {
-      feed.running.push(toPanelSession(session, false));
+      if (session.phase !== 'complete') {
+        feed.running.push(toPanelSession(session, false));
+      }
     } else if (session.hasUnread) {
       feed.unread.push(toPanelSession(session, false));
     }

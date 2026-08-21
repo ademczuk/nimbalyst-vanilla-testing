@@ -64,6 +64,12 @@ export interface TrackerRecord {
   typeTags: string[];
   issueNumber?: number;
   issueKey?: string;
+  /**
+   * This machine's private number for the item (`NIM.75`), from the `local_key`
+   * column. Distinct from `issueKey`, which the team's room owns: the same
+   * dotted value on another machine is a different item.
+   */
+  localKey?: string;
   source: 'native' | 'inline' | 'frontmatter' | 'import';
   sourceRef?: string;
   archived: boolean;
@@ -95,7 +101,7 @@ const SYSTEM_KEYS = new Set([
 
 const NON_FIELD_KEYS = new Set([
   // top-level record props
-  'id', 'type', 'typeTags', 'issueNumber', 'issueKey',
+  'id', 'type', 'typeTags', 'issueNumber', 'issueKey', 'localKey',
   'source', 'sourceRef', 'archived', 'archivedAt', 'syncStatus',
   'content', 'module', 'lineNumber', 'workspace', 'lastIndexed',
   'created', 'updated',
@@ -152,6 +158,7 @@ export function dbRowToRecord(row: any): TrackerRecord {
     typeTags,
     issueNumber: row.issue_number ?? undefined,
     issueKey: row.issue_key ?? undefined,
+    localKey: row.local_key ?? undefined,
     source: row.source || (row.document_path ? 'inline' : 'native'),
     sourceRef: row.source_ref ?? undefined,
     archived: row.archived === 1 || row.archived === true || false,

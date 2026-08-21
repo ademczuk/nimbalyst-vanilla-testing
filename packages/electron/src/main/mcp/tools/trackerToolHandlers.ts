@@ -12,7 +12,7 @@ import {
 } from '../../services/TrackerPolicyService';
 import { isTrackerSyncActive, syncTrackerItem } from '../../services/TrackerSyncManager';
 import { awaitServerIssueKey } from '../../services/tracker/awaitServerIssueKey';
-import { isLocalIssueKey } from '../../../shared/localIssueKey';
+import { isLocalIssueKey, resolveDisplayIssueKey } from '../../../shared/localIssueKey';
 import { applyHeadlessBodyMarkdown } from '../../services/MainBodyDocService';
 import { applyRelationshipFieldWrites } from '../../services/tracker/relationshipFieldWrite';
 import { appendActivity } from '../../services/tracker/trackerActivity';
@@ -52,10 +52,10 @@ import {
   getAssignedIssueKey,
   getTrackerDisplayRef,
   issueKeyAvailabilityNote,
+  issueKeyMessage,
   issueKeyStatus,
   type BodyWriteFailure,
   type McpToolResult,
-  UNPUBLISHED_ISSUE_KEY_MESSAGE,
 } from './trackerToolResult';
 
 export {
@@ -1165,6 +1165,7 @@ export async function handleTrackerList(
         id: item.id,
         issueNumber: item.issueNumber ?? undefined,
         issueKey: getAssignedIssueKey(item),
+        localKey: item.localKey ?? undefined,
         issueKeyStatus: issueKeyStatus(item),
         type: item.type,
         typeTags: item.typeTags && item.typeTags.length > 0 ? item.typeTags : [item.type],
@@ -1188,10 +1189,15 @@ export async function handleTrackerList(
       }));
     tempDocService?.destroy?.();
 
+    // The ref is whatever actually resolves: a room key, else this machine's
+    // number, else the raw id. Explaining the absence is only worth a line when
+    // there is no number either -- repeating the private-number caveat on every
+    // row of a long list would drown the list it is annotating.
+    const listCanIssueKeys = isTrackerSyncActive(workspacePath);
     const summary = items
       .map(
         (item: any) =>
-          `- [${item.type}] ${item.title} (${item.status || "no status"}, ${item.priority || "no priority"}, ${item.syncStatus}) [ref: ${item.issueKey || item.id}]${item.issueKey ? '' : ` — ${UNPUBLISHED_ISSUE_KEY_MESSAGE}`}`
+          `- [${item.type}] ${item.title} (${item.status || "no status"}, ${item.priority || "no priority"}, ${item.syncStatus}) [ref: ${getTrackerDisplayRef(item)}]${item.issueKeyStatus === 'unassigned' ? ` — ${issueKeyMessage(item, { canIssueKeys: listCanIssueKeys })}` : ''}`
       )
       .join("\n");
 
@@ -1216,6 +1222,7 @@ export async function handleTrackerList(
         id: item.id,
         issueNumber: item.issueNumber,
         issueKey: item.issueKey,
+        localKey: item.localKey,
         issueKeyStatus: item.issueKeyStatus,
         type: item.type,
         typeTags: item.typeTags,
@@ -1303,7 +1310,11 @@ export async function handleTrackerGet(
       item = await docService.getTrackerItemById(args.id);
       if (!item && args.id) {
         const all = await docService.listTrackerItems();
-        item = all.find(candidate => candidate.issueKey === args.id) || null;
+        // Match the local number too. `tracker_create` hands one back as the
+        // item's ref, so refusing to resolve it here makes the tool contradict
+        // itself one call later.
+        item = all.find(candidate => candidate.issueKey === args.id
+          || candidate.localKey === args.id) || null;
       }
     }
 
@@ -1326,7 +1337,21 @@ export async function handleTrackerGet(
     lines.push("");
     lines.push(`**Type**: ${item.type}`);
     const assignedIssueKey = getAssignedIssueKey(item);
-    lines.push(`**Issue Key**: ${assignedIssueKey ?? UNPUBLISHED_ISSUE_KEY_MESSAGE}`);
+    const getCanIssueKeys = isTrackerSyncActive(workspacePath);
+    // Show the reference that resolves, then explain what kind it is. Printing
+    // the message *instead of* the number was the #1346 symptom: an item with
+    // `NIM.75` sitting in `local_key` reported that it had no key at all.
+    //
+    // `resolveDisplayIssueKey`, not `getTrackerDisplayRef`: the latter falls
+    // back to the raw row id, and an id dressed up as a key is exactly what
+    // TRACKER_SCHEMA_SHARING.md forbids on this line. With no key of either
+    // kind the message stands alone, as before.
+    const getDisplayKey = resolveDisplayIssueKey(item);
+    const getIssueKeyMessage = issueKeyMessage(item, { canIssueKeys: getCanIssueKeys });
+    lines.push(`**Issue Key**: ${getDisplayKey ?? getIssueKeyMessage}`);
+    if (getDisplayKey && getIssueKeyMessage) {
+      lines.push(`**Issue Key Note**: ${getIssueKeyMessage}`);
+    }
     if (item.status) lines.push(`**Status**: ${item.status}`);
     if (item.priority) lines.push(`**Priority**: ${item.priority}`);
     if (item.tags?.length)
@@ -1405,7 +1430,9 @@ export async function handleTrackerGet(
         id: item.id,
         issueNumber: item.issueNumber ?? undefined,
         issueKey: assignedIssueKey,
+        localKey: item.localKey ?? undefined,
         issueKeyStatus: issueKeyStatus(item),
+        ...(getIssueKeyMessage ? { issueKeyMessage: getIssueKeyMessage } : {}),
         type: item.type,
         typeTags: item.typeTags && item.typeTags.length > 0 ? item.typeTags : [item.type],
         title: item.title || "Untitled",
@@ -1810,13 +1837,20 @@ export async function handleTrackerCreate(
     }
 
     const createdRef = createdItem || { id };
+    const createdKeyContext = {
+      published: shouldSyncTrackerItem(sharingPolicy, data),
+      canIssueKeys: isTrackerSyncActive(workspacePath),
+    };
+    const createdKeyMessage = issueKeyMessage(createdRef, createdKeyContext);
     const structured = {
       action: "created" as const,
       item: {
         id,
         issueNumber: createdItem?.issueNumber,
         issueKey: getAssignedIssueKey(createdRef),
+        localKey: createdRef.localKey ?? undefined,
         issueKeyStatus: issueKeyStatus(createdRef),
+        ...(createdKeyMessage ? { issueKeyMessage: createdKeyMessage } : {}),
         type: args.type,
         typeTags,
         title: data[titleField],
@@ -1833,7 +1867,7 @@ export async function handleTrackerCreate(
           type: "text",
           text: JSON.stringify({
             structured,
-            summary: `Created tracker item:\n- **Type**: ${args.type}\n- **Title**: ${data[titleField]}\n- **Status**: ${data[statusField]}\n- **Ref**: ${getTrackerDisplayRef(createdRef)}\n- **ID**: ${id}${issueKeyAvailabilityNote(createdRef, shouldSyncTrackerItem(sharingPolicy, data))}${bodyWriteResult ? `\n- **Body write**: Failed — ${bodyWriteResult.message}` : ''}`,
+            summary: `Created tracker item:\n- **Type**: ${args.type}\n- **Title**: ${data[titleField]}\n- **Status**: ${data[statusField]}\n- **Ref**: ${getTrackerDisplayRef(createdRef)}\n- **ID**: ${id}${issueKeyAvailabilityNote(createdRef, createdKeyContext)}${bodyWriteResult ? `\n- **Body write**: Failed — ${bodyWriteResult.message}` : ''}`,
           }),
         },
       ],
@@ -2162,6 +2196,7 @@ export async function handleTrackerUpdate(
                   id: refreshedItem.id,
                   issueNumber: refreshedItem.issueNumber ?? undefined,
                   issueKey: getAssignedIssueKey(refreshedItem),
+                  localKey: refreshedItem.localKey ?? undefined,
                   issueKeyStatus: issueKeyStatus(refreshedItem),
                   type: refreshedItem.type,
                   typeTags: refreshedItem.typeTags && refreshedItem.typeTags.length > 0
@@ -2171,9 +2206,11 @@ export async function handleTrackerUpdate(
                   changes,
                 },
                 summary: [
-                  `Updated tracker item ${getTrackerDisplayRef({ id: refreshedItem.id, issueKey: refreshedItem.issueKey ?? undefined })}:`,
+                  `Updated tracker item ${getTrackerDisplayRef(refreshedItem)}:`,
                   ...updateSummaryParts,
-                ].join('\n') + issueKeyAvailabilityNote(refreshedItem),
+                ].join('\n') + issueKeyAvailabilityNote(refreshedItem, {
+                  canIssueKeys: isTrackerSyncActive(workspacePath),
+                }),
               }),
             },
           ],
@@ -2555,13 +2592,18 @@ export async function handleTrackerUpdate(
       const updatedRef = {
         id: publicTrackerId,
         issueKey: postSyncRow?.issue_key ?? refreshedRow?.issue_key ?? row.issue_key ?? undefined,
+        localKey: postSyncRow?.local_key ?? refreshedRow?.local_key ?? row.local_key ?? undefined,
       };
+      const updatedKeyContext = { canIssueKeys: isTrackerSyncActive(effectiveWorkspacePath) };
+      const updatedKeyMessage = issueKeyMessage(updatedRef, updatedKeyContext);
       const structured: Record<string, any> = {
         action: "updated" as const,
         id: publicTrackerId,
         issueNumber: postSyncRow?.issue_number ?? refreshedRow?.issue_number ?? row.issue_number ?? undefined,
         issueKey: getAssignedIssueKey(updatedRef),
+        localKey: updatedRef.localKey,
         issueKeyStatus: issueKeyStatus(updatedRef),
+        ...(updatedKeyMessage ? { issueKeyMessage: updatedKeyMessage } : {}),
         type: row.type,
         typeTags: currentTypeTags,
         title: data[rf('title', 'title')],
@@ -2572,7 +2614,7 @@ export async function handleTrackerUpdate(
       const summaryLines = [
         `Updated tracker item ${getTrackerDisplayRef(updatedRef)}:`,
         ...updateSummaryParts,
-        ...(issueKeyAvailabilityNote(updatedRef) ? [issueKeyAvailabilityNote(updatedRef).slice(1)] : []),
+        ...(updatedKeyMessage ? [`- **Issue key**: ${updatedKeyMessage}`] : []),
         ...(bodyWriteResult ? [`- **Body write**: Failed — ${bodyWriteResult.message}`] : []),
       ];
 
@@ -2702,12 +2744,18 @@ export async function handleTrackerLinkSession(
       const linkedIds = readLinkedTrackerItemIds(sessionResult.rows[0]?.metadata);
       await notifySessionLinkedTrackerChanged(targetSessionId, linkedIds);
 
+      const linkedRef = {
+        id: item.id,
+        issueKey: item.issueKey ?? existing.issue_key ?? undefined,
+        localKey: item.localKey ?? existing.local_key ?? undefined,
+      };
       const structured = {
         action: "linked" as const,
         trackerId: item.id,
         issueNumber: item.issueNumber ?? existing.issue_number ?? undefined,
-        issueKey: getAssignedIssueKey({ issueKey: item.issueKey ?? existing.issue_key ?? undefined }),
-        issueKeyStatus: issueKeyStatus({ issueKey: item.issueKey ?? existing.issue_key ?? undefined }),
+        issueKey: getAssignedIssueKey(linkedRef),
+        localKey: linkedRef.localKey,
+        issueKeyStatus: issueKeyStatus(linkedRef),
         type: item.type || existing.type || "",
         title: item.title || trackerData.title || "",
         linkedCount: linkedSessions.length,
@@ -2720,7 +2768,7 @@ export async function handleTrackerLinkSession(
             type: "text",
             text: JSON.stringify({
               structured,
-              summary: `Linked session ${targetSessionId} to tracker item ${getTrackerDisplayRef({ id: item.id, issueKey: item.issueKey ?? undefined })}. Total linked sessions: ${linkedSessions.length}${issueKeyAvailabilityNote(item)}`,
+              summary: `Linked session ${targetSessionId} to tracker item ${getTrackerDisplayRef(linkedRef)}. Total linked sessions: ${linkedSessions.length}${issueKeyAvailabilityNote(linkedRef, { canIssueKeys: isTrackerSyncActive(workspacePath) })}`,
             }),
           },
         ],
@@ -2822,12 +2870,18 @@ export async function handleTrackerUnlinkSession(
         await notifySessionLinkedTrackerChanged(targetSessionId, linkedIds);
       }
 
+      const unlinkedRef = {
+        id: item.id,
+        issueKey: item.issueKey ?? existing.issue_key ?? undefined,
+        localKey: item.localKey ?? existing.local_key ?? undefined,
+      };
       const structured = {
         action: "unlinked" as const,
         trackerId: item.id,
         issueNumber: item.issueNumber ?? existing.issue_number ?? undefined,
-        issueKey: getAssignedIssueKey({ issueKey: item.issueKey ?? existing.issue_key ?? undefined }),
-        issueKeyStatus: issueKeyStatus({ issueKey: item.issueKey ?? existing.issue_key ?? undefined }),
+        issueKey: getAssignedIssueKey(unlinkedRef),
+        localKey: unlinkedRef.localKey,
+        issueKeyStatus: issueKeyStatus(unlinkedRef),
         type: item.type || existing.type || "",
         title: item.title || trackerData.title || "",
         linkedCount: linkedSessions.length,
@@ -2835,12 +2889,11 @@ export async function handleTrackerUnlinkSession(
         removed,
       };
 
-      const unlinkedRef = { id: item.id, issueKey: item.issueKey ?? undefined };
       const displayRef = getTrackerDisplayRef(unlinkedRef);
       const summary = (removed
         ? `Unlinked session ${targetSessionId} from tracker item ${displayRef}. Total linked sessions: ${linkedSessions.length}`
         : `Session ${targetSessionId} was not linked to tracker item ${displayRef}. Total linked sessions: ${linkedSessions.length}`)
-        + issueKeyAvailabilityNote(unlinkedRef);
+        + issueKeyAvailabilityNote(unlinkedRef, { canIssueKeys: isTrackerSyncActive(workspacePath) });
 
       return {
         content: [
@@ -3040,6 +3093,12 @@ export async function handleTrackerAddComment(
         : false,
     );
 
+    const commentedRef = {
+      id: row.id,
+      issueKey: row.issue_key ?? undefined,
+      localKey: row.local_key ?? undefined,
+    };
+
     return {
       content: [
         {
@@ -3049,12 +3108,13 @@ export async function handleTrackerAddComment(
               action: "commented" as const,
               trackerId: row.id,
               issueNumber: row.issue_number ?? undefined,
-              issueKey: getAssignedIssueKey({ issueKey: row.issue_key ?? undefined }),
-              issueKeyStatus: issueKeyStatus({ issueKey: row.issue_key ?? undefined }),
+              issueKey: getAssignedIssueKey(commentedRef),
+              localKey: commentedRef.localKey,
+              issueKeyStatus: issueKeyStatus(commentedRef),
               commentId,
               author: authorIdentity.displayName,
             },
-            summary: `Added comment to ${getTrackerDisplayRef({ id: row.id, issueKey: row.issue_key ?? undefined })} by ${authorIdentity.displayName}${issueKeyAvailabilityNote({ issueKey: row.issue_key ?? undefined })}`,
+            summary: `Added comment to ${getTrackerDisplayRef(commentedRef)} by ${authorIdentity.displayName}${issueKeyAvailabilityNote(commentedRef, { canIssueKeys: isTrackerSyncActive(workspacePath) })}`,
           }),
         },
       ],

@@ -8,7 +8,7 @@ import { selectedOrgIdAtom } from '../../../store/atoms/orgScope';
 import { dialogRef } from '../../../contexts/DialogContext';
 import { DIALOG_IDS } from '../../../dialogs/registry';
 import { organizationDirectoryAtom } from '../../../store/atoms/settingsDomains';
-import { trackerItemsMapAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
+import { orgTrackerItemsAtom, trackerItemsMapAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import { OrgModeHost } from '../OrgModeHost';
 import { ORG_WINDOW_SURFACE_ID } from '../orgWindowState';
 
@@ -230,7 +230,7 @@ describe('TeamMode organization targeting', () => {
     expect(store.get(selectedOrgIdAtom)).toBe('org-workspace');
   });
 
-  it('hydrates canonical tracker records for chips in the dedicated org window', async () => {
+  it('hydrates the org tracker slice for chips without touching workspace records', async () => {
     installApi();
     const invoke = (window as any).electronAPI.invoke as ReturnType<typeof vi.fn>;
     invoke.mockImplementation(async (channel: string, payload?: { orgId?: string }) => {
@@ -250,34 +250,10 @@ describe('TeamMode organization targeting', () => {
       return [];
     });
     const store = createStore();
-    render(
-      <Provider store={store}>
-        <OrgModeHost
-        orgId="org-other"
-        surfaceId={ORG_WINDOW_SURFACE_ID}
-        chrome="window"
-        />
-      </Provider>,
-    );
-
-    await waitFor(() => expect(
-      store.get(trackerItemsMapAtom).get('plan-1'),
-    ).toMatchObject({
-      issueKey: 'NIM-2300',
-      primaryType: 'plan',
-      fields: {
-        title: 'Satellite apps',
-        status: 'in-progress',
-      },
-    }));
-  });
-
-  it('leaves the workspace tracker records alone when org mode is a project-window mode', async () => {
-    installApi();
-    const store = createStore();
-    // What initTrackerSyncListeners loads at startup. Org mode is mounted in
-    // the project window as a hidden mode and shares this store, so seeding it
-    // from the org here would empty every tracker surface (#3637).
+    // What initTrackerSyncListeners loads at startup. Org mode shares this
+    // store whenever it is a mode rather than a window, and stays mounted while
+    // hidden, so seeding the workspace map here emptied every tracker surface
+    // (#3637). Asserted as a mode because that is the arrangement that broke.
     store.set(trackerItemsMapAtom, new Map([['bug-1', { id: 'bug-1' } as never]]));
 
     render(
@@ -287,8 +263,15 @@ describe('TeamMode organization targeting', () => {
     );
 
     await waitFor(() => expect(
-      (window as any).electronAPI.organization.listMembers,
-    ).toHaveBeenCalledWith('org-other'));
+      store.get(orgTrackerItemsAtom).get('org-other')?.get('plan-1'),
+    ).toMatchObject({
+      issueKey: 'NIM-2300',
+      primaryType: 'plan',
+      fields: {
+        title: 'Satellite apps',
+        status: 'in-progress',
+      },
+    }));
     expect(store.get(trackerItemsMapAtom).get('bug-1')).toBeDefined();
   });
 

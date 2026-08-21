@@ -366,15 +366,20 @@ describe('groupTraySessions', () => {
       .some((s) => s.sessionId === 'quiet')).toBe(false);
   });
 
-  it('excludes archived and complete-phase sessions, matching agentSessionAttentionAtom', () => {
+  // An agent sets phase 'complete' just before its closing output, which is what
+  // flags the session unread -- so `complete` may only suppress the running
+  // bucket, never an unread or prompting one. Mirrors agentSessionAttentionAtom.
+  it('excludes archived sessions, and lets complete-phase suppress only Running', () => {
     const feed = groupTraySessions([
-      { ...base, sessionId: 'archived', title: 'Archived', status: 'completed', hasUnread: true, isArchived: true, updatedAt: 3 },
-      { ...base, sessionId: 'done', title: 'Done', status: 'running', hasPendingPrompt: true, phase: 'complete', updatedAt: 2 },
-      { ...base, sessionId: 'kept', title: 'Kept', status: 'completed', hasUnread: true, phase: 'validating', updatedAt: 1 },
+      { ...base, sessionId: 'archived', title: 'Archived', status: 'completed', hasUnread: true, isArchived: true, updatedAt: 4 },
+      { ...base, sessionId: 'done-streaming', title: 'Done streaming', status: 'running', phase: 'complete', updatedAt: 3 },
+      { ...base, sessionId: 'done-prompting', title: 'Done prompting', status: 'running', hasPendingPrompt: true, phase: 'complete', updatedAt: 2 },
+      { ...base, sessionId: 'done-unread', title: 'Done unread', status: 'completed', hasUnread: true, phase: 'complete', updatedAt: 1 },
     ] as any);
 
-    expect(feed.needsAttention).toEqual([]);
-    expect(feed.unread.map((s) => s.sessionId)).toEqual(['kept']);
+    expect(feed.needsAttention.map((s) => s.sessionId)).toEqual(['done-prompting']);
+    expect(feed.running).toEqual([]);
+    expect(feed.unread.map((s) => s.sessionId)).toEqual(['done-unread']);
   });
 
   it('sorts newest first and derives the workspace chip from the path', () => {

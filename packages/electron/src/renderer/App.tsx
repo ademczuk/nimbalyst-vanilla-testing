@@ -2692,8 +2692,6 @@ export default function App() {
           }}
           panelControls={windowTopBarPanelControls}
           newSessionControl={windowTopBarNewSessionControl}
-          workspacePath={workspacePath}
-          onOpenOrgMode={() => setActiveMode('org')}
         />
       )}
       <div data-layout="workspace-row" className="flex flex-row flex-1 min-h-0">

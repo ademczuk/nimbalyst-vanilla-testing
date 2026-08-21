@@ -3,6 +3,7 @@ import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import chokidar, { FSWatcher as ChokidarFSWatcher } from 'chokidar';
 import ignore, { Ignore } from 'ignore';
+import { ATOMIC_WRITE_TEMP_SUFFIX } from './safeFileWrite';
 import { logger } from '../utils/logger';
 import { shouldExcludeDir } from '../utils/fileFilters';
 import { isPathInWorkspace } from '../utils/workspaceDetection';
@@ -282,6 +283,12 @@ function shouldIgnoreHardcoded(relativePath: string): boolean {
   }
 
   const basename = segments[segments.length - 1];
+
+  // Scratch files from an atomic save. They exist for microseconds inside the
+  // workspace, and surfacing them would emit an add/unlink pair per autosave.
+  if (basename.endsWith(ATOMIC_WRITE_TEMP_SUFFIX)) {
+    return true;
+  }
 
   // Ignore OS junk files
   if (IGNORED_BASENAMES.has(basename)) {

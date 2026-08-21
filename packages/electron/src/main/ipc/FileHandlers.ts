@@ -4,6 +4,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { basename, join, dirname, extname } from 'path';
 import { windowStates, savingWindows, recentlyDeletedFiles, findWindowByFilePath, createWindow, getWindowId, windows, documentServices } from '../window/WindowManager';
 import { loadFileIntoWindow, saveFile } from '../file/FileOperations';
+import { shouldBlockEmptyOverwrite } from '../file/safeFileWrite';
 import { openFileWithDialog, openFile } from '../file/FileOpener';
 import { startFileWatcher, stopFileWatcher } from '../file/FileWatcher';
 import { AUTOSAVE_DELAY } from '../utils/constants';
@@ -201,6 +202,24 @@ export function registerFileHandlers() {
             if (!existsSync(filePath)) {
                 logger.main.info(`[SAVE] File no longer exists on disk, skipping save: ${filePath}`);
                 return { success: false, deleted: true, filePath };
+            }
+
+            // An editor that never finished mounting serializes to an empty
+            // buffer, and the conflict check above still passes because disk
+            // matches last-known. Without this the autosave that follows
+            // cleanly writes 0 bytes over the user's file (GitHub #647).
+            // Only reads disk when the incoming content is already blank.
+            if (content.trim().length === 0) {
+                let diskContent = '';
+                try {
+                    diskContent = readFileSync(filePath, 'utf-8');
+                } catch (readError) {
+                    console.error('[SAVE] Failed to read file for empty-write check:', readError);
+                }
+                if (shouldBlockEmptyOverwrite({ content, diskContent, source: saveSource })) {
+                    logger.main.warn(`[SAVE] Refused empty autosave over non-empty file: ${filePath}`);
+                    return { success: false, errorType: 'empty_write_blocked', filePath };
+                }
             }
 
             // Mark that we're saving to prevent file watcher from reacting

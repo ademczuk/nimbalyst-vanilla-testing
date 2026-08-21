@@ -19,6 +19,7 @@ import {
   broadcastWorkspaceOrgChanged,
 } from '../services/TeamService';
 import { initializeTrackerSync } from '../services/TrackerSyncManager';
+import { ensureWorkspaceLocalNumbersInBackground } from '../services/tracker/ensureWorkspaceLocalNumbers';
 import { updateTrackerSchemaWorkspace } from '../services/TrackerSchemaService';
 import { getDialogDefaultPath, rememberDialogSelection } from '../utils/dialogPaths';
 import { windowReferencesWorkspace } from './windowState';
@@ -493,6 +494,10 @@ export function setupWorkspaceManagerHandlers() {
       // we've yielded the main thread; both paths may probe git remotes.
       void autoMatchTeamForWorkspace(workspacePath).catch(() => {});
       void initializeTrackerSync(workspacePath).catch(() => {});
+      // Sibling, not a step inside tracker sync: that path returns early for a
+      // workspace with no team, which is exactly the workspace whose items have
+      // nothing but a local number.
+      ensureWorkspaceLocalNumbersInBackground(workspacePath);
       updateTrackerSchemaWorkspace(workspacePath);
     }, 0);
 

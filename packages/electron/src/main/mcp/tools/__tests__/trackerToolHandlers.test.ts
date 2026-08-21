@@ -190,6 +190,7 @@ import {
   removeBidirectionalLink,
   rowToTrackerItem,
 } from '../trackerToolHandlers';
+import { getTrackerDisplayRef, issueKeyMessage, issueKeyStatus } from '../trackerToolResult';
 import { isTrackerSyncActive, syncTrackerItem } from '../../../services/TrackerSyncManager';
 import { assignLocalKeysToRows } from '../../../services/tracker/localKeyAllocator';
 import { getEffectiveTrackerSharingPolicy, shouldSyncTrackerItem } from '../../../services/TrackerPolicyService';
@@ -427,8 +428,16 @@ describe('handleTrackerCreate issue-key timing', () => {
       [expect.any(String)],
     );
     expect(summary).toContain('**Ref**: NIM.7');
-    // A local number is still not a key: publishing is what assigns one.
-    expect(structured.item.issueKeyStatus).toBe('unassigned');
+    // A local number is not a *shared* key -- `issueKey` stays empty and only
+    // the room can fill it. But it is a real reference, so the status says
+    // `local`, not `unassigned`. Reporting a numbered item as unassigned is
+    // what made the tool contradict its own ref one line above (#1346).
+    expect(structured.item.issueKeyStatus).toBe('local');
+    expect(structured.item.issueKey).toBeUndefined();
+    expect(structured.item.localKey).toBe('NIM.7');
+    // Sync is inactive here, so "publish it" is not advice this workspace can
+    // act on and must not appear.
+    expect(summary).not.toContain('until it is published');
   });
 
   it('leaves a team draft without any key', async () => {
@@ -621,6 +630,61 @@ describe('rowToTrackerItem content decoding', () => {
   it('returns undefined when content is null', () => {
     const item = rowToTrackerItem(makeRow({ content: null }));
     expect(item.content).toBeUndefined();
+  });
+});
+
+/**
+ * The agent-facing key contract. A numbered item reporting `unassigned` sent
+ * agents to a publish action that a personal tracker refuses outright, and told
+ * team-less workspaces a key was still coming when nothing would ever mint one
+ * (#1346, #1243). Table-driven because the bug lives in the combinations, not
+ * in any single input.
+ */
+describe('issue key status and message', () => {
+  const LOCAL = 'NIM.75';
+  const TEAM = 'NIM-75';
+
+  it.each([
+    // ref,                        published, canIssueKeys, status,       messageMatch
+    [{ issueKey: TEAM },                false, true,  'assigned',   null],
+    [{ issueKey: TEAM, localKey: LOCAL }, false, true,  'assigned',   null],
+    [{ localKey: LOCAL },               false, true,  'local',      /private to this project/],
+    [{ localKey: LOCAL },               false, false, 'local',      /no team/],
+    [{},                                false, true,  'unassigned', /until it is published/],
+    [{},                                true,  true,  'unassigned', /still pending/],
+    // The #1346 shape: published, healthy auth, and no room to answer.
+    [{},                                true,  false, 'unassigned', /no team/],
+  ] as const)(
+    'reports %j as %s',
+    (ref, published, canIssueKeys, expectedStatus, messageMatch) => {
+      expect(issueKeyStatus(ref)).toBe(expectedStatus);
+      const message = issueKeyMessage(ref, { published, canIssueKeys });
+      if (messageMatch === null) expect(message).toBe('');
+      else expect(message).toMatch(messageMatch);
+    },
+  );
+
+  it('never advises publishing an item that has no room to publish to', () => {
+    for (const ref of [{ localKey: LOCAL }, {}]) {
+      const message = issueKeyMessage(ref, { canIssueKeys: false, published: true });
+      expect(message).not.toMatch(/until it is published/);
+      expect(message).not.toMatch(/still pending/);
+    }
+  });
+
+  it('still explains the private number when it also explains the missing room', () => {
+    // Both facts matter: why there is no key, and what the reference in hand
+    // actually is. Reporting only the first leaves the agent with a number it
+    // does not know the rules for.
+    const message = issueKeyMessage({ localKey: LOCAL }, { canIssueKeys: false });
+    expect(message).toMatch(/no team/);
+    expect(message).toMatch(/private to this project/);
+  });
+
+  it('prefers the room key over the local number as the display ref', () => {
+    expect(getTrackerDisplayRef({ id: 'row_1', issueKey: TEAM, localKey: LOCAL })).toBe(TEAM);
+    expect(getTrackerDisplayRef({ id: 'row_1', localKey: LOCAL })).toBe(LOCAL);
+    expect(getTrackerDisplayRef({ id: 'row_1' })).toBe('row_1');
   });
 });
 

@@ -32,6 +32,36 @@ export const trackerItemsMapAtom = atom<Map<string, TrackerRecord>>(new Map());
  */
 export const trackerDataLoadedAtom = atom(false);
 
+/**
+ * Tracker records an organization surface knows about, sliced by org id.
+ *
+ * Separate from `trackerItemsMapAtom` on purpose. An org surface sees items
+ * across every project in the org, so its records are not the workspace's and
+ * must never replace them -- an org body that seeded the workspace map emptied
+ * every tracker surface in the project window (#3637). Keeping the two apart
+ * means no arrangement of windows and modes can make one clobber the other.
+ *
+ * Only reference resolution reads this, as a fallback behind the workspace map:
+ * counts, grids and pickers are workspace surfaces and stay workspace-only.
+ */
+export const orgTrackerItemsAtom = atom<Map<string, Map<string, TrackerRecord>>>(new Map());
+
+/**
+ * Replace one organization's slice, leaving the other orgs' slices intact.
+ */
+export const replaceOrgTrackerItemsAtom = atom(
+  null,
+  (get, set, { orgId, records }: { orgId: string; records: TrackerRecord[] }) => {
+    const byOrg = new Map(get(orgTrackerItemsAtom));
+    const slice = new Map<string, TrackerRecord>();
+    for (const record of records) {
+      slice.set(record.id, record);
+    }
+    byOrg.set(orgId, slice);
+    set(orgTrackerItemsAtom, byOrg);
+  }
+);
+
 // ============================================================
 // Derived Read Atoms
 // ============================================================
@@ -106,15 +136,28 @@ export const trackerItemByIdAtom = atomFamily((id: string) =>
  * A single tracker record by reference key — an issue key (NIM-123) or the
  * internal record id. Used by inline tracker reference chips, which store only
  * a reference key and resolve the live record here. Returns null when no record
- * matches (unknown / not yet synced / different workspace).
+ * matches (unknown / not yet synced / outside both the workspace and the org).
+ *
+ * The workspace wins when both hold the key: it is the copy the rest of the UI
+ * edits, so a chip agrees with the grid next to it. Org slices are searched
+ * after, which is how a chip in an org room resolves an item belonging to a
+ * project this window has not opened.
  */
 export const trackerItemByReferenceKeyAtom = atomFamily((referenceKey: string) =>
   atom((get) => {
-    const map = get(trackerItemsMapAtom);
-    const direct = map.get(referenceKey);
-    if (direct) return direct;
-    for (const record of map.values()) {
-      if (record.issueKey === referenceKey) return record;
+    const findIn = (map: Map<string, TrackerRecord>): TrackerRecord | null => {
+      const direct = map.get(referenceKey);
+      if (direct) return direct;
+      for (const record of map.values()) {
+        if (record.issueKey === referenceKey) return record;
+      }
+      return null;
+    };
+    const workspace = findIn(get(trackerItemsMapAtom));
+    if (workspace) return workspace;
+    for (const slice of get(orgTrackerItemsAtom).values()) {
+      const match = findIn(slice);
+      if (match) return match;
     }
     return null;
   })

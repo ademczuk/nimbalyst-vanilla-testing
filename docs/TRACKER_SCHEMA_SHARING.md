@@ -37,7 +37,11 @@ The state is visible on the item detail header and in the tracker table's Public
 
 ## Numbering
 
-Personal items and drafts receive no human-readable issue key. They still have an internal row ID so the database and tools can address them, but no prefix-number key is minted before publication.
+Personal items and drafts receive no **shared** issue key. They do receive a machine-private number — `NIM.75`, prefix and dot and number — assigned by [`localKeyAllocator.ts`](../packages/electron/src/main/services/tracker/localKeyAllocator.ts) with no server round-trip. The dot is the whole distinction: a room prefix is two to five uppercase letters, so `NIM.75` and `NIM-75` can never be confused, and the private one fails loudly instead of resolving to someone else's item.
+
+A local number is real, stable, and never reissued, so it is safe to hold. It is **not** safe to share: the same value in another project on the same machine, or on a colleague's machine, is a different item. Agents and the CLI are told this every time they are handed one.
+
+Numbering runs in two places. `ElectronDocumentService.assignLocalKeysFrom` numbers rows a list or create has already read — cheap, and nothing in the steady state. [`ensureWorkspaceLocalNumbers`](../packages/electron/src/main/services/tracker/ensureWorkspaceLocalNumbers.ts) sweeps the whole workspace once per process at window open. That sweep is deliberately a **sibling** of `initializeTrackerSync`, not a step inside it: that function returns early when there is no team, which is precisely the workspace whose items will only ever have a local number.
 
 On publication, or when existing items are published as part of personal-to-team tracker promotion, the server-side TrackerRoom assigns the issue number and key. Clients no longer allocate a provisional key. Every tracker type in the same room draws from that room's one prefix and monotonically advancing sequence, so Bugs, Features, Plans, and other team trackers in the same shared project do not have separate number ranges.
 
@@ -47,7 +51,17 @@ The issue number sequence remains per shared project room. Prefixes are unique a
 
 Existing keys are immutable. When a room that predates prefix reservations claims a prefix already held by another project, the server reports the collision and leaves every existing key unchanged. That room may continue updating already-keyed items, but it cannot mint another key until a user assigns a free prefix.
 
-An unkeyed draft reads as normal, not as a failure: surfaces show "No key yet" with the settled explanation "This item has no key until it is published." (`issueKeyStatus: 'unassigned'`), never the internal row ID dressed up as a key. `reconcileIssueKeyOnPublish` in [`trackerLifecycle.ts`](../packages/runtime/src/plugins/TrackerPlugin/models/trackerLifecycle.ts) is the client-side statement of the invariant: a key is minted once at publication and an existing one is kept, so re-publishing or sweeping an already-published item during promotion can never consume a second number.
+`issueKeyStatus` has three values, and every surface — the tracker grid, the agent tools, and `nim --json` — reports the same one:
+
+| Value | Meaning | What the reader is told |
+| --- | --- | --- |
+| `assigned` | a key the room owns | nothing further; it resolves for everyone |
+| `local` | this machine's private number | it is not a shared key; keep it out of commit messages |
+| `unassigned` | a team draft waiting on the room | "This item has no key until it is published." |
+
+An unkeyed draft reads as normal, not as a failure, and the internal row ID is never dressed up as a key. The `local` value exists because collapsing it into `unassigned` was a lie with consequences: it sent agents to a publish action that a personal tracker refuses outright, and told a team-less workspace that a key was still pending when nothing would ever mint one (#1346, #1243). Where no room exists at all, the message says so rather than advising publication.
+
+The four sentences live in [`trackerLifecycle.ts`](../packages/runtime/src/plugins/TrackerPlugin/models/trackerLifecycle.ts) and nowhere else; the CLI carries a marked vendored copy because it cannot import the runtime. `reconcileIssueKeyOnPublish` in the same module is the client-side statement of the invariant: a key is minted once at publication and an existing one is kept, so re-publishing or sweeping an already-published item during promotion can never consume a second number.
 
 ## Promotion and archiving
 

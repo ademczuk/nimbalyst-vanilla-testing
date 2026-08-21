@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TrackerItem } from '@nimbalyst/runtime/core/DocumentService';
 import { trackerItemToRecord } from '@nimbalyst/runtime/core/TrackerRecord';
-import { replaceAllTrackerItemsAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
+import { replaceOrgTrackerItemsAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import { useAtomValue, useStore } from 'jotai';
 
 import {
@@ -182,30 +182,27 @@ export function OrgModeBody({
     });
   }, [activeConversationId, chrome, orgId, route.view]);
 
-  // Only the standalone window owns the tracker record map. As a project-window
-  // mode this body shares the one app store with tracker mode, which already
-  // holds the workspace's items -- and it stays mounted while hidden, so seeding
-  // from the org here emptied every tracker surface at startup (#3637).
-  const ownsTrackerRecords = chrome === 'window';
+  // Into this org's own slice, never the workspace map. Whenever this body is a
+  // mode rather than a window it shares one store with tracker mode, and it
+  // stays mounted while hidden, so seeding the workspace map from here emptied
+  // every tracker surface at startup (#3637). Chips fall back to the slice.
   useEffect(() => {
-    if (!ownsTrackerRecords) return;
     let cancelled = false;
-    trackerStore.set(replaceAllTrackerItemsAtom, []);
     void window.electronAPI.invoke(
       'team-window:tracker-items-list',
       { orgId },
     ).then((items: TrackerItem[]) => {
       if (cancelled) return;
-      trackerStore.set(
-        replaceAllTrackerItemsAtom,
-        (items ?? []).map(trackerItemToRecord),
-      );
+      trackerStore.set(replaceOrgTrackerItemsAtom, {
+        orgId,
+        records: (items ?? []).map(trackerItemToRecord),
+      });
     }).catch((error) => {
       if (cancelled) return;
       console.error('[TeamMode] Failed to load tracker metadata:', error);
     });
     return () => { cancelled = true; };
-  }, [orgId, ownsTrackerRecords, trackerStore]);
+  }, [orgId, trackerStore]);
 
   // Keyed on the id, not the entry object: every directory refresh produces a
   // fresh descriptor object for the same room, which would otherwise refetch

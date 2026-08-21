@@ -98,6 +98,40 @@ export function findRestorableBackups(userDataPath: string): RestorableBackup[] 
   return found;
 }
 
+/**
+ * How many projects this install has settings for, read straight from the
+ * electron-store JSON rather than through `Store` so it works from the SQLite
+ * worker thread, which has no electron bindings.
+ *
+ * This is deliberately a fact about the install rather than about the
+ * database: it is how a migration can tell "this store has no sessions because
+ * the app is new" apart from "this store has no sessions because it is not the
+ * user's store" (NIM-3632).
+ */
+export function countConfiguredProjects(userDataPath: string): number {
+  const fromWorkspaces = countJsonKeys(path.join(userDataPath, 'workspace-settings.json'));
+  if (fromWorkspaces > 0) return fromWorkspaces;
+  try {
+    const raw = fs.readFileSync(path.join(userDataPath, 'app-settings.json'), 'utf-8');
+    const parsed = JSON.parse(raw) as { recent?: { workspaces?: unknown[] } };
+    return Array.isArray(parsed.recent?.workspaces) ? parsed.recent.workspaces.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function countJsonKeys(filePath: string): number {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return Object.keys(parsed).length;
+    }
+  } catch {
+    // Missing or unparseable settings mean no evidence, which is permissive.
+  }
+  return 0;
+}
+
 /** Compact size for display in a plain-text dialog. */
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

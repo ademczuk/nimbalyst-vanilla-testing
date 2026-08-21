@@ -95,7 +95,10 @@ export class LiveGateway implements TrackerGateway {
 
   async getTrackerBody(workspace: string, record: TrackerRecord): Promise<string | undefined> {
     // tracker_get returns the markdown body in its summary / structured payload.
-    const result = await this.client.callTool(workspace, 'tracker_get', { id: record.issueKey ?? record.id });
+    // The id, not a key: this is a second lookup of a record already in hand,
+    // so there is nothing to gain from a key and something to lose -- a local
+    // number is workspace-scoped and a stale room key may have been rewritten.
+    const result = await this.client.callTool(workspace, 'tracker_get', { id: record.id });
     const body = result.structured?.body ?? result.structured?.item?.body;
     if (typeof body === 'string') return body;
     return result.summary;
@@ -304,6 +307,7 @@ function mcpItemToRecord(item: any): TrackerRecord {
     typeTags: Array.isArray(item.typeTags) ? item.typeTags : [item.type],
     issueNumber: item.issueNumber,
     issueKey: item.issueKey,
+    localKey: item.localKey,
     source: item.source ?? 'native',
     sourceRef: item.sourceRef,
     archived: item.archived ?? false,

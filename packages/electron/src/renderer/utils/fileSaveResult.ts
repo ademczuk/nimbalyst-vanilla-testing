@@ -42,6 +42,8 @@ export function getSaveFailureMessage(
       return `${prefix} because the operating system could not write the file. Your edits remain unsaved.`;
     case 'conflict':
       return `${prefix} because the file changed on disk. Your edits remain unsaved.`;
+    case 'empty_write_blocked':
+      return `${prefix} because it would have emptied a file that still has content. Your edits remain unsaved — save manually if you meant to clear the file.`;
     default:
       return `${prefix}. Your edits remain unsaved.`;
   }

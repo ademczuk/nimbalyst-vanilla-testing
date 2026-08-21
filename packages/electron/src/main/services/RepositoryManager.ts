@@ -29,6 +29,7 @@ import { createSQLiteStoreAdapter } from '../database/sqlite/SQLiteStoreAdapter'
 import { logger } from '../utils/logger';
 import { initializeSync, shutdownSync, isSyncEnabled, reinitializeSync } from './SyncManager';
 import { shutdownTrackerSync, initializeTrackerSync } from './TrackerSyncManager';
+import { ensureWorkspaceLocalNumbersInBackground } from './tracker/ensureWorkspaceLocalNumbers';
 import { onAuthStateChange } from './StytchAuthService';
 import { windows, windowStates } from '../window/WindowManager';
 
@@ -345,6 +346,10 @@ class RepositoryManager {
         initializeTrackerSync(state.workspacePath).catch(err => {
           logger.main.error('[RepositoryManager] Failed to initialize tracker sync for workspace:', err);
         });
+        // Usually a no-op -- the window already swept on open. It matters when
+        // that sweep failed because the database was not up yet: this is the
+        // only later trigger a single-window workspace gets.
+        ensureWorkspaceLocalNumbersInBackground(state.workspacePath);
       }
     }
   }

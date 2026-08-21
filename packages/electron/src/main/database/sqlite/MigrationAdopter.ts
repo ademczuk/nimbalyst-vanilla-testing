@@ -35,6 +35,9 @@ import { MigrationProgressReporter } from './MigrationProgressReporter';
 import { commitMigrationToSqlite } from './BackendSelector';
 import { DRY_RUN_MANIFEST_FILENAME } from './MigrationDryRunner';
 import { classifyDatabaseError } from '../DatabaseErrorTelemetry';
+import { dirSizeBytes } from './dirSize';
+import { findRestorableBackups } from './recoveryArtifacts';
+import { assessMigrationSource, gatherMigrationSourceFacts } from './migrationSourcePlausibility';
 
 /**
  * Same single-statement read surface MigrationDryRunner uses — lets us pull
@@ -74,6 +77,11 @@ export interface AdopterOptions {
   migrator?: PGLiteToSQLiteMigrator;
   log?: (level: 'info' | 'warn' | 'error', msg: string, meta?: unknown) => void;
   sendEvent?: (eventName: string, properties: Record<string, unknown>) => void;
+  /**
+   * Projects configured in app settings — evidence from outside the database
+   * that this install has been used. See `migrationSourcePlausibility.ts`.
+   */
+  configuredProjectCount?: number;
 }
 
 export interface AdoptResult {
@@ -141,6 +149,30 @@ export class MigrationAdopter {
       pgliteMigratedDir,
       manifestAge: Date.now() - new Date(manifest.completedAt).getTime(),
     });
+
+    // Adopting is a cutover, so it needs the same source check the orchestrator
+    // does: a dry-run taken against an emptied PGLite store is exactly as
+    // permanent once it becomes the active backend (NIM-3632). Event first, so
+    // a refusal is recorded even if this process dies immediately after.
+    const plausibility = assessMigrationSource(
+      await gatherMigrationSourceFacts({
+        userDataPath: userData,
+        liveDirBytes: fs.existsSync(pgliteDir) ? dirSizeBytes(pgliteDir) : 0,
+        pglite: this.opts.pglite,
+        configuredProjectCount: this.opts.configuredProjectCount,
+        findBackups: findRestorableBackups,
+      }),
+    );
+    if (!plausibility.ok) {
+      this.opts.sendEvent?.('migration_refused_implausible_source', {
+        reason: plausibility.reason,
+        path: 'adopt',
+      });
+      log('error', '[adopter] refusing to adopt an implausible source', {
+        reason: plausibility.reason,
+      });
+      throw new Error(plausibility.reason);
+    }
 
     // Refuse to clobber an existing sqlite-db/. If a prior adopt failed mid-way
     // we want a human to look at it.

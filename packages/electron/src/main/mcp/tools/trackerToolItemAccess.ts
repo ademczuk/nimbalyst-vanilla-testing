@@ -97,5 +97,11 @@ export async function resolveTrackerItemFromDocumentService(
   if (byId) return byId;
 
   const allItems = await docService.listTrackerItems();
-  return allItems.find((candidate) => candidate.issueKey === reference) || null;
+  // Local numbers resolve here too. `resolveTrackerRowByReference` has matched
+  // them since they were introduced; this path did not, so which references an
+  // agent could read back depended on which lookup its tool happened to use.
+  // The service is already workspace-scoped, so the ambiguity that gates the
+  // database path does not arise.
+  return allItems.find((candidate) => candidate.issueKey === reference
+    || candidate.localKey === reference) || null;
 }

@@ -34,6 +34,7 @@ import { MigrationOrchestrator, type LivePgliteReader as OrchestratorLivePgliteR
 import { MigrationDryRunner } from '../MigrationDryRunner';
 import { MigrationAdopter } from '../MigrationAdopter';
 import { MigrationProgressReporter } from '../MigrationProgressReporter';
+import { countConfiguredProjects } from '../recoveryArtifacts';
 import {
   type RequestEnvelope,
   type ResponseEnvelope,
@@ -468,6 +469,7 @@ async function handle(req: RequestEnvelope): Promise<unknown> {
         schemaDir,
         pglite: buildPgliteReader(),
         closeRunningPglite: async () => undefined,
+        configuredProjectCount: countConfiguredProjects(userDataPath),
         log: workerLogger,
       });
       return orch.preflight();
@@ -486,6 +488,7 @@ async function handle(req: RequestEnvelope): Promise<unknown> {
           pglite: buildPgliteReader(),
           closeRunningPglite: bridgeClosePglite,
           reopenPgliteAfterClose: reopenClosedPglite,
+          configuredProjectCount: countConfiguredProjects(userDataPath),
           onCutoverSuccess: async (info) => {
             emit('db:migration:cutoverSuccess', {
               sqliteDir: info.sqliteDir,
@@ -534,6 +537,7 @@ async function handle(req: RequestEnvelope): Promise<unknown> {
         schemaDir,
         pglite: buildPgliteReader(),
         closeRunningPglite: async () => undefined,
+        configuredProjectCount: countConfiguredProjects(userDataPath),
         log: workerLogger,
       });
       const found = adopter.findDryRunDir();

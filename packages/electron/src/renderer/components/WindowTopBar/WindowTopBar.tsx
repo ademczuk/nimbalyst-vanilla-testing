@@ -8,10 +8,7 @@ import {
   trackerModeDocumentItemIdAtom,
   trackerModeLayoutAtom,
 } from '../../store/atoms/trackers';
-import { orgInboxUnreadCountAtomFamily } from '../../store/atoms/teamInbox';
 import { windowFullScreenAtom } from '../../store/atoms/windowFullScreen';
-import { formatUnreadCount } from '../../store/projectWindowUnreadViewModel';
-import { useProjectOrg } from '../../hooks/useProjectOrg';
 import { TRACKER_DOCUMENT_PANEL_MODES } from '../TrackerMode/trackerDocumentPanelModes';
 import { DRAG_REGION, NO_DRAG_REGION } from './dragRegion';
 import { WindowMenuBar } from './WindowMenuBar';
@@ -68,10 +65,6 @@ export interface WindowTopBarProps {
   gitActions: WindowTopBarGitActions;
   panelControls?: WindowTopBarPanelControls;
   newSessionControl?: WindowTopBarNewSessionControl;
-  /** Root project path, used to resolve which organization's inbox to open. */
-  workspacePath?: string | null;
-  /** Switch this project window to its organization messaging mode. */
-  onOpenOrgMode?: () => void;
 }
 
 const GIT_FEEDBACK_MAX_LINES = 6;
@@ -114,58 +107,6 @@ export function clampGitFeedbackMessage(
     truncated = true;
   }
   return truncated ? `${clamped}…` : clamped;
-}
-
-/**
- * Entry point to the active project's organization inbox in Org mode.
- *
- * Present whenever the project belongs to an organization, not only when
- * something is unread — before this control the only ways in were a menu item
- * and a footer chip that appeared solely while unread was non-zero, so a user
- * with a quiet inbox had no way to find messaging at all. The count is scoped to
- * this project's organization so the badge never refers to an inbox outside the
- * org being worked in.
- */
-function InboxButton({
-  workspacePath,
-  onOpenOrgMode,
-}: {
-  workspacePath?: string | null;
-  onOpenOrgMode?: () => void;
-}) {
-  const { org: projectOrg } = useProjectOrg(workspacePath);
-  const unreadCount = useAtomValue(
-    orgInboxUnreadCountAtomFamily(projectOrg?.orgId ?? ''),
-  );
-
-  if (!projectOrg) return null;
-
-  const label = unreadCount > 0 ? `Messages, ${unreadCount} unread` : 'Messages';
-
-  return (
-    <button
-      type="button"
-      className={`window-top-bar__inbox w-7 ${CONTROL_BASE} ${CONTROL_GHOST} ${NO_DRAG_REGION}`}
-      data-testid="window-top-bar-inbox"
-      aria-label={label}
-      title="Open organization inbox"
-      onClick={onOpenOrgMode}
-    >
-      <span className="relative inline-flex items-center justify-center">
-        <MaterialSymbol icon="inbox" size={18} />
-        {unreadCount > 0 && (
-          <span
-            // Ringed in the bar's own background so the count stays legible
-            // where it overlaps the glyph.
-            className="window-top-bar__inbox-badge absolute -top-1.5 -right-2.5 min-w-[15px] rounded-full px-[3px] text-[9.5px] font-bold leading-[15px] text-white bg-nim-error shadow-[0_0_0_2px_var(--nim-bg-secondary)]"
-            data-testid="window-top-bar-inbox-unread"
-          >
-            {formatUnreadCount(unreadCount)}
-          </span>
-        )}
-      </span>
-    </button>
-  );
 }
 
 function PanelButton({
@@ -469,8 +410,6 @@ export function WindowTopBar({
   gitActions,
   panelControls,
   newSessionControl,
-  workspacePath,
-  onOpenOrgMode,
 }: WindowTopBarProps) {
   const trackerDocumentItemId = useAtomValue(trackerModeDocumentItemIdAtom);
   const trackerLayout = useAtomValue(trackerModeLayoutAtom);
@@ -561,7 +500,6 @@ export function WindowTopBar({
             className="window-top-bar__right-actions flex items-center justify-end gap-1"
             data-testid="window-top-bar-right-actions"
           >
-            <InboxButton workspacePath={workspacePath} onOpenOrgMode={onOpenOrgMode} />
             {newSessionControl && (
               <button
                 type="button"

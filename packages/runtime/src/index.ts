@@ -101,6 +101,8 @@ export {
   upsertTrackerItemAtom,
   removeTrackerItemAtom,
   replaceAllTrackerItemsAtom,
+  orgTrackerItemsAtom,
+  replaceOrgTrackerItemsAtom,
 } from './plugins/TrackerPlugin';
 export type {
   TrackerItemData,

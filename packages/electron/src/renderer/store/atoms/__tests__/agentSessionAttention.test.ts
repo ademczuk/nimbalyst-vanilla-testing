@@ -89,19 +89,35 @@ describe('agentSessionAttentionAtom', () => {
     expect(groups.unread).toEqual([]);
   });
 
-  it('ignores completed, archived, and other-workspace sessions', () => {
+  it('ignores archived and other-workspace sessions', () => {
     const store = setup(
       session('current'),
-      session('completed', { phase: 'complete' }),
       session('archived', { isArchived: true }),
       session('other-workspace', { workspaceId: '/workspace/other' }),
     );
     store.set(sessionUnreadAtom('current'), true);
-    store.set(sessionHasPendingInteractivePromptAtom('completed'), true);
     store.set(sessionUnreadAtom('archived'), true);
     store.set(sessionUnreadAtom('other-workspace'), true);
 
     expect(store.get(agentSessionAttentionAtom).unread.map((item) => item.id)).toEqual(['current']);
-    expect(store.get(agentSessionAttentionAtom).awaitingInput).toEqual([]);
+  });
+
+  // An agent sets phase 'complete' just before its closing output, which is
+  // what flags the session unread -- so a blanket phase filter hid exactly the
+  // sessions that had just finished.
+  it('still surfaces a complete-phase session that is unread or awaiting input', () => {
+    const store = setup(
+      session('done-unread', { phase: 'complete' }),
+      session('done-awaiting', { phase: 'complete' }),
+      session('done-running', { phase: 'complete' }),
+    );
+    store.set(sessionUnreadAtom('done-unread'), true);
+    store.set(sessionHasPendingInteractivePromptAtom('done-awaiting'), true);
+    store.set(sessionProcessingAtom('done-running'), true);
+
+    const groups = store.get(agentSessionAttentionAtom);
+    expect(groups.unread.map((item) => item.id)).toEqual(['done-unread']);
+    expect(groups.awaitingInput.map((item) => item.id)).toEqual(['done-awaiting']);
+    expect(groups.running).toEqual([]);
   });
 });

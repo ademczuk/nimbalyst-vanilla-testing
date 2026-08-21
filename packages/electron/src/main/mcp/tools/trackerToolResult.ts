@@ -1,3 +1,8 @@
+import {
+  TRACKER_LOCAL_ISSUE_KEY_MESSAGE,
+  TRACKER_NO_TEAM_ISSUE_KEY_MESSAGE,
+  TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerLifecycle';
 import { isLocalIssueKey, resolveDisplayIssueKey } from '../../../shared/localIssueKey';
 import { TrackerSchemaChangeBlockedError } from '../../services/tracker/trackerSchemaChangeGuard';
 
@@ -49,7 +54,13 @@ export function destructiveSchemaChangeToolResult(error: TrackerSchemaChangeBloc
   };
 }
 
-export const UNPUBLISHED_ISSUE_KEY_MESSAGE = 'This item has no key until it is published.';
+/**
+ * Re-exported, not restated. This sentence used to be hand-copied here and in
+ * the CLI, and both copies missed `TRACKER_LOCAL_ISSUE_KEY_MESSAGE` when local
+ * numbers landed -- which is how a numbered `idea` item came to report "no key
+ * until it is published" on a tracker where publishing is refused (#1346).
+ */
+export const UNPUBLISHED_ISSUE_KEY_MESSAGE = TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE;
 const PUBLISHED_ISSUE_KEY_PENDING_MESSAGE = 'This item is published, but its server-issued key is still pending.';
 const COLLABORATIVE_BODY_WRITE_FAILURE_MESSAGE =
   'The item fields and local body snapshot were saved, but the body was not stored in collaborative tracker content. Retry the body write before treating it as available to collaborators.';
@@ -86,14 +97,61 @@ export function getTrackerDisplayRef(item: { issueKey?: string; localKey?: strin
   return resolveDisplayIssueKey(item) ?? item.id;
 }
 
-export function issueKeyAvailabilityNote(
-  item: { issueKey?: string | null },
-  published = false,
-): string {
-  if (getAssignedIssueKey(item)) return '';
-  return `\n- **Issue key**: ${published ? PUBLISHED_ISSUE_KEY_PENDING_MESSAGE : UNPUBLISHED_ISSUE_KEY_MESSAGE}`;
+/**
+ * Three states, because there are three, and collapsing them is what produced
+ * #1346. `assigned` is a key the room owns and everyone resolves the same way.
+ * `local` is this machine's private number: real, stable, and safe to hold --
+ * but not safe to put anywhere another person reads. `unassigned` shrinks back
+ * to its true meaning, a team draft genuinely waiting on the room.
+ *
+ * Reporting a numbered item as `unassigned` was not merely imprecise. It sent
+ * agents to a publish action that a personal tracker refuses outright, and told
+ * users of team-less workspaces that a key was still coming when nothing would
+ * ever mint one.
+ */
+export type IssueKeyStatus = 'assigned' | 'local' | 'unassigned';
+
+export interface IssueKeyContext {
+  /** Whether the item has been published to its team room. */
+  published?: boolean;
+  /**
+   * Whether a room exists that could mint a key at all. False for a workspace
+   * with no team -- the case where "publish it to get a key" is a dead end.
+   * Defaults to true so a caller that genuinely does not know does not invent
+   * a claim about the workspace.
+   */
+  canIssueKeys?: boolean;
 }
 
-export function issueKeyStatus(item: { issueKey?: string | null }): 'assigned' | 'unassigned' {
-  return getAssignedIssueKey(item) ? 'assigned' : 'unassigned';
+export type IssueKeyRef = { issueKey?: string | null; localKey?: string | null };
+
+export function issueKeyStatus(item: IssueKeyRef): IssueKeyStatus {
+  if (getAssignedIssueKey(item)) return 'assigned';
+  return item.localKey ? 'local' : 'unassigned';
+}
+
+/**
+ * What to tell a reader about a reference that is not a shared key, or nothing
+ * at all when it is one.
+ *
+ * The absent-room case wins over every other explanation because it is the one
+ * that changes what the reader should do next: no amount of publishing, waiting
+ * or retrying produces a key without a team.
+ */
+export function issueKeyMessage(item: IssueKeyRef, context: IssueKeyContext = {}): string {
+  const { published = false, canIssueKeys = true } = context;
+  const status = issueKeyStatus(item);
+  if (status === 'assigned') return '';
+  if (status === 'local') {
+    return canIssueKeys
+      ? TRACKER_LOCAL_ISSUE_KEY_MESSAGE
+      : `${TRACKER_NO_TEAM_ISSUE_KEY_MESSAGE} ${TRACKER_LOCAL_ISSUE_KEY_MESSAGE}`;
+  }
+  if (!published) return TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE;
+  return canIssueKeys ? PUBLISHED_ISSUE_KEY_PENDING_MESSAGE : TRACKER_NO_TEAM_ISSUE_KEY_MESSAGE;
+}
+
+export function issueKeyAvailabilityNote(item: IssueKeyRef, context: IssueKeyContext = {}): string {
+  const message = issueKeyMessage(item, context);
+  return message ? `\n- **Issue key**: ${message}` : '';
 }

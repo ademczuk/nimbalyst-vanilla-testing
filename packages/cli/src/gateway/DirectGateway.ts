@@ -9,6 +9,7 @@
 import type { Database as DB } from 'better-sqlite3';
 import * as fs from 'fs';
 import { openDatabase } from '../db/openDatabase.js';
+import { isLocalKeyReference } from '../vendor/localIssueKey.js';
 import { dbRowToRecord, type TrackerRecord } from '../vendor/trackerRecord.js';
 import {
   appendActivity,
@@ -253,26 +254,8 @@ export class DirectGateway implements TrackerGateway {
   }
 
   async getTracker(workspace: string, reference: string): Promise<TrackerRecord | null> {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM tracker_items
-         WHERE (id = @ref OR issue_key = @ref) AND workspace = @ws AND deleted_at IS NULL
-         ORDER BY updated DESC LIMIT 1`,
-      )
-      .get({ ref: reference, ws: workspace }) as any;
-    if (!row) {
-      // Fall back to a workspace-agnostic lookup so `nim tracker get BUG-1`
-      // works even when workspace resolution picked a sibling.
-      const any = this.db
-        .prepare(
-          `SELECT * FROM tracker_items
-           WHERE (id = @ref OR issue_key = @ref) AND deleted_at IS NULL
-           ORDER BY updated DESC LIMIT 1`,
-        )
-        .get({ ref: reference }) as any;
-      return any ? dbRowToRecord(any) : null;
-    }
-    return dbRowToRecord(row);
+    const row = this.findRow(this.db, workspace, reference);
+    return row ? dbRowToRecord(row) : null;
   }
 
   async getTrackerByUrn(workspace: string, urn: string): Promise<TrackerRecord | null> {
@@ -394,8 +377,30 @@ export class DirectGateway implements TrackerGateway {
     }
   }
 
-  /** Resolve a row by id or issue key, workspace-first then workspace-agnostic. */
+  /**
+   * Resolve a row by id, issue key, or this machine's local number.
+   *
+   * A dotted local number resolves **only** inside the named workspace, and
+   * deliberately does not fall through to the workspace-agnostic lookup below:
+   * `NIM.4` means a different item in every project on the machine, so a
+   * cross-workspace match would confidently return the wrong one. That is the
+   * whole reason the dotted form is distinguishable from `NIM-4` at all.
+   *
+   * The workspace-agnostic fallback stays for ids and room keys, so
+   * `nim tracker get BUG-1` still works when workspace resolution picked a
+   * sibling directory.
+   */
   private findRow(db: DB, workspace: string, reference: string): any {
+    if (isLocalKeyReference(reference)) {
+      return db
+        .prepare(
+          `SELECT * FROM tracker_items
+           WHERE local_key = @ref AND workspace = @ws AND deleted_at IS NULL
+           ORDER BY updated DESC LIMIT 1`,
+        )
+        .get({ ref: reference.trim().toUpperCase(), ws: workspace });
+    }
+
     const inWs = db
       .prepare(
         `SELECT * FROM tracker_items

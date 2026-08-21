@@ -8,6 +8,7 @@ import {
   getAssignedIssueKey,
   getTrackerDisplayRef,
   issueKeyAvailabilityNote,
+  issueKeyMessage,
   issueKeyStatus,
   type McpToolResult,
 } from './trackerToolResult';
@@ -53,8 +54,13 @@ export async function handleTrackerPublicationUpdate(
   }
 
   const existingKey = getAssignedIssueKey(item);
+  // Whether anything could mint a key at all. Without this the sync-inactive
+  // path below is silently skipped and the result still claims a key is
+  // "pending" -- the exact report in #1346, where the item was published and
+  // then waited nine days on a room that did not exist.
+  const canIssueKeys = isTrackerSyncActive(workspacePath);
   let publishedItem = await docService.setTrackerItemPublished(item.id, args.published);
-  if (args.published && !existingKey && !getAssignedIssueKey(publishedItem) && isTrackerSyncActive(workspacePath)) {
+  if (args.published && !existingKey && !getAssignedIssueKey(publishedItem) && canIssueKeys) {
     const serverKey = await awaitServerIssueKey(db, publishedItem.id);
     if (serverKey) {
       const keyedRow = await resolveTrackerRowByReference(db, publishedItem.id, workspacePath);
@@ -67,7 +73,13 @@ export async function handleTrackerPublicationUpdate(
     throw new Error(`Existing issue key changed during publication: ${existingKey} -> ${publishedKey}`);
   }
   const finalKey = existingKey ?? publishedKey;
-  const publishedRef = { id: publishedItem.id, issueKey: finalKey };
+  const publishedRef = {
+    id: publishedItem.id,
+    issueKey: finalKey,
+    localKey: publishedItem.localKey ?? item.localKey ?? undefined,
+  };
+  const keyContext = { published: args.published, canIssueKeys };
+  const keyMessage = issueKeyMessage(publishedRef, keyContext);
   return {
     content: [
       {
@@ -78,12 +90,14 @@ export async function handleTrackerPublicationUpdate(
             id: publishedItem.id,
             issueNumber: publishedItem.issueNumber ?? undefined,
             issueKey: finalKey,
+            localKey: publishedRef.localKey,
             issueKeyStatus: issueKeyStatus(publishedRef),
+            ...(keyMessage ? { issueKeyMessage: keyMessage } : {}),
             type: publishedItem.type,
             title: publishedItem.title || '',
             published: args.published,
           },
-          summary: `${args.published ? 'Published' : 'Unpublished'} tracker item ${getTrackerDisplayRef(publishedRef)}.${issueKeyAvailabilityNote(publishedRef, args.published)}`,
+          summary: `${args.published ? 'Published' : 'Unpublished'} tracker item ${getTrackerDisplayRef(publishedRef)}.${issueKeyAvailabilityNote(publishedRef, keyContext)}`,
         }),
       },
     ],

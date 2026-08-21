@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron';
-import { writeFileSync } from 'fs';
 import { basename } from 'path';
+import { writeFileAtomicSync } from './safeFileWrite';
 import { windowStates, getWindowId } from '../window/WindowManager';
 import { addToRecentItems } from '../utils/store';
 
@@ -38,7 +38,8 @@ export function loadFileIntoWindow(window: BrowserWindow, filePath: string) {
     }
 }
 
-// Save file
+// Save file. Atomic because a crash during a plain writeFileSync leaves the
+// user's file at 0 bytes -- see safeFileWrite.ts and GitHub #647.
 export function saveFile(filePath: string, content: string): void {
-    writeFileSync(filePath, content, 'utf-8');
+    writeFileAtomicSync(filePath, content);
 }
