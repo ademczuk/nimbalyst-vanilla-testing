@@ -99,19 +99,34 @@ export function writeBackendState(userDataPath: string, state: BackendState): vo
   fs.renameSync(tmpPath, flagPath);
 }
 
-/** Merge a partial update into the existing state without losing sibling fields. */
+/**
+ * Merge a partial update into the existing state without losing sibling fields.
+ *
+ * Returns `null` without writing when there is no state yet and the patch does
+ * not name a backend. Choosing a backend is `resolveBackend`'s job; a caller
+ * updating a sibling field must never decide it as a side effect. This used to
+ * default to `pglite`, which meant the kill-switch cache refresh — it runs on
+ * every launch, including a fresh install's first — wrote "pglite" into the
+ * flag file of an install that had just resolved to SQLite, pinning it to a
+ * PGLite database it should never have had (#1347).
+ */
 export function updateBackendState(
   userDataPath: string,
   patch: Partial<BackendState>,
-): BackendState {
+): BackendState | null {
   const current = readBackendState(userDataPath);
-  const next: BackendState = {
-    backend: current?.backend ?? 'pglite',
-    setAt: new Date().toISOString(),
-    setBy: current?.setBy ?? 'auto-migration-deferred',
-    ...current,
-    ...patch,
-  };
+  if (!current) {
+    if (!patch.backend || !patch.setBy) return null;
+    const created: BackendState = {
+      ...patch,
+      backend: patch.backend,
+      setBy: patch.setBy,
+      setAt: new Date().toISOString(),
+    };
+    writeBackendState(userDataPath, created);
+    return created;
+  }
+  const next: BackendState = { ...current, ...patch };
   writeBackendState(userDataPath, next);
   return next;
 }

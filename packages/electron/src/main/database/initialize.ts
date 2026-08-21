@@ -9,9 +9,10 @@ import * as fsp from 'fs/promises';
 import path from 'path';
 import { database, legacyPgliteDatabase } from './PGLiteDatabaseWorker';
 import { CORRUPTED_METADATA_WIPE_SQL } from './corruptedMetadataWipe';
-import { resolveBackend } from './sqlite/BackendSelector';
+import { commitFreshInstallSqlite, resolveBackend } from './sqlite/BackendSelector';
 import { refreshMigrationFlagInBackground } from './sqlite/migrationFlag';
 import { dirSizeBytes } from './sqlite/dirSize';
+import { findRecoveryArtifacts, largestDirBytes } from './sqlite/recoveryArtifacts';
 import { runForcedMigration } from './bootMigration';
 import { SQLiteDatabaseProxy } from './sqlite/SQLiteDatabaseProxy';
 import { logger } from '../utils/logger';
@@ -150,6 +151,18 @@ export async function initializeDatabase(): Promise<SessionStore> {
       `[Database] Backend selector resolved to '${backendChoice.backend}' (reason: ${backendChoice.reason})`,
     );
 
+    // Persist a fresh install's SQLite decision immediately, before the
+    // kill-switch refresh below or anything else can touch the flag file.
+    // Leaving it unwritten meant the decision was recomputed every launch and
+    // whoever wrote the file first got to pick the backend (#1347).
+    if (backendChoice.reason === 'fresh-install-defaults-sqlite') {
+      try {
+        commitFreshInstallSqlite(userDataPath);
+      } catch (flagErr) {
+        logger.main.warn('[Database] failed to persist fresh-install backend flag', flagErr);
+      }
+    }
+
     // Unconditional per-launch heartbeat. Until this shipped there was no way
     // to size the population still on PGLite: `database_error` carries the
     // backend but only fires on failure, and `pglite_legacy_dir_present` only
@@ -170,21 +183,38 @@ export async function initializeDatabase(): Promise<SessionStore> {
     // path reads only the disk cache.
     refreshMigrationFlagInBackground(userDataPath);
 
-    // Heartbeat: when SQLite is active but a preserved `pglite-db.migrated-*`
-    // directory still exists, surface it so we can decide when to retire the
-    // PGLite reader code. Per the plan, the rollback window stays open until
-    // fleet telemetry shows < 1% of installs carry this directory.
+    // Heartbeats for leftover PGLite directories, from one scan of userData.
+    //
+    // `pglite-db.migrated-*`: a preserved pre-migration store. The rollback
+    // window stays open until fleet telemetry shows < 1% of installs carry it.
+    //
+    // `pglite-db.backup-*`: the worker decided the database was corrupt and
+    // renamed it aside. This had no fleet signal at all, which is why an
+    // established install could run for hours on an empty database with
+    // nothing upstream noticing (#1347). Reporting the backup's size next to
+    // the live directory's is what distinguishes a real wipe -- megabytes
+    // parked in the backup, near-nothing live -- from routine noise.
     try {
-      const migratedPresent = fs
-        .readdirSync(userDataPath)
-        .some((d) => d.startsWith('pglite-db.migrated-'));
-      if (migratedPresent) {
+      const artifacts = findRecoveryArtifacts(userDataPath);
+      if (artifacts.migratedDirs.length > 0) {
         AnalyticsService.getInstance().sendEvent('pglite_legacy_dir_present', {
           active_backend: backendChoice.backend,
         });
       }
+      if (artifacts.corruptionBackupDirs.length > 0) {
+        AnalyticsService.getInstance().sendEvent('pglite_corruption_backup_present', {
+          active_backend: backendChoice.backend,
+          reason: backendChoice.reason,
+          backup_dir_count: artifacts.corruptionBackupDirs.length,
+          backup_dir_bytes: largestDirBytes(userDataPath, artifacts.corruptionBackupDirs),
+          live_pglite_dir_bytes: dirSizeBytes(path.join(userDataPath, 'pglite-db')),
+        });
+        logger.main.warn(
+          `[Database] ${artifacts.corruptionBackupDirs.length} renamed-aside PGLite database(s) present; the newest is ${artifacts.corruptionBackupDirs[artifacts.corruptionBackupDirs.length - 1]}`,
+        );
+      }
     } catch (heartbeatErr) {
-      logger.main.warn('[Database] legacy-dir heartbeat failed', heartbeatErr);
+      logger.main.warn('[Database] recovery-artifact heartbeat failed', heartbeatErr);
     }
 
     if (backendChoice.backend === 'sqlite') {

@@ -7,7 +7,9 @@ import {
   commitMigrationToSqlite,
   commitRollbackToPglite,
   readBackendState,
+  recordAutoMigrationFailure,
   resolveBackend,
+  updateBackendState,
 } from '../BackendSelector';
 
 describe('BackendSelector', () => {
@@ -60,6 +62,45 @@ describe('BackendSelector', () => {
     const state = readBackendState(tmp);
     expect(state?.backend).toBe('sqlite');
     expect(state?.setBy).toBe('auto-fresh-install');
+  });
+
+  // #1347: the kill-switch cache refresh runs on every launch, including a
+  // fresh install's first. When it defaulted the backend to pglite, every
+  // fresh install flipped to `existing-pglite-migration-due` on its second
+  // launch and grew a PGLite database it should never have had.
+  it('does not decide the backend when a sibling-field update finds no state', () => {
+    expect(updateBackendState(tmp, { forceMigrationFlag: false })).toBeNull();
+    expect(readBackendState(tmp)).toBeNull();
+    expect(resolveBackend({ userDataPath: tmp }).reason).toBe('fresh-install-defaults-sqlite');
+  });
+
+  it('keeps a fresh install on sqlite across the kill-switch cache refresh', () => {
+    commitFreshInstallSqlite(tmp);
+    updateBackendState(tmp, { forceMigrationFlag: false });
+    const result = resolveBackend({ userDataPath: tmp });
+    expect(result.backend).toBe('sqlite');
+    expect(result.reason).toBe('flag-file-sqlite');
+    expect(readBackendState(tmp)?.forceMigrationFlag).toBe(false);
+  });
+
+  it('still merges sibling fields into existing state without losing them', () => {
+    commitMigrationToSqlite(tmp, '/some/pglite-db.migrated-12345');
+    updateBackendState(tmp, { forceMigrationFlag: true });
+    const state = readBackendState(tmp);
+    expect(state?.backend).toBe('sqlite');
+    expect(state?.setBy).toBe('user-migration');
+    expect(state?.pgliteMigratedDir).toBe('/some/pglite-db.migrated-12345');
+    expect(state?.forceMigrationFlag).toBe(true);
+  });
+
+  // The one caller that legitimately creates state from nothing: it names both
+  // backend and setBy, so the guard above must not block it.
+  it('records a first auto-migration failure even with no prior flag file', () => {
+    expect(recordAutoMigrationFailure(tmp, 'disk_space')).toBe(1);
+    const state = readBackendState(tmp);
+    expect(state?.backend).toBe('pglite');
+    expect(state?.setBy).toBe('auto-migration-deferred');
+    expect(state?.migrationAttempts?.count).toBe(1);
   });
 
   it('ignores a malformed flag file and falls back to inferring from disk', () => {

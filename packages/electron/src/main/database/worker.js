@@ -21,6 +21,7 @@ const path = require('path');
 const inspector = require('node:inspector');
 const { performance } = require('node:perf_hooks');
 const { serializeWorkerError } = require('./workerErrorSerialization');
+const { planInitFailureResponse } = require('./pgliteInitRecovery');
 
 // ---------------------------------------------------------------------------
 // CPU profile auto-capture for the PGLite worker.
@@ -458,9 +459,19 @@ class PGLiteWorker {
         console.warn('[PGLite Worker] Could not remove stale postmaster.pid:', e.message);
       }
 
-      // Attempt to initialize database, with automatic recovery on corruption
+      // Attempt to initialize database, with automatic recovery on corruption.
+      //
+      // The first failure never touches the user's data. `RuntimeError` is any
+      // WASM abort -- memory pressure, a bad allocation, an interrupted load --
+      // and treating one as proof of on-disk damage silently emptied
+      // established installs, which then came up looking healthy because the
+      // project list lives in electron-store rather than the database (#1347).
+      // So: try, retry the same directory, and only then consider renaming.
       let initAttempt = 0;
-      const maxAttempts = 2;
+      const maxAttempts = 3;
+      const renameAllowedFromAttempt = 2;
+      /** Set to the backup path only if we actually renamed the database aside. */
+      let renamedAsideDir = null;
 
       while (initAttempt < maxAttempts) {
         initAttempt++;
@@ -492,31 +503,57 @@ class PGLiteWorker {
 
           console.error(`[PGLite Worker] Database initialization failed (attempt ${initAttempt}/${maxAttempts}):`, errorStr);
 
-          // Check if this looks like corruption/abort (not a real lock)
-          const isCorruptionError = errorStr.includes('Aborted') || errorName === 'RuntimeError';
+          // Decision lives in pgliteInitRecovery.js so it can be tested
+          // without standing up a real PGLite.
+          const plan = planInitFailureResponse({
+            errorMessage: errorStr,
+            errorName,
+            attempt: initAttempt,
+            maxAttempts,
+            renameAllowedFromAttempt,
+            dataDirExists: fs.existsSync(this.dataDir),
+          });
 
-          if (isCorruptionError && initAttempt < maxAttempts && fs.existsSync(this.dataDir)) {
-            // Database appears corrupted - move it and try fresh
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const backupDir = `${this.dataDir}.backup-${timestamp}`;
-
-            console.log('[PGLite Worker] Database appears corrupted, moving to backup:', backupDir);
-            console.log('[PGLite Worker] Creating fresh database...');
-
-            try {
-              fs.renameSync(this.dataDir, backupDir);
-              console.log('[PGLite Worker] Corrupted database backed up successfully');
-              console.log('[PGLite Worker] User data is preserved at:', backupDir);
-              // Continue to next attempt with fresh database directory
-              continue;
-            } catch (backupError) {
-              console.error('[PGLite Worker] Failed to backup corrupted database:', backupError);
-              // Fall through to re-throw the original error
-            }
+          if (plan.action === 'rethrow') {
+            console.error(`[PGLite Worker] Not recovering (${plan.reason})`);
+            throw dbError;
           }
 
-          // Either not a corruption error, or we failed to recover - re-throw
-          throw dbError;
+          // Release whatever the half-built instance is holding before we point
+          // a second PGlite at the same directory.
+          try {
+            await this.db?.close();
+          } catch (closeError) {
+            console.warn('[PGLite Worker] Could not close failed instance:', closeError?.message || closeError);
+          }
+          this.db = null;
+
+          if (plan.action === 'retry') {
+            console.warn('[PGLite Worker] Init aborted; retrying the same data directory before any recovery');
+            continue;
+          }
+
+          // Repeated aborts on the same directory. Now treat it as corrupt:
+          // move it aside and start fresh. The data is preserved, and the
+          // launch heartbeat in `initialize.ts` reports the leftover directory
+          // so this stops being invisible to us.
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const backupDir = `${this.dataDir}.backup-${timestamp}`;
+
+          console.log('[PGLite Worker] Database still aborting after a retry, moving to backup:', backupDir);
+          console.log('[PGLite Worker] Creating fresh database...');
+
+          try {
+            fs.renameSync(this.dataDir, backupDir);
+            renamedAsideDir = backupDir;
+            console.log('[PGLite Worker] Corrupted database backed up successfully');
+            console.log('[PGLite Worker] User data is preserved at:', backupDir);
+            // Continue to next attempt with fresh database directory
+            continue;
+          } catch (backupError) {
+            console.error('[PGLite Worker] Failed to backup corrupted database:', backupError);
+            throw dbError;
+          }
         }
       }
 
@@ -555,8 +592,10 @@ class PGLiteWorker {
         console.warn('[PGLite Worker] Startup CHECKPOINT failed (non-fatal):', ckptError?.message || ckptError);
       }
 
-      // Check if we recovered from corruption
-      const recovered = initAttempt > 1;
+      // Only a rename counts as recovery. `initAttempt > 1` no longer implies
+      // one: a retry on the same directory leaves the user's data in place and
+      // must not be reported as a corruption recovery.
+      const recovered = renamedAsideDir !== null;
 
       const totalInitTime = performance.now() - initStartTime;
       console.log(`[PGLite Worker] Total initialization took ${totalInitTime.toFixed(0)}ms`);
@@ -568,7 +607,7 @@ class PGLiteWorker {
           message: recovered ? 'Database recovered from corruption' : 'Database initialized successfully',
           dataDir: this.dataDir,
           recovered: recovered,
-          backupLocation: recovered ? `${this.dataDir}.backup-*` : null,
+          backupLocation: renamedAsideDir,
           initTimeMs: Math.round(totalInitTime)
         }
       };

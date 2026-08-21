@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, nativeImage, nativeTheme, session } from 'electron';
+import { app, BrowserWindow, dialog, nativeImage, nativeTheme, session, shell } from 'electron';
 import {
     parseTrackerDeepLink,
     type TrackerDeepLinkTarget,
@@ -224,6 +224,7 @@ import { autoUpdaterService, AutoUpdaterService } from './services/autoUpdater';
 import { initializeDatabase } from './database/initialize';
 import { database, HandledError } from './database/PGLiteDatabaseWorker';
 import { buildDatabaseInitializationErrorProperties } from './database/DatabaseErrorTelemetry';
+import { findRestorableBackups, formatBytes } from './database/sqlite/recoveryArtifacts';
 import { resolveTrackerDeepLinkId } from './services/tracker/resolveTrackerDeepLinkId';
 import { AnalyticsService } from "./services/analytics/AnalyticsService.ts";
 import { registerAnalyticsHandlers } from "./ipc/AnalyticsHandlers.ts";
@@ -1858,23 +1859,62 @@ app.whenReady().then(async () => {
 
         // Show appropriate error dialog
         if (isWasmRuntimeCrash) {
-            // Get database path for the error message (use actual expanded path)
-            const dbPath = join(app.getPath('userData'), 'pglite-db');
+            // This dialog used to end with "delete the database folder: <path>".
+            // Users followed it, and because the project list lives in
+            // electron-store rather than the database, the app came back up
+            // looking healthy with every session and all document history gone
+            // (#1347). Never instruct a delete: say what is recoverable, and
+            // give the user a way to reach it.
+            const userDataPath = app.getPath('userData');
+            const backups = findRestorableBackups(userDataPath);
+            const backupList = backups
+                .map((b) => `   - ${b.name} (${formatBytes(b.bytes)})`)
+                .join('\n');
 
-            dialog.showErrorBox(
-                'Nimbalyst - Database Initialization Failed',
-                `The database system failed to start.\n\n` +
-                `This usually indicates:\n` +
-                `1. Another process has the database locked\n` +
-                `2. Database files are corrupted\n` +
-                `3. Insufficient file system permissions\n\n` +
-                `To fix this:\n` +
-                `1. Close any other Nimbalyst windows\n` +
-                `2. Restart your computer (clears stale locks)\n` +
-                `3. If the problem persists, delete the database folder:\n` +
-                `   ${dbPath}\n\n` +
-                `Nimbalyst will now close.`
-            );
+            const recoveryText = backups.length > 0
+                ? `Your data has not been lost. These copies are on this computer right now:\n\n` +
+                  `${backupList}\n\n` +
+                  `Do not delete the database folder -- these backups are what it would be restored from.\n\n`
+                : `Do not delete the database folder. Support can often recover a database that will not start.\n\n`;
+
+            const choice = dialog.showMessageBoxSync({
+                type: 'error',
+                title: 'Nimbalyst - Database Initialization Failed',
+                message: 'The database could not be started.',
+                detail:
+                    `${recoveryText}` +
+                    `Things to try, in order:\n` +
+                    `1. Close any other Nimbalyst windows and open it again\n` +
+                    `2. Restart your computer, which clears stale database locks\n` +
+                    `3. If it still will not start, contact support before changing anything on disk\n\n` +
+                    `Nimbalyst will now close.`,
+                buttons: backups.length > 0 ? ['Show Backups', 'Quit'] : ['Quit'],
+                defaultId: 0,
+                cancelId: backups.length > 0 ? 1 : 0,
+                noLink: true,
+            });
+
+            const revealed = backups.length > 0 && choice === 0;
+            if (revealed) {
+                try {
+                    shell.showItemInFolder(backups[0].path);
+                } catch (revealErr) {
+                    logger.main.warn('[Database] Could not reveal backup folder', revealErr);
+                }
+            }
+
+            // NIM-3624: this dialog was previously invisible in telemetry, so
+            // there was no way to see how many users it sent to delete their
+            // database. Report that it was shown and what the user did.
+            try {
+                AnalyticsService.getInstance().sendEvent('database_init_failure_dialog', {
+                    backup_count: backups.length,
+                    largest_backup_bytes: backups.reduce((max, b) => Math.max(max, b.bytes), 0),
+                    action: revealed ? 'show_backups' : 'quit',
+                });
+            } catch {
+                // Analytics failure shouldn't block error handling
+            }
         } else {
             dialog.showErrorBox(
                 'Nimbalyst - Database Initialization Failed',
