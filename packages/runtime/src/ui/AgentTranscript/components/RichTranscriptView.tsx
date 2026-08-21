@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { VList, type VListHandle, type CacheSnapshot } from 'virtua';
 import type { TranscriptViewMessage, SessionData } from '../../../ai/server/types';
 import type { ToolCallDiffLoadResult } from '../../../ai/server/transcript';
+import { isInteractiveWidgetTool, stripMcpPrefix } from '../../../ai/server/interactivePromptTools';
 import type { TranscriptSettings } from '../types';
 import { MessageSegment } from './MessageSegment';
 import { MarkdownRenderer, type TranscriptFileLocation } from './MarkdownRenderer';
@@ -604,41 +605,12 @@ const isEditToolName = (name?: string): boolean => {
 const WRITE_TOOL_NAMES = new Set(['write', 'notebookedit']);
 
 /**
- * Interactive tool widgets that require the user to act. These render even when
- * `settings.showToolCalls` is false, so the user can still respond to prompts
- * (permission grants, plan-mode exits, question answers, structured input
- * prompts, commit proposals).
+ * The interactive-prompt tool set and the MCP prefix rule live in
+ * `ai/server/interactivePromptTools` because the transcript parser and the live
+ * Claude Code stream path need the same answers (#1341). Re-exported here so
+ * existing importers and the renderer's `sessions.ts` mirror keep working.
  */
-const INTERACTIVE_WIDGET_TOOLS = new Set([
-  'ToolPermission',
-  'ExitPlanMode',
-  'AskUserQuestion',
-  'PromptForUserInput',
-  'RequestUserInput',
-  'GitCommitProposal',
-  'git_commit_proposal',
-  'developer_git_commit_proposal',
-  'developer.git_commit_proposal',
-]);
-
-/**
- * MCP tools arrive as `mcp__<server>__<toolName>` (server name may contain
- * dashes or underscores). When the tool was registered with a bare name like
- * `AskUserQuestion` on the in-app MCP server, the SDK forwards it as
- * `mcp__nimbalyst-mcp__AskUserQuestion`. Strict equality against the bare set
- * misses, so the suppression / grouping logic below uses the un-prefixed name.
- *
- * Exported for tests; mirrored on the renderer in `sessions.ts`.
- */
-export function stripMcpPrefix(toolName: string): string {
-  const match = toolName.match(/^mcp__[^_]+(?:_[^_]+)*__(.+)$/);
-  return match ? match[1] : toolName;
-}
-
-export function isInteractiveWidgetTool(toolName: string | null | undefined): boolean {
-  if (!toolName) return false;
-  return INTERACTIVE_WIDGET_TOOLS.has(stripMcpPrefix(toolName));
-}
+export { stripMcpPrefix, isInteractiveWidgetTool };
 
 /** Formats provider-supplied sub-agent execution metadata without normalizing it. */
 export function formatSubagentAuditLabel(

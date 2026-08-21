@@ -17,6 +17,7 @@ import type {
   TurnEndedPayload,
   AssistantMessagePayload,
 } from './types';
+import { isBackgroundedToolAck, isInteractiveWidgetTool } from '../interactivePromptTools';
 
 // ---------------------------------------------------------------------------
 // View model types
@@ -265,16 +266,23 @@ function projectEvent(
     case 'tool_call': {
       const p = event.payload as unknown as ToolCallPayload;
       const progressEvents = progressByParent.get(event.id) ?? [];
+      // #1341: the harness's "moved to the background" acknowledgement is not
+      // an answer. Every interactive widget reads pending vs answered off this
+      // `result`, so suppressing it here keeps a still-waiting prompt
+      // answerable no matter which path wrote the acknowledgement -- including
+      // transcripts persisted before the parser learned to drop it.
+      const isStrandedPromptAck =
+        isInteractiveWidgetTool(p.toolName) && isBackgroundedToolAck(p.result);
       base.toolCall = {
         toolName: p.toolName,
         toolDisplayName: p.toolDisplayName,
-        status: p.status,
+        status: isStrandedPromptAck ? 'running' : p.status,
         description: p.description,
         arguments: p.arguments,
         targetFilePath: p.targetFilePath,
         mcpServer: p.mcpServer,
         mcpTool: p.mcpTool,
-        result: p.result,
+        result: isStrandedPromptAck ? undefined : p.result,
         isError: p.isError,
         exitCode: p.exitCode,
         durationMs: p.durationMs,

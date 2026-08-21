@@ -139,7 +139,11 @@ describe('getMcpServersConfig consolidated topology', () => {
     expect(config[MCP_CORE].alwaysLoad).toBeUndefined();
     expect(config[MCP_CORE].url).toContain('/mcp/core');
     // Carries the long timeout (git_commit_proposal / AskUserQuestion block on input).
+    // #1341: in BOTH dialects -- Codex reads `tool_timeout_sec`, Claude Code reads
+    // `timeout` in ms and ignored the seconds key, so a pending question hit its
+    // 300s idle default and aborted.
     expect(config[MCP_CORE].tool_timeout_sec).toBeGreaterThan(60);
+    expect(config[MCP_CORE].timeout).toBe(config[MCP_CORE].tool_timeout_sec * 1000);
   });
 
   it('registers each active extension as its own deferred nimbalyst-<ext> server', async () => {

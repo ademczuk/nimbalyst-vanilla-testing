@@ -70,6 +70,21 @@
             }
 
             console.log('[THEME-INIT] Applied class:', theme + '-theme', 'to document.documentElement');
+
+            // The base theme class only carries base colours. An extension or
+            // file-based theme (solarized-light and friends) is not resolved
+            // until React runs useTheme, so the canvas would paint the base
+            // light/dark colour first and repaint on mount. Seed --nim-bg with
+            // the colour the renderer reported last time it applied this theme;
+            // useTheme overwrites it with the same value moments later.
+            try {
+                const storedBg = window.electronAPI?.getThemeBackgroundColorSync?.();
+                if (storedBg) {
+                    root.style.setProperty('--nim-bg', storedBg);
+                }
+            } catch (err) {
+                console.error('[THEME-INIT] Error seeding --nim-bg:', err);
+            }
         })();
     </script>
 </head>

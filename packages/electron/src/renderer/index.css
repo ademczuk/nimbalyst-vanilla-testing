@@ -33,6 +33,12 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
+  /* The canvas every surface sits on. Without it the window falls through to
+     the browser default white wherever a surface forgets its own background,
+     which is how team mode shipped white on a light extension theme. The
+     tray-panel window overrides this below; it must stay see-through. */
+  background: var(--nim-bg);
+  color: var(--nim-text);
 }
 
 #root {

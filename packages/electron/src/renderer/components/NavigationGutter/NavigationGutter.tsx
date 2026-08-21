@@ -97,7 +97,7 @@ interface NavigationGutterProps {
 
 // Shared nav-button styling. `active` swaps the filled/primary look.
 const NAV_BTN_BASE =
-  'nav-button relative w-9 h-9 flex items-center justify-center border-none rounded-md cursor-pointer transition-all duration-150 p-0 active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--nim-primary)] focus-visible:outline-offset-2';
+  'nav-button group relative w-9 h-9 flex items-center justify-center border-none rounded-md cursor-pointer transition-all duration-150 p-0 active:scale-95 focus-visible:outline-2 focus-visible:outline-[var(--nim-primary)] focus-visible:outline-offset-2';
 const navBtnClass = (active: boolean): string =>
   `${NAV_BTN_BASE} ${active ? 'active bg-nim-primary text-nim-on-primary hover:bg-nim-primary-hover' : 'bg-transparent text-nim-muted hover:bg-nim-tertiary hover:text-nim'}`;
 
@@ -216,6 +216,8 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
     testId: string;
     /** Re-clicking the already-active mode (e.g. toggle sidebar collapse). */
     onReclick?: () => void;
+    /** Small glyph badged into the icon's lower-right corner (e.g. "shared with people"). */
+    badgeIcon?: string;
     /** Extra decoration (e.g. alpha badge). */
     decoration?: React.ReactNode;
     /** Interactive sibling rendered over the button (e.g. Agent attention bubble). */
@@ -248,6 +250,20 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
             data-testid={opts.testId}
           >
             <MaterialSymbol icon={opts.icon} size={20} fill={isActive} />
+            {opts.badgeIcon && (
+              // The disc tracks the button's own background so the badge glyph
+              // stays legible where it overlaps the main icon, in every state.
+              <span
+                className={`nav-mode-button-badge absolute bottom-[3px] right-[3px] flex items-center justify-center rounded-full p-[1px] pointer-events-none ${
+                  isActive
+                    ? 'bg-nim-primary group-hover:bg-nim-primary-hover'
+                    : 'bg-nim-secondary group-hover:bg-nim-tertiary'
+                }`}
+                aria-hidden="true"
+              >
+                <MaterialSymbol icon={opts.badgeIcon} size={12} fill />
+              </span>
+            )}
             {opts.decoration}
           </button>
         </HelpTooltip>
@@ -364,9 +380,10 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
       }),
     }] : []),
     ...(hasTeam ? [{
-      id: 'collab', section: 'modes' as GutterSection, icon: 'cloud_sync', label: 'Shared Docs', hideable: true,
+      id: 'collab', section: 'modes' as GutterSection, icon: 'description', label: 'Shared Docs', hideable: true,
       render: () => renderModeButton({
-        icon: 'cloud_sync',
+        icon: 'description',
+        badgeIcon: 'groups',
         label: `Shared Docs (${getShortcutDisplay(KeyboardShortcuts.view.collabMode)})`,
         contentMode: 'collab', testId: 'collab-mode-button',
         onReclick: () => onToggleCollabCollapsed?.(),

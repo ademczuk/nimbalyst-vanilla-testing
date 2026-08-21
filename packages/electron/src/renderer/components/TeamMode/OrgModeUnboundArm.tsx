@@ -40,7 +40,7 @@ export function OrgModeUnboundArm({
   onLoadError: (message: string) => void;
 }) {
   return (
-    <section className="org-mode-host team-mode team-mode-unbound flex h-full flex-col overflow-hidden" data-component="OrgModeHost">
+    <section className="org-mode-host team-mode team-mode-unbound flex h-full flex-col overflow-hidden bg-[var(--nim-bg)] text-[var(--nim-text)]" data-component="OrgModeHost">
       {chrome === 'window' && <OrgWindowTitleBar />}
       <header
         className="team-mode-header org-window-drag-region border-b border-nim px-6 py-5"

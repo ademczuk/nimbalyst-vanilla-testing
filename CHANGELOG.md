@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Nimbalyst never sets an existing database aside on its own: if it will not start, you are shown the backups that exist and asked, instead of being handed an empty app that looks fine.
+- A question, plan approval, or commit proposal you take more than two minutes to answer stays answerable, instead of losing its buttons and then timing out.
+- Windows open in your theme's own background colour instead of flashing white first, including on themes that come from extensions.
+- Your trackers list your items again instead of coming up empty once your organization has loaded.
 
 ### Removed
 <!-- Removed features go here -->

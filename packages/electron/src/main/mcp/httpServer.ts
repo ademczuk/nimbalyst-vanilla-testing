@@ -491,7 +491,11 @@ function createSharedMcpServer(
   // and keyed by type name, so a tool call must resolve schemas against ITS OWN
   // workspace -- otherwise a call for one project reads (and used to overwrite)
   // another open project's identically-named tracker types (#1035).
-  server.setRequestHandler(CallToolRequestSchema, withTrackerSchemaWorkspace(workspacePath, async (request: any) => {
+  // `extra` carries the SDK's per-request `sendNotification` and `signal`. The
+  // interactive prompts need both: progress keepalives so the client's idle
+  // watchdog never aborts a question the user is still looking at, and the
+  // abort signal so a cancelled call tears its waiter down (#1341).
+  server.setRequestHandler(CallToolRequestSchema, withTrackerSchemaWorkspace(workspacePath, async (request: any, extra: any) => {
     const { name, arguments: args } = request.params;
     if (request.params._meta) {
       console.log(
@@ -571,17 +575,17 @@ function createSharedMcpServer(
           return handleVoiceAgentStop();
 
         case "AskUserQuestion":
-          return handleAskUserQuestion(args, sessionId, request);
+          return handleAskUserQuestion(args, sessionId, request, extra);
 
         case "PromptForUserInput":
-          return handleRequestUserInput(args, sessionId, workspacePath, request);
+          return handleRequestUserInput(args, sessionId, workspacePath, request, extra);
 
         case "get_session_edited_files":
           return handleGetSessionEditedFiles(sessionId);
 
         case "developer_git_commit_proposal":
         case "developer.git_commit_proposal":
-          return handleGitCommitProposal(args, sessionId, workspacePath, request);
+          return handleGitCommitProposal(args, sessionId, workspacePath, request, extra);
 
         case "tracker_list":
           return handleTrackerList(args, workspacePath);
@@ -804,6 +808,15 @@ async function tryCreateServer(port: number): Promise<any> {
             res.end(JSON.stringify({ decision: "ask", reason: "missing sessionId or toolName" }));
             return;
           }
+          // NIM-2607: if the CLI that asked dies, this socket closes. Give the
+          // waiter a signal for it so the approval surface comes down instead of
+          // waiting out its ~10m timeout with nobody left to answer. The
+          // response is only written after the await, so a 'close' before then
+          // always means the caller went away.
+          const permissionAbort = new AbortController();
+          const abortPermission = () => permissionAbort.abort();
+          req.once("aborted", abortPermission);
+          res.once("close", abortPermission);
           try {
             // The handler blocks until the user answers the widget (up to ~10m).
             const result = await handleToolPermission(
@@ -811,6 +824,7 @@ async function tryCreateServer(port: number): Promise<any> {
               permSessionId,
               body?.cwd,
               {},
+              { signal: permissionAbort.signal },
             );
             let decision: "allow" | "deny" = "deny";
             try {
@@ -826,6 +840,9 @@ async function tryCreateServer(port: number): Promise<any> {
             // True error (not a deny) → let the CLI fall back to its native prompt.
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ decision: "ask", reason: "permission handler error" }));
+          } finally {
+            req.off("aborted", abortPermission);
+            res.off("close", abortPermission);
           }
           return;
         }

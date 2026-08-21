@@ -36,3 +36,25 @@ export function isTitleBarOverlayColors(value: unknown): value is TitleBarOverla
   const candidate = value as Record<string, unknown>;
   return isShortCssColor(candidate.color) && isShortCssColor(candidate.symbolColor);
 }
+
+/**
+ * What the renderer reports once it has actually applied a theme.
+ *
+ * `backgroundColor` is the resolved `--nim-bg`. Main persists it so the *next*
+ * launch can paint the window canvas in the real theme colour before any CSS
+ * parses. Without it, extension and file-based themes are collapsed to a base
+ * light/dark colour at window-creation time (their colours only exist inside
+ * the renderer's theme registry), so a light extension theme opens white and
+ * repaints once React resolves it.
+ *
+ * Kept separate from TitleBarOverlayColors because that object is handed
+ * straight to Electron's setTitleBarOverlay, which takes no such field.
+ */
+export interface ResolvedThemeChrome extends TitleBarOverlayColors {
+  backgroundColor?: string;
+}
+
+/** Narrow an untrusted IPC value to a short, well-formed CSS colour. */
+export function readCssColor(value: unknown): string | undefined {
+  return isShortCssColor(value) ? value.trim() : undefined;
+}

@@ -94,6 +94,10 @@ export default defineConfig({
   test: {
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: HOOK_TIMEOUT_MS,
+    // Every run records its failures to `.vitest/last-run.log`. The suite takes
+    // minutes; losing which tests failed to a dot reporter or a truncated pipe
+    // should never cost a second run to find out.
+    reporters: ['default', './scripts/vitest-run-log-reporter.mjs'],
     // Tests under packages/electron/src/main touch better-sqlite3, whose
     // build/Release/.node binary is compiled for Electron (NODE_MODULE_VERSION
     // 145) and unloadable under the system Node that vitest runs against.

@@ -1,4 +1,4 @@
-import { BrowserWindow, app, nativeImage, ipcMain, screen, nativeTheme, Menu, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
+import { BrowserWindow, app, nativeImage, ipcMain, screen, Menu, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import { join, basename } from 'path';
 import { existsSync } from 'fs';
@@ -8,7 +8,7 @@ import { getTheme, saveWorkspaceWindowState, getWorkspaceNavigationHistory, save
 import { stopFileWatcher } from '../file/FileWatcher';
 import { stopWorkspaceWatcher, startWorkspaceWatcher } from '../file/WorkspaceWatcher.ts';
 import { getFolderContents } from '../utils/FileTree';
-import { getTitleBarColors } from '../theme/ThemeManager';
+import { getBackgroundColor, getTitleBarColors } from '../theme/ThemeManager';
 import { ElectronDocumentService, setupDocumentServiceHandlers } from '../services/ElectronDocumentService';
 import { ElectronFileSystemService } from '../services/ElectronFileSystemService';
 import { isWorktreePath, resolveProjectPath } from '../utils/workspaceDetection';
@@ -236,23 +236,15 @@ export function createWindow(
             }
         }
 
-        // Determine the current theme and set appropriate background color
-        // IMPORTANT: These colors MUST match the CSS theme files exactly to prevent flash
+        // Passed to the renderer as a query param so it can apply the theme on
+        // first paint; this is the persisted id, extension themes included.
         const currentTheme = getTheme();
-        // console.log('[WINDOW-MANAGER] Creating window with theme:', currentTheme);
-        let backgroundColor = '#ffffff'; // Default to white for light theme
 
-        if (currentTheme === 'dark') {
-            backgroundColor = '#2d2d2d'; // Matches --nim-bg in NimbalystTheme.css (dark)
-        } else if (currentTheme === 'crystal-dark') {
-            backgroundColor = '#0f172a'; // Matches --nim-bg in NimbalystTheme.css (crystal-dark)
-        } else if (currentTheme === 'light') {
-            backgroundColor = '#ffffff'; // Matches --nim-bg in NimbalystTheme.css (light)
-        } else {
-            // system/auto - use nativeTheme which should match prefers-color-scheme
-            backgroundColor = nativeTheme.shouldUseDarkColors ? '#2d2d2d' : '#ffffff';
-        }
-        // console.log('[WINDOW-MANAGER] Background color:', backgroundColor);
+        // The canvas colour behind the renderer, painted before any CSS parses.
+        // Single source of truth in ThemeManager: it prefers the real --nim-bg
+        // the renderer last reported (the only way an extension or file-based
+        // theme's colour is knowable here) and falls back to the base themes.
+        const backgroundColor = getBackgroundColor();
 
         const preloadPath = getPreloadPath();
 

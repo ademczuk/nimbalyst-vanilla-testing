@@ -82,6 +82,10 @@ export const DEFAULT_DATABASE_MAINTENANCE: DatabaseMaintenanceSettings = {
 interface AppStoreSchema {
   theme: AppTheme;
   themeIsDark?: boolean; // Whether the current theme is dark (used for extension themes)
+  // The active theme's resolved --nim-bg, reported by the renderer once it has
+  // applied the theme. Lets window creation paint the real colour before CSS
+  // parses; cleared on a theme change until the new theme reports its own.
+  themeBackgroundColor?: string;
   // Set when the active theme disappeared (extension uninstalled/disabled or
   // file removed) and the runtime fell back to a base theme. Cleared when the
   // user explicitly applies a theme or dismisses the banner in the Themes panel.
@@ -1002,6 +1006,23 @@ export function setTheme(theme: AppTheme, isDark?: boolean): void {
 
 export function getThemeIsDark(): boolean | undefined {
   return getAppStore().get('themeIsDark');
+}
+
+export function setThemeBackgroundColor(color: string): void {
+  getAppStore().set('themeBackgroundColor', color);
+}
+
+export function getThemeBackgroundColor(): string | undefined {
+  return getAppStore().get('themeBackgroundColor');
+}
+
+/**
+ * Drop the remembered canvas colour. Called on a theme change: until the
+ * renderer applies the new theme and reports its --nim-bg, the stored colour
+ * belongs to the theme we just left and would paint the wrong flash.
+ */
+export function clearThemeBackgroundColor(): void {
+  getAppStore().delete('themeBackgroundColor');
 }
 
 export function getPendingThemeFallback(): { missingId: string; appliedId: string } | undefined {

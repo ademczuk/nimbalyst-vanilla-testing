@@ -1406,8 +1406,13 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
               case 'tool_result': {
                 const toolCall = toolCallsById.get(item.toolUseId);
                 if (toolCall) {
-                  const { isDuplicate } = applyToolResultToToolCall(toolCall, item.content, item.isError);
+                  const { isDuplicate, isBackgroundAck } = applyToolResultToToolCall(toolCall, item.content, item.isError);
                   if (isDuplicate) break;
+                  // #1341: the harness backgrounded an interactive prompt that
+                  // is still waiting on the user. The call is still outstanding
+                  // -- don't decrement the watchdog's counter or settle
+                  // anything on a result that hasn't arrived yet.
+                  if (isBackgroundAck) break;
                   // Tool finished -- re-arm the stall watchdog for the model's
                   // next thinking/generation phase. NIM-1481.
                   outstandingToolCalls = Math.max(0, outstandingToolCalls - 1);

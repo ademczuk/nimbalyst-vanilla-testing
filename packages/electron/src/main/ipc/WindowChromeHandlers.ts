@@ -3,7 +3,8 @@ import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import { setResolvedTitleBarOverlayColors } from '../window/windowChrome';
 import { getWindowMenuBar, invokeWindowMenuItem } from '../menu/menuBarBridge';
 import { WINDOW_MENU_CHANNELS } from '../../shared/menuBar';
-import { WINDOW_FULL_SCREEN_CHANNELS } from '../../shared/windowChrome';
+import { WINDOW_FULL_SCREEN_CHANNELS, readCssColor } from '../../shared/windowChrome';
+import { setThemeBackgroundColor } from '../utils/store';
 
 let handlersRegistered = false;
 
@@ -12,6 +13,14 @@ export function registerWindowChromeHandlers(): void {
 
   safeOn('window-chrome:set-overlay-colors', (_event, payload: unknown) => {
     setResolvedTitleBarOverlayColors(payload);
+
+    // The same report carries the theme's resolved --nim-bg. Persisting it is
+    // what lets the next launch open on the real colour instead of a base
+    // light/dark stand-in.
+    const backgroundColor = readCssColor((payload as { backgroundColor?: unknown } | null)?.backgroundColor);
+    if (backgroundColor) {
+      setThemeBackgroundColor(backgroundColor);
+    }
   });
 
   safeHandle(WINDOW_MENU_CHANNELS.get, () => getWindowMenuBar());

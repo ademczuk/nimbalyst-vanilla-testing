@@ -19,6 +19,7 @@ import type {
   CanonicalEventDescriptor,
 } from './IRawMessageParser';
 import { stagedAttachmentRegistry } from '../../attachments/stagedAttachmentRegistry';
+import { isBackgroundedToolAck, isInteractiveWidgetTool } from '../../interactivePromptTools';
 
 const ATTACHMENT_DENY_MESSAGE = 'File is in a directory that is denied by your permission settings.';
 
@@ -541,6 +542,21 @@ export class ClaudeCodeRawParser implements IRawMessageParser {
       }
     } else if (block.content != null) {
       resultText = JSON.stringify(block.content);
+    }
+
+    // #1341: the harness parks a slow MCP call at 120s and puts an
+    // acknowledgement here. The call is still running and the user can still
+    // answer, so completing an interactive prompt on it retires the widget and
+    // leaves the question unanswerable. Drop the descriptor and let the prompt
+    // stay pending until it really settles. Non-interactive tools keep showing
+    // their acknowledgement -- for those it is the useful, honest status.
+    if (isBackgroundedToolAck(resultText)) {
+      const backgroundedToolName =
+        this.toolInputsById.get(toolUseId)?.toolName
+        ?? ((await context.findByProviderToolCallId(toolUseId))?.payload as Record<string, any> | undefined)?.toolName;
+      if (isInteractiveWidgetTool(backgroundedToolName)) {
+        return [];
+      }
     }
 
     const completed: CanonicalEventDescriptor = {

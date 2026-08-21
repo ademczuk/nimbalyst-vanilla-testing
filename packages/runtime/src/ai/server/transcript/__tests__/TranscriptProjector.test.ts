@@ -66,6 +66,44 @@ describe('TranscriptProjector', () => {
     expect(vm.messages[1].text).toBe('Hi there');
   });
 
+  // #1341: last line of defence. Whatever path wrote the harness's
+  // "moved to the background" acknowledgement into a prompt's result, the
+  // widget must still render as answerable -- every interactive widget decides
+  // pending vs answered from this projected `result`.
+  it('does not project a background acknowledgement as an interactive prompt result', () => {
+    const ack =
+      'MCP tool "nimbalyst - AskUserQuestion (MCP)" is still running after 120s. '
+      + 'It was moved to the background as task bq7x2k and keeps running.';
+    const vm = TranscriptProjector.project([
+      makeEvent({
+        eventType: 'tool_call',
+        providerToolCallId: 'ask-1',
+        payload: {
+          toolName: 'mcp__nimbalyst__AskUserQuestion',
+          status: 'completed',
+          arguments: { questions: [] },
+          result: ack,
+        },
+      }),
+    ]);
+
+    expect(vm.messages[0].toolCall?.result).toBeUndefined();
+    expect(vm.messages[0].toolCall?.status).toBe('running');
+  });
+
+  it('projects a background acknowledgement for a non-interactive tool as its result', () => {
+    const ack = 'Command did not complete within its 120s timeout and was moved to the background (ID: b1).';
+    const vm = TranscriptProjector.project([
+      makeEvent({
+        eventType: 'tool_call',
+        providerToolCallId: 'bash-1',
+        payload: { toolName: 'Bash', status: 'completed', arguments: {}, result: ack },
+      }),
+    ]);
+
+    expect(vm.messages[0].toolCall?.result).toBe(ack);
+  });
+
   it('groups tool progress under parent tool call', () => {
     const toolCallId = nextId;
     const events: TranscriptEvent[] = [

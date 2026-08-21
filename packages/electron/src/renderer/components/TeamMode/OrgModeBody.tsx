@@ -182,7 +182,13 @@ export function OrgModeBody({
     });
   }, [activeConversationId, chrome, orgId, route.view]);
 
+  // Only the standalone window owns the tracker record map. As a project-window
+  // mode this body shares the one app store with tracker mode, which already
+  // holds the workspace's items -- and it stays mounted while hidden, so seeding
+  // from the org here emptied every tracker surface at startup (#3637).
+  const ownsTrackerRecords = chrome === 'window';
   useEffect(() => {
+    if (!ownsTrackerRecords) return;
     let cancelled = false;
     trackerStore.set(replaceAllTrackerItemsAtom, []);
     void window.electronAPI.invoke(
@@ -199,7 +205,7 @@ export function OrgModeBody({
       console.error('[TeamMode] Failed to load tracker metadata:', error);
     });
     return () => { cancelled = true; };
-  }, [orgId, trackerStore]);
+  }, [orgId, ownsTrackerRecords, trackerStore]);
 
   // Keyed on the id, not the entry object: every directory refresh produces a
   // fresh descriptor object for the same room, which would otherwise refetch
@@ -275,7 +281,7 @@ export function OrgModeBody({
   ]);
 
   return (
-    <section className="org-mode-host team-mode flex h-full flex-col overflow-hidden" data-testid="team-mode" data-component="OrgModeHost">
+    <section className="org-mode-host team-mode flex h-full flex-col overflow-hidden bg-[var(--nim-bg)] text-[var(--nim-text)]" data-testid="team-mode" data-component="OrgModeHost">
       {/* Renders nothing: the Messages menu and Cmd+K land here. */}
       <OrgWindowCommandBridge
         surfaceId={surfaceId}

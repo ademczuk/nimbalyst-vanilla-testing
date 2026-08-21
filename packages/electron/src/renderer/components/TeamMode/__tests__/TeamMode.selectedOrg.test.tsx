@@ -272,6 +272,26 @@ describe('TeamMode organization targeting', () => {
     }));
   });
 
+  it('leaves the workspace tracker records alone when org mode is a project-window mode', async () => {
+    installApi();
+    const store = createStore();
+    // What initTrackerSyncListeners loads at startup. Org mode is mounted in
+    // the project window as a hidden mode and shares this store, so seeding it
+    // from the org here would empty every tracker surface (#3637).
+    store.set(trackerItemsMapAtom, new Map([['bug-1', { id: 'bug-1' } as never]]));
+
+    render(
+      <Provider store={store}>
+        <OrgModeHost orgId="org-other" surfaceId="project-org-mode" chrome="mode" />
+      </Provider>,
+    );
+
+    await waitFor(() => expect(
+      (window as any).electronAPI.organization.listMembers,
+    ).toHaveBeenCalledWith('org-other'));
+    expect(store.get(trackerItemsMapAtom).get('bug-1')).toBeDefined();
+  });
+
   it('falls back to the workspace-bound organization when no organization is selected', async () => {
     installApi();
     const store = createStore();

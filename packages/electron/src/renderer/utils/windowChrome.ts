@@ -6,5 +6,9 @@ export function reportResolvedTitleBarColors(
   const symbolColor = styles.getPropertyValue('--nim-text').trim();
   if (!color || !symbolColor) return;
 
-  window.electronAPI?.setTitleBarOverlayColors?.({ color, symbolColor });
+  // --nim-bg rides along so main can persist the theme's real canvas colour
+  // and paint it at window creation on the next launch, before CSS parses.
+  const backgroundColor = styles.getPropertyValue('--nim-bg').trim() || undefined;
+
+  window.electronAPI?.setTitleBarOverlayColors?.({ color, symbolColor, backgroundColor });
 }

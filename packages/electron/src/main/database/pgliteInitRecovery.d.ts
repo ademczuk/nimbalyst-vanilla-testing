@@ -7,6 +7,11 @@ export interface InitFailureInput {
   /** Earliest attempt permitted to rename the database aside. */
   renameAllowedFromAttempt: number;
   dataDirExists: boolean;
+  /**
+   * True when the data directory was already on disk before this process
+   * started. Such a directory holds the user's data and is never auto-renamed.
+   */
+  dataDirPredatesLaunch: boolean;
 }
 
 export interface InitFailurePlan {
@@ -16,7 +21,8 @@ export interface InitFailurePlan {
     | 'attempts-exhausted'
     | 'first-abort-may-be-transient'
     | 'no-data-dir-to-move'
-    | 'repeated-aborts-on-same-directory';
+    | 'preexisting-data-needs-consent'
+    | 'repeated-aborts-on-directory-we-created';
 }
 
 export function planInitFailureResponse(input: InitFailureInput): InitFailurePlan;

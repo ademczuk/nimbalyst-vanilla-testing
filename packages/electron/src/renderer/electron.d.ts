@@ -285,7 +285,7 @@ interface ElectronAPI {
   onOpenKeyboardShortcuts: (callback: () => void) => () => void;
   onOpenFeedback: (callback: () => void) => () => void;
   onThemeChange: (callback: (theme: string) => void) => () => void;
-  setTitleBarOverlayColors: (colors: { color: string; symbolColor: string }) => void;
+  setTitleBarOverlayColors: (colors: { color: string; symbolColor: string; backgroundColor?: string }) => void;
   getWindowFullScreen: () => Promise<boolean>;
   exitWindowFullScreen: () => void;
   getWindowMenuBar: () => Promise<import('../shared/menuBar').SerializedMenuBar>;
@@ -319,6 +319,7 @@ interface ElectronAPI {
   getTheme: () => Promise<string>;
   getThemeSync: () => string;
   getResolvedThemeSync: () => string;
+  getThemeBackgroundColorSync: () => string | null;
   getAppVersion: () => Promise<string>;
   setTheme: (theme: string) => Promise<void>;
 

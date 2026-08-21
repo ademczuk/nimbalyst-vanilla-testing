@@ -16,7 +16,9 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ### Write and Run Tests for Behavioral Changes
 
-**Any change to runtime behavior ships with a unit test** — a new test, or an extension of an existing one. Pure refactors already covered by tests, formatting, docs, and config-only changes are exempt. Before pushing, run the gate locally: `npm run typecheck && npm run test:prepush`. The repo's pre-push hook runs this automatically; it installs on `npm install` (or `npm run hooks:install`). Never push to `main` with a red suite — CI on `main` is a backstop, not the gate. For high-risk areas (sync/collab, main-process init, IPC, restart-to-verify bugs) the test comes **first** and must fail before the fix — see [end-to-end-verification.md](./.claude/rules/end-to-end-verification.md).
+**Any change to runtime behavior ships with a unit test** — a new test, or an extension of an existing one. Pure refactors already covered by tests, formatting, docs, and config-only changes are exempt. Before pushing, run the gate locally: `npm run typecheck && npm run test:prepush`.
+
+**Never run the suite twice to find out what failed.** It takes minutes. Every run records its failures — names, files, messages, diffs, and a command to rerun only those files — to `.vitest/last-run.log`; read it with `npm run test:last`. Never pipe a test run through `tail -n`: it truncates exactly the failure block you need and costs another full run. Capture to a file, then read the file. The repo's pre-push hook runs this automatically; it installs on `npm install` (or `npm run hooks:install`). Never push to `main` with a red suite — CI on `main` is a backstop, not the gate. For high-risk areas (sync/collab, main-process init, IPC, restart-to-verify bugs) the test comes **first** and must fail before the fix — see [end-to-end-verification.md](./.claude/rules/end-to-end-verification.md).
 
 **A test's job is to catch a regression a reader cannot see.** The test corpus is ~2M tokens, and every future session pays to read the tests next to the code it touches. A test that only re-states what is obvious on screen is pure cost. Write fewer, denser tests:
 
@@ -72,6 +74,12 @@ The biggest gotcha: **JSONB sub-extraction (`data->'someKey'`) returns a parsed 
 - NEVER use `node -e "const { PGlite } = require(...)"` or sqlite CLI
 
 **For sync/collab bugs, local PGLite ≠ server collab state.** `tracker_body_cache`, `documents`, and other sync-related tables only reflect the local side. The authoritative state for shared trackers/documents lives in Cloudflare Workers (`packages/collabv3/` DurableObjects) and must be inspected separately via `wrangler tail` against the prod sync worker, or via wrangler-backed E2E tests (`tracker-content-collab.spec.ts` / `tracker-sync-collab.spec.ts` patterns, `RUN_COLLAB_TESTS=1`, `document-sync:open-test` IPC for Stytch bypass). Confirming "the body is in PGLite" is not the same as confirming "the body is on the server." See `feedback_local_state_vs_server_state.md`.
+
+### Never Destroy User Data on a Heuristic
+
+See [destructive-data-paths.md](./.claude/rules/destructive-data-paths.md). Any path that renames, moves, truncates, overwrites, or deletes user data must **retry first, verify the damage is real (not a substring match on an error message), emit its event before acting, and leave a recoverable artifact with a launch heartbeat.** Never print an instruction telling the user to delete their data — restore-from-backup is the primary action.
+
+Past incident (#1347): a feature named "corruption recovery" renamed the live `pglite-db/` aside on any WASM abort, for nine months, silently. Six confirmed installs came up on empty databases; three then migrated the empty database and made it permanent.
 
 ### Always Run Your Own Observation Commands — Don't Push Logs/Curl/Tail to the User
 

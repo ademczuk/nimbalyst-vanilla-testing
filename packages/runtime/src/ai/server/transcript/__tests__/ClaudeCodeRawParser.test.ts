@@ -152,6 +152,71 @@ describe('ClaudeCodeRawParser', () => {
       });
     });
 
+    // #1341: at 120s the harness moves a slow MCP call to the background and
+    // returns an acknowledgement in the tool_result slot. The call is still
+    // running and the user can still answer it, so completing the tool call
+    // here retires the question widget and strands the prompt.
+    it('does not complete an interactive prompt on the MCP auto-background acknowledgement', async () => {
+      const parser = new ClaudeCodeRawParser();
+      const ack =
+        'MCP tool "nimbalyst - AskUserQuestion (MCP)" is still running after 120s. '
+        + 'It was moved to the background as task bq7x2k and keeps running; you\'ll receive a '
+        + 'notification with the result when it completes. You can keep working in the meantime. '
+        + 'To stop it, use TaskStop with task_id "bq7x2k". Note: it does not survive exiting this session.';
+      const msg = makeRawMessage({
+        direction: 'input',
+        content: JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'ask-1', content: ack }],
+          },
+        }),
+      });
+
+      const context = makeContext({
+        hasToolCall: (id) => id === 'ask-1',
+        findByProviderToolCallId: async () => ({
+          id: 'evt-1',
+          payload: { toolName: 'mcp__nimbalyst__AskUserQuestion' },
+        }) as any,
+      });
+      const descriptors = await parser.parseMessage(msg, context);
+
+      expect(descriptors.some(d => d.type === 'tool_call_completed')).toBe(false);
+    });
+
+    it('still completes a non-interactive tool on the MCP auto-background acknowledgement', async () => {
+      const parser = new ClaudeCodeRawParser();
+      const ack =
+        'MCP tool "nimbalyst - tracker_list (MCP)" is still running after 120s. '
+        + 'It was moved to the background as task bq7x2k and keeps running.';
+      const msg = makeRawMessage({
+        direction: 'input',
+        content: JSON.stringify({
+          type: 'user',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'tracker-1', content: ack }],
+          },
+        }),
+      });
+
+      const context = makeContext({
+        hasToolCall: (id) => id === 'tracker-1',
+        findByProviderToolCallId: async () => ({
+          id: 'evt-2',
+          payload: { toolName: 'mcp__nimbalyst-trackers__tracker_list' },
+        }) as any,
+      });
+      const descriptors = await parser.parseMessage(msg, context);
+
+      expect(descriptors[0]).toMatchObject({
+        type: 'tool_call_completed',
+        providerToolCallId: 'tracker-1',
+      });
+    });
+
     it('treats plain text as user_message', async () => {
       const parser = new ClaudeCodeRawParser();
       const msg = makeRawMessage({

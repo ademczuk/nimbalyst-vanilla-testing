@@ -7,7 +7,7 @@ import * as path from 'path';
 import { app } from 'electron';
 import {
     getWorkspaceState, updateWorkspaceState,
-    getTheme, getThemeSync, getResolvedThemeSync,
+    getTheme, getThemeSync, getResolvedThemeSync, getThemeBackgroundColor,
     isCompletionSoundEnabled, setCompletionSoundEnabled,
     getCompletionSoundType, setCompletionSoundType, CompletionSoundType,
     getCompletionSoundCustomPath, setCompletionSoundCustomPath,
@@ -365,6 +365,14 @@ export function registerSettingsHandlers() {
     safeOn('get-resolved-theme-sync', (event) => {
         const theme = getResolvedThemeSync();
         event.returnValue = theme;
+    });
+
+    // The active theme's resolved --nim-bg, for the same flash-prevention
+    // script. The base theme classes only carry base colours, so an extension
+    // or file-based theme would still paint light/dark white until React
+    // resolves it; this seeds the variable before the first stylesheet applies.
+    safeOn('get-theme-background-color-sync', (event) => {
+        event.returnValue = getThemeBackgroundColor() ?? null;
     });
 
     // Get app version (from app.getVersion)

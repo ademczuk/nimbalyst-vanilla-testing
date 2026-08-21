@@ -151,7 +151,7 @@ function OrgModeHostContent({
   // the window whatever it is showing, and they must never land on content.
   if (loading) {
     return (
-      <section className="org-mode-host team-mode team-mode-loading-arm flex h-full flex-col overflow-hidden" data-component="OrgModeHost">
+      <section className="org-mode-host team-mode team-mode-loading-arm flex h-full flex-col overflow-hidden bg-[var(--nim-bg)] text-[var(--nim-text)]" data-component="OrgModeHost">
         {chrome === 'window' && <OrgWindowTitleBar />}
         <div className="team-mode-loading flex flex-1 items-center justify-center text-sm text-nim-muted">Loading organization…</div>
       </section>

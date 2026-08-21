@@ -2,11 +2,15 @@
 import { describe, expect, it } from 'vitest';
 import { planInitFailureResponse } from '../pgliteInitRecovery';
 
-/** The values worker.js runs with. */
+/**
+ * The values worker.js runs with. `dataDirPredatesLaunch: false` is the
+ * this-launch-created-it case, which is the only one an auto-rename can touch.
+ */
 const defaults = {
   maxAttempts: 3,
   renameAllowedFromAttempt: 2,
   dataDirExists: true,
+  dataDirPredatesLaunch: false,
 };
 
 const plan = (over: Partial<Parameters<typeof planInitFailureResponse>[0]>) =>
@@ -30,6 +34,39 @@ describe('planInitFailureResponse', () => {
 
   it('renames only once the same directory has aborted twice', () => {
     expect(plan({ attempt: 2 }).action).toBe('rename');
+  });
+
+  // The rest of #1347. Retrying first narrowed the window but did not close
+  // it: two aborts in a row still bought the right to move an established
+  // user's only copy of their data, on nothing but a WASM error name. A
+  // directory that existed before this launch is the user's, and setting it
+  // aside is their call to make -- so we fail up to the recovery dialog, which
+  // lists the backups we hold, instead of acting on our own.
+  it('refuses to auto-rename a database that existed before this launch', () => {
+    for (const attempt of [2, 3]) {
+      expect(plan({ attempt, dataDirPredatesLaunch: true })).toEqual({
+        action: 'rethrow',
+        reason: 'preexisting-data-needs-consent',
+      });
+    }
+  });
+
+  it('still renames a directory this launch created, where nothing can be lost', () => {
+    expect(plan({ attempt: 2, dataDirPredatesLaunch: false })).toEqual({
+      action: 'rename',
+      reason: 'repeated-aborts-on-directory-we-created',
+    });
+  });
+
+  // Consent outranks the attempt budget: exhausting attempts must not become a
+  // back door to renaming what we just refused to rename.
+  it('never returns rename for pre-existing data under any configuration', () => {
+    for (const attempt of [1, 2, 3, 4]) {
+      for (const maxAttempts of [2, 3, 4, 5]) {
+        expect(plan({ attempt, maxAttempts, dataDirPredatesLaunch: true }).action)
+          .not.toBe('rename');
+      }
+    }
   });
 
   it('gives up rather than looping once attempts are exhausted', () => {

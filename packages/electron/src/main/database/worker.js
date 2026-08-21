@@ -512,10 +512,26 @@ class PGLiteWorker {
             maxAttempts,
             renameAllowedFromAttempt,
             dataDirExists: fs.existsSync(this.dataDir),
+            // `isFreshDb` was captured before we touched anything, so it is
+            // the only trustworthy answer to "is this directory ours or the
+            // user's?" -- by now a failed attempt may have created it.
+            dataDirPredatesLaunch: !isFreshDb,
           });
 
           if (plan.action === 'rethrow') {
-            console.error(`[PGLite Worker] Not recovering (${plan.reason})`);
+            if (plan.reason === 'preexisting-data-needs-consent') {
+              // Deliberate dead end. This database was here before we started,
+              // so it is the user's, and nothing readable from in here tells a
+              // corrupt one apart from a stumble. Failing up shows the recovery
+              // dialog with the backups we hold; renaming would hand back an
+              // app that starts empty and looks fine (#1347).
+              console.error(
+                '[PGLite Worker] Refusing to move a database that predates this launch; surfacing for recovery:',
+                this.dataDir,
+              );
+            } else {
+              console.error(`[PGLite Worker] Not recovering (${plan.reason})`);
+            }
             throw dbError;
           }
 
@@ -533,14 +549,16 @@ class PGLiteWorker {
             continue;
           }
 
-          // Repeated aborts on the same directory. Now treat it as corrupt:
-          // move it aside and start fresh. The data is preserved, and the
-          // launch heartbeat in `initialize.ts` reports the leftover directory
-          // so this stops being invisible to us.
+          // Repeated aborts on a directory *this launch created* -- an install
+          // that had no database when we started. Nothing on disk here is the
+          // user's, so moving it aside and starting over loses nothing. A
+          // directory that predates this launch never reaches this point.
+          // The launch heartbeat in `initialize.ts` reports the leftover
+          // directory either way, so this stops being invisible to us.
           const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
           const backupDir = `${this.dataDir}.backup-${timestamp}`;
 
-          console.log('[PGLite Worker] Database still aborting after a retry, moving to backup:', backupDir);
+          console.log('[PGLite Worker] Half-built database still aborting after a retry, moving aside:', backupDir);
           console.log('[PGLite Worker] Creating fresh database...');
 
           try {

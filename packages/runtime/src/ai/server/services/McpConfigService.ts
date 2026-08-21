@@ -21,6 +21,13 @@ import {
   extensionServerEndpointPath,
 } from './mcpTopology';
 
+/**
+ * How long a `nimbalyst` core tool call may sit without a response before the
+ * harness is entitled to give up on it. A week, because the interactive prompts
+ * block on a human and there is no honest smaller number.
+ */
+export const INTERACTIVE_TOOL_TIMEOUT_SEC = 604800;
+
 export interface McpConfigServiceDeps {
   /** Port for the unified internal Nimbalyst MCP HTTP server (all endpoints). */
   mcpServerPort: number | null;
@@ -130,11 +137,19 @@ export class McpConfigService {
       // tools stay registered but defer through ToolSearch. Carries the long
       // tool timeout because developer_git_commit_proposal / AskUserQuestion /
       // PromptForUserInput block indefinitely on user input.
+      //
+      // Two keys, because the two harnesses read different ones (#1341):
+      // `tool_timeout_sec` is Codex's, `timeout` (ms) is Claude Code's, which
+      // silently ignored the seconds key and aborted a pending question after
+      // its 300s non-stdio idle default. The keepalive in
+      // interactivePromptKeepalive.ts is the primary defence; this is the belt
+      // for clients that don't honour progress notifications.
       config[MCP_CORE] = {
         type: 'sse',
         transport: 'sse',
         url: endpointUrl('/mcp/core'),
-        tool_timeout_sec: 604800,
+        tool_timeout_sec: INTERACTIVE_TOOL_TIMEOUT_SEC,
+        timeout: INTERACTIVE_TOOL_TIMEOUT_SEC * 1000,
         ...(authHeaders ? { headers: { ...authHeaders } } : {}),
       };
 

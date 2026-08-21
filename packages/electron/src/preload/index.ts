@@ -282,9 +282,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return 'light';
     }
   },
+  getThemeBackgroundColorSync: () => {
+    try {
+      return ipcRenderer.sendSync('get-theme-background-color-sync');
+    } catch (err) {
+      console.error('[preload] getThemeBackgroundColorSync error:', err);
+      return null;
+    }
+  },
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   setTheme: (theme: string) => ipcRenderer.invoke('set-theme', theme),
-  setTitleBarOverlayColors: (colors: { color: string; symbolColor: string }) =>
+  setTitleBarOverlayColors: (colors: { color: string; symbolColor: string; backgroundColor?: string }) =>
     ipcRenderer.send('window-chrome:set-overlay-colors', colors),
 
   // Fullscreen state for the custom title bar's own exit control

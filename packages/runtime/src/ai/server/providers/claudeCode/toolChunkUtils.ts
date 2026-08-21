@@ -1,3 +1,5 @@
+import { isBackgroundedToolAck, isInteractiveWidgetTool } from '../../interactivePromptTools';
+
 // Claude Agent SDK emits several chunk types that are pure runtime side-channels:
 // the live in-memory dispatch loop reacts to them (status text, auth detection,
 // rate-limit metadata, tool progress), but the persistent reparse path
@@ -160,9 +162,18 @@ export function applyToolResultToToolCall(
   toolCall: any,
   toolResult: unknown,
   isError: boolean
-): { isDuplicate: boolean } {
+): { isDuplicate: boolean; isBackgroundAck?: boolean } {
   if (toolCall.result !== undefined) {
     return { isDuplicate: true };
+  }
+
+  // #1341: an interactive prompt the harness moved to the background is still
+  // waiting on the user -- the acknowledgement in the result slot is not an
+  // answer. Applying it flips the widget to "answered" with no answers and
+  // takes the buttons away. Leave the call outstanding so it stays answerable
+  // and the real result can land later.
+  if (isInteractiveWidgetTool(toolCall.name) && isBackgroundedToolAck(toolResult)) {
+    return { isDuplicate: false, isBackgroundAck: true };
   }
 
   toolCall.result = toolResult;

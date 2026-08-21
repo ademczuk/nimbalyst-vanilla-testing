@@ -1,6 +1,9 @@
 # Agent mistake log (local only)
 agent-mistakes.md
 
+# Last vitest run outcome (npm run test:last) -- local only
+.vitest/
+
 # Dependencies
 node_modules/
 .pnpm-store/
@@ -167,6 +170,7 @@ nimbalyst-local/
 # Nimbalyst-generated agent/skill/plugin compatibility shims (regenerated on launch)
 .agents/skills/.nimbalyst-generated/
 .claude/plugins/.nimbalyst-generated/
+**/.nimbalyst-generated/
 
 # Personal/agent plan documents (Nimbalyst planning feature stores these at
 # workspace root; they're personal working files, not source).

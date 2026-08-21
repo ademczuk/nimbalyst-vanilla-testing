@@ -224,7 +224,8 @@ import { autoUpdaterService, AutoUpdaterService } from './services/autoUpdater';
 import { initializeDatabase } from './database/initialize';
 import { database, HandledError } from './database/PGLiteDatabaseWorker';
 import { buildDatabaseInitializationErrorProperties } from './database/DatabaseErrorTelemetry';
-import { findRestorableBackups, formatBytes } from './database/sqlite/recoveryArtifacts';
+import { findRestorableBackups } from './database/sqlite/recoveryArtifacts';
+import { buildDatabaseFailureDialog } from './database/databaseFailureDialog';
 import { resolveTrackerDeepLinkId } from './services/tracker/resolveTrackerDeepLinkId';
 import { AnalyticsService } from "./services/analytics/AnalyticsService.ts";
 import { registerAnalyticsHandlers } from "./ipc/AnalyticsHandlers.ts";
@@ -1867,37 +1868,23 @@ app.whenReady().then(async () => {
             // give the user a way to reach it.
             const userDataPath = app.getPath('userData');
             const backups = findRestorableBackups(userDataPath);
-            const backupList = backups
-                .map((b) => `   - ${b.name} (${formatBytes(b.bytes)})`)
-                .join('\n');
-
-            const recoveryText = backups.length > 0
-                ? `Your data has not been lost. These copies are on this computer right now:\n\n` +
-                  `${backupList}\n\n` +
-                  `Do not delete the database folder -- these backups are what it would be restored from.\n\n`
-                : `Do not delete the database folder. Support can often recover a database that will not start.\n\n`;
+            const content = buildDatabaseFailureDialog(backups);
 
             const choice = dialog.showMessageBoxSync({
                 type: 'error',
-                title: 'Nimbalyst - Database Initialization Failed',
-                message: 'The database could not be started.',
-                detail:
-                    `${recoveryText}` +
-                    `Things to try, in order:\n` +
-                    `1. Close any other Nimbalyst windows and open it again\n` +
-                    `2. Restart your computer, which clears stale database locks\n` +
-                    `3. If it still will not start, contact support before changing anything on disk\n\n` +
-                    `Nimbalyst will now close.`,
-                buttons: backups.length > 0 ? ['Show Backups', 'Quit'] : ['Quit'],
-                defaultId: 0,
-                cancelId: backups.length > 0 ? 1 : 0,
+                title: content.title,
+                message: content.message,
+                detail: content.detail,
+                buttons: content.buttons,
+                defaultId: content.defaultId,
+                cancelId: content.cancelId,
                 noLink: true,
             });
 
-            const revealed = backups.length > 0 && choice === 0;
+            const revealed = content.revealPath !== null && choice === 0;
             if (revealed) {
                 try {
-                    shell.showItemInFolder(backups[0].path);
+                    shell.showItemInFolder(content.revealPath!);
                 } catch (revealErr) {
                     logger.main.warn('[Database] Could not reveal backup folder', revealErr);
                 }
