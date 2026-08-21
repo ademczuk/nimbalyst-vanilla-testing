@@ -10,9 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
-- The tracker sidebar collapses and reopens the way every other mode's does — click the Tracker icon again, press Cmd+T, or use the title-bar control.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.74.1] - 2026-08-20
+
+
+### Added
+<!-- New features go here -->
+- The tracker sidebar collapses and reopens like every other mode's — the Tracker icon, Cmd+T, or the title-bar control.
 - Expand the active tab to fill the window from View > Toggle Expanded Tab or with Shift+Escape, in any view mode.
-- Your organization's inbox, rooms, and direct messages open in the project window as an Organization mode, with mentions, work assigned to you, and replies you owe as their own navigation rows.
+- Your organization's inbox, rooms, and direct messages open in the project window as an Organization mode, with mentions, assigned work, and owed replies as their own rows.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
