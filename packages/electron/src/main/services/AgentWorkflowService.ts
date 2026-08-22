@@ -57,6 +57,87 @@ export interface AgentWorkflowEntry extends SlashCommand {
   id: string;
   sourceType: AgentWorkflowSourceType;
   diagnostics?: WorkflowDiagnostic[];
+  /** Model the command pins, when it declares one. */
+  model?: string;
+}
+
+/**
+ * A provider-native command or skill, as the running agent reports it.
+ *
+ * A bare string is a provider that reports names only: nothing about where the
+ * command came from, what it says it does, or what it runs is known, and the
+ * entry built from it must not invent any of that.
+ */
+export interface ProviderNativeWorkflow {
+  name: string;
+  /** The command's own description. */
+  description?: string;
+  /** Provenance the provider vouches for. Absent means it reports none. */
+  source?: SlashCommand['source'];
+  /** The prompt template the command actually runs. */
+  template?: string;
+  /** Role/agent the command pins. */
+  agentName?: string;
+  /** Model the command pins. */
+  model?: string;
+}
+
+export type ProviderNativeWorkflowInput = string | ProviderNativeWorkflow;
+
+function normalizeNativeWorkflow(entry: ProviderNativeWorkflowInput): ProviderNativeWorkflow {
+  return typeof entry === 'string' ? { name: entry } : entry;
+}
+
+const CODEX_BUILTIN_COMMAND_DESCRIPTIONS: Record<string, string> = {
+  compact: 'Summarize the current conversation to free context while preserving key points',
+  diff: 'Show the current Git diff, including untracked files',
+  init: 'Generate an AGENTS.md scaffold for the current directory',
+  mcp: 'List the configured MCP tools available in this Codex session',
+  review: 'Ask Codex to review the current working tree',
+  status: 'Display active model, sandbox, and session token usage information',
+};
+
+const CLAUDE_BUILTIN_COMMAND_DESCRIPTIONS: Record<string, string> = {
+  compact: 'Reduces conversation history by summarizing older messages',
+  clear: 'Start a new conversation session',
+  context: 'Show context information about the current session',
+  cost: 'Display token usage and cost information for the session',
+  init: 'Initialize or reinitialize the Claude Code session',
+  'output-style:new': 'Create a new custom output style configuration',
+  'pr-comments': 'Generate pull request comments for code changes',
+  'release-notes': 'Generate release notes from recent changes',
+  todos: 'Extract and manage TODO items from the codebase',
+  review: 'Perform code review on recent changes',
+  'security-review': 'Conduct security analysis of the codebase',
+};
+
+/**
+ * Copy for the commands a provider itself ships, keyed by name.
+ *
+ * OpenCode gets neither table. Its native catalog is `command.list`, which
+ * enumerates the commands defined in OpenCode config -- every entry carries a
+ * prompt template somebody wrote -- so a builtin's copy here would be
+ * describing a command we did not write. A project-supplied `/review` read
+ * "Ask Codex to review the current working tree" while running whatever the
+ * repository's template says.
+ */
+function builtinCommandDescriptions(provider: string): Record<string, string> {
+  if (provider === 'opencode') return {};
+  return usesCodexStyleAgentWorkflows(provider)
+    ? CODEX_BUILTIN_COMMAND_DESCRIPTIONS
+    : CLAUDE_BUILTIN_COMMAND_DESCRIPTIONS;
+}
+
+/**
+ * What to claim about a native command whose provider reports no provenance.
+ *
+ * For OpenCode the answer is knowable without the provider's help: its native
+ * catalog only contains config-defined commands, so `builtin` is the one claim
+ * that is certainly false -- and it is the claim that matters, because it is
+ * what tells the user the command is ours rather than the repository's.
+ */
+function defaultNativeCommandSource(provider: string): SlashCommand['source'] {
+  return provider === 'opencode' ? 'project' : 'builtin';
 }
 
 interface ExtensionWorkflowSource {
@@ -74,8 +155,8 @@ interface RegistrySnapshot {
 
 export interface AgentWorkflowQueryOptions {
   provider?: string | null;
-  nativeCommands?: string[];
-  nativeSkills?: string[];
+  nativeCommands?: ProviderNativeWorkflowInput[];
+  nativeSkills?: ProviderNativeWorkflowInput[];
   /**
    * Drop extension Claude-plugin commands (`source: 'plugin'`) from the result
    * (NIM-845). Set by the picker for a `claude-code-cli` session whose resolved
@@ -897,58 +978,49 @@ export class AgentWorkflowService {
 
   private buildProviderNativeEntries(
     provider: string,
-    nativeCommands: string[],
-    nativeSkills: string[],
+    nativeCommands: ProviderNativeWorkflowInput[],
+    nativeSkills: ProviderNativeWorkflowInput[],
   ): AgentWorkflowEntry[] {
     const nativeSkillProviderLabel = provider === 'opencode'
       ? 'OpenCode'
       : usesCodexStyleAgentWorkflows(provider)
         ? 'Codex'
         : 'Claude';
-    const commandDescriptions: Record<string, string> = usesCodexStyleAgentWorkflows(provider)
-      ? {
-          compact: 'Summarize the current conversation to free context while preserving key points',
-          diff: 'Show the current Git diff, including untracked files',
-          init: 'Generate an AGENTS.md scaffold for the current directory',
-          mcp: 'List the configured MCP tools available in this Codex session',
-          review: 'Ask Codex to review the current working tree',
-          status: 'Display active model, sandbox, and session token usage information',
-        }
-      : {
-          compact: 'Reduces conversation history by summarizing older messages',
-          clear: 'Start a new conversation session',
-          context: 'Show context information about the current session',
-          cost: 'Display token usage and cost information for the session',
-          init: 'Initialize or reinitialize the Claude Code session',
-          'output-style:new': 'Create a new custom output style configuration',
-          'pr-comments': 'Generate pull request comments for code changes',
-          'release-notes': 'Generate release notes from recent changes',
-          todos: 'Extract and manage TODO items from the codebase',
-          review: 'Perform code review on recent changes',
-          'security-review': 'Conduct security analysis of the codebase',
-        };
+    const commandDescriptions = builtinCommandDescriptions(provider);
+    const unattributedSource = defaultNativeCommandSource(provider);
 
     const entries: AgentWorkflowEntry[] = [];
 
-    for (const name of nativeCommands) {
+    for (const command of nativeCommands) {
+      const native = normalizeNativeWorkflow(command);
       entries.push({
-        id: `provider-native:command:${name}`,
-        name,
-        description: commandDescriptions[name] || `Execute ${name} command`,
-        source: 'builtin',
+        id: `provider-native:command:${native.name}`,
+        name: native.name,
+        // The command's own description first. The builtin table is copy for
+        // commands the *provider* ships, so applying it to a name that came
+        // from somebody's config describes a command nobody wrote.
+        description: native.description
+          || commandDescriptions[native.name]
+          || `Execute ${native.name} command`,
+        source: native.source ?? unattributedSource,
         kind: 'command',
         sourceType: 'provider-native',
+        ...(native.template ? { content: native.template } : {}),
+        ...(native.agentName ? { agentName: native.agentName } : {}),
+        ...(native.model ? { model: native.model } : {}),
       });
     }
 
-    for (const name of nativeSkills) {
+    for (const skill of nativeSkills) {
+      const native = normalizeNativeWorkflow(skill);
       entries.push({
-        id: `provider-native:skill:${name}`,
-        name,
-        description: `Invoke the ${name} ${nativeSkillProviderLabel} skill`,
-        source: 'plugin',
+        id: `provider-native:skill:${native.name}`,
+        name: native.name,
+        description: native.description || `Invoke the ${native.name} ${nativeSkillProviderLabel} skill`,
+        source: native.source ?? 'plugin',
         kind: 'skill',
         sourceType: 'provider-native',
+        ...(native.template ? { content: native.template } : {}),
       });
     }
 

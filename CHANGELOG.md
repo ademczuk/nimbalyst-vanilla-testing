@@ -10,12 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- OpenCode's model picker now lists the models you are actually signed in for, discovered live instead of a fixed built-in list, with per-model hiding and a refresh control in settings.
+- OpenCode sessions support slash commands and Compact, and can run as one of your configured agent roles.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Calc Sheets can mix narrative Markdown with calculations without treating prose as a formula error, and now recognize `ln` as the natural logarithm.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Removing a team member or revoking their project access now takes effect immediately on connections they already have open, instead of only when they next reconnect.
+- The context-usage indicator hides itself for agents that cannot report usage, instead of sitting at a permanent 0%.
 
 ### Removed
 <!-- Removed features go here -->

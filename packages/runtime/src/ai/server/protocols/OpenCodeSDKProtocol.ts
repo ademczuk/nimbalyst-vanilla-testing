@@ -18,7 +18,9 @@
 
 import { ChildProcess, spawn } from 'child_process';
 import { promises as fs } from 'fs';
+import type { Command } from '@opencode-ai/sdk';
 import type { ChatAttachment } from '../types';
+import { loadOpenCodeSdkClientModule } from '../providers/openCode/OpenCodeSdkClient';
 import {
   AgentProtocol,
   ProtocolSession,
@@ -38,6 +40,16 @@ export interface OpenCodeClientLike {
     list: (options?: Record<string, unknown>) => Promise<{ data: Array<{ id: string; [key: string]: unknown }> }>;
     prompt: (options: Record<string, unknown>) => Promise<unknown>;
     abort: (options: Record<string, unknown>) => Promise<unknown>;
+    summarize: (options: {
+      path: { id: string };
+      query?: { directory?: string };
+      body: { providerID: string; modelID: string };
+    }) => Promise<{ data?: boolean; error?: unknown }>;
+  };
+  command: {
+    list: (options?: {
+      query?: { directory?: string };
+    }) => Promise<{ data?: Command[]; error?: unknown }>;
   };
   global: {
     event: (options?: Record<string, unknown>) => Promise<{
@@ -64,6 +76,13 @@ export interface OpenCodeClientLike {
 export interface OpenCodeSSEEvent {
   type: string;
   properties?: Record<string, unknown>;
+}
+
+interface OpenCodeUsageSnapshot {
+  usage: NonNullable<ProtocolEvent['usage']>;
+  contextFillTokens: number;
+  messageId?: string;
+  modelId?: string;
 }
 
 /**
@@ -94,6 +113,12 @@ export class OpenCodeServerManager {
   private serverProcess: ChildProcess | null = null;
   private port: number = 0;
   private sessionCount = 0;
+  /**
+   * Bumped every time a server process is spawned. Callers that cache
+   * server-derived data (the slash-command catalog) key off this so a restart
+   * always re-fetches (#574).
+   */
+  private generation = 0;
   private ready = false;
   private readyPromise: Promise<void> | null = null;
   private workspacePath: string = '';
@@ -147,6 +172,11 @@ export class OpenCodeServerManager {
     return `http://127.0.0.1:${this.port}`;
   }
 
+  /** Identity of the currently running server process, for cache keys. */
+  get serverGeneration(): number {
+    return this.generation;
+  }
+
   get isRunning(): boolean {
     return this.serverProcess !== null && this.ready;
   }
@@ -183,6 +213,8 @@ export class OpenCodeServerManager {
   }
 
   private async startServer(env?: Record<string, string>): Promise<void> {
+    this.generation++;
+
     // Find an available port
     this.port = await this.findAvailablePort();
 
@@ -366,40 +398,42 @@ export class OpenCodeServerManager {
 }
 
 /**
- * Load the @opencode-ai/sdk module dynamically.
- */
-async function loadOpenCodeSdkModule(): Promise<{ createOpencodeClient: OpenCodeClientFactory }> {
-  try {
-    // Dynamic import -- the SDK is ESM-only so we use the /client subpath
-    const moduleName = '@opencode-ai/sdk/client';
-    const sdkModule = await import(/* webpackIgnore: true */ moduleName);
-    return sdkModule;
-  } catch (error) {
-    throw new Error(
-      'Failed to load @opencode-ai/sdk. Install it with: npm install @opencode-ai/sdk\n' +
-      `Error: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-}
-
-/**
  * Convert a Nimbalyst-style OpenCode model id (e.g. `opencode:anthropic/claude-sonnet-4-5`
  * or just `anthropic/claude-sonnet-4-5`) into the `{ providerID, modelID }` shape
- * the OpenCode SDK expects in the prompt body. Returns null when the id can't be
- * parsed -- callers should omit the field so OpenCode picks its config default.
+ * the OpenCode SDK expects in the prompt body. Returns null only for an absent
+ * model or the explicit `default` sentinel and throws for malformed ids.
  */
 export function parseOpenCodeModelId(
   rawModel: string | undefined
 ): { providerID: string; modelID: string } | null {
   if (!rawModel) return null;
   const stripped = rawModel.startsWith('opencode:') ? rawModel.slice('opencode:'.length) : rawModel;
-  if (!stripped || stripped === 'default') return null;
+  if (stripped === 'default') return null;
   const slashIdx = stripped.indexOf('/');
-  if (slashIdx <= 0 || slashIdx === stripped.length - 1) return null;
+  if (slashIdx <= 0 || slashIdx === stripped.length - 1) {
+    throw new Error(
+      `Invalid OpenCode model id "${rawModel}". Expected "provider/model" or "opencode:provider/model".`
+    );
+  }
   return {
     providerID: stripped.slice(0, slashIdx),
     modelID: stripped.slice(slashIdx + 1),
   };
+}
+
+/**
+ * Read the OpenCode agent role the host configured for this session.
+ *
+ * Carried through `SessionOptions.raw` because the role is an OpenCode concept
+ * with no equivalent on the cross-provider protocol contract. An absent, blank
+ * or non-string value means "no role" -- OpenCode then uses its own default
+ * primary agent, which is the same behavior as before the picker existed.
+ */
+export function readAgentRole(options: SessionOptions | undefined): string | null {
+  const raw = (options?.raw as { openCodeAgent?: unknown } | undefined)?.openCodeAgent;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 /**
@@ -488,8 +522,28 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
   readonly platform = 'opencode-sdk';
 
   private client: OpenCodeClientLike | null = null;
+  private clientBaseUrl: string | null = null;
   private aborted = new Set<string>();
   private readonly loadSdkModule: () => Promise<{ createOpencodeClient: OpenCodeClientFactory }>;
+  /**
+   * Protocol sessions holding a server reference. `createSession`/`resumeSession`
+   * run once per turn and each call bumps the manager's reference count, so
+   * only the first one per session is kept -- otherwise the count could never
+   * fall back to zero and the `opencode serve` child outlived the app's use of
+   * it (#574).
+   */
+  private readonly serverRefsBySessionId = new Set<string>();
+  private readonly resolvedModelBySessionId = new Map<
+    string,
+    { providerID: string; modelID: string }
+  >();
+  /**
+   * Memoized `command.list` result. The catalog belongs to the running server,
+   * so a fetch stays valid until that server process is replaced; keyed by
+   * generation + directory so a restart or a different workspace re-fetches
+   * (#574). Previously this ran on every turn.
+   */
+  private slashCommandCache: { key: string; commands: Promise<string[]> } | null = null;
 
   /**
    * @param loadSdkModule - Optional SDK loader for testing
@@ -497,7 +551,12 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
   constructor(
     loadSdkModule?: () => Promise<{ createOpencodeClient: OpenCodeClientFactory }>
   ) {
-    this.loadSdkModule = loadSdkModule || loadOpenCodeSdkModule;
+    this.loadSdkModule = loadSdkModule || (async () => {
+      const sdk = await loadOpenCodeSdkClientModule();
+      return {
+        createOpencodeClient: sdk.createOpencodeClient as unknown as OpenCodeClientFactory,
+      };
+    });
   }
 
   /**
@@ -505,26 +564,33 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
    */
   async createSession(options: SessionOptions): Promise<ProtocolSession> {
     const serverManager = OpenCodeServerManager.getInstance();
-    await serverManager.ensureRunning(options.workspacePath, options.env);
+    let acquisitionOutstanding = true;
+    try {
+      await serverManager.ensureRunning(options.workspacePath, options.env);
 
-    const client = await this.getClient(serverManager.baseUrl);
-    await this.registerMcpServers(client, options);
-    const result = await client.session.create({
-      body: {},
-      query: { directory: options.workspacePath },
-    });
+      const client = await this.getClient(serverManager.baseUrl);
+      await this.registerMcpServers(client, options);
+      const result = await client.session.create({
+        body: {},
+        query: { directory: options.workspacePath },
+      });
 
-    const sessionId = result.data?.id ?? (result as any).id;
-    console.log('[OPENCODE-PROTOCOL] Session created:', sessionId);
+      const sessionId = result.data?.id ?? (result as any).id;
+      console.log('[OPENCODE-PROTOCOL] Session created:', sessionId);
+      this.retainServerReference(sessionId);
+      acquisitionOutstanding = false;
 
-    return {
-      id: sessionId,
-      platform: this.platform,
-      raw: {
-        options,
-        baseUrl: serverManager.baseUrl,
-      },
-    };
+      return {
+        id: sessionId,
+        platform: this.platform,
+        raw: {
+          options,
+          baseUrl: serverManager.baseUrl,
+        },
+      };
+    } finally {
+      if (acquisitionOutstanding) serverManager.release();
+    }
   }
 
   /**
@@ -532,22 +598,113 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
    */
   async resumeSession(sessionId: string, options: SessionOptions): Promise<ProtocolSession> {
     const serverManager = OpenCodeServerManager.getInstance();
-    await serverManager.ensureRunning(options.workspacePath, options.env);
+    let acquisitionOutstanding = true;
+    try {
+      await serverManager.ensureRunning(options.workspacePath, options.env);
 
-    const client = await this.getClient(serverManager.baseUrl);
-    await this.registerMcpServers(client, options);
+      const client = await this.getClient(serverManager.baseUrl);
+      await this.registerMcpServers(client, options);
 
-    console.log('[OPENCODE-PROTOCOL] Resuming session:', sessionId);
+      console.log('[OPENCODE-PROTOCOL] Resuming session:', sessionId);
+      this.retainServerReference(sessionId);
+      acquisitionOutstanding = false;
 
-    return {
-      id: sessionId,
-      platform: this.platform,
-      raw: {
-        options,
-        baseUrl: serverManager.baseUrl,
-        resume: true,
-      },
-    };
+      return {
+        id: sessionId,
+        platform: this.platform,
+        raw: {
+          options,
+          baseUrl: serverManager.baseUrl,
+          resume: true,
+        },
+      };
+    } finally {
+      if (acquisitionOutstanding) serverManager.release();
+    }
+  }
+
+  /**
+   * List provider-native slash commands for this workspace (#574).
+   *
+   * Served from `slashCommandCache` for the lifetime of the server process the
+   * session is talking to. The catalog is loaded by that server from the
+   * workspace and user config, so a command the user adds is picked up when the
+   * server is next started -- which happens on app launch and whenever the last
+   * OpenCode session releases the previous one.
+   */
+  async listSlashCommands(session: ProtocolSession): Promise<string[]> {
+    const directory = (session.raw?.options as SessionOptions | undefined)?.workspacePath;
+    const key = `${OpenCodeServerManager.getInstance().serverGeneration}:${directory ?? ''}`;
+
+    const cached = this.slashCommandCache;
+    if (cached?.key === key) {
+      return cached.commands;
+    }
+
+    const commands = this.fetchSlashCommands(session, directory).catch((error) => {
+      // A failed fetch must not be cached: the next turn retries.
+      if (this.slashCommandCache?.key === key) {
+        this.slashCommandCache = null;
+      }
+      throw error;
+    });
+    this.slashCommandCache = { key, commands };
+    return commands;
+  }
+
+  private async fetchSlashCommands(session: ProtocolSession, directory: string | undefined): Promise<string[]> {
+    const client = await this.getActiveSessionClient(session);
+    const result = await client.command.list({ query: { directory } });
+    if (!Array.isArray(result.data)) {
+      throw new Error('[OpenCode] command.list did not return a command catalog.');
+    }
+    return result.data.map((command) => command.name);
+  }
+
+  /** Compact this session through OpenCode's native summarize RPC. */
+  async compactSession(session: ProtocolSession): Promise<void> {
+    const options = session.raw?.options as SessionOptions | undefined;
+    const model =
+      parseOpenCodeModelId(options?.model) ??
+      this.resolvedModelBySessionId.get(session.id);
+    if (!model) {
+      throw new Error(
+        'Cannot compact this OpenCode session before an assistant message reports its provider/model.'
+      );
+    }
+    const client = await this.getActiveSessionClient(session);
+    const result = await client.session.summarize({
+      path: { id: session.id },
+      query: { directory: options?.workspacePath },
+      body: model,
+    });
+    if (result.data !== true) {
+      throw new Error('[OpenCode] session.summarize did not compact the session.');
+    }
+  }
+
+  /**
+   * Keep exactly one server reference per protocol session. `ensureRunning`
+   * has already incremented the count for this call; a session that already
+   * holds a reference hands the surplus one straight back.
+   */
+  private retainServerReference(sessionId: string): void {
+    if (this.serverRefsBySessionId.has(sessionId)) {
+      OpenCodeServerManager.getInstance().release();
+      return;
+    }
+    this.serverRefsBySessionId.add(sessionId);
+  }
+
+  private async getActiveSessionClient(session: ProtocolSession): Promise<OpenCodeClientLike> {
+    const baseUrl = session.raw?.baseUrl as string | undefined;
+    if (!baseUrl) {
+      throw new Error('Invalid session: missing baseUrl');
+    }
+    if (!OpenCodeServerManager.getInstance().isRunning) {
+      throw new Error('Cannot use OpenCode session RPCs: the server is not running.');
+    }
+    return this.getClient(baseUrl);
   }
 
   // Pushes MCP servers from SessionOptions into the OpenCode server's
@@ -647,21 +804,30 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
     });
 
     let fullText = '';
-    let usage: { input_tokens: number; output_tokens: number; total_tokens: number } | undefined;
+    const usageByMessageId = new Map<string, OpenCodeUsageSnapshot>();
+    let latestUsage: OpenCodeUsageSnapshot | undefined;
 
     try {
       const sessionOptions = session.raw?.options as SessionOptions | undefined;
       const modelSelector = parseOpenCodeModelId(sessionOptions?.model);
 
-      // Send the prompt (non-blocking -- events arrive via SSE).
-      // The `model` field is optional -- when omitted, OpenCode falls back to
-      // the default model from its config file (~/.config/opencode/opencode.json).
+      // Send the prompt (non-blocking -- events arrive via SSE). Omit `model`
+      // only for an explicit default signal; malformed ids must not silently
+      // fall back to OpenCode's config default (#730).
       const parts = await buildPromptParts(message.content, message.attachments);
       const promptBody: Record<string, unknown> = {
         parts,
       };
       if (modelSelector) {
         promptBody.model = modelSelector;
+      }
+      // The session role belongs on the prompt body, not on session creation:
+      // `POST /session` accepts only parentID/title, while every prompt carries
+      // its own `agent`. Sending it here is also what lets the user change role
+      // mid-conversation.
+      const agentRole = readAgentRole(sessionOptions);
+      if (agentRole) {
+        promptBody.agent = agentRole;
       }
       const promptPromise = client.session.prompt({
         path: { id: sessionId },
@@ -703,14 +869,49 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
             fullText += protocolEvent.content;
           }
           if (protocolEvent.type === 'usage' && protocolEvent.usage) {
-            usage = protocolEvent.usage;
+            const snapshot: OpenCodeUsageSnapshot = {
+              usage: protocolEvent.usage,
+              contextFillTokens: protocolEvent.contextFillTokens ?? protocolEvent.usage.input_tokens,
+              ...(typeof protocolEvent.metadata?.openCodeMessageId === 'string'
+                ? { messageId: protocolEvent.metadata.openCodeMessageId }
+                : {}),
+              ...(typeof protocolEvent.metadata?.openCodeModelId === 'string'
+                ? { modelId: protocolEvent.metadata.openCodeModelId }
+                : {}),
+            };
+            latestUsage = snapshot;
+            if (snapshot.messageId) {
+              // message.updated can repeat for the same assistant message as
+              // OpenCode fills in its final token counts. Latest wins so a
+              // streaming update is never counted twice.
+              usageByMessageId.set(snapshot.messageId, snapshot);
+            }
           }
-          yield protocolEvent;
 
           // Session idle means the agent is done
           if (protocolEvent.type === 'complete') {
+            const snapshots = usageByMessageId.size > 0
+              ? [...usageByMessageId.values()]
+              : (latestUsage ? [latestUsage] : []);
+            const normalizedUsage = aggregateOpenCodeUsage(snapshots);
+            yield {
+              ...protocolEvent,
+              content: fullText,
+              ...(normalizedUsage ? { usage: normalizedUsage } : {}),
+              ...(latestUsage
+                ? {
+                    contextFillTokens: latestUsage.contextFillTokens,
+                    metadata: {
+                      ...protocolEvent.metadata,
+                      ...(latestUsage.modelId ? { openCodeModelId: latestUsage.modelId } : {}),
+                    },
+                  }
+                : {}),
+            };
             return;
           }
+
+          yield protocolEvent;
         }
       }
 
@@ -718,10 +919,22 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
       await promptPromise;
 
       // Emit completion event
+      const snapshots = usageByMessageId.size > 0
+        ? [...usageByMessageId.values()]
+        : (latestUsage ? [latestUsage] : []);
+      const normalizedUsage = aggregateOpenCodeUsage(snapshots);
       yield {
         type: 'complete',
         content: fullText,
-        usage: usage ?? { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+        ...(normalizedUsage ? { usage: normalizedUsage } : {}),
+        ...(latestUsage
+          ? {
+              contextFillTokens: latestUsage.contextFillTokens,
+              metadata: latestUsage.modelId
+                ? { openCodeModelId: latestUsage.modelId }
+                : undefined,
+            }
+          : {}),
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -749,12 +962,15 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
   }
 
   /**
-   * Clean up session resources
+   * Clean up session resources. Releasing the last reference stops the
+   * `opencode serve` child.
    */
   cleanupSession(session: ProtocolSession): void {
     this.aborted.delete(session.id);
-    // Release server reference
-    OpenCodeServerManager.getInstance().release();
+    this.resolvedModelBySessionId.delete(session.id);
+    if (this.serverRefsBySessionId.delete(session.id)) {
+      OpenCodeServerManager.getInstance().release();
+    }
   }
 
   /**
@@ -848,6 +1064,50 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
           // typically delivered through message.part.updated with full text.
           events.push({ type: 'text', content: delta });
         }
+        break;
+      }
+
+      // OpenCode reports one usage snapshot per assistant message. Input plus
+      // cache reads/writes is the current context fill; output is generated
+      // after that prompt and therefore is not part of this snapshot.
+      case 'message.updated': {
+        const info = props.info as Record<string, unknown> | undefined;
+        if (!info || info.role !== 'assistant') break;
+        const providerId =
+          typeof info.providerID === 'string' ? info.providerID.trim() : '';
+        const modelId =
+          typeof info.modelID === 'string' ? info.modelID.trim() : '';
+        if (providerId && modelId) {
+          this.resolvedModelBySessionId.set(targetSessionId, {
+            providerID: providerId,
+            modelID: modelId,
+          });
+        }
+        const tokens = info.tokens as Record<string, unknown> | undefined;
+        if (!tokens) break;
+        const cache = tokens.cache as Record<string, unknown> | undefined;
+        const inputTokens = toTokenCount(tokens.input);
+        const outputTokens = toTokenCount(tokens.output);
+        const contextFillTokens = inputTokens
+          + toTokenCount(cache?.read)
+          + toTokenCount(cache?.write);
+        const reportedTotal = toOptionalTokenCount(tokens.total);
+
+        events.push({
+          type: 'usage',
+          usage: {
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            total_tokens: reportedTotal ?? inputTokens + outputTokens,
+          },
+          contextFillTokens,
+          metadata: {
+            ...(typeof info.id === 'string' ? { openCodeMessageId: info.id } : {}),
+            ...(providerId && modelId
+              ? { openCodeModelId: `opencode:${providerId}/${modelId}` }
+              : {}),
+          },
+        });
         break;
       }
 
@@ -950,12 +1210,13 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
    * Get or create the SDK client
    */
   private async getClient(baseUrl: string): Promise<OpenCodeClientLike> {
-    if (this.client) {
+    if (this.client && this.clientBaseUrl === baseUrl) {
       return this.client;
     }
 
     const sdkModule = await this.loadSdkModule();
     this.client = sdkModule.createOpencodeClient({ baseUrl });
+    this.clientBaseUrl = baseUrl;
     return this.client;
   }
 
@@ -965,6 +1226,32 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
   private getClientIfReady(): OpenCodeClientLike | null {
     return this.client;
   }
+}
+
+function toTokenCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : 0;
+}
+
+function toOptionalTokenCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function aggregateOpenCodeUsage(
+  snapshots: OpenCodeUsageSnapshot[]
+): ProtocolEvent['usage'] | undefined {
+  if (snapshots.length === 0) return undefined;
+  return snapshots.reduce<NonNullable<ProtocolEvent['usage']>>(
+    (total, snapshot) => ({
+      input_tokens: total.input_tokens + snapshot.usage.input_tokens,
+      output_tokens: total.output_tokens + snapshot.usage.output_tokens,
+      total_tokens: total.total_tokens + snapshot.usage.total_tokens,
+    }),
+    { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+  );
 }
 
 // Pulls the OpenCode session ID out of an SSE event so we can route events to

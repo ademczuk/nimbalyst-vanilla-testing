@@ -123,8 +123,11 @@ describe('calc sheet selection context', () => {
   });
 
   it('includes malformed selected formulas without exposing unbounded text', () => {
-    const hostile = `not a formula ${'x'.repeat(5_000)}\u0000secret`;
-    const parsed = parseCalcSheetDocument(hostile);
+    const parsed = parseCalcSheetDocument('total =');
+    parsed.lines[0] = {
+      ...parsed.lines[0],
+      raw: `total = ${'x'.repeat(5_000)}\u0000secret`,
+    };
     const evaluation = evaluateCalcSheet(parsed.lines, parsed.frontmatter);
 
     const [item] = buildCalcSheetSelectionContextItems({
@@ -143,6 +146,17 @@ describe('calc sheet selection context', () => {
     expect(item.description.length).toBeLessThanOrEqual(1_600);
     expect(serialized.length).toBeLessThan(2_000);
     expect(serialized).not.toContain('\u0000');
+  });
+
+  it('does not create selection context for prose', () => {
+    const parsed = parseCalcSheetDocument('This paragraph explains the calculation.');
+    const evaluation = evaluateCalcSheet(parsed.lines, parsed.frontmatter);
+
+    expect(buildCalcSheetSelectionContextItems({
+      parsed,
+      evaluation,
+      selection: { startLineNumber: 1, endLineNumber: 1 },
+    })).toEqual([]);
   });
 
   it('caps large selections and reports how many formula cells were omitted', () => {

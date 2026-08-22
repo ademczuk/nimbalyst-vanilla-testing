@@ -69,6 +69,7 @@ import {
   sessionDocumentContextAtom,
   sessionEffortLevelRawAtom,
   sessionThinkingModeRawAtom,
+  sessionOpenCodeRoleAtom,
   sessionLoadingAtom,
   sessionModeAtom,
   sessionModelAtom,
@@ -472,6 +473,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
   const sessionDocumentContext = useAtomValue(sessionDocumentContextAtom(sessionId));
   const rawEffortLevel = useAtomValue(sessionEffortLevelRawAtom(sessionId));
   const rawThinkingMode = useAtomValue(sessionThinkingModeRawAtom(sessionId));
+  const openCodeRole = useAtomValue(sessionOpenCodeRoleAtom(sessionId));
   const loadSessionData = useSetAtom(loadSessionDataAtom);
   const reloadSessionData = useSetAtom(reloadSessionDataAtom);
   const updateSessionStore = useSetAtom(updateSessionStoreAtom);
@@ -1610,6 +1612,12 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
     });
   }, [sessionId, updateSessionStore, thinkingMode, currentModel, posthog]);
 
+  // OpenCode session role. Persisted per session under the metadata key PR #624
+  // introduced, so a session that already carries one keeps it.
+  const handleOpenCodeRoleChange = useCallback(async (role: string | null) => {
+    await updateSessionMetadataField(sessionId, 'opencodeAgent', role, null, updateSessionStore);
+  }, [sessionId, updateSessionStore]);
+
   const handleCommandSelect = useCallback((command: string) => {
     setDraftInput(command);
     inputRef.current?.focus();
@@ -2715,6 +2723,8 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
         thinkingMode={thinkingMode}
         onThinkingModeChange={handleThinkingModeChange}
         showThinkingToggle={isClaudeCliTerminalSession(provider) && cliSessionCommitted ? false : showThinkingToggle}
+        openCodeRole={openCodeRole}
+        onOpenCodeRoleChange={provider === 'opencode' ? handleOpenCodeRoleChange : undefined}
         tokenUsage={tokenUsage}
         provider={provider}
         onQueue={handleQueue}

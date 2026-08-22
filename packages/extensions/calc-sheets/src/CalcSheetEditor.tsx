@@ -372,7 +372,7 @@ export function CalcSheetEditor({ host }: EditorHostProps) {
                   style={{ top: lineTops[gutterLineOffset + line.index] ?? (gutterLineOffset + line.index) * editorLineHeight, height: editorLineHeight }}
                 >
                   <span className="calc-sheets__result-value">
-                    {line.kind === 'section' ? '' : output}
+                    {line.kind === 'section' || line.kind === 'prose' ? '' : output}
                   </span>
                 </div>
               );

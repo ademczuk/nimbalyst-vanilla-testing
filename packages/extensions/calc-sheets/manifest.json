@@ -14,9 +14,10 @@
     "icon": "calculate",
     "featured": false,
     "tagline": "Reusable business-model worksheets with live results",
-    "longDescription": "Open .calc.md files in a dedicated editor built for line-oriented assumptions, formulas, units, assertions, and quick business modeling. Calc Sheets stay text-first, embed inside markdown documents, and show live results in a calculator-style gutter.",
+    "longDescription": "Open .calc.md files in a dedicated editor built for line-oriented assumptions, formulas, units, assertions, and quick business modeling. Mix calculations with narrative markdown source while live results stay focused in a calculator-style gutter.",
     "highlights": [
       "Line-based worksheets instead of grid-heavy spreadsheets",
+      "Narrative markdown stays readable without becoming a calculation error",
       "Live result gutter with unit-aware evaluation",
       "Custom editor embeds directly inside markdown documents",
       "YAML frontmatter for currency, units, and display defaults"

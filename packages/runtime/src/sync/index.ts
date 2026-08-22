@@ -141,6 +141,12 @@ export {
   OutboxWriteRejectedError,
   isConfirmedOutboxRevocationCode,
 } from './OutboxDrainer';
+export {
+  COLLAB_CLOSE_ACCESS_REVOKED,
+  COLLAB_CLOSE_REMOVED_FROM_TEAM,
+  collabAccessRevokedMessage,
+  isCollabAccessRevokedCloseCode,
+} from './collabCloseCodes';
 export type {
   OutboxDrainBatch,
   OutboxDrainSendResult,

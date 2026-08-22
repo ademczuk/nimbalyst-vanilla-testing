@@ -1,4 +1,7 @@
+import { classifyCalcSheetLine } from './lineClassifier';
+
 export type CalcSheetSyntaxTokenKind =
+  | 'prose'
   | 'comment'
   | 'heading-marker'
   | 'heading-text'
@@ -27,6 +30,7 @@ const BUILTIN_FUNCTIONS = new Set([
   'ceil',
   'exp',
   'floor',
+  'ln',
   'log',
   'log10',
   'max',
@@ -185,16 +189,26 @@ function scanExpression(
 
 export function tokenizeCalcSheetLine(line: string): CalcSheetSyntaxToken[] {
   const tokens: CalcSheetSyntaxToken[] = [];
+  const classified = classifyCalcSheetLine(line);
 
-  const commentMatch = line.match(/^(\s*)(\/\/.*)$/);
-  if (commentMatch) {
+  if (classified.kind === 'blank') {
+    return tokens;
+  }
+
+  if (classified.kind === 'prose') {
+    pushToken(tokens, 0, line.length, 'prose');
+    return tokens;
+  }
+
+  if (classified.kind === 'comment' && classified.match) {
+    const commentMatch = classified.match;
     const start = commentMatch[1].length;
     pushToken(tokens, start, line.length, 'comment');
     return tokens;
   }
 
-  const headingMatch = line.match(/^(\s*)(#{1,6})(\s+)(.*)$/);
-  if (headingMatch) {
+  if (classified.kind === 'section' && classified.match) {
+    const headingMatch = classified.match;
     const markerStart = headingMatch[1].length;
     const markerEnd = markerStart + headingMatch[2].length;
     const textStart = markerEnd + headingMatch[3].length;
@@ -203,8 +217,8 @@ export function tokenizeCalcSheetLine(line: string): CalcSheetSyntaxToken[] {
     return tokens;
   }
 
-  const assertMatch = line.match(/^(\s*)(assert)\b/);
-  if (assertMatch) {
+  if (classified.calcAttempt === 'assert' && classified.match) {
+    const assertMatch = classified.match;
     const keywordStart = assertMatch[1].length;
     const keywordEnd = keywordStart + assertMatch[2].length;
     pushToken(tokens, keywordStart, keywordEnd, 'keyword');
@@ -212,8 +226,8 @@ export function tokenizeCalcSheetLine(line: string): CalcSheetSyntaxToken[] {
     return tokens;
   }
 
-  const bindingMatch = line.match(/^(\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*)(=)/);
-  if (bindingMatch) {
+  if (classified.calcAttempt === 'binding' && classified.match) {
+    const bindingMatch = classified.match;
     const nameStart = bindingMatch[1].length;
     const nameEnd = nameStart + bindingMatch[2].length;
     const operatorStart = nameEnd + bindingMatch[3].length;

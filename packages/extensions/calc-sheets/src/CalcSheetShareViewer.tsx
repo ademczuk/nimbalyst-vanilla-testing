@@ -275,7 +275,9 @@ export function CalcSheetShareViewer({ host }: EditorHostProps) {
                   }}
                   title={lineTitle(line, evaluation)}
                 >
-                  <span className="calc-sheets__result-value">{output}</span>
+                  <span className="calc-sheets__result-value">
+                    {line.kind === 'section' || line.kind === 'prose' ? '' : output}
+                  </span>
                 </div>
               );
             })}

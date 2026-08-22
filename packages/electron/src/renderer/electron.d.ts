@@ -506,6 +506,13 @@ interface ElectronAPI {
   aiGetAllModels: () => Promise<any>;
   aiClearModelCache: () => Promise<void>;
   aiRefreshSessionProvider: (sessionId: string) => Promise<void>;
+  openCodeModelCatalogGet: () => Promise<import('../shared/openCodeModelCatalog').OpenCodeModelCatalogIpcResponse>;
+  openCodeModelCatalogRefresh: (
+    request: import('../shared/openCodeModelCatalog').OpenCodeModelCatalogRefreshRequest
+  ) => Promise<import('../shared/openCodeModelCatalog').OpenCodeModelCatalogIpcResponse>;
+  openCodeAgentCatalogGet: (
+    request: import('../shared/openCodeAgentCatalog').OpenCodeAgentCatalogRequest
+  ) => Promise<import('../shared/openCodeAgentCatalog').OpenCodeAgentCatalogIpcResponse>;
 
   // AI event listeners
   onAIStreamResponse: (callback: (data: any) => void) => () => void;

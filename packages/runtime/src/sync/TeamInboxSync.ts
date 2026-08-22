@@ -14,6 +14,10 @@ import type {
 import { teamInboxRoomId } from '@nimbalyst/collab-protocol';
 
 import { asTeamMemberId, type TeamJwt, type TeamMemberId } from '../auth/jwtScopes';
+import {
+  collabAccessRevokedMessage,
+  isCollabAccessRevokedCloseCode,
+} from './collabCloseCodes';
 import { appendSyncClientParams } from './syncClientInfo';
 
 export const DEFAULT_TEAM_INBOX_CONNECT_CONCURRENCY = 4;
@@ -181,6 +185,8 @@ export class TeamInboxOrgClient implements TeamInboxOrgClientLike {
   private ws: WebSocket | null = null;
   private destroyed = false;
   private custodyBlocked = false;
+  /** Server said this member may not be here. Terminal for reconnects only. */
+  private accessRevoked = false;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -203,6 +209,9 @@ export class TeamInboxOrgClient implements TeamInboxOrgClientLike {
   async connect(): Promise<void> {
     if (this.destroyed) throw new Error('Team inbox client has been destroyed');
     if (this.ws || this.custodyBlocked) return;
+    // An explicit reconnect asserts access may have been restored; let the
+    // server decide again rather than staying latched off.
+    this.accessRevoked = false;
 
     this.emit({ type: 'connecting' });
     try {
@@ -234,11 +243,22 @@ export class TeamInboxOrgClient implements TeamInboxOrgClientLike {
         if (this.ws !== ws) return;
         this.handleMessage(event.data);
       });
-      ws.addEventListener('close', () => {
+      ws.addEventListener('close', (event) => {
         if (this.ws !== ws) return;
         this.ws = null;
         this.stopHeartbeat();
         this.emit({ type: 'disconnected' });
+        const code = (event as CloseEvent | undefined)?.code;
+        if (isCollabAccessRevokedCloseCode(code)) {
+          // Settled answer: retrying replays the same refused handshake and
+          // leaves the inbox stuck reconnecting with nothing explaining why.
+          // Separate from `destroyed` so this says "no access", not "torn down".
+          const message = collabAccessRevokedMessage(code);
+          this.accessRevoked = true;
+          this.rejectPendingRequests(new Error(message));
+          this.emit({ type: 'error', code: 'TEAM_INBOX_ACCESS_REVOKED', message });
+          return;
+        }
         this.rejectPendingRequests(new Error('Team inbox disconnected'));
         this.scheduleReconnect();
       });
@@ -495,6 +515,7 @@ export class TeamInboxOrgClient implements TeamInboxOrgClientLike {
     if (
       this.destroyed
       || this.custodyBlocked
+      || this.accessRevoked
       || this.reconnectTimer
     ) return;
     const delay = Math.min(

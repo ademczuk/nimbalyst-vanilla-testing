@@ -793,6 +793,31 @@ export interface UnsyncedTrackerSchemaDef {
  * explicit sharing value keep their prior behavior (not filtered) so this never
  * silently stops an existing custom type from syncing.
  */
+/**
+ * Retire a schema change the server refused for good.
+ *
+ * `listUnsyncedTrackerSchemaDefs` selects `sync_status IN ('local','pending')`,
+ * so `'rejected'` drops this type out of the push queue while leaving the local
+ * model intact. No migration: `sync_status` is a plain TEXT column.
+ */
+export async function markTrackerSchemaDefRejected(
+  workspace: string,
+  type: string,
+  dbOverride?: TypeDefDb,
+): Promise<void> {
+  try {
+    const db = dbOverride ?? getDatabase();
+    if (!db) return;
+    await db.query(
+      `UPDATE tracker_type_defs SET sync_status = 'rejected'
+       WHERE workspace = $1 AND type = $2`,
+      [workspace, type],
+    );
+  } catch (err) {
+    logger.main.warn('[trackerTypeDefStore] markRejected failed:', err);
+  }
+}
+
 export async function listUnsyncedTrackerSchemaDefs(
   workspace: string,
   dbOverride?: TypeDefDb,

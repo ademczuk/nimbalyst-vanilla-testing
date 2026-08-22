@@ -125,6 +125,8 @@ export declare class TeamInboxOrgClient implements TeamInboxOrgClientLike {
     private ws;
     private destroyed;
     private custodyBlocked;
+    /** Server said this member may not be here. Terminal for reconnects only. */
+    private accessRevoked;
     private reconnectAttempt;
     private reconnectTimer;
     private heartbeatTimer;

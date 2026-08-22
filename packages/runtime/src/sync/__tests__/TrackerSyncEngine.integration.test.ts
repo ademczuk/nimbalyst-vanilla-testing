@@ -448,6 +448,57 @@ describe('TrackerSyncEngine (in-memory)', () => {
     c.engine.destroy();
   });
 
+  /**
+   * A refused saved-view write must not be re-offered forever.
+   *
+   * These lanes push from a local "unsynced" queue: `pushPendingSavedViews`
+   * drains `listUnsynced()` at the end of every bootstrap, and a row leaves the
+   * queue only when `applyRemote` writes the server's envelope over it. A
+   * rejection did neither -- `handleSavedViewAck` returned without touching the
+   * row -- so the same refused mutation was re-sent on every reconnect, and the
+   * user was told nothing.
+   *
+   * Server-side this became reachable when collabv3 v0.1.146 started refusing
+   * writes from read-only members, which is the correct answer to the wrong
+   * question if the client just asks again.
+   */
+  it('stops re-offering a saved view the server refused, and reports it', async () => {
+    const server = createFakeServer({ rejectAll: true });
+    const rejections: Array<{ code: string }> = [];
+    const marked: string[] = [];
+
+    let pending: Array<{ viewId: string; payload: string | null; deleted: boolean }> =
+      [{ viewId: 'view-refused', payload: JSON.stringify({ name: 'Nope' }), deleted: false }];
+
+    const a = await buildEngine({ room: server.room, serverConnect: server.connect, encryptionKey: key });
+    a.config.savedViewSync = {
+      getMaxSyncId: async () => 0,
+      listUnsynced: async () => pending,
+      applyRemote: async (def) => {
+        pending = pending.filter((view) => view.viewId !== def.viewId);
+      },
+      markRejected: async (viewId) => {
+        marked.push(viewId);
+        pending = pending.filter((view) => view.viewId !== viewId);
+      },
+    };
+    a.config.onRejection = (rejection) => { rejections.push({ code: rejection.rejection.code }); };
+
+    await a.engine.connect();
+    await waitUntil(() => a.engine.getStatus() === 'connected');
+    await waitUntil(() => marked.includes('view-refused'));
+
+    // The refusal reached the user rather than vanishing.
+    expect(rejections).toEqual([{ code: 'forbidden' }]);
+
+    // ...and the row is out of the queue, so a re-drain does not replay it.
+    const beforeRedrain = server.room.receivedSavedViewMutations.length;
+    await a.engine.flushSavedViews();
+    expect(server.room.receivedSavedViewMutations.length).toBe(beforeRedrain);
+
+    a.engine.destroy();
+  });
+
   // ==========================================================================
   // Stripping linked sessions at upload boundary
   // ==========================================================================

@@ -8,6 +8,8 @@ import {
   setAgentWorkflowSourceSettings,
 } from '../../utils/store';
 
+const CODEX_REVIEW_DESCRIPTION = 'Ask Codex to review the current working tree';
+
 describe('AgentWorkflowService', () => {
   let workspacePath: string;
   let userHomePath: string;
@@ -651,6 +653,55 @@ Inspect the target issue, patch the code, and explain the fix.
 
     expect(fs.statSync(codexSkillPath).mtimeMs).toBe(codexBefore);
     expect(fs.statSync(claudePluginJsonPath).mtimeMs).toBe(claudeBefore);
+  });
+
+  it('does not present an OpenCode config command as a built-in of ours', async () => {
+    // OpenCode's native catalog only lists commands defined in OpenCode config,
+    // so every one of them is someone's template. Labelling them `builtin` and
+    // pasting a builtin's copy over them told the user a repository-controlled
+    // /review was ours.
+    setAgentWorkflowExportSettings({
+      codexEnabled: false,
+      claudeGeneratedExtensionWorkflowsEnabled: false,
+    });
+    const service = new AgentWorkflowService(workspacePath, {
+      userHomePath,
+      extensionDirectoriesLoader: async () => [],
+      nativeClaudePluginPathsLoader: async () => [],
+      releaseChannelLoader: () => 'stable',
+    });
+
+    const [namesOnly] = await service.listEntries({
+      provider: 'opencode',
+      nativeCommands: ['review'],
+    });
+    expect(namesOnly.source).not.toBe('builtin');
+    expect(namesOnly.description).not.toBe(CODEX_REVIEW_DESCRIPTION);
+
+    const [described] = await service.listEntries({
+      provider: 'opencode',
+      nativeCommands: [{
+        name: 'review',
+        description: 'Run the house review checklist',
+        template: 'Review $ARGUMENTS against docs/review.md',
+        agentName: 'reviewer',
+        model: 'anthropic/claude-sonnet-4-5',
+      }],
+    });
+    expect(described).toMatchObject({
+      description: 'Run the house review checklist',
+      content: 'Review $ARGUMENTS against docs/review.md',
+      agentName: 'reviewer',
+      model: 'anthropic/claude-sonnet-4-5',
+    });
+
+    // Codex keeps its own builtin copy: its native list really is builtins.
+    const [codexReview] = await service.listEntries({
+      provider: 'openai-codex',
+      nativeCommands: ['review'],
+    });
+    expect(codexReview.source).toBe('builtin');
+    expect(codexReview.description).toBe(CODEX_REVIEW_DESCRIPTION);
   });
 
   it('collapses N concurrent listEntries() calls into a single filesystem scan (startup burst)', async () => {

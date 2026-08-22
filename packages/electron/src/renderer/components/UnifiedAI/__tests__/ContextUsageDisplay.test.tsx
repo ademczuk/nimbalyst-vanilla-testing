@@ -4,14 +4,14 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { fireEvent, render, screen, cleanup } from '@testing-library/react';
 import { ContextUsageDisplay } from '../ContextUsageDisplay';
 
-vi.mock('@nimbalyst/runtime', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@nimbalyst/runtime')>(),
+vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   MaterialSymbol: () => null,
 }));
 vi.mock('../../../help', () => ({ getHelpContent: () => undefined }));
 
 // inputTokens > 0 makes the breakdown panel eligible (enableTooltip).
 const props = {
+  provider: 'claude-code',
   inputTokens: 80_000,
   outputTokens: 20_000,
   totalTokens: 100_000,
@@ -79,6 +79,7 @@ describe('ContextUsageDisplay - cumulative rows are labeled as session totals (#
     // window-fill total renders, so there is no second quantity to label.
     render(
       <ContextUsageDisplay
+        provider="openai"
         inputTokens={80_000}
         outputTokens={20_000}
         totalTokens={100_000}
@@ -87,5 +88,37 @@ describe('ContextUsageDisplay - cumulative rows are labeled as session totals (#
     );
     fireEvent.click(screen.getByTestId('context-indicator'));
     expect(screen.queryByText('Session totals (cumulative)')).toBeNull();
+  });
+});
+
+describe('ContextUsageDisplay - measured provider support (#914)', () => {
+  it('does not render an indicator for a provider that reports no usage', () => {
+    render(
+      <ContextUsageDisplay
+        provider="copilot-cli"
+        inputTokens={0}
+        outputTokens={0}
+        totalTokens={0}
+        contextWindow={200_000}
+        currentContext={{ tokens: 0, contextWindow: 200_000 }}
+      />
+    );
+
+    expect(screen.queryByTestId('context-indicator')).toBeNull();
+  });
+
+  it('shows cumulative counts without inventing a percentage for count-only providers', () => {
+    render(
+      <ContextUsageDisplay
+        provider="openai"
+        inputTokens={80_000}
+        outputTokens={20_000}
+        totalTokens={100_000}
+        contextWindow={200_000}
+      />
+    );
+
+    screen.getByText('100k tokens');
+    expect(screen.queryByText(/%/)).toBeNull();
   });
 });

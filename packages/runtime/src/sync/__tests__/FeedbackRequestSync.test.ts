@@ -26,9 +26,9 @@ class FakeWebSocket {
     this.sent.push(message);
   }
 
-  close(): void {
+  close(code?: number): void {
     this.readyState = 3;
-    this.emit('close', {});
+    this.emit('close', code === undefined ? {} : { code });
   }
 
   open(): void {
@@ -323,6 +323,61 @@ describe('FeedbackRequestSync', () => {
       replayed: false,
     });
     await expect(commenting).resolves.toMatchObject({ id: 'comment-a' });
+    sync.destroy();
+  });
+
+  it('stops reconnecting when the server closes the socket for revoked access', async () => {
+    // A revoked member reconnecting replays the same refused handshake forever;
+    // the panel sits on "connecting" with nothing explaining why.
+    const sockets: FakeWebSocket[] = [];
+    const events: { type: string; code?: string }[] = [];
+    const sync = new FeedbackRequestSync({
+      serverUrl: 'https://sync.example.test',
+      target: { orgId: 'org-a', requestId: 'request-a' },
+      getTeamJwt: async () => asTeamJwt('team-jwt'),
+      createWebSocket: () => {
+        const socket = new FakeWebSocket();
+        sockets.push(socket);
+        return socket as unknown as WebSocket;
+      },
+    });
+    sync.subscribe((event) => events.push(event));
+
+    await sync.connect();
+    sockets[0].open();
+    sockets[0].close(4003);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(sockets).toHaveLength(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({ code: 'FEEDBACK_REQUEST_ACCESS_REVOKED' }),
+    );
+  });
+
+  it('still reconnects after an ordinary transport close', async () => {
+    const sockets: FakeWebSocket[] = [];
+    const sync = new FeedbackRequestSync({
+      serverUrl: 'https://sync.example.test',
+      target: { orgId: 'org-a', requestId: 'request-a' },
+      getTeamJwt: async () => asTeamJwt('team-jwt'),
+      createWebSocket: () => {
+        const socket = new FakeWebSocket();
+        sockets.push(socket);
+        return socket as unknown as WebSocket;
+      },
+    });
+
+    await sync.connect();
+    sockets[0].open();
+    sockets[0].close(1006);
+
+    // Guards the revocation handling above from being over-broad: an ordinary
+    // transport close must still retry. Reconnect backoff starts at 1s, so wait
+    // past it rather than racing the timer.
+    await new Promise((resolve) => setTimeout(resolve, 1_300));
+
+    expect(sockets.length).toBeGreaterThan(1);
     sync.destroy();
   });
 });

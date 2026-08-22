@@ -60,6 +60,7 @@ import type {
   TrackerSavedViewMutationAckMessage,
   TrackerRoomMovedMessage,
   TrackerErrorMessage,
+  TrackerMutationRejectCode,
 } from './trackerProtocol';
 import { SYNC_ID_INITIAL, buildTrackerRoomId } from './trackerProtocol';
 import { appendSyncClientParams } from './syncClientInfo';
@@ -70,6 +71,7 @@ import {
   decodeTrackerNavigationEnvelopePlaintext,
   decodeTrackerSavedViewEnvelopePlaintext,
 } from './TrackerEnvelopeCrypto';
+import { isConfirmedOutboxRevocationCode } from './OutboxDrainer';
 import type { TrackerPersistence, TrackerRowSnapshot } from './trackerPersistence';
 import type { TeamJwt, TeamMemberId } from '../auth/jwtScopes';
 
@@ -105,7 +107,13 @@ export interface AppliedTrackerItem {
  */
 export interface RejectedTrackerMutation {
   clientMutationId: string;
+  /** The item, view, entry or schema type the refusal is about. */
   itemId: string;
+  /**
+   * Which lane refused. Absent means the item lane, so existing consumers that
+   * predate the other three keep reading the same shape.
+   */
+  lane?: 'item' | 'savedView' | 'navigation' | 'schema';
   rejection: NonNullable<TrackerTransactionRow['lastRejection']>;
 }
 
@@ -137,6 +145,16 @@ export interface TrackerSchemaSyncHooks {
   // definition can repair a diverged row. See runSchemaBootstrap (#1178).
   listUnsynced: () => Promise<TrackerSchemaLocalChange[]>;
   applyRemote: (def: { type: string; model: string | null; syncId: SyncId }) => Promise<unknown>;
+  /**
+   * Retire a local change the server refused for good.
+   *
+   * This lane pushes whatever `listUnsynced` returns at the end of every
+   * bootstrap, and a row leaves that queue only when `applyRemote` overwrites
+   * it. Without this seam a settled refusal -- a read-only role, most often --
+   * is re-sent on every single reconnect, forever. Optional so a host that has
+   * no notion of a retired row simply keeps the old behaviour.
+   */
+  markRejected?: (type: string, code: string) => Promise<unknown>;
 }
 
 export interface TrackerNavigationLocalChange {
@@ -149,6 +167,8 @@ export interface TrackerNavigationSyncHooks {
   getMaxSyncId: () => Promise<SyncId>;
   listUnsynced: () => Promise<TrackerNavigationLocalChange[]>;
   applyRemote: (def: { entryId: string; payload: string | null; syncId: SyncId }) => Promise<unknown>;
+  /** Retire a refused change; see the note on `TrackerSchemaSyncHooks`. */
+  markRejected?: (entryId: string, code: string) => Promise<unknown>;
 }
 
 export interface TrackerSavedViewLocalChange {
@@ -166,6 +186,8 @@ export interface TrackerSavedViewSyncHooks {
   getMaxSyncId: () => Promise<SyncId>;
   listUnsynced: () => Promise<TrackerSavedViewLocalChange[]>;
   applyRemote: (def: { viewId: string; payload: string | null; syncId: SyncId }) => Promise<unknown>;
+  /** Retire a refused change; see the note on `TrackerSchemaSyncHooks`. */
+  markRejected?: (viewId: string, code: string) => Promise<unknown>;
 }
 
 export interface TrackerSyncEngineConfig {
@@ -323,6 +345,14 @@ export class TrackerSyncEngine {
    * lives for the duration of any given mutation's lifecycle so this
    * map is sufficient.
    */
+  /**
+   * clientMutationId -> the saved view / navigation entry / schema type it is
+   * about. Rejection acks on those lanes carry only the mutation id, so this is
+   * the only way to know what the server refused. Entries are removed on the
+   * matching ack, so it holds at most the in-flight pushes.
+   */
+  private readonly pendingLaneIds = new Map<string, string>();
+
   private readonly rollbackSnapshots = new Map<string, {
     itemId: string;
     snapshot: TrackerRowSnapshot;
@@ -432,6 +462,7 @@ export class TrackerSyncEngine {
     this.destroyed = true;
     this.disconnect();
     this.rollbackSnapshots.clear();
+    this.pendingLaneIds.clear();
   }
 
   /** Current connection status. */
@@ -941,7 +972,12 @@ export class TrackerSyncEngine {
       await this.applySchemaEnvelope(msg.schema);
       return;
     }
-
+    await this.retireRefusedLaneChange(
+      'schema',
+      msg.clientMutationId,
+      msg.error,
+      this.config.schemaSync?.markRejected,
+    );
   }
 
   private async handleSavedViewDelta(msg: TrackerSavedViewDeltaMessage): Promise<void> {
@@ -953,6 +989,56 @@ export class TrackerSyncEngine {
       await this.applySavedViewEnvelope(msg.view);
       return;
     }
+    await this.retireRefusedLaneChange(
+      'savedView',
+      msg.clientMutationId,
+      msg.error,
+      this.config.savedViewSync?.markRejected,
+    );
+  }
+
+  /**
+   * Retire a saved-view / navigation / schema change the server has settled on,
+   * and tell the host.
+   *
+   * Only *terminal* codes retire the row. A write barrier like `rotationLocked`
+   * or a missing key is temporary, and dropping the user's change on one would
+   * turn a momentary refusal into silent data loss -- so anything not in the
+   * confirmed-revocation vocabulary stays queued and is retried, exactly as
+   * before. `isConfirmedOutboxRevocationCode` is the document lane's existing
+   * list; sharing it keeps one answer to "is this settled" rather than two that
+   * drift.
+   */
+  private async retireRefusedLaneChange(
+    lane: 'savedView' | 'navigation' | 'schema',
+    clientMutationId: string,
+    error: { code: TrackerMutationRejectCode; message: string } | undefined,
+    markRejected: ((id: string, code: string) => Promise<unknown>) | undefined,
+  ): Promise<void> {
+    // A rejection ack carries only the mutation id -- the server builds it
+    // without the view/entry/schema it refused -- so the subject comes from
+    // what we recorded when the mutation went out.
+    const id = this.pendingLaneIds.get(clientMutationId);
+    this.pendingLaneIds.delete(clientMutationId);
+    if (!error || id === undefined) return;
+    if (!isConfirmedOutboxRevocationCode(error.code)) return;
+
+    if (markRejected) {
+      try {
+        await markRejected(id, error.code);
+      } catch (err) {
+        // Retiring is best-effort: if the store write fails the row stays
+        // queued and we retry next connect, which is the old behaviour rather
+        // than a new failure mode. The host still hears about the refusal.
+        this.config.onBootstrapError?.(err);
+      }
+    }
+    this.config.onRejection?.({
+      clientMutationId,
+      itemId: id,
+      lane,
+      rejection: { code: error.code, message: error.message, occurredAt: Date.now() },
+    });
   }
 
   private async handleNavigationDelta(msg: TrackerNavigationDeltaMessage): Promise<void> {
@@ -964,6 +1050,12 @@ export class TrackerSyncEngine {
       await this.applyNavigationEnvelope(msg.entry);
       return;
     }
+    await this.retireRefusedLaneChange(
+      'navigation',
+      msg.clientMutationId,
+      msg.error,
+      this.config.navigationSync?.markRejected,
+    );
   }
 
   private handleConfigBroadcast(msg: TrackerConfigBroadcastMessage): void {
@@ -1208,6 +1300,7 @@ export class TrackerSyncEngine {
     }
     for (const def of pending) {
       const clientMutationId = generateClientMutationId();
+      this.pendingLaneIds.set(clientMutationId, def.type);
       if (def.deleted || def.model === null) {
         console.info(`[TrackerSchemaSync] -> mutation (delete) type=${def.type} cmid=${clientMutationId}`);
         this.send({
@@ -1237,6 +1330,7 @@ export class TrackerSyncEngine {
     const pending = await hooks.listUnsynced();
     for (const view of pending) {
       const clientMutationId = generateClientMutationId();
+      this.pendingLaneIds.set(clientMutationId, view.viewId);
       if (view.deleted || view.payload === null) {
         this.send({
           type: 'trackerSavedViewMutation',
@@ -1261,6 +1355,7 @@ export class TrackerSyncEngine {
     const pending = await hooks.listUnsynced();
     for (const entry of pending) {
       const clientMutationId = generateClientMutationId();
+      this.pendingLaneIds.set(clientMutationId, entry.entryId);
       if (entry.deleted || entry.payload === null) {
         this.send({
           type: 'trackerNavigationMutation',

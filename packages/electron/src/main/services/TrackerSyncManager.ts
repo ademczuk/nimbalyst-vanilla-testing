@@ -54,6 +54,7 @@ import { getDatabase } from '../database/initialize';
 import { TrackerPGLiteStore } from './tracker/TrackerPGLiteStore';
 import {
   listUnsyncedTrackerSchemaDefs,
+  markTrackerSchemaDefRejected,
 } from './tracker/trackerTypeDefStore';
 import {
   applyRemoteWorkspaceTrackerSchemaDef,
@@ -66,10 +67,12 @@ import {
 import {
   getMaxTrackerNavigationSyncId,
   listUnsyncedTrackerNavigationEntries,
+  markTrackerNavigationEntryRejected,
 } from './tracker/trackerNavigationStore';
 import {
   getMaxSharedSavedViewSyncId,
   listUnsyncedSharedSavedViews,
+  markSharedSavedViewRejected,
 } from './tracker/trackerSavedViewStore';
 import {
   applyRemoteWorkspaceSharedSavedView,
@@ -344,16 +347,19 @@ async function doInitializeTrackerSync(workspacePath: string): Promise<void> {
       listUnsynced: async () =>
         (await listUnsyncedTrackerSchemaDefs(workspacePath)).map(encodeTrackerSchemaDefForPush),
       applyRemote: (def) => applyRemoteWorkspaceTrackerSchemaDef(workspacePath, def),
+      markRejected: (type) => markTrackerSchemaDefRejected(workspacePath, type),
     },
     navigationSync: {
       getMaxSyncId: () => getMaxTrackerNavigationSyncId(workspacePath),
       listUnsynced: () => listUnsyncedTrackerNavigationEntries(workspacePath),
       applyRemote: (def) => applyRemoteWorkspaceTrackerNavigationEntry(workspacePath, def),
+      markRejected: (entryId) => markTrackerNavigationEntryRejected(workspacePath, entryId),
     },
     savedViewSync: {
       getMaxSyncId: () => getMaxSharedSavedViewSyncId(workspacePath),
       listUnsynced: () => listUnsyncedSharedSavedViews(workspacePath),
       applyRemote: (def) => applyRemoteWorkspaceSharedSavedView(workspacePath, def),
+      markRejected: (viewId) => markSharedSavedViewRejected(workspacePath, viewId),
     },
     getJwt: () => getOrgScopedJwt(team.orgId),
     // Node.js 22+ ships a global WebSocket, but Electron's main process
@@ -408,10 +414,19 @@ async function doInitializeTrackerSync(workspacePath: string): Promise<void> {
       broadcastToAllWindows('tracker-sync:config-error', { workspacePath, error });
     },
     onRejection: (rejection) => {
-      logger.main.warn('[TrackerSyncManager] onRejection for', workspacePath, 'itemId:', rejection.itemId, 'code:', rejection.rejection.code, 'message:', rejection.rejection.message);
+      logger.main.warn('[TrackerSyncManager] onRejection for', workspacePath, 'lane:', rejection.lane ?? 'item', 'itemId:', rejection.itemId, 'code:', rejection.rejection.code, 'message:', rejection.rejection.message);
       // Resolve the tracker type so the rejection dashboards can break down by
       // type; the lookup is local-only and only the type name is reported.
-      void resolveTrackerTypeForItem(rejection.itemId).then((trackerType) => {
+      //
+      // Only the item lane names an item. On the saved-view, navigation and
+      // schema lanes `itemId` is a view/entry/schema id, which would never
+      // match an item row -- looking it up would spend a query to report a
+      // `trackerType` of "unknown" and blur the breakdown.
+      const laneIsItem = (rejection.lane ?? 'item') === 'item';
+      const resolveType = laneIsItem
+        ? resolveTrackerTypeForItem(rejection.itemId)
+        : Promise.resolve(undefined);
+      void resolveType.then((trackerType) => {
         const errorCategory = categorizeTeamAnalyticsError(
           'sync',
           `${rejection.rejection.code} ${rejection.rejection.message}`,

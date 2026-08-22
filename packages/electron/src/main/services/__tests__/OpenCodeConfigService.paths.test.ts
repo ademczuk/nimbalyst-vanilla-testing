@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 /**
  * Path-resolution tests for OpenCodeConfigService.
  *
@@ -15,10 +17,13 @@
  */
 import { describe, it, expect } from 'vitest';
 import * as path from 'path';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import {
   resolveOpenCodeConfigCandidates,
   pickFirstExisting,
 } from '../OpenCodeConfigService';
+import { createOpenCodeModelCatalogCacheKey } from '../OpenCodeModelCatalogService';
 
 const HOME_UNIX = '/home/user';
 const HOME_WIN = 'C:\\Users\\user';
@@ -172,5 +177,48 @@ describe('integration: AnisminC #284 scenario', () => {
     });
     const chosen = pickFirstExisting(candidates, () => false);
     expect(chosen).toBe(path.join(APPDATA, 'opencode', 'opencode.json'));
+  });
+});
+
+describe('OpenCode model catalog identity', () => {
+  it('changes when either the OpenCode binary or credential state changes', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'opencode-catalog-identity-'));
+    try {
+      const binDir = path.join(root, 'bin');
+      const binaryPath = path.join(binDir, 'opencode');
+      const configPath = path.join(root, 'config', 'opencode.json');
+      const xdgDataHome = path.join(root, 'data');
+      const authPath = path.join(xdgDataHome, 'opencode', 'auth.json');
+      await Promise.all([
+        mkdir(binDir, { recursive: true }),
+        mkdir(path.dirname(configPath), { recursive: true }),
+        mkdir(path.dirname(authPath), { recursive: true }),
+      ]);
+      await Promise.all([
+        writeFile(binaryPath, 'binary-a'),
+        writeFile(configPath, '{}'),
+        writeFile(authPath, '{"openrouter":{"type":"api","key":"key-a"}}'),
+      ]);
+
+      const options = {
+        enhancedPath: binDir,
+        configPath,
+        xdgDataHome,
+        platform: 'linux' as const,
+        arch: 'x64',
+        homedir: root,
+      };
+      const initial = await createOpenCodeModelCatalogCacheKey(options);
+
+      await writeFile(authPath, '{"openrouter":{"type":"api","key":"key-b"}}');
+      const afterAuth = await createOpenCodeModelCatalogCacheKey(options);
+      expect(afterAuth).not.toBe(initial);
+
+      await writeFile(binaryPath, 'binary-b-with-a-different-size');
+      const afterBinary = await createOpenCodeModelCatalogCacheKey(options);
+      expect(afterBinary).not.toBe(afterAuth);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

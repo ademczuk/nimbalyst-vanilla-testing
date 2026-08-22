@@ -21,7 +21,9 @@ import {
   isAgentProvider,
   ClaudeCodeProvider,
   OpenAICodexProvider,
+  OpenCodeProvider,
 } from '@nimbalyst/runtime/ai/server';
+import { agentCapabilitiesForProviderType } from '@nimbalyst/runtime/ai/server/agentCapabilities';
 import { CLAUDE_CODE_SAFE_FALLBACK_MODEL } from '@nimbalyst/runtime/ai/modelConstants';
 import { reconcileClaudeCodeModels } from './claudeCodeModelReconcile';
 import { isModelEnabled } from './modelEnablementFilter';
@@ -152,6 +154,32 @@ import {
 import { captureTutorialMilestone } from '../tutorial/tutorialAnalytics';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Catalogs that survive the provider instance that discovered them.
+ *
+ * The `/` typeahead runs before a session has a live provider, and a provider
+ * whose catalog is only learned from a running agent (claude-code from the SDK
+ * init payload, opencode from `command.list` against its server) has nothing to
+ * report at that moment. The static cache each of them keeps lets the commands
+ * a previous session discovered show up immediately.
+ *
+ * Registering here rather than branching per provider name keeps the next one a
+ * single line; providers absent from the map have no pre-instance catalog and
+ * fall through to an empty one.
+ */
+const CROSS_SESSION_WORKFLOW_CATALOGS: Partial<
+  Record<AIProviderType, () => { commands: string[]; skills: string[] }>
+> = {
+  'claude-code': () => ({
+    commands: ClaudeCodeProvider.getCachedSdkSlashCommands(),
+    skills: ClaudeCodeProvider.getCachedSdkSkills(),
+  }),
+  opencode: () => ({
+    commands: OpenCodeProvider.getCachedSdkSlashCommands(),
+    skills: [],
+  }),
+};
 
 // Debounced re-sync of the available-models list to mobile. The renderer can
 // send rapid providerSettings slices when toggling providers, so coalesce them
@@ -1657,14 +1685,7 @@ export class AIService {
 
     return resolveProviderWorkflowCatalog(effectiveType, {
       instance,
-      // claude-code learns its catalog from the SDK init payload, so it is the
-      // only provider with anything to say before a session exists.
-      cachedCatalog: effectiveType === 'claude-code'
-        ? () => ({
-            commands: ClaudeCodeProvider.getCachedSdkSlashCommands(),
-            skills: ClaudeCodeProvider.getCachedSdkSkills(),
-          })
-        : undefined,
+      cachedCatalog: CROSS_SESSION_WORKFLOW_CATALOGS[effectiveType as AIProviderType],
     });
   }
 
@@ -3671,7 +3692,7 @@ export class AIService {
     // the literal string "/compact" as a user turn, which only ever worked for
     // providers whose SDK happens to interpret slash commands -- for Codex it
     // reached the model as prompt text and silently did nothing.
-    safeHandle('ai:compactSession', async (_event, sessionId: string) => {
+    safeHandle('ai:compactSession', async (event, sessionId: string) => {
       if (!sessionId) {
         throw new Error('ai:compactSession requires a sessionId');
       }
@@ -3684,6 +3705,23 @@ export class AIService {
         provider = ProviderFactory.getProvider(type, sessionId);
         if (provider) break;
       }
+
+      // The stored session is what a cold compact runs on: the Compact button
+      // is offered for every session of a provider that declares `rpc`,
+      // including one restored after a restart that has not sent a turn in this
+      // app launch and so has no provider instance. The conversation still
+      // exists on the agent's side, so hand the provider what it needs to reach
+      // it instead of refusing (#574).
+      const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
+      const storedSession = await AISessionsRepository.get(sessionId);
+      if (!provider && storedSession?.provider) {
+        // Only for a type that declares `rpc`: everything else has nothing to
+        // call here, and the declaration fails closed for ids the factory does
+        // not build (extension-contributed agents).
+        if (agentCapabilitiesForProviderType(storedSession.provider).compaction === 'rpc') {
+          provider = ProviderFactory.createProvider(storedSession.provider as AIProviderType, sessionId);
+        }
+      }
       if (!provider) {
         return { success: false, error: 'Cannot compact: this session has no active provider yet.' };
       }
@@ -3693,12 +3731,38 @@ export class AIService {
       if (provider.getAgentCapabilities().compaction !== 'rpc') {
         return { success: false, error: 'This provider does not support compaction.' };
       }
-      const compactable = provider as unknown as { compactSession?: (id: string) => Promise<void> };
+      const compactable = provider as unknown as {
+        compactSession?: (
+          id: string,
+          options?: { workspacePath?: string; providerSessionId?: string },
+        ) => Promise<void>;
+      };
       if (typeof compactable?.compactSession !== 'function') {
         return { success: false, error: 'This provider does not support compaction.' };
       }
       try {
-        await compactable.compactSession(sessionId);
+        await compactable.compactSession(sessionId, {
+          workspacePath: storedSession?.worktreePath || storedSession?.workspacePath,
+          providerSessionId: storedSession?.providerSessionId,
+        });
+
+        // The conversation the meter was measuring no longer exists. Nothing
+        // here knows how large the summary is, so drop the reading rather than
+        // leave the pre-compaction one on screen -- the next turn reports a
+        // measured one. Without this, the one action whose whole purpose is
+        // reducing context left the session reading 90% until something else
+        // happened to refresh it. The denominator goes too: the meter falls
+        // back to cumulative spend over the window, which would replace a stale
+        // percentage with a confidently wrong one. Cumulative totals stay --
+        // compaction reset the context, not what the session has spent.
+        const storedUsage = (storedSession?.metadata as Record<string, unknown> | undefined)
+          ?.tokenUsage as SessionData['tokenUsage'] | undefined;
+        if (storedUsage?.currentContext || storedUsage?.contextWindow) {
+          const clearedUsage = { ...storedUsage, currentContext: undefined, contextWindow: undefined };
+          await this.sessionManager.updateSessionTokenUsage(sessionId, clearedUsage);
+          safeSend(event, 'ai:tokenUsageUpdated', { sessionId, tokenUsage: clearedUsage });
+        }
+
         return { success: true };
       } catch (error) {
         console.error('[AIService] compactSession failed:', error);

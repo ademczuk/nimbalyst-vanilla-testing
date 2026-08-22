@@ -1,7 +1,19 @@
+// @vitest-environment node
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OpenCodeProvider } from '../OpenCodeProvider';
 import { configureMcpServers } from '../../services/mcpServerConfig';
 import { EventEmitter } from 'events';
+import {
+  configureOpenCodeModelCatalog,
+  getOpenCodeModelCatalog,
+  resetOpenCodeModelCatalogForTests,
+  type OpenCodeModelCatalogCache,
+} from '../openCode/OpenCodeModelCatalog';
+import {
+  configureOpenCodeAgentCatalogForTests,
+  getOpenCodeAgentCatalog,
+} from '../openCode/OpenCodeAgentCatalog';
 
 // Mock child_process.spawn to avoid actually launching opencode
 vi.mock('child_process', () => {
@@ -72,6 +84,30 @@ function createMockProtocol(sseEvents: any[] = []) {
   } as any;
 }
 
+function providerListModel(id: string, name: string) {
+  return {
+    id,
+    name,
+    release_date: '2026-08-21',
+    attachment: true,
+    reasoning: true,
+    temperature: true,
+    tool_call: true,
+    cost: {
+      input: 3,
+      output: 15,
+      cache_read: 0.3,
+      cache_write: 3.75,
+    },
+    limit: { context: 200_000, output: 32_000 },
+    modalities: {
+      input: ['text', 'image'] as Array<'text' | 'image'>,
+      output: ['text'] as Array<'text'>,
+    },
+    options: {},
+  };
+}
+
 describe('OpenCodeProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,10 +118,26 @@ describe('OpenCodeProvider', () => {
     OpenCodeProvider.setMcpConfigLoader(null);
     OpenCodeProvider.setShellEnvironmentLoader(null);
     OpenCodeProvider.setEnhancedPathLoader(null);
-    OpenCodeProvider.setConfigLoader(null);
+    OpenCodeProvider.resetCachedSdkSlashCommandsForTests();
+    resetOpenCodeModelCatalogForTests();
+    configureOpenCodeAgentCatalogForTests();
   });
 
-  it('returns the curated preset model list from getModels when no opencode.json exists', async () => {
+  it('returns offline presets from a cold cache without acquiring or spawning a server', async () => {
+    const ensureRunning = vi.fn();
+    const createClient = vi.fn();
+    configureOpenCodeModelCatalog({
+      getCacheKey: () => 'binary-a:auth-a',
+      loadCache: () => null,
+      getServerManager: () => ({
+        isRunning: false,
+        baseUrl: 'http://127.0.0.1:19999',
+        ensureRunning,
+        release: vi.fn(),
+      }),
+      createClient,
+    });
+
     const models = await OpenCodeProvider.getModels();
 
     expect(models.length).toBeGreaterThan(0);
@@ -96,25 +148,306 @@ describe('OpenCodeProvider', () => {
       expect.objectContaining({ id: 'opencode:zai/glm-5.2', provider: 'opencode' }),
       expect.objectContaining({ id: 'opencode:zai-coding-plan/glm-5.2', provider: 'opencode' }),
     ]));
+    expect(ensureRunning).not.toHaveBeenCalled();
+    expect(createClient).not.toHaveBeenCalled();
   });
 
-  it('appends user-configured providers from opencode.json to the preset list', async () => {
-    OpenCodeProvider.setConfigLoader(async () => ({
-      provider: {
-        lmstudio: {
-          name: 'LM Studio (local)',
-          npm: '@ai-sdk/openai-compatible',
-          options: { baseURL: 'http://127.0.0.1:1234/v1' },
-          models: { 'qwen2.5-coder-7b-instruct': { name: 'Qwen 2.5 Coder 7B' } },
+  it('replaces presets with provider.list results once discovery succeeds', async () => {
+    const savedCaches: OpenCodeModelCatalogCache[] = [];
+    const ensureRunning = vi.fn();
+    configureOpenCodeModelCatalog({
+      getCacheKey: () => 'binary-a:auth-a',
+      loadCache: () => savedCaches.at(-1) ?? null,
+      saveCache: (cache) => { savedCaches.push(cache); },
+      getServerManager: () => ({
+        isRunning: true,
+        baseUrl: 'http://127.0.0.1:19999',
+        ensureRunning,
+        release: vi.fn(),
+      }),
+      createClient: async () => ({
+        provider: {
+          list: async () => ({
+            data: {
+              all: [{
+                id: 'anthropic',
+                name: 'Anthropic',
+                env: ['ANTHROPIC_API_KEY'],
+                models: {
+                  'claude-sonnet-4-5': providerListModel('claude-sonnet-4-5', 'Live Sonnet 4.5'),
+                } as Record<string, ReturnType<typeof providerListModel>>,
+              }, {
+                id: 'openrouter',
+                name: 'OpenRouter',
+                env: ['OPENROUTER_API_KEY'],
+                models: {
+                  'acme/novel-model': providerListModel('acme/novel-model', 'Novel Model'),
+                } as Record<string, ReturnType<typeof providerListModel>>,
+              }],
+              default: {},
+              connected: ['anthropic', 'openrouter'],
+            },
+          }),
         },
-      },
+      }),
+    });
+
+    const { models } = await getOpenCodeModelCatalog('/workspace-a');
+
+    expect(models.filter((model) => model.id === 'opencode:anthropic/claude-sonnet-4-5')).toEqual([
+      expect.objectContaining({
+        name: 'Live Sonnet 4.5',
+        contextWindow: 200_000,
+        maxTokens: 32_000,
+        status: 'active',
+        cost: {
+          input: 3,
+          output: 15,
+          cache: { read: 0.3, write: 3.75 },
+        },
+        capabilities: expect.objectContaining({ reasoning: true, toolcall: true }),
+      }),
+    ]);
+    expect(models).toContainEqual(expect.objectContaining({
+      id: 'opencode:openrouter/acme/novel-model',
+      name: 'Novel Model',
     }));
+    // Presets are an offline fallback, not padding: a discovered catalog must
+    // not carry hardcoded models this install never reported.
+    expect(models.map((model) => model.id)).not.toContain('opencode:openai/gpt-5');
+    expect(ensureRunning).not.toHaveBeenCalled();
+    expect(savedCaches.at(-1)?.models).toHaveLength(2);
+  });
 
-    const models = await OpenCodeProvider.getModels();
+  it('lists only connected providers, keeping a retained selection marked unavailable', async () => {
+    const savedCaches: OpenCodeModelCatalogCache[] = [];
+    configureOpenCodeModelCatalog({
+      getCacheKey: () => 'binary-a:auth-a',
+      loadCache: () => savedCaches.at(-1) ?? null,
+      saveCache: (cache) => { savedCaches.push(cache); },
+      // The user's opencode.json default points at a provider they have since
+      // stopped being authenticated for.
+      getRetainedModelIds: () => ['google/gemini-2.5-pro'],
+      getServerManager: () => ({
+        isRunning: true,
+        baseUrl: 'http://127.0.0.1:19999',
+        ensureRunning: vi.fn(),
+        release: vi.fn(),
+      }),
+      createClient: async () => ({
+        provider: {
+          list: async () => ({
+            data: {
+              all: [{
+                id: 'anthropic',
+                name: 'Anthropic',
+                env: ['ANTHROPIC_API_KEY'],
+                models: {
+                  'claude-sonnet-4-5': providerListModel('claude-sonnet-4-5', 'Live Sonnet 4.5'),
+                } as Record<string, ReturnType<typeof providerListModel>>,
+              }, {
+                id: 'google',
+                name: 'Google',
+                env: ['GEMINI_API_KEY'],
+                models: {
+                  'gemini-2.5-pro': providerListModel('gemini-2.5-pro', 'Gemini 2.5 Pro'),
+                  'gemini-2.5-flash': providerListModel('gemini-2.5-flash', 'Gemini 2.5 Flash'),
+                } as Record<string, ReturnType<typeof providerListModel>>,
+              }],
+              default: {},
+              connected: ['anthropic'],
+            },
+          }),
+        },
+      }),
+    });
 
-    expect(models).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'opencode:lmstudio/qwen2.5-coder-7b-instruct', provider: 'opencode' }),
-    ]));
+    const { models } = await getOpenCodeModelCatalog('/workspace-a');
+
+    // `all` is OpenCode's whole registry; only `connected` providers can run.
+    expect(models.map((model) => model.id)).not.toContain('opencode:google/gemini-2.5-flash');
+    expect(savedCaches.at(-1)?.models.map((model) => model.id)).toEqual([
+      'opencode:anthropic/claude-sonnet-4-5',
+    ]);
+    expect(models).toContainEqual(expect.objectContaining({
+      id: 'opencode:google/gemini-2.5-pro',
+      unavailable: true,
+    }));
+  });
+
+  it('invalidates discovered cache entries when the auth identity changes', async () => {
+    let cacheKey = 'binary-a:auth-a';
+    const cachedModel = {
+      id: 'opencode:openrouter/acme/novel-model',
+      name: 'Novel Model',
+      provider: 'opencode' as const,
+      contextWindow: 128_000,
+    };
+    const cache: OpenCodeModelCatalogCache = {
+      version: 2,
+      cacheKey,
+      workspacePath: '/workspace-a',
+      models: [cachedModel],
+      refreshedAt: Date.now(),
+    };
+    const ensureRunning = vi.fn();
+    configureOpenCodeModelCatalog({
+      getCacheKey: () => cacheKey,
+      loadCache: () => cache,
+      getServerManager: () => ({
+        isRunning: false,
+        baseUrl: 'http://127.0.0.1:19999',
+        ensureRunning,
+        release: vi.fn(),
+      }),
+    });
+
+    expect((await getOpenCodeModelCatalog('/workspace-a')).models).toContainEqual(cachedModel);
+
+    cacheKey = 'binary-a:auth-b';
+    const snapshot = await getOpenCodeModelCatalog('/workspace-a');
+    expect(snapshot).toMatchObject({
+      cacheStatus: 'stale',
+      staleReason: 'identity-changed',
+    });
+    expect(snapshot.models).not.toContainEqual(cachedModel);
+    expect(ensureRunning).not.toHaveBeenCalled();
+  });
+
+  it('does not expose one workspace model cache to another workspace', async () => {
+    const privateModel = {
+      id: 'opencode:private/project-a-model',
+      name: 'Project A model',
+      provider: 'opencode' as const,
+    };
+    configureOpenCodeModelCatalog({
+      getCacheKey: (workspacePath) => `identity:${workspacePath}`,
+      loadCache: () => ({
+        version: 2,
+        cacheKey: 'identity:/workspace-a',
+        workspacePath: '/workspace-a',
+        models: [privateModel],
+        refreshedAt: Date.now(),
+      }),
+      getServerManager: () => ({
+        isRunning: false,
+        baseUrl: 'http://127.0.0.1:19999',
+        ensureRunning: vi.fn(),
+        release: vi.fn(),
+      }),
+    });
+
+    const projectB = await getOpenCodeModelCatalog('/workspace-b');
+
+    expect(projectB.models).not.toContainEqual(privateModel);
+  });
+
+  it('rejects malformed persisted entries and caps a discovered catalog at 5000 models', async () => {
+    configureOpenCodeModelCatalog({
+      getCacheKey: () => 'identity:/workspace',
+      loadCache: () => ({
+        version: 2,
+        cacheKey: 'identity:/workspace',
+        workspacePath: '/workspace',
+        models: [{}],
+        refreshedAt: Date.now(),
+      }),
+      getServerManager: () => ({
+        isRunning: false,
+        baseUrl: 'http://127.0.0.1:19999',
+        ensureRunning: vi.fn(),
+        release: vi.fn(),
+      }),
+    });
+    const malformedRead = await getOpenCodeModelCatalog('/workspace');
+
+    const persisted: OpenCodeModelCatalogCache[] = [];
+    const models = Object.fromEntries(
+      Array.from({ length: 5_001 }, (_, index) => {
+        const id = `model-${index}`;
+        return [id, providerListModel(id, `Model ${index}`)];
+      }),
+    );
+    configureOpenCodeModelCatalog({
+      getCacheKey: () => 'identity:/workspace',
+      loadCache: () => null,
+      saveCache: (cache) => { persisted.push(cache); },
+      getServerManager: () => ({
+        isRunning: true,
+        baseUrl: 'http://127.0.0.1:19999',
+        ensureRunning: vi.fn(),
+        release: vi.fn(),
+      }),
+      createClient: () => ({
+        provider: {
+          list: async () => ({
+            data: {
+              all: [{ id: 'local', name: 'Local', env: [], models }],
+              default: {},
+              connected: ['local'],
+            },
+          }),
+        },
+      }),
+    });
+    await getOpenCodeModelCatalog('/workspace');
+
+    expect({
+      malformedStatus: malformedRead.cacheStatus,
+      persistedModels: persisted.at(-1)?.models.length,
+    }).toEqual({ malformedStatus: 'cold', persistedModels: 5_000 });
+  });
+
+  it('offers only the agents that can be a session role, with the model each declares', async () => {
+    const agents = vi.fn(async () => ({
+      data: [
+        {
+          name: 'build', mode: 'primary', builtIn: true, tools: {}, options: {},
+          permission: { edit: 'allow', bash: { '*': 'allow' } },
+        },
+        {
+          name: 'plan', mode: 'primary', builtIn: true, tools: {}, options: {},
+          description: 'Read-only planning',
+          model: { providerID: 'anthropic', modelID: 'claude-opus-4-1' },
+          permission: { edit: 'deny', bash: { '*': 'deny' }, webfetch: 'allow' },
+        },
+        {
+          name: 'flexible', mode: 'all', builtIn: false, tools: {}, options: {},
+          permission: { edit: 'ask', bash: {} },
+        },
+        {
+          name: 'general', mode: 'subagent', builtIn: true, tools: {}, options: {},
+          permission: { edit: 'allow', bash: { '*': 'allow' } },
+        },
+      ],
+    }));
+    configureOpenCodeAgentCatalogForTests({
+      getServerManager: () => ({ isRunning: true, baseUrl: 'http://127.0.0.1:19999', serverGeneration: 1 }),
+      createClient: () => ({ app: { agents } }) as any,
+    });
+
+    const snapshot = await getOpenCodeAgentCatalog('/workspace');
+
+    // `subagent` is the teammate surface, not a role the session runs as; `all`
+    // is usable in either position, so it qualifies.
+    expect(snapshot.agents.map((entry) => entry.name)).toEqual(['build', 'plan', 'flexible']);
+    expect(snapshot.discovered).toBe(true);
+    expect(agents).toHaveBeenCalledWith({ query: { directory: '/workspace' } });
+    expect(snapshot.agents[1]).toMatchObject({
+      model: { providerID: 'anthropic', modelID: 'claude-opus-4-1' },
+      permission: { edit: 'deny', bash: { '*': 'deny' }, webfetch: 'allow' },
+    });
+  });
+
+  it('never starts a server to answer for roles', async () => {
+    const createClient = vi.fn();
+    configureOpenCodeAgentCatalogForTests({
+      getServerManager: () => ({ isRunning: false, baseUrl: 'http://127.0.0.1:19999', serverGeneration: 0 }),
+      createClient,
+    });
+
+    expect(await getOpenCodeAgentCatalog('/workspace')).toEqual({ agents: [], discovered: false });
+    expect(createClient).not.toHaveBeenCalled();
   });
 
   it('returns correct capabilities', () => {
@@ -165,6 +498,58 @@ describe('OpenCodeProvider', () => {
     // can populate fullResponse for OS notification bodies.
     expect(chunks.some((c) => c.type === 'text')).toBe(true);
     expect(chunks.some((c) => c.type === 'complete')).toBe(true);
+  });
+
+  it('adds the cache-backed context window for the model OpenCode actually ran', async () => {
+    const ensureRunning = vi.fn();
+    configureOpenCodeModelCatalog({
+      getCacheKey: () => 'binary-a:auth-a',
+      loadCache: () => ({
+        version: 2,
+        cacheKey: 'binary-a:auth-a',
+        workspacePath: process.cwd(),
+        refreshedAt: Date.now(),
+        models: [{
+          id: 'opencode:anthropic/claude-sonnet-4',
+          name: 'Claude Sonnet 4',
+          provider: 'opencode',
+          contextWindow: 200_000,
+        }],
+      }),
+      getServerManager: () => ({
+        isRunning: false,
+        baseUrl: 'http://127.0.0.1:19999',
+        ensureRunning,
+        release: vi.fn(),
+      }),
+    });
+    const protocol = createMockProtocol([{
+      type: 'complete',
+      content: '',
+      usage: { input_tokens: 1_000, output_tokens: 200, total_tokens: 1_200 },
+      contextFillTokens: 12_500,
+      metadata: { openCodeModelId: 'opencode:anthropic/claude-sonnet-4' },
+    }]);
+    const provider = new OpenCodeProvider({ protocol });
+    await provider.initialize({ model: 'default' });
+    const chunks: any[] = [];
+
+    for await (const chunk of provider.sendMessage(
+      'test',
+      undefined,
+      'session-context',
+      [],
+      process.cwd(),
+    )) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.find((chunk) => chunk.type === 'complete')).toMatchObject({
+      usage: { input_tokens: 1_000, output_tokens: 200, total_tokens: 1_200 },
+      contextFillTokens: 12_500,
+      contextWindow: 200_000,
+    });
+    expect(ensureRunning).not.toHaveBeenCalled();
   });
 
   it('streams tool_call chunks from protocol tool events', async () => {

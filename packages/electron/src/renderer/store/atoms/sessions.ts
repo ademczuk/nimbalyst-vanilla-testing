@@ -943,6 +943,15 @@ export const sessionEffortLevelRawAtom = atomFamily((sessionId: string) =>
   })
 );
 
+/** OpenCode session role (an `app.agents` primary agent), or null for its default. */
+export const sessionOpenCodeRoleAtom = atomFamily((sessionId: string) =>
+  atom((get) => {
+    const metadata = get(sessionStoreAtom(sessionId))?.metadata as Record<string, unknown> | undefined;
+    const role = metadata?.opencodeAgent;
+    return typeof role === 'string' && role.trim().length > 0 ? role : null;
+  })
+);
+
 export const sessionThinkingModeRawAtom = atomFamily((sessionId: string) =>
   atom((get) => {
     const metadata = get(sessionStoreAtom(sessionId))?.metadata as Record<string, unknown> | undefined;

@@ -16,6 +16,7 @@ import {
   ORG_PROJECT_WALK_DISMISSED_SETTING_KEY,
 } from '../../shared/orgProjectWalk';
 import { normalizeCodexProviderConfig, omitModelsField } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
+import type { OpenCodeModelCatalogCache } from '@nimbalyst/runtime/ai/server';
 
 // Theme can be a built-in theme or an extension theme ID (format: "extensionId:themeId")
 export type AppTheme = 'dark' | 'light' | 'system' | 'auto' | 'crystal-dark' | string;
@@ -192,6 +193,8 @@ interface AppStoreSchema {
     // path retained as an escape hatch.
     transport?: 'sdk' | 'app-server';
   };
+  /** Live provider.list catalog, keyed by OpenCode binary + auth identity. */
+  openCodeModelCatalogCache?: OpenCodeModelCatalogCache;
   // Unified agent workflow registry source settings
   agentWorkflowSources?: {
     workspaceClaudeCompatibilityEnabled?: boolean;
@@ -1729,6 +1732,14 @@ export function getDefaultAIModel(): string | undefined {
 
 export function setDefaultAIModel(model: string): void {
   getAppStore().set('defaultAIModel', model);
+}
+
+export function getOpenCodeModelCatalogCache(): OpenCodeModelCatalogCache | null {
+  return getAppStore().get('openCodeModelCatalogCache') ?? null;
+}
+
+export function setOpenCodeModelCatalogCache(cache: OpenCodeModelCatalogCache): void {
+  getAppStore().set('openCodeModelCatalogCache', cache);
 }
 
 // Default Effort Level Settings (Opus 4.6 adaptive reasoning)

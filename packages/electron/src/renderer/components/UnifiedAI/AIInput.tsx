@@ -11,6 +11,7 @@ import { ModeTag, AIMode } from './ModeTag';
 import { ModelSelector } from './ModelSelector';
 import { EffortLevelSelector } from './EffortLevelSelector';
 import { ThinkingModeSelector } from './ThinkingModeSelector';
+import { OpenCodeRoleSelector } from './OpenCodeRoleSelector';
 import { registerPendingVoiceCommandSetter } from './VoiceModeButton.tsx';
 import { PendingVoiceCommand } from './PendingVoiceCommand';
 import { pendingVoiceCommandAtom, voiceActiveSessionIdAtom, type PendingVoiceCommand as PendingVoiceCommandType } from '../../store/atoms/voiceModeState';
@@ -94,6 +95,11 @@ interface AIInputProps {
   showThinkingToggle?: boolean;
   reasoningControlsDisabled?: boolean;
   reasoningControlsDisabledTitle?: string;
+
+  // OpenCode session role (an `app.agents` primary agent). Only supplied for
+  // OpenCode sessions; the selector hides itself when no roles are known.
+  openCodeRole?: string | null;
+  onOpenCodeRoleChange?: (role: string | null) => void;
 
   // Token usage display support (for Claude Code)
   tokenUsage?: {
@@ -181,6 +187,8 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     showThinkingToggle,
     reasoningControlsDisabled = false,
     reasoningControlsDisabledTitle,
+    openCodeRole = null,
+    onOpenCodeRoleChange,
     tokenUsage,
     provider,
     onQueue,
@@ -1403,6 +1411,16 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
                 />
               </span>
             )}
+            {onOpenCodeRoleChange && workspacePath && (
+              <OpenCodeRoleSelector
+                workspacePath={workspacePath}
+                role={openCodeRole}
+                onRoleChange={onOpenCodeRoleChange}
+                currentModel={currentModel}
+                onModelChange={onModelChange}
+                turnActive={isLoading}
+              />
+            )}
             {showEffortLevel && onEffortLevelChange && effortLevel && (
               <EffortLevelSelector
                 level={effortLevel}
@@ -1432,6 +1450,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
             )}
             {/* Show token usage for all providers - displays "--" if no data yet */}
             <ContextUsageDisplay
+              provider={currentProvider ?? provider}
               inputTokens={tokenUsage?.inputTokens || 0}
               outputTokens={tokenUsage?.outputTokens || 0}
               totalTokens={tokenUsage?.totalTokens || 0}

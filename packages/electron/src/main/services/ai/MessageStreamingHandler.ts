@@ -34,10 +34,13 @@ import {
   type DocumentContext,
 } from '@nimbalyst/runtime/ai/server/types';
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
+import { agentCapabilitiesForProviderType } from '@nimbalyst/runtime/ai/server/agentCapabilities';
 import { isBedrockToolSearchError } from '@nimbalyst/runtime/ai/server/utils/errorDetection';
 import { resolveEffortLevel, resolveThinkingMode } from '@nimbalyst/runtime/ai/server/effortLevels';
-import type { RawDocumentContext, DocumentContextService } from '@nimbalyst/runtime';
-import { AISessionsRepository, resolveClaudeCodeParentContextWindow } from '@nimbalyst/runtime';
+import type { RawDocumentContext } from '@nimbalyst/runtime/ai/services/types';
+import type { DocumentContextService } from '@nimbalyst/runtime/ai/services/DocumentContextService';
+import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
+import { resolveClaudeCodeParentContextWindow } from '@nimbalyst/runtime/ai/modelConstants';
 import {
   buildMcpSessionStatusSnapshot,
   type McpSessionStatusInput,
@@ -66,6 +69,20 @@ function resolveExtensionModelDisplayName(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Read the OpenCode session role the user picked, from session metadata.
+ *
+ * OpenCode-only: `opencodeAgent` names an `app.agents` primary agent and means
+ * nothing to any other provider, so it is never forwarded to one.
+ */
+function resolveOpenCodeAgentRole(session: { provider?: string; metadata?: unknown }): string | undefined {
+  if (session.provider !== 'opencode') return undefined;
+  const role = (session.metadata as Record<string, unknown> | undefined)?.opencodeAgent;
+  if (typeof role !== 'string') return undefined;
+  const trimmed = role.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 import { extractFilePath } from './tools/extractFilePath';
@@ -1289,6 +1306,14 @@ export class MessageStreamingHandler {
             turnConfig.model = modelForProvider;
           }
         }
+        // OpenCode session role. This is the last initialize() before the turn
+        // and OpenCode's initialize() replaces the whole config, so the role has
+        // to be re-supplied here or it is erased exactly the way the model was
+        // in #730.
+        const turnAgentRole = resolveOpenCodeAgentRole(session);
+        if (turnAgentRole) {
+          turnConfig.agentRole = turnAgentRole;
+        }
         await provider.initialize(turnConfig);
       }
 
@@ -2360,7 +2385,12 @@ export class MessageStreamingHandler {
                 outputTokens: currentUsage.outputTokens + newOutputTokens,
                 totalTokens: currentUsage.totalTokens + newInputTokens + newOutputTokens,
                 costUSD: (currentUsage.costUSD || 0) + newCostUSD,
-                contextWindow: contextWindowForDisplay,
+                // Both figures go, not just the fill. The meter falls back to
+                // cumulative `totalTokens` over whatever denominator survives,
+                // so clearing the fill alone turns a stale 90% into a confident
+                // 600%. With no denominator it reports plain token totals and
+                // claims nothing about context until a turn measures it.
+                contextWindow: contextCompacted ? undefined : contextWindowForDisplay,
                 // contextFillTokens = input + cacheRead + cacheCreation from last assistant message
                 // This is the actual context fill, not cumulative - updates correctly after compaction
                 // After compaction, clear stale currentContext (next real turn will set accurate value)
@@ -2410,13 +2440,19 @@ export class MessageStreamingHandler {
               const newOutputTokens = tokenUsage.output_tokens || 0;
               const newTotalTokens = newInputTokens + newOutputTokens;
               const isCodexProvider = session.provider === 'openai-codex';
+              const reportsCurrentContext = agentCapabilitiesForProviderType(
+                session.provider,
+              ).contextReporting === 'context-window';
               const codexInitData = isCodexProvider ? (provider as any).getInitData?.() : null;
               const isResumedCodexThread = codexInitData?.isResumedThread === true;
 
-              const codexContextWindow =
-                isCodexProvider
-                  ? (contextWindowFromChunk || currentUsage.contextWindow)
-                  : currentUsage.contextWindow;
+              // #914: only providers measured to report both a live fill and
+              // denominator may populate currentContext. A catalog window by
+              // itself cannot turn cumulative token spend into a percentage.
+              const reportedContextWindow = reportsCurrentContext
+                ? (contextWindowFromChunk || selectedModelContextWindow || currentUsage.contextWindow)
+                : undefined;
+              const storedContextWindow = reportedContextWindow || currentUsage.contextWindow;
 
               // Codex SDK turn.completed usage is cumulative for the provider thread.
               // Convert to per-session deltas using the last seen cumulative snapshot.
@@ -2471,11 +2507,20 @@ export class MessageStreamingHandler {
                   providerCumulativeInputTokens,
                   providerCumulativeOutputTokens,
                 } : {}),
-                contextWindow: codexContextWindow,
-                currentContext:
-                  isCodexProvider && !contextCompacted
-                    ? (contextFillTokens !== undefined && codexContextWindow
-                      ? { tokens: contextFillTokens, contextWindow: codexContextWindow }
+                // A compaction just replaced the conversation with a summary, so
+                // every fill figure in hand describes context that no longer
+                // exists -- including the one this chunk reports, which is read
+                // off the last assistant message from before the boundary. The
+                // denominator goes with it: the meter otherwise falls back to
+                // cumulative spend over the window and reports a confident,
+                // wrong percentage. Report nothing until a turn measures the new
+                // context. Codex and OpenCode reach this branch.
+                contextWindow: contextCompacted ? undefined : storedContextWindow,
+                currentContext: contextCompacted
+                  ? undefined
+                  : reportsCurrentContext
+                    ? (contextFillTokens !== undefined && reportedContextWindow
+                      ? { tokens: contextFillTokens, contextWindow: reportedContextWindow }
                       : currentUsage.currentContext)
                     : currentUsage.currentContext,
               };
@@ -2488,8 +2533,8 @@ export class MessageStreamingHandler {
                 tokenUsage: updatedUsage
               });
 
-              // Push context usage to mobile sync for Codex sessions
-              if (isCodexProvider && contextFillTokens !== undefined && codexContextWindow) {
+              // Push measured context usage to mobile sync.
+              if (reportsCurrentContext && contextFillTokens !== undefined && reportedContextWindow) {
                 const syncProvider = getSyncProvider();
                 if (syncProvider) {
                   syncProvider.pushChange(session.id, {
@@ -2497,7 +2542,7 @@ export class MessageStreamingHandler {
                     metadata: {
                       currentContext: {
                         tokens: contextFillTokens,
-                        contextWindow: codexContextWindow,
+                        contextWindow: reportedContextWindow,
                       },
                     } as any,
                   });

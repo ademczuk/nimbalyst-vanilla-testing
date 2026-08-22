@@ -1,6 +1,19 @@
 import { safeHandle } from '../utils/ipcRegistry';
 import { OpenCodeConfigService, LMStudioBridgeOptions } from '../services/OpenCodeConfigService';
 import type { OpenCodeFileConfig } from '@nimbalyst/runtime/ai/server';
+import {
+  getOpenCodeAgentCatalog,
+  getOpenCodeModelCatalog,
+  refreshOpenCodeModelCatalog,
+} from '@nimbalyst/runtime/ai/server';
+import type {
+  OpenCodeModelCatalogIpcResponse,
+  OpenCodeModelCatalogRefreshRequest,
+} from '../../shared/openCodeModelCatalog';
+import type {
+  OpenCodeAgentCatalogIpcResponse,
+  OpenCodeAgentCatalogRequest,
+} from '../../shared/openCodeAgentCatalog';
 import { logger } from '../utils/logger';
 
 const service = new OpenCodeConfigService();
@@ -27,6 +40,60 @@ async function fetchLMStudioModels(baseUrl: string): Promise<string[]> {
 }
 
 export function registerOpenCodeConfigHandlers(): void {
+  safeHandle('opencode-model-catalog:get', async (): Promise<OpenCodeModelCatalogIpcResponse> => {
+    try {
+      return { success: true, catalog: await getOpenCodeModelCatalog() };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      logger.ai.error('[OpenCode] Failed to read model catalog:', error);
+      return { success: false, error: message };
+    }
+  });
+
+  safeHandle(
+    'opencode-model-catalog:refresh',
+    async (
+      _event,
+      request: OpenCodeModelCatalogRefreshRequest
+    ): Promise<OpenCodeModelCatalogIpcResponse> => {
+      if (!request?.workspacePath || typeof request.workspacePath !== 'string') {
+        throw new Error('opencode-model-catalog:refresh requires workspacePath');
+      }
+      try {
+        return {
+          success: true,
+          catalog: await refreshOpenCodeModelCatalog(request.workspacePath),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        logger.ai.error('[OpenCode] Failed to refresh model catalog:', error);
+        return { success: false, error: message };
+      }
+    }
+  );
+
+  safeHandle(
+    'opencode-agent-catalog:get',
+    async (
+      _event,
+      request: OpenCodeAgentCatalogRequest
+    ): Promise<OpenCodeAgentCatalogIpcResponse> => {
+      if (!request?.workspacePath || typeof request.workspacePath !== 'string') {
+        throw new Error('opencode-agent-catalog:get requires workspacePath');
+      }
+      try {
+        return {
+          success: true,
+          catalog: await getOpenCodeAgentCatalog(request.workspacePath),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        logger.ai.error('[OpenCode] Failed to read agent catalog:', error);
+        return { success: false, error: message };
+      }
+    }
+  );
+
   safeHandle('opencode-config:read', async () => {
     try {
       const config = await service.readConfig();

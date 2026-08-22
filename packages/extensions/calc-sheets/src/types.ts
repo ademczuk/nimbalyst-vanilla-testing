@@ -17,6 +17,7 @@ export type CalcSheetLineKind =
   | 'blank'
   | 'comment'
   | 'section'
+  | 'prose'
   | 'binding'
   | 'assert'
   | 'unknown';

@@ -143,6 +143,7 @@ function createMath(frontmatter: CalcSheetFrontmatter): MathInstance {
   }
 
   math.import({
+    ln: math.log,
     to(value: any, unitName: string) {
       const target = stripQuotes(String(unitName));
       if (value && typeof value.to === 'function') {
@@ -496,6 +497,11 @@ export function evaluateCalcSheet(
     if (line.kind === 'unknown') {
       lineOutputs[line.index] = 'PARSE ERR';
       errorCount++;
+      continue;
+    }
+
+    if (line.kind === 'prose') {
+      lineOutputs[line.index] = '';
     }
   }
 

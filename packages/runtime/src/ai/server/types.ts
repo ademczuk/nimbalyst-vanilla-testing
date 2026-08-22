@@ -324,6 +324,49 @@ export interface AIModel {
   provider: AIProviderType;
   maxTokens?: number;
   contextWindow?: number;
+  cost?: AIModelCost;
+  status?: 'alpha' | 'beta' | 'deprecated' | 'active';
+  capabilities?: AIModelCapabilities;
+  /**
+   * Listed only because the user already selected it: discovery did not find
+   * the model under an authenticated provider, so a new turn would fail. Kept
+   * so a revoked credential never silently erases a selection (#916).
+   */
+  unavailable?: boolean;
+}
+
+export interface AIModelCost {
+  input: number;
+  output: number;
+  cache: {
+    read: number;
+    write: number;
+  };
+  experimentalOver200K?: {
+    input: number;
+    output: number;
+    cache: {
+      read: number;
+      write: number;
+    };
+  };
+}
+
+export interface AIModelModalityCapabilities {
+  text: boolean;
+  audio: boolean;
+  image: boolean;
+  video: boolean;
+  pdf: boolean;
+}
+
+export interface AIModelCapabilities {
+  temperature: boolean;
+  reasoning: boolean;
+  attachment: boolean;
+  toolcall: boolean;
+  input: AIModelModalityCapabilities;
+  output: AIModelModalityCapabilities;
 }
 
 /** Structural type describing what role a session plays in the hierarchy */
@@ -443,6 +486,12 @@ export interface ProviderConfig {
   baseUrl?: string;
   allowedTools?: string[];  // List of allowed tool names, ['*'] for all tools
   effortLevel?: EffortLevel;  // Effort level for Opus 4.6 adaptive reasoning (low/medium/high/max)
+  /**
+   * Provider-native persona the session runs as. Currently OpenCode only, where
+   * it names one of the `mode: primary | all` agents from `app.agents`.
+   * Undefined means the provider's own default role.
+   */
+  agentRole?: string;
   thinkingMode?: ThinkingMode;  // Extended thinking mode for Claude Agent (enabled/disabled)
   responseFormat?: ProviderResponseFormat;  // Response format constraint (extension chat completions)
   skipLogging?: boolean;  // Skip message logging to DB (extension stateless completions)

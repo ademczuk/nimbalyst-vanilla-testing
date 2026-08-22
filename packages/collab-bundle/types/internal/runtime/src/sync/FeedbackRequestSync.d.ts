@@ -52,6 +52,8 @@ export declare class FeedbackRequestSync {
     private snapshotVersion;
     private syncRequested;
     private destroyed;
+    /** Server said this member may not be here. Terminal for reconnects only. */
+    private accessRevoked;
     private reconnectAttempt;
     private reconnectTimer;
     constructor(config: FeedbackRequestSyncConfig);

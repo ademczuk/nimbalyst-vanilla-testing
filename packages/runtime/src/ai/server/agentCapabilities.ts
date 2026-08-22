@@ -22,9 +22,10 @@
  *    `slashCommands: true` with an empty list means "supported, nothing to
  *    show yet" (e.g. the catalog arrives with the SDK init payload).
  *
- * Context reporting is the obvious next member — a provider that never reports
- * usage currently shows a lying 0% rather than hiding the indicator — but it is
- * left out until the per-provider answers are measured rather than guessed.
+ * Context reporting follows the same rule. Its three states were added only
+ * after every built-in provider path was measured: cumulative token counts are
+ * not a current-context snapshot, and no usage signal must hide the indicator
+ * rather than render a lying 0% (#914).
  */
 
 import type { AIProviderType } from './types';
@@ -41,6 +42,17 @@ import type { AIProviderType } from './types';
  */
 export type CompactionSupport = 'rpc' | 'slash-command' | 'unsupported';
 
+/**
+ * How much context-usage information the provider can report honestly.
+ *
+ * - `'none'`: no measured usage signal; hide the indicator.
+ * - `'token-counts'`: cumulative input/output counts only. These are useful in
+ *   the tooltip, but cannot produce a current-context percentage.
+ * - `'context-window'`: both the current context fill and its model-specific
+ *   denominator are available, so a percentage is meaningful.
+ */
+export type ContextReportingSupport = 'none' | 'token-counts' | 'context-window';
+
 export interface AgentCapabilities {
   /**
    * The provider can enumerate slash commands it will genuinely service, via
@@ -54,16 +66,26 @@ export interface AgentCapabilities {
   skills: boolean;
 
   compaction: CompactionSupport;
+
+  contextReporting: ContextReportingSupport;
 }
 
 /**
- * Fail-closed declaration: chat providers, and any agent whose support is
- * unknown (an extension contribution whose manifest says nothing).
+ * Fail-closed declaration for any provider whose support is unknown (for
+ * example, an extension contribution whose manifest says nothing).
  */
 export const NO_AGENT_CAPABILITIES: AgentCapabilities = Object.freeze({
   slashCommands: false,
   skills: false,
   compaction: 'unsupported',
+  contextReporting: 'none',
+});
+
+const TOKEN_COUNT_ONLY_CAPABILITIES: AgentCapabilities = Object.freeze({
+  slashCommands: false,
+  skills: false,
+  compaction: 'unsupported',
+  contextReporting: 'token-counts',
 });
 
 /**
@@ -74,31 +96,65 @@ export const NO_AGENT_CAPABILITIES: AgentCapabilities = Object.freeze({
  * which has no compaction RPC.
  */
 export const BUILTIN_AGENT_CAPABILITIES: Readonly<Record<AIProviderType, AgentCapabilities>> = Object.freeze({
-  // Chat providers: no agent surfaces at all.
-  claude: NO_AGENT_CAPABILITIES,
-  openai: NO_AGENT_CAPABILITIES,
-  lmstudio: NO_AGENT_CAPABILITIES,
+  // Chat providers report cumulative request token counts, but none reports a
+  // distinct current-context snapshot. A model catalog window cannot turn
+  // cumulative spend into an honest fill percentage.
+  claude: TOKEN_COUNT_ONLY_CAPABILITIES,
+  openai: TOKEN_COUNT_ONLY_CAPABILITIES,
+  lmstudio: TOKEN_COUNT_ONLY_CAPABILITIES,
 
   // The Claude Agent SDK reports its own commands and skills in the init
   // payload and interprets `/compact` as a real command.
-  'claude-code': { slashCommands: true, skills: true, compaction: 'slash-command' },
+  'claude-code': {
+    slashCommands: true,
+    skills: true,
+    compaction: 'slash-command',
+    contextReporting: 'context-window',
+  },
 
   // The genuine CLI is driven by its PTY, not by this provider class:
   // `sendMessage` throws, so there is nothing here to enumerate or compact.
-  // Its own TUI still handles `/`-commands the user types into the terminal.
-  'claude-code-cli': { slashCommands: false, skills: false, compaction: 'unsupported' },
+  // Its own TUI still handles `/`-commands the user types into the terminal;
+  // the host observation proxy independently supplies currentContext.
+  'claude-code-cli': {
+    slashCommands: false,
+    skills: false,
+    compaction: 'unsupported',
+    contextReporting: 'context-window',
+  },
 
   // Codex: skills are real (skills/list over the app-server), slash commands
   // are not — the app-server interprets none, so the catalog is deliberately
   // empty rather than advertising TUI names that no-op (#1252). Compaction is
   // `thread/compact/start`.
-  'openai-codex': { slashCommands: false, skills: true, compaction: 'rpc' },
+  'openai-codex': {
+    slashCommands: false,
+    skills: true,
+    compaction: 'rpc',
+    contextReporting: 'context-window',
+  },
 
-  // ACP and the remaining CLI agents expose none of the three over their
-  // protocols today. Declared unsupported rather than left ambiguous.
-  'openai-codex-acp': { slashCommands: false, skills: false, compaction: 'unsupported' },
-  opencode: { slashCommands: false, skills: false, compaction: 'unsupported' },
-  'copilot-cli': { slashCommands: false, skills: false, compaction: 'unsupported' },
+  // Codex ACP sends usage_update with both used and size. Copilot's ACP parser
+  // handles no usage event at all. OpenCode's assistant message updates carry
+  // the fill, and its discovered model catalog supplies the window.
+  'openai-codex-acp': {
+    slashCommands: false,
+    skills: false,
+    compaction: 'unsupported',
+    contextReporting: 'context-window',
+  },
+  opencode: {
+    slashCommands: true,
+    skills: false,
+    compaction: 'rpc',
+    contextReporting: 'context-window',
+  },
+  'copilot-cli': {
+    slashCommands: false,
+    skills: false,
+    compaction: 'unsupported',
+    contextReporting: 'none',
+  },
 });
 
 /**

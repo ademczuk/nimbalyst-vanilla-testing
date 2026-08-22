@@ -119,8 +119,11 @@ import {
     getAppSetting,
     getClaudeCodeSettings,
     getAttachmentStagingConfig,
+    getOpenCodeModelCatalogCache,
+    getProviderApiKeyFromSettings,
     isSettingsAgentToolsDisabled,
     isTrackersAgentToolsEnabled,
+    setOpenCodeModelCatalogCache,
     store
 } from './utils/store';
 import { shouldShowFirstLaunchOnboarding } from './utils/firstLaunchOnboarding';
@@ -128,6 +131,7 @@ import { getAIProviderOverridesWithWorktreeFallback } from './utils/aiSettingsMe
 import { registerMCPConfigHandlers } from './ipc/MCPConfigHandlers';
 import { registerMcpSessionStatusHandlers } from './ipc/McpSessionStatusHandlers';
 import { getOpenCodeConfigService, registerOpenCodeConfigHandlers } from './ipc/OpenCodeConfigHandlers';
+import { createOpenCodeModelCatalogCacheKey } from './services/OpenCodeModelCatalogService';
 import { registerClaudeCodePluginHandlers } from './ipc/ClaudeCodePluginHandlers';
 import { registerExportHandlers } from './ipc/ExportHandlers';
 import { registerSemanticSearchHandlers } from './ipc/SemanticSearchHandlers';
@@ -203,7 +207,14 @@ import { installExtensionAgentBridge } from './extensions/extensionAgentBridge';
 import { getAgentWorkflowService } from './services/AgentWorkflowService';
 import { queueMarketplaceInstallRequest, registerExtensionMarketplaceHandlers, runExtensionAutoUpdate } from './ipc/ExtensionMarketplaceHandlers';
 import { getRegisteredExtensions } from './extensions/RegisteredFileTypes';
-import { ClaudeCodeProvider, OpenAICodexProvider, OpenAICodexACPProvider, OpenCodeProvider, CopilotCLIProvider } from '@nimbalyst/runtime/ai/server';
+import {
+  ClaudeCodeProvider,
+  OpenAICodexProvider,
+  OpenAICodexACPProvider,
+  OpenCodeProvider,
+  CopilotCLIProvider,
+  configureOpenCodeModelCatalog,
+} from '@nimbalyst/runtime/ai/server';
 import { configureMcpServers } from '@nimbalyst/runtime/ai/server';
 import { matchesAllowPattern } from '@nimbalyst/runtime/ai/server/permissions/toolPermissionHelpers';
 import { resolveCodexPreEditHookScriptPath } from './services/ai/codexPreEditHookPath';
@@ -2313,9 +2324,35 @@ app.whenReady().then(async () => {
     OpenCodeProvider.setEnhancedPathLoader(() => getEnhancedPath());
     CopilotCLIProvider.setEnhancedPathLoader(() => getEnhancedPath());
 
-    // Inject opencode.json loader so OpenCodeProvider.getModels() can surface
-    // user-configured providers (e.g. an LM Studio bridge) in the model picker.
-    OpenCodeProvider.setConfigLoader(() => getOpenCodeConfigService().readConfig());
+    configureOpenCodeModelCatalog({
+      loadCache: () => getOpenCodeModelCatalogCache(),
+      saveCache: (cache) => setOpenCodeModelCatalogCache(cache),
+      getCacheKey: (workspacePath) => {
+        const shellEnvironment = getShellEnvironment();
+        return createOpenCodeModelCatalogCacheKey({
+          enhancedPath: getEnhancedPath(),
+          configPath: getOpenCodeConfigService().getConfigPath(),
+          workspacePath,
+          xdgDataHome: shellEnvironment?.XDG_DATA_HOME ?? process.env.XDG_DATA_HOME,
+          configuredApiKey: getProviderApiKeyFromSettings('opencode'),
+        });
+      },
+      getRetainedModelIds: async () => {
+        // The model the user picked in settings stays in the catalog even if
+        // discovery stops reporting its provider as connected, so a revoked or
+        // not-yet-added credential never silently erases the selection (#916).
+        try {
+          const config = await getOpenCodeConfigService().readConfig();
+          return config?.model ? [config.model] : [];
+        } catch {
+          return [];
+        }
+      },
+      getEnvironment: () => ({
+        ...(getShellEnvironment() ?? {}),
+        PATH: getEnhancedPath(),
+      }),
+    });
 
     // Inject SDK module loader for packaged builds where dynamic import('@openai/codex-sdk')
     // can't resolve the package from within app.asar.

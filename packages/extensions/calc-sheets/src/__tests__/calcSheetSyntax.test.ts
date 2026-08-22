@@ -20,12 +20,24 @@ describe('calc sheet syntax tokenization', () => {
     ]);
   });
 
+  it('colors narrative markdown as one prose span', () => {
+    const line = 'The result below uses the conservative estimate.';
+    expect(tokenTexts(line)).toEqual([
+      { kind: 'prose', text: line },
+    ]);
+  });
+
   it('colors bindings, units, and formatters', () => {
     expect(tokenTexts('payload = 15500 kg')).toEqual([
       { kind: 'variable-definition', text: 'payload' },
       { kind: 'operator', text: '=' },
       { kind: 'number', text: '15500' },
       { kind: 'unit', text: 'kg' },
+    ]);
+
+    expect(tokenTexts('total =')).toEqual([
+      { kind: 'variable-definition', text: 'total' },
+      { kind: 'operator', text: '=' },
     ]);
 
     expect(tokenTexts('stage2_burn_fraction = stage2_propellant_burned / stage2_propellant -> percent(1)')).toEqual([
@@ -61,6 +73,12 @@ describe('calc sheet syntax tokenization', () => {
       { kind: 'variable', text: 'stage1_initial_mass' },
       { kind: 'operator', text: '/' },
       { kind: 'variable', text: 'stage1_final_mass' },
+    ]);
+
+    expect(tokenTexts('natural_log = ln')).toEqual([
+      { kind: 'variable-definition', text: 'natural_log' },
+      { kind: 'operator', text: '=' },
+      { kind: 'function', text: 'ln' },
     ]);
   });
 });

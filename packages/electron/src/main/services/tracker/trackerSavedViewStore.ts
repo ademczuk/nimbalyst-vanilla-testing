@@ -129,6 +129,38 @@ export async function listUnsyncedSharedSavedViews(
   }
 }
 
+/**
+ * Retire a shared view the server refused for good.
+ *
+ * `listUnsyncedSharedSavedViews` selects `sync_status IN ('local','pending')`,
+ * so moving the row to `'rejected'` takes it out of the push queue without
+ * deleting the user's view or its payload. `sync_status` is a plain TEXT
+ * column with no CHECK constraint, so this needs no migration; a row that
+ * predates this code simply never carries the value.
+ *
+ * The local copy is left in place on purpose. It is still the user's view --
+ * it just is not the team's, and destroying it because the server said "not
+ * yours to share" would lose work the user never asked us to discard.
+ */
+export async function markSharedSavedViewRejected(
+  workspace: string,
+  viewId: string,
+  dbOverride?: TypeDefDb,
+): Promise<void> {
+  try {
+    const db = dbOverride ?? getDatabase();
+    if (!db) return;
+    await db.query(
+      `UPDATE tracker_shared_saved_views
+       SET sync_status = 'rejected'
+       WHERE workspace = $1 AND view_id = $2`,
+      [workspace, viewId],
+    );
+  } catch (err) {
+    logger.main.warn('[trackerSavedViewStore] markRejected failed:', err);
+  }
+}
+
 export async function getMaxSharedSavedViewSyncId(
   workspace: string,
   dbOverride?: TypeDefDb,

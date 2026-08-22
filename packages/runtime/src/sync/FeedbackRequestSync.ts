@@ -13,6 +13,10 @@ import {
 } from '@nimbalyst/collab-protocol';
 
 import type { TeamJwt } from '../auth/jwtScopes';
+import {
+  collabAccessRevokedMessage,
+  isCollabAccessRevokedCloseCode,
+} from './collabCloseCodes';
 import { appendSyncClientParams } from './syncClientInfo';
 
 const RECONNECT_BASE_MS = 1_000;
@@ -110,6 +114,8 @@ export class FeedbackRequestSync {
   private snapshotVersion = 0;
   private syncRequested = false;
   private destroyed = false;
+  /** Server said this member may not be here. Terminal for reconnects only. */
+  private accessRevoked = false;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -121,6 +127,9 @@ export class FeedbackRequestSync {
   async connect(): Promise<void> {
     if (this.destroyed) throw new Error('Feedback request sync has been destroyed');
     if (this.ws) return;
+    // An explicit reconnect is the caller asserting access may have been
+    // restored; let the server be the judge again.
+    this.accessRevoked = false;
 
     this.emit({ type: 'connecting' });
     try {
@@ -149,14 +158,34 @@ export class FeedbackRequestSync {
         if (this.ws !== ws) return;
         this.handleMessage(event.data);
       });
-      ws.addEventListener('close', () => {
+      ws.addEventListener('close', (event) => {
         if (this.ws !== ws) return;
         this.ws = null;
+        const code = (event as CloseEvent | undefined)?.code;
+        const revoked = isCollabAccessRevokedCloseCode(code);
         this.rejectRequests(new FeedbackRequestSyncError(
-          'FEEDBACK_REQUEST_CONNECTION_CLOSED',
-          'Feedback request connection closed before the request completed',
+          revoked
+            ? 'FEEDBACK_REQUEST_ACCESS_REVOKED'
+            : 'FEEDBACK_REQUEST_CONNECTION_CLOSED',
+          revoked
+            ? collabAccessRevokedMessage(code)
+            : 'Feedback request connection closed before the request completed',
         ));
         this.emit({ type: 'disconnected' });
+        if (revoked) {
+          // Settled answer, not a blip -- reconnecting replays the same refused
+          // handshake forever and leaves the panel silently stuck connecting.
+          // Kept separate from `destroyed` so this stays a statement about
+          // access, not about teardown: a caller that re-connects after the
+          // member is re-added gets a connection attempt, not "destroyed".
+          this.accessRevoked = true;
+          this.emit({
+            type: 'error',
+            code: 'FEEDBACK_REQUEST_ACCESS_REVOKED',
+            message: collabAccessRevokedMessage(code),
+          });
+          return;
+        }
         this.scheduleReconnect();
       });
       ws.addEventListener('error', () => {
@@ -514,7 +543,7 @@ export class FeedbackRequestSync {
   }
 
   private scheduleReconnect(): void {
-    if (this.destroyed || this.reconnectTimer) return;
+    if (this.destroyed || this.accessRevoked || this.reconnectTimer) return;
     const delay = Math.min(
       RECONNECT_BASE_MS * 2 ** this.reconnectAttempt,
       RECONNECT_MAX_MS,

@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ProviderConfig } from '../../Settings/SettingsView';
 import { SettingsToggle } from '../SettingsToggle';
 import { AlphaBadge, SETTINGS_ALPHA_TOOLTIP } from '../../common/AlphaBadge';
-import { OPENCODE_PRESET_MODELS } from '@nimbalyst/runtime/ai/modelConstants';
 import type { OpenCodeFileConfig } from '@nimbalyst/runtime/ai/server';
+import { OpenCodeModelsSection } from './OpenCodeModelsSection';
 
 interface OpenCodePanelProps {
   config: ProviderConfig;
@@ -16,6 +16,10 @@ interface OpenCodePanelProps {
   onSelectAllModels: (selectAll: boolean) => void;
   onTestConnection: () => Promise<void>;
   onConfigChange: (updates: Partial<ProviderConfig>) => void;
+  /** Directory OpenCode discovers providers for. */
+  workspacePath?: string;
+  onModelVisibilityToggle: (modelId: string, visible: boolean) => void;
+  onSetVisibilityForModels: (modelIds: string[], visible: boolean) => void;
 }
 
 type CLIStatus = 'checking' | 'installed' | 'not-installed' | 'installing' | 'install-error';
@@ -41,46 +45,15 @@ interface OpenCodeLMStudioResponse {
   error?: string;
 }
 
-interface ModelOption {
-  id: string;
-  label: string;
-  group: 'preset' | 'lmstudio' | 'custom';
-}
-
-function buildModelOptions(config: OpenCodeFileConfig | null): ModelOption[] {
-  const presetIds = new Set<string>();
-  const presets: ModelOption[] = OPENCODE_PRESET_MODELS.map((m) => {
-    const id = `${m.providerID}/${m.modelID}`;
-    presetIds.add(id);
-    return { id, label: m.name, group: 'preset' };
-  });
-
-  const extras: ModelOption[] = [];
-  const providers = config?.provider ?? {};
-  for (const [providerID, entry] of Object.entries(providers)) {
-    const models = entry.models ?? {};
-    const providerLabel = entry.name || providerID;
-    for (const [modelID, modelEntry] of Object.entries(models)) {
-      const id = `${providerID}/${modelID}`;
-      if (presetIds.has(id)) continue;
-      const baseLabel = modelEntry?.name || modelID;
-      extras.push({
-        id,
-        label: `${baseLabel} (${providerLabel})`,
-        group: providerID === 'lmstudio' ? 'lmstudio' : 'custom',
-      });
-    }
-  }
-
-  return [...presets, ...extras];
-}
-
 export function OpenCodePanel({
   config,
   apiKeys,
   onToggle,
   onApiKeyChange,
   onTestConnection,
+  workspacePath,
+  onModelVisibilityToggle,
+  onSetVisibilityForModels,
 }: OpenCodePanelProps) {
   const [cliStatus, setCLIStatus] = useState<CLIStatus>('checking');
   const [cliVersion, setCLIVersion] = useState<string | null>(null);
@@ -196,7 +169,9 @@ export function OpenCodePanel({
         setOpenCodeConfig(response.config);
         setLmStudioStatus('success');
         const count = response.modelIds?.length ?? 0;
-        setLmStudioMessage(`Configured ${count} ${count === 1 ? 'model' : 'models'} from LM Studio.`);
+        setLmStudioMessage(
+          `Configured ${count} ${count === 1 ? 'model' : 'models'} from LM Studio. Use "Discover models" above to add them to the picker.`
+        );
       } else {
         setLmStudioStatus('error');
         setLmStudioMessage(response.error ?? 'Failed to configure LM Studio bridge');
@@ -225,7 +200,6 @@ export function OpenCodePanel({
     }
   };
 
-  const modelOptions = buildModelOptions(openCodeConfig);
   const selectedModel = openCodeConfig?.model ?? '';
   const lmStudioBridgeConfigured = !!openCodeConfig?.provider?.lmstudio;
   const lmStudioBridgeModelCount = openCodeConfig?.provider?.lmstudio?.models
@@ -313,43 +287,14 @@ export function OpenCodePanel({
 
       {config.enabled && (
         <>
-          <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)]">
-            <h4 className="provider-panel-section-title text-base font-semibold mb-3 text-[var(--nim-text)]">Default model</h4>
-            <p className="text-[13px] text-[var(--nim-text-muted)] mb-3 leading-relaxed">
-              Choose which model OpenCode uses by default. This writes the <code className="text-[var(--nim-code-text)] bg-[var(--nim-code-bg)] px-1 rounded">model</code> field
-              of your <code className="text-[var(--nim-code-text)] bg-[var(--nim-code-bg)] px-1 rounded">~/.config/opencode/opencode.json</code>.
-            </p>
-            <select
-              data-testid="opencode-model-select"
-              value={selectedModel}
-              onChange={(e) => handleModelChange(e.target.value)}
-              className="w-full py-2 px-3 rounded-md bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] text-[var(--nim-text)] outline-none focus:border-[var(--nim-primary)]"
-            >
-              <option value="">OpenCode default</option>
-              <optgroup label="Hosted">
-                {modelOptions.filter((m) => m.group === 'preset').map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
-                ))}
-              </optgroup>
-              {modelOptions.some((m) => m.group === 'lmstudio') && (
-                <optgroup label="LM Studio (local)">
-                  {modelOptions.filter((m) => m.group === 'lmstudio').map((m) => (
-                    <option key={m.id} value={m.id}>{m.label}</option>
-                  ))}
-                </optgroup>
-              )}
-              {modelOptions.some((m) => m.group === 'custom') && (
-                <optgroup label="Custom providers">
-                  {modelOptions.filter((m) => m.group === 'custom').map((m) => (
-                    <option key={m.id} value={m.id}>{m.label}</option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-            <p className="text-xs text-[var(--nim-text-muted)] mt-2">
-              Picking a hosted model requires the matching API key to be set up in OpenCode's own config.
-            </p>
-          </div>
+          <OpenCodeModelsSection
+            workspacePath={workspacePath}
+            hiddenModels={config.hiddenModels || []}
+            selectedModelId={selectedModel}
+            onSelectModel={(modelId) => { void handleModelChange(modelId); }}
+            onVisibilityToggle={onModelVisibilityToggle}
+            onSetVisibilityForModels={onSetVisibilityForModels}
+          />
 
           <div className="provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)]">
             <h4 className="provider-panel-section-title text-base font-semibold mb-3 text-[var(--nim-text)]">LM Studio integration</h4>

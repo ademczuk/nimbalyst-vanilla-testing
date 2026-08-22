@@ -161,6 +161,32 @@ export interface UnsyncedTrackerNavigationEntry {
  * sub-extraction diverges between PGLite and SQLite (see DATABASE.md), and this
  * table holds a handful of rows per workspace.
  */
+/**
+ * Retire a navigation entry the server refused for good.
+ *
+ * `listUnsyncedTrackerNavigationEntries` only pushes rows whose `sync_status`
+ * is `'local'` or `'pending'`, so `'rejected'` takes this one out of the queue
+ * without touching the payload. No migration: `sync_status` is plain TEXT and
+ * already carries several values ('remote', 'personal', ...).
+ */
+export async function markTrackerNavigationEntryRejected(
+  workspace: string,
+  entryId: string,
+  dbOverride?: TypeDefDb,
+): Promise<void> {
+  try {
+    const db = dbOverride ?? getDatabase();
+    if (!db) return;
+    await db.query(
+      `UPDATE tracker_type_navigation SET sync_status = 'rejected'
+       WHERE workspace = $1 AND entry_id = $2`,
+      [workspace, entryId],
+    );
+  } catch (err) {
+    logger.main.warn('[trackerNavigationStore] markRejected failed:', err);
+  }
+}
+
 export async function listUnsyncedTrackerNavigationEntries(
   workspace: string,
   dbOverride?: TypeDefDb,

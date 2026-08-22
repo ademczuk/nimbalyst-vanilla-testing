@@ -8,6 +8,7 @@ const CALC_SHEET_LIGHT_THEME = 'calc-sheet-light';
 const CALC_SHEET_DARK_THEME = 'calc-sheet-dark';
 
 const TOKEN_SCOPE_BY_KIND: Record<CalcSheetSyntaxTokenKind, string> = {
+  prose: 'calc.prose',
   comment: 'calc.comment',
   'heading-marker': 'calc.heading.marker',
   'heading-text': 'calc.heading.text',
@@ -78,6 +79,7 @@ function registerCalcSheetLanguage(monaco: Monaco): void {
     base: 'vs',
     inherit: true,
     rules: [
+      { token: 'calc.prose', foreground: '746e61' },
       { token: 'calc.comment', foreground: '8e7d52', fontStyle: 'italic' },
       { token: 'calc.heading.marker', foreground: 'a57121', fontStyle: 'bold' },
       { token: 'calc.heading.text', foreground: '7a3e14', fontStyle: 'bold' },
@@ -97,6 +99,7 @@ function registerCalcSheetLanguage(monaco: Monaco): void {
     base: 'vs-dark',
     inherit: true,
     rules: [
+      { token: 'calc.prose', foreground: 'aaa398' },
       { token: 'calc.comment', foreground: 'bba56f', fontStyle: 'italic' },
       { token: 'calc.heading.marker', foreground: 'f0b35b', fontStyle: 'bold' },
       { token: 'calc.heading.text', foreground: 'ffd9a3', fontStyle: 'bold' },

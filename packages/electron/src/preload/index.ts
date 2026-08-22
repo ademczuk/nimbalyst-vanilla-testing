@@ -30,6 +30,14 @@ import type {
   FeedbackRequestServiceTarget,
 } from '../shared/feedbackRequest.ts';
 import type { TutorialEntryPoint, TutorialStartResult, TutorialStatusResult } from '../shared/tutorial.ts';
+import type {
+  OpenCodeModelCatalogIpcResponse,
+  OpenCodeModelCatalogRefreshRequest,
+} from '../shared/openCodeModelCatalog.ts';
+import type {
+  OpenCodeAgentCatalogIpcResponse,
+  OpenCodeAgentCatalogRequest,
+} from '../shared/openCodeAgentCatalog.ts';
 
 type StytchAuthFlowOptions = {
   intent: 'sign-in' | 'add-account' | 'reauth';
@@ -601,6 +609,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aiGetAllModels: () => ipcRenderer.invoke('ai:getAllModels'),
   aiClearModelCache: () => ipcRenderer.invoke('ai:clearModelCache'),
   aiRefreshSessionProvider: (sessionId: string) => ipcRenderer.invoke('ai:refreshSessionProvider', sessionId),
+  openCodeModelCatalogGet: (): Promise<OpenCodeModelCatalogIpcResponse> =>
+    ipcRenderer.invoke('opencode-model-catalog:get'),
+  openCodeModelCatalogRefresh: (
+    request: OpenCodeModelCatalogRefreshRequest
+  ): Promise<OpenCodeModelCatalogIpcResponse> =>
+    ipcRenderer.invoke('opencode-model-catalog:refresh', request),
+  openCodeAgentCatalogGet: (
+    request: OpenCodeAgentCatalogRequest
+  ): Promise<OpenCodeAgentCatalogIpcResponse> =>
+    ipcRenderer.invoke('opencode-agent-catalog:get', request),
 
   // Per-session MCP status (NIM-2272). Pull for first render, push for live
   // transitions — the push listener only exists once a message has been sent.

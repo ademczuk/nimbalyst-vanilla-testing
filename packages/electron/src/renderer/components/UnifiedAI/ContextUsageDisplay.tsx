@@ -2,6 +2,7 @@ import React, { useId, useMemo, useState, useRef, useCallback, useEffect } from 
 import { useSetAtom } from 'jotai';
 import type { TokenUsageCategory } from '@nimbalyst/runtime/ai/server/types';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
+import { agentCapabilitiesForProviderType } from '@nimbalyst/runtime/ai/server/agentCapabilities';
 import { getHelpContent } from '../../help';
 import { openSettingsCommandAtom } from '../../store';
 
@@ -16,6 +17,7 @@ const CATEGORY_COLORS = [
 ];
 
 interface ContextUsageDisplayProps {
+  provider?: string | null;
   inputTokens: number;       // Cumulative input tokens (for tooltip breakdown)
   outputTokens: number;      // Cumulative output tokens (for tooltip breakdown)
   totalTokens: number;       // Cumulative total tokens (fallback if no currentContext)
@@ -44,6 +46,7 @@ interface FormattedCategory extends TokenUsageCategory {
  * - No data yet: "--"
  */
 export function ContextUsageDisplay({
+  provider,
   inputTokens,
   outputTokens,
   totalTokens,
@@ -51,15 +54,18 @@ export function ContextUsageDisplay({
   categories,
   currentContext
 }: ContextUsageDisplayProps) {
+  const contextReporting = agentCapabilitiesForProviderType(provider).contextReporting;
   // For context window display, prefer currentContext (from /context command)
   // Fall back to legacy fields for backward compatibility
-  const displayTokens = currentContext?.tokens ?? totalTokens;
+  const displayTokens = contextReporting === 'context-window'
+    ? currentContext?.tokens ?? totalTokens
+    : totalTokens;
   const displayContextWindow = currentContext?.contextWindow ?? contextWindow;
   const displayCategories = currentContext?.categories ?? categories;
 
   // Check what data we have
   const hasTokenData = displayTokens > 0 || totalTokens > 0;
-  const hasContextWindow = displayContextWindow > 0;
+  const hasContextWindow = contextReporting === 'context-window' && displayContextWindow > 0;
   const [tooltipVisible, setTooltipVisible] = useState(false);
   const [helpExpanded, setHelpExpanded] = useState(false);
   const [toolBaselineTokens, setToolBaselineTokens] = useState<number | null>(null);
@@ -219,6 +225,12 @@ export function ContextUsageDisplay({
     'usage-warning': 'text-orange-500',
     'usage-critical': 'text-[#ff4444]'
   };
+
+  // #914: no measured usage signal means no meter. Rendering a zeroed
+  // percentage would claim knowledge the provider never supplied.
+  if (contextReporting === 'none') {
+    return null;
+  }
 
   return (
     <div
