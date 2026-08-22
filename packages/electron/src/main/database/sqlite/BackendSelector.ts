@@ -151,12 +151,19 @@ const SQLITE_DB_RELPATH = path.join('sqlite-db', 'nimbalyst.sqlite');
 /**
  * Below this a `nimbalyst.sqlite` is a stub, not a store. The floor exists only
  * to reject a zero-byte or half-created file -- the contradiction itself is
- * what carries the decision, so this is deliberately generous. Erring low is
- * the safe direction: when the flag's own backend has no store on disk, booting
- * it creates an empty database, so there is no case where honouring the flag
- * beats switching to the store that does exist.
+ * what carries the decision.
+ *
+ * Keep it far below a real database. A schema-only store at migration v34
+ * measures ~836 KB before a single message is written, so a floor anywhere near
+ * a megabyte silently excludes light-but-genuine installs: the first draft of
+ * this guard used 1 MB and failed to heal a 7-session fixture.
+ *
+ * Erring low is the safe direction. When the flag's own backend has no store on
+ * disk, booting it creates an empty database, so there is no case where
+ * honouring the flag beats switching to the store that does exist -- even a
+ * near-empty one. The floor is a sanity check, not a judgement about value.
  */
-const SQLITE_PLAUSIBLE_MIN_BYTES = 1024 * 1024;
+const SQLITE_PLAUSIBLE_MIN_BYTES = 64 * 1024;
 
 export interface BackendContradictionFacts {
   /** What the flag file claims. */

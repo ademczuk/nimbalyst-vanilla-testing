@@ -185,6 +185,18 @@ describe('BackendSelector', () => {
       expect(result.reason).toBe('existing-pglite-migration-due');
     });
 
+    // The floor must sit below a schema-only store, not above it. An empty
+    // database at migration v34 is ~836 KB before any message is written; the
+    // first draft used a 1 MB floor and left exactly this install booting
+    // empty. Sized from a real fixture, not guessed.
+    it('heals a light install whose store is barely larger than the bare schema', () => {
+      writePoisonedFlag();
+      writeSqliteDb(856_064);
+      const result = resolveBackend({ userDataPath: tmp });
+      expect(result.backend).toBe('sqlite');
+      expect(result.reason).toBe('flag-contradiction-healed-sqlite');
+    });
+
     it('leaves a rollback install alone even with no pglite-db on disk', () => {
       commitRollbackToPglite(tmp);
       writeSqliteDb(64 * 1024 * 1024);
