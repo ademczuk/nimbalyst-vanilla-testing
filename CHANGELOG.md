@@ -10,35 +10,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
-- OpenCode's model picker now lists the models you are actually signed in for, discovered live instead of a fixed built-in list, with per-model hiding and a refresh control in settings.
-- OpenCode sessions support slash commands and Compact, and can run as one of your configured agent roles.
-- Creating an automation can now set where its output goes, what the output file is called, and whether it starts enabled.
-- Click a spot on a shared mockup to leave a comment there: pins are labeled with the author, sync live to everyone in the document, keep their place when an AI regenerates the mockup, and can be read and replied to by an agent — on the desktop and in the browser.
-- Trackers can record what an item is waiting on, and a built-in Ready view lists the open work whose blockers are all cleared, most-unblocking first, with blocked items showing what is holding them up and a warning when a set of items is waiting on itself.
-- Right-clicking a tracker item on the board or in the list jumps to the AI sessions already working on it, or launches a new session or worktree for it.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
-- Calc Sheets can mix narrative Markdown with calculations without treating prose as a formula error, and now recognize `ln` as the natural logarithm.
-- Find (Cmd+F) in Tracker Mode jumps to the search box.
-- The feedback request list moved from Shared Docs to your organization, beside the Inbox, so requests you sent are findable alongside the ones sent to you.
 
 ### Fixed
 <!-- Bug fixes go here -->
-- Saving a file, opening a folder and switching sessions no longer hang for seconds at a time on a busy workspace — several of the most frequent database queries were scanning whole tables or repeating work they had already done.
-- A tracker board with thousands of items now draws only the cards on screen, so the app no longer carries the whole board's weight in memory even while you are working somewhere else entirely.
-- Edits you make to a team tracker while offline — including archiving and deleting — now reach the team as soon as you reconnect, instead of waiting for the next app launch or being lost entirely.
-- Creating a published item while disconnected no longer claims the workspace has no team; it says the issue key is pending until you reconnect.
-- Turning off an automation now actually stops it — a disabled automation could keep running on its schedule while showing as Disabled.
-- Automations write to the output file name you configured; append and replace modes ignored it and always wrote to `output.md`.
-- Removing a team member or revoking their project access now takes effect immediately on connections they already have open, instead of only when they next reconnect.
-- The context-usage indicator hides itself for agents that cannot report usage, instead of sitting at a permanent 0%.
-- Arrow keys move through the @-mention list in document comments instead of snapping back to the first name.
-- A background shell command killed when its turn ends is now reported as killed, with how long it ran, instead of vanishing silently and leaving the agent unable to tell it apart from work you stopped.
-- A file open in an editor tab no longer silently reverts changes an agent or another program makes to it on disk; if the tab cannot show you the new content it stops saving, retries, and tells you rather than overwriting.
-- Shared Docs no longer vanishes from the navigation rail for a project that belongs to a team when the team lookup is slow or times out at launch; it retries instead of staying hidden until you reopen the window.
-- Shared trackers and team documents connect within moments of launch instead of taking up to half a minute to appear.
-- The Set Status menu on a tracker card now scrolls instead of running off the bottom of the screen, and offers only statuses the selected items can actually hold — mixed selections get the shared lifecycle stages rather than every status in the workspace.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.75.0] - 2026-08-23
+
+
+### Added
+<!-- New features go here -->
+- OpenCode sessions gain slash commands, Compact, agent roles, and a live model picker listing the models you are signed in for.
+- Comment on a spot in a shared mockup: pins sync live, keep their place when an AI regenerates the mockup, and agents can read and reply.
+- Trackers record what an item is waiting on, with a built-in Ready view listing unblocked work most-unblocking first.
+- Right-click a tracker item to jump to the AI sessions working on it, or launch a new session or worktree for it.
+- Creating an automation can set where its output goes, what the file is called, and whether it starts enabled.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Calc Sheets mix narrative Markdown with calculations without treating prose as a formula error, and recognize `ln`.
+- Find (Cmd+F) in Tracker Mode jumps to the search box.
+- The feedback request list moved from Shared Docs to your organization, beside the Inbox.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Saving a file, opening a folder and switching sessions no longer hang for seconds at a time on a busy workspace.
+- A tracker board with thousands of items now draws only the cards on screen.
+- Offline team-tracker edits, including archives and deletes, reach the team as soon as you reconnect.
+- Creating a published item while disconnected says the issue key is pending instead of claiming the workspace has no team.
+- A disabled automation no longer keeps running on its schedule.
+- Automations write to the output file name you configured instead of always writing `output.md`.
+- Removing a team member or revoking their project access takes effect on connections they already have open.
+- A team change the server refuses for good is retired instead of being re-sent on every reconnect.
+- The context-usage indicator hides itself for agents that cannot report usage, instead of sitting at 0%.
+- Arrow keys move through the @-mention list in document comments.
+- A background shell command killed when its turn ends is reported as killed, with how long it ran.
+- A file open in an editor tab no longer silently reverts changes made to it on disk; it stops saving, retries, and tells you.
+- Shared Docs stays in the navigation rail when the team lookup is slow or times out at launch.
+- Shared trackers and team documents connect within moments of launch instead of taking up to half a minute.
+- The Set Status menu on a tracker card scrolls, and offers only statuses the selected items can actually hold.
 
 ### Removed
 <!-- Removed features go here -->
