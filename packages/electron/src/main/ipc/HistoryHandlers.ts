@@ -7,6 +7,7 @@ import { BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import { getWindowId, windowStates } from '../window/WindowManager';
 import { dirtyEditorRegistry } from '../services/DirtyEditorRegistry';
 import { ProjectFileService } from '../services/ProjectFileService';
+import { jsonKeyAccessor } from '../database/jsonKeyExpr';
 import type { ProjectFileEdit, ProjectFileWriteReceipt } from '@nimbalyst/runtime';
 
 // Initialize history manager
@@ -170,6 +171,7 @@ export async function registerHistoryHandlers() {
     safeHandle('history:mark-incremental-tags-reviewed', async (event, filePath: string, sessionId: string) => {
         const { database } = await import('../database/PGLiteDatabaseWorker');
         const now = Date.now();
+        const md = jsonKeyAccessor(database.getEngine(), 'metadata');
 
         await database.query(`
             UPDATE document_history
@@ -178,8 +180,8 @@ export async function registerHistoryHandlers() {
                   '{updatedAt}', to_jsonb($1::bigint)
                 )
             WHERE file_path = $2
-              AND metadata->>'type' = 'incremental-approval'
-              AND metadata->>'sessionId' = $3
+              AND ${md('type')} = 'incremental-approval'
+              AND ${md('sessionId')} = $3
         `, [now, filePath, sessionId]);
     });
 

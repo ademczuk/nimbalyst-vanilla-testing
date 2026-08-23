@@ -162,6 +162,10 @@ interface PendingOutboxMetadataRow {
   queued_count: number | bigint;
   inflight_count: number | bigint;
   rejected_count: number | bigint;
+  max_attempt_count: number | bigint | null;
+  last_attempt_at: string | number | Date | null;
+  oldest_created_at: string | number | Date | null;
+  last_error_code: string | null;
 }
 
 interface AccountBudgetEstimate {
@@ -622,13 +626,22 @@ export class CollabDocumentReplicaStore implements LocalReplicaStore {
   async recordOutboxError(
     identity: LocalReplicaIdentity,
     batchIds: string[],
-    errorCode: string
+    errorCode: string,
+    options?: { countAttempt?: boolean }
   ): Promise<void> {
     if (batchIds.length === 0) return;
+    // `claimOutboxBatch` counts the attempt it starts, but a batch that is
+    // already `inflight` is never re-claimed — so a document that fails on
+    // every pass used to sit at attempt_count = 1 forever no matter how often
+    // it was retried. Nothing could back off, and nothing could tell a first
+    // failure from a four-hundredth.
+    const attemptDelta = options?.countAttempt ? 1 : 0;
     await this.db.runTransaction(
       batchIds.map((batchId) => ({
         sql: `UPDATE collab_document_outbox
-          SET last_error_code = $5, updated_at = $6
+          SET last_error_code = $5,
+              attempt_count = attempt_count + $7,
+              updated_at = $6
           WHERE account_id = $1 AND org_id = $2 AND document_id = $3
             AND batch_id = $4`,
         params: [
@@ -636,6 +649,7 @@ export class CollabDocumentReplicaStore implements LocalReplicaStore {
           batchId,
           errorCode,
           new Date(),
+          attemptDelta,
         ],
       }))
     );
@@ -1087,23 +1101,48 @@ export class CollabDocumentReplicaStore implements LocalReplicaStore {
   }
 
   async listPendingOutboxes(
-    accountId?: string
+    accountId?: string,
+    options?: { states?: LocalReplicaOutboxState[] }
   ): Promise<LocalReplicaPendingOutbox[]> {
-    const accountFilter = accountId ? "WHERE o.account_id = $1" : "";
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (accountId) {
+      params.push(accountId);
+      conditions.push(`o.account_id = $${params.length}`);
+    }
+    const states = options?.states;
+    if (states && states.length > 0) {
+      const placeholders = states.map((state) => {
+        params.push(state);
+        return `$${params.length}`;
+      });
+      conditions.push(`o.state IN (${placeholders.join(", ")})`);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
     const result = await this.db.query<PendingOutboxMetadataRow>(
       `SELECT o.account_id, o.org_id, o.document_id, r.document_type,
               SUM(CASE WHEN o.state = 'queued' THEN 1 ELSE 0 END) AS queued_count,
               SUM(CASE WHEN o.state = 'inflight' THEN 1 ELSE 0 END) AS inflight_count,
-              SUM(CASE WHEN o.state = 'rejected' THEN 1 ELSE 0 END) AS rejected_count
+              SUM(CASE WHEN o.state = 'rejected' THEN 1 ELSE 0 END) AS rejected_count,
+              MAX(o.attempt_count) AS max_attempt_count,
+              MAX(o.updated_at) AS last_attempt_at,
+              MIN(o.created_at) AS oldest_created_at,
+              (SELECT e.last_error_code FROM collab_document_outbox e
+                WHERE e.account_id = o.account_id AND e.org_id = o.org_id
+                  AND e.document_id = o.document_id
+                  AND e.last_error_code IS NOT NULL
+                ORDER BY e.updated_at DESC LIMIT 1) AS last_error_code
        FROM collab_document_outbox o
        JOIN collab_document_replicas r
          ON r.account_id = o.account_id AND r.org_id = o.org_id
         AND r.document_id = o.document_id
-       ${accountFilter}
+       ${where}
        GROUP BY o.account_id, o.org_id, o.document_id, r.document_type
        ORDER BY o.account_id, o.org_id, o.document_id`,
-      accountId ? [accountId] : []
+      params
     );
+
     return result.rows.map((row) => ({
       identity: {
         accountId: row.account_id,
@@ -1114,6 +1153,10 @@ export class CollabDocumentReplicaStore implements LocalReplicaStore {
       queuedCount: Number(row.queued_count),
       inflightCount: Number(row.inflight_count),
       rejectedCount: Number(row.rejected_count),
+      maxAttemptCount: Number(row.max_attempt_count ?? 0),
+      lastAttemptAt: toMillis(row.last_attempt_at) ?? null,
+      oldestCreatedAt: toMillis(row.oldest_created_at) ?? null,
+      lastErrorCode: row.last_error_code ?? null,
     }));
   }
 

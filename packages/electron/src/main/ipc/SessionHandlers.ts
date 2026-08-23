@@ -24,6 +24,7 @@ import {
     resolveGitCommitProposalPromptId,
 } from '../services/ai/gitCommitProposalPromptUtils';
 import { SessionCommitService } from '../services/SessionCommitService';
+import { findSessionIdsForFile } from '../services/sessionFilesByPath';
 import { setSessionPendingPrompt } from '../services/ai/pendingPromptPersistence';
 import { normalizeSessionPhaseMetadataUpdate } from '../services/session/sessionPhaseTransition';
 import { destroyProviderForArchivedSession } from '../services/ai/archiveSessionProviderLifecycle';
@@ -897,34 +898,16 @@ export async function registerSessionHandlers() {
 
             const projectPath = resolveProjectPath(workspaceId);
 
-            let fileLinksResult;
-            if (relativePath) {
-                // Query across all related workspaces using relative path suffix
-                // This handles: worktree -> main project, main project -> worktrees,
-                // and worktree -> other worktrees
-                // Escape SQL LIKE wildcards in the path to prevent unintended pattern matching
-                const escapedRelativePath = relativePath.replace(/[%_\\]/g, '\\$&');
-                const escapedProjectPath = projectPath.replace(/[%_\\]/g, '\\$&');
-                fileLinksResult = await database.query(
-                    `SELECT DISTINCT session_id FROM session_files
-                     WHERE file_path LIKE '%' || $1 ESCAPE '\\'
-                     AND (workspace_id = $2 OR workspace_id = $3 OR workspace_id LIKE $4 ESCAPE '\\')`,
-                    [escapedRelativePath, workspaceId, projectPath, escapedProjectPath + '_worktrees/%']
-                );
-            } else {
-                // Fallback: exact match only
-                fileLinksResult = await database.query(
-                    `SELECT DISTINCT session_id FROM session_files
-                     WHERE workspace_id = $1 AND file_path = $2`,
-                    [workspaceId, filePath]
-                );
-            }
+            const sessionIds = await findSessionIdsForFile(database, {
+                workspaceId,
+                projectPath,
+                relativePath,
+                filePath,
+            });
 
-            if (!fileLinksResult.rows || fileLinksResult.rows.length === 0) {
+            if (sessionIds.length === 0) {
                 return [];
             }
-
-            const sessionIds = fileLinksResult.rows.map((row: any) => row.session_id);
 
             // Get list entries with messageCount (only available for current workspace sessions)
             const listEntries = await AISessionsRepository.list(workspaceId);

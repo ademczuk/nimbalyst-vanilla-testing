@@ -21,11 +21,7 @@
  */
 
 import log from 'electron-log/main';
-import {
-  mergeReceipt,
-  receiptAdvances,
-  type ReadReceiptEntityKind,
-} from '@nimbalyst/runtime/readReceipts/readReceipts';
+import type { ReadReceiptEntityKind } from '@nimbalyst/runtime/readReceipts/readReceipts';
 
 const logger = log.scope('ReadReceiptsStore');
 
@@ -132,42 +128,54 @@ export function createReadReceiptsStore(db: PGliteLike, ensureDbReady?: EnsureRe
     async markViewed(input: MarkViewedInput): Promise<ReadReceiptRow | null> {
       await ensureReady();
 
-      const incoming = {
-        lastSeenVersion: input.lastSeenVersion,
-        lastViewedAt: input.lastViewedAt,
-      };
-      const existing = await getOne(
-        input.userEmail,
-        input.entityKind,
-        input.entityId,
-        input.scope,
-      );
-
-      if (!receiptAdvances(existing, incoming)) {
-        return null;
-      }
-
-      const merged = mergeReceipt(existing, incoming);
       const updatedAt = input.updatedAt ?? input.lastViewedAt;
 
-      await db.query(
+      // One round trip, not two. This used to SELECT the existing receipt,
+      // merge it in JS, then upsert — 17,711 reads in a five-minute window
+      // (~59/s) on a FIFO single-lane DB worker, every one of them paired with
+      // a write. The merge is `mergeReceipt` (max on both watermarks, null
+      // meaning "no version") and the skip is `receiptAdvances`; both are
+      // expressible in the conflict clause, so the SELECT buys nothing.
+      //
+      // The DO UPDATE ... WHERE is the advance-only guarantee: a receipt can
+      // only move forward, so viewing on one device is never undone by a stale
+      // write arriving from another. When it does not advance, no row is
+      // updated and RETURNING yields nothing — which is exactly the `null`
+      // ("no-op, skip the sync push") the previous JS guard returned.
+      const { rows } = await db.query<ReadReceiptDbRow>(
         `INSERT INTO read_receipts
            (user_email, entity_kind, entity_id, scope, last_viewed_at, last_seen_version, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (user_email, entity_kind, entity_id, scope) DO UPDATE SET
-           last_viewed_at    = EXCLUDED.last_viewed_at,
-           last_seen_version = EXCLUDED.last_seen_version,
-           updated_at        = EXCLUDED.updated_at`,
+           last_viewed_at    = GREATEST(read_receipts.last_viewed_at, EXCLUDED.last_viewed_at),
+           last_seen_version = CASE
+             WHEN read_receipts.last_seen_version IS NULL THEN EXCLUDED.last_seen_version
+             WHEN EXCLUDED.last_seen_version IS NULL THEN read_receipts.last_seen_version
+             ELSE GREATEST(read_receipts.last_seen_version, EXCLUDED.last_seen_version)
+           END,
+           updated_at        = EXCLUDED.updated_at
+         WHERE EXCLUDED.last_viewed_at > read_receipts.last_viewed_at
+            OR (read_receipts.last_seen_version IS NULL AND EXCLUDED.last_seen_version IS NOT NULL)
+            OR (read_receipts.last_seen_version IS NOT NULL
+                AND EXCLUDED.last_seen_version IS NOT NULL
+                AND EXCLUDED.last_seen_version > read_receipts.last_seen_version)
+         RETURNING *`,
         [
           input.userEmail,
           input.entityKind,
           input.entityId,
           input.scope,
-          merged.lastViewedAt,
-          merged.lastSeenVersion,
+          input.lastViewedAt,
+          input.lastSeenVersion,
           updatedAt,
         ],
       );
+
+      if (rows.length === 0) {
+        return null;
+      }
+
+      const merged = rowToReceipt(rows[0]);
 
       logger.debug('markViewed', {
         entityKind: input.entityKind,
@@ -176,15 +184,7 @@ export function createReadReceiptsStore(db: PGliteLike, ensureDbReady?: EnsureRe
         lastSeenVersion: merged.lastSeenVersion,
       });
 
-      return {
-        userEmail: input.userEmail,
-        entityKind: input.entityKind,
-        entityId: input.entityId,
-        scope: input.scope,
-        lastViewedAt: merged.lastViewedAt,
-        lastSeenVersion: merged.lastSeenVersion,
-        updatedAt,
-      };
+      return merged;
     },
   };
 }

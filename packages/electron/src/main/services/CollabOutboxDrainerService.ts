@@ -8,6 +8,7 @@ import {
   type LocalReplicaIdentity,
   type OutboxDrainBatch,
   type OutboxDrainTransport,
+  type StuckOutboxDocument,
 } from "@nimbalyst/runtime/sync";
 import { getCollabDocumentReplicaStore } from "./CollabDocumentReplicaStore";
 import { getCollabSyncWsUrl } from "../utils/collabSyncUrl";
@@ -25,6 +26,8 @@ import {
 import { ProviderAttachmentRegistry } from "./ProviderAttachmentRegistry";
 
 const PERIODIC_DRAIN_MS = 30_000;
+/** Per-document ceiling on the not-converging warning, so it never floods. */
+const STUCK_REPORT_INTERVAL_MS = 60 * 60_000;
 const ACK_TIMEOUT_MS = 10_000;
 
 class ElectronDocumentOutboxTransport implements OutboxDrainTransport {
@@ -152,6 +155,7 @@ export class CollabOutboxDrainCoordinator {
     isLiveProviderAttached: (identity) => this.isLiveProviderAttached(identity),
   });
   private periodicTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly stuckReportedAt = new Map<string, number>();
   private unsubscribeNetwork: (() => void) | null = null;
   private unsubscribeAuth: (() => void) | null = null;
 
@@ -229,6 +233,35 @@ export class CollabOutboxDrainCoordinator {
     return this.providerAttachments.isAttached(identity);
   }
 
+  /**
+   * Report documents whose upload is not converging, at most hourly each.
+   *
+   * The counterpart to silencing the idle heartbeat: with that line gone, a
+   * document that has never reached the server would otherwise leave no trace
+   * at all. 22 batches sat inflight for 17 days without a single log line
+   * naming them, because every failure was handled inside `drainDocument` and
+   * the only guard that fired keyed on "we looked at something".
+   */
+  private reportStuckDocuments(stuck: StuckOutboxDocument[]): void {
+    const now = Date.now();
+    for (const document of stuck) {
+      const key = `${document.identity.orgId}\x00${document.identity.documentId}`;
+      const lastReported = this.stuckReportedAt.get(key) ?? 0;
+      if (now - lastReported < STUCK_REPORT_INTERVAL_MS) continue;
+      this.stuckReportedAt.set(key, now);
+      logger.main.warn("[CollabOutboxDrainer] Document is not converging", {
+        orgId: document.identity.orgId,
+        documentId: document.identity.documentId,
+        batchCount: document.batchCount,
+        attemptCount: document.attemptCount,
+        lastErrorCode: document.lastErrorCode,
+        strandedSince: document.oldestCreatedAt
+          ? new Date(document.oldestCreatedAt).toISOString()
+          : null,
+      });
+    }
+  }
+
   private trigger(source: string): void {
     if (!net.isOnline()) return;
     const accountId = getPersonalUserId();
@@ -241,26 +274,35 @@ export class CollabOutboxDrainCoordinator {
     }
     const startedAt = Date.now();
     void this.drainer
-      .drainOnce(accountId)
+      // Only the unconditional 30s tick honours the retry backoff. Every other
+      // source is an event that changes the odds — the network came back, auth
+      // was restored, a live provider let go — so those still retry at once.
+      .drainOnce(accountId, { respectBackoff: source === "periodic" })
       .then((result) => {
-        // Only log drains that did work -- the periodic trigger fires every
-        // 30s and an idle heartbeat line each time floods main.log.
-        if (result.documentsExamined > 0 || result.batchesUploaded > 0 || result.rejectedBatches > 0) {
+        // Only log drains that did WORK. The previous guard keyed on
+        // `documentsExamined > 0`, and examining is not doing anything: one
+        // permanently-stuck document made this the single most frequent line
+        // in main.log (1,011 blocks, ~8,000 lines in eight hours) while
+        // reporting `batchesUploaded: 0` every time.
+        const didWork = result.batchesUploaded > 0 || result.rejectedBatches > 0;
+        if (didWork) {
           logger.main.info("[CollabOfflineMetric]", {
             metric: "background_drain",
             source,
             durationMs: Date.now() - startedAt,
             documentsDrained: result.documentsExamined,
+            documentsDeferred: result.documentsDeferred,
+            batchesUploaded: result.batchesUploaded,
+            rejectedBatches: result.rejectedBatches,
+          });
+          logger.main.info("[CollabOutboxDrainer] Drain completed", {
+            source,
+            documentsExamined: result.documentsExamined,
             batchesUploaded: result.batchesUploaded,
             rejectedBatches: result.rejectedBatches,
           });
         }
-        if (result.batchesUploaded > 0 || result.rejectedBatches > 0) {
-          logger.main.info("[CollabOutboxDrainer] Drain completed", {
-            source,
-            ...result,
-          });
-        }
+        this.reportStuckDocuments(result.stuck);
       })
       .catch((error) => {
         logger.main.warn("[CollabOutboxDrainer] Drain failed", {

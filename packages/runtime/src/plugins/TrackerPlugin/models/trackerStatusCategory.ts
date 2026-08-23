@@ -294,17 +294,30 @@ export function statusCategoryOfItem(
 }
 
 /**
- * The status a type closes into, for callers that must *write* a terminal
- * status rather than test one (the commit linker, bulk "mark done" actions).
+ * The status value a type uses to express a lifecycle category, for callers that
+ * must *write* a status rather than test one.
  *
- * Returns the first `done`-category option in schema order, or undefined for a
- * type that has no way to finish — `idea` is exactly that: an accepted idea is
- * still in flight, so it ends either cancelled or converted, never "done".
- * Callers must handle undefined rather than falling back to the string `'done'`,
+ * This is the inverse of {@link resolveStatusCategory}, and it is the only way to
+ * apply one intent ("close these") across a mixed-type selection: a bug closes as
+ * `done`, a plan as `completed`, an idea as `rejected`. Returns the first matching
+ * option in schema order, and `undefined` for a type that cannot express the
+ * category at all — `idea` has no `done`, `customer` has no lifecycle whatsoever.
+ *
+ * Callers must handle `undefined` rather than falling back to the category name,
  * which is how an out-of-schema status got written onto plans.
  */
-export function getDoneStatusValue(type: string): string | undefined {
+export function getStatusValueForCategory(
+  type: string,
+  category: StatusCategory,
+): string | undefined {
   return getWorkflowStatusOptions(type)
-    .find(option => resolveStatusCategory(type, option.value) === 'done')
+    .find(option => resolveStatusCategory(type, option.value) === category)
     ?.value;
+}
+
+/**
+ * The status a type closes into (the commit linker, bulk "mark done" actions).
+ */
+export function getDoneStatusValue(type: string): string | undefined {
+  return getStatusValueForCategory(type, 'done');
 }

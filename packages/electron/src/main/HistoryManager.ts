@@ -7,6 +7,7 @@ import { promisify } from 'util';
 import { database } from './database/PGLiteDatabaseWorker';
 import { logger } from './utils/logger';
 import { parseJsonObjectColumn } from './utils/jsonColumn';
+import { jsonKeyExpr } from './database/jsonKeyExpr';
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
@@ -78,6 +79,19 @@ export class HistoryManager {
   private readonly PENDING_COUNT_EMIT_DEBOUNCE_MS = 50;
 
   constructor() {}
+
+  /**
+   * SQL for a `metadata` JSON key, in the form the live backend indexes.
+   *
+   * Every partial index on `document_history` is declared over
+   * `json_extract(metadata,'$.key')`, and SQLite will not match a `->>`
+   * predicate against one — the query still returns the right rows, off a full
+   * scan of the whole table. Use this for WHERE predicates; projections don't
+   * affect planning and can stay as they are.
+   */
+  private md(key: string): string {
+    return jsonKeyExpr(database.getEngine(), 'metadata', key);
+  }
 
   /**
    * Configure the history retention limits.
@@ -476,7 +490,7 @@ export class HistoryManager {
                metadata->>'speculative' as speculative
         FROM document_history
         WHERE file_path = $1
-          AND metadata->>'status' = 'pending-review'
+          AND ${this.md('status')} = 'pending-review'
         LIMIT 1
       `, [filePath]);
 
@@ -611,7 +625,7 @@ export class HistoryManager {
           UPDATE document_history
           SET metadata = jsonb_set(metadata, '{status}', to_jsonb('reviewed'::text))
           WHERE file_path = $1
-            AND metadata->>'status' = 'pending-review'
+            AND ${this.md('status')} = 'pending-review'
         `, [filePath]);
       }
 
@@ -703,7 +717,7 @@ export class HistoryManager {
         FROM document_history
         WHERE file_path = $1
           AND metadata->>'tagId' = $2
-          AND metadata->>'type' = 'pre-edit'
+          AND ${this.md('type')} = 'pre-edit'
         ORDER BY timestamp DESC
         LIMIT 1
       `, [filePath, tagId]);
@@ -755,7 +769,7 @@ export class HistoryManager {
             metadata = jsonb_set(metadata, '{updatedAt}', to_jsonb($3::bigint))
         WHERE file_path = $4
           AND metadata->>'tagId' = $5
-          AND metadata->>'type' = 'pre-edit'
+          AND ${this.md('type')} = 'pre-edit'
       `, [compressed, compressed.length, now, filePath, tagId]);
 
       logger.main.debug('[HistoryManager] Updated tag content:', { filePath, tagId });
@@ -801,7 +815,7 @@ export class HistoryManager {
         SELECT metadata->>'status' as status, metadata->>'tagId' as tag_id, metadata->>'type' as type
         FROM document_history
         WHERE file_path = $1
-          AND (metadata->>'type' = 'pre-edit' OR metadata->>'type' = 'incremental-approval')
+          AND (${this.md('type')} = 'pre-edit' OR ${this.md('type')} = 'incremental-approval')
       `, [filePath]);
 
       // logger.main.info('[HistoryManager] All tags for file after update:',
@@ -837,13 +851,13 @@ export class HistoryManager {
           SELECT file_path, content, metadata
           FROM document_history
           WHERE file_path = $1
-            AND metadata->>'status' = 'pending-review'
+            AND ${this.md('status')} = 'pending-review'
           ORDER BY timestamp DESC
         `
         : `
           SELECT file_path, content, metadata
           FROM document_history
-          WHERE metadata->>'status' = 'pending-review'
+          WHERE ${this.md('status')} = 'pending-review'
           ORDER BY timestamp DESC
         `;
 
@@ -908,7 +922,7 @@ export class HistoryManager {
         FROM document_history
         WHERE file_path = $1
           AND metadata->>'tagId' = $2
-          AND metadata->>'type' = 'pre-edit'
+          AND ${this.md('type')} = 'pre-edit'
       `, [filePath, tagId]);
 
       return result.rows[0]?.count > 0;
@@ -955,7 +969,7 @@ export class HistoryManager {
         UPDATE document_history
         SET metadata = jsonb_set(metadata, '{status}', to_jsonb('reviewed'::text))
         WHERE file_path = $1
-          AND metadata->>'status' = 'pending-review'
+          AND ${this.md('status')} = 'pending-review'
       `, [filePath]);
 
       // Store as history entry with incremental-approval type and status = pending-review
@@ -1014,19 +1028,14 @@ export class HistoryManager {
 
       // The status predicate must textually match the partial index
       // idx_history_one_pending_per_file or the planner falls back to a full
-      // table scan (~100ms). SQLite indexes the json_extract form; PGLite the
-      // ->> form. A ->> query does NOT match a json_extract index on SQLite.
-      const isSqlite = database.getEngine() === 'sqlite';
-      const statusExpr = isSqlite
-        ? `json_extract(metadata, '$.status')`
-        : `metadata->>'status'`;
-
+      // table scan (~100ms).
+      //
       // Use file_path LIKE to match all files within the workspace directory
       const result = await database.query<{ count: string }>(`
         SELECT COUNT(DISTINCT file_path) as count
         FROM document_history
         WHERE file_path LIKE $1
-          AND ${statusExpr} = 'pending-review'
+          AND ${this.md('status')} = 'pending-review'
       `, [workspacePath + '%']);
 
       return parseInt(result.rows[0]?.count || '0', 10);
@@ -1053,23 +1062,14 @@ export class HistoryManager {
           await database.initialize();
         }
 
-        // SQLite uses json_extract so the planner can match
-        // idx_history_pending_session_file (migration 2). PGLite needs the
-        // PostgreSQL ->> operator: its metadata column is jsonb, and
-        // json_extract has no (jsonb, unknown) overload there. The dialect
-        // split is required -- a single form cannot satisfy both engines.
-        const isSqlite = database.getEngine() === 'sqlite';
-        const sessionIdExpr = isSqlite
-          ? `json_extract(metadata, '$.sessionId')`
-          : `metadata->>'sessionId'`;
-        const statusExpr = isSqlite
-          ? `json_extract(metadata, '$.status')`
-          : `metadata->>'status'`;
+        // Both predicates must match idx_history_pending_session_file
+        // (migration 2) -- the indexed sessionId expression and the partial
+        // index's own status clause.
         const result = await database.query<{ file_path: string }>(`
           SELECT DISTINCT file_path
           FROM document_history
-          WHERE ${sessionIdExpr} = $1
-            AND ${statusExpr} = 'pending-review'
+          WHERE ${this.md('sessionId')} = $1
+            AND ${this.md('status')} = 'pending-review'
             AND file_path LIKE $2
         `, [sessionId, workspacePath + '%']);
 
@@ -1104,8 +1104,8 @@ export class HistoryManager {
         SELECT DISTINCT file_path
         FROM document_history
         WHERE file_path LIKE $1
-          AND metadata->>'sessionId' = $2
-          AND metadata->>'type' IN ('pre-edit', 'incremental-approval')
+          AND ${this.md('sessionId')} = $2
+          AND ${this.md('type')} IN ('pre-edit', 'incremental-approval')
       `, [workspacePath + '%', sessionId]);
 
       return result.rows.map((row: { file_path: string }) => row.file_path);
@@ -1129,8 +1129,8 @@ export class HistoryManager {
         SELECT MAX(CAST(metadata->>'updatedAt' AS bigint)) as last_reviewed_at
         FROM document_history
         WHERE file_path = $1
-          AND metadata->>'status' = 'reviewed'
-          AND metadata->>'type' = 'pre-edit'
+          AND ${this.md('status')} = 'reviewed'
+          AND ${this.md('type')} = 'pre-edit'
       `, [filePath]);
 
       const val = result.rows[0]?.last_reviewed_at;
@@ -1154,8 +1154,8 @@ export class HistoryManager {
         SELECT COUNT(DISTINCT file_path) as count
         FROM document_history
         WHERE file_path LIKE $1
-          AND metadata->>'status' = 'pending-review'
-          AND metadata->>'sessionId' = $2
+          AND ${this.md('status')} = 'pending-review'
+          AND ${this.md('sessionId')} = $2
       `, [workspacePath + '%', sessionId]);
 
       return parseInt(result.rows[0]?.count || '0', 10);
@@ -1183,7 +1183,7 @@ export class HistoryManager {
         SELECT DISTINCT file_path
         FROM document_history
         WHERE file_path LIKE $1
-          AND metadata->>'status' = 'pending-review'
+          AND ${this.md('status')} = 'pending-review'
       `, [workspacePath + '%']);
 
       const clearedFiles = filesResult.rows.map((row: { file_path: string }) => row.file_path);
@@ -1198,7 +1198,7 @@ export class HistoryManager {
                 '{updatedAt}', to_jsonb($1::bigint)
               )
           WHERE file_path LIKE $2
-            AND metadata->>'status' = 'pending-review'
+            AND ${this.md('status')} = 'pending-review'
         `, [now, workspacePath + '%']);
 
         logger.main.info('[HistoryManager] Cleared all pending tags:', { workspacePath, clearedCount, clearedFiles });
@@ -1242,8 +1242,8 @@ export class HistoryManager {
         SELECT DISTINCT file_path
         FROM document_history
         WHERE file_path LIKE $1
-          AND metadata->>'status' = 'pending-review'
-          AND metadata->>'sessionId' = $2
+          AND ${this.md('status')} = 'pending-review'
+          AND ${this.md('sessionId')} = $2
       `, [workspacePath + '%', sessionId]);
 
       const clearedFiles = filesResult.rows.map((row: { file_path: string }) => row.file_path);
@@ -1258,8 +1258,8 @@ export class HistoryManager {
                 '{updatedAt}', to_jsonb($1::bigint)
               )
           WHERE file_path LIKE $2
-            AND metadata->>'status' = 'pending-review'
-            AND metadata->>'sessionId' = $3
+            AND ${this.md('status')} = 'pending-review'
+            AND ${this.md('sessionId')} = $3
         `, [now, workspacePath + '%', sessionId]);
 
         logger.main.info('[HistoryManager] Cleared pending tags for session:', { workspacePath, sessionId, clearedCount, clearedFiles });
@@ -1312,8 +1312,8 @@ export class HistoryManager {
           SELECT content
           FROM document_history
           WHERE file_path = $1
-            AND metadata->>'sessionId' = $2
-            AND metadata->>'type' = $3
+            AND ${this.md('sessionId')} = $2
+            AND ${this.md('type')} = $3
           ORDER BY timestamp DESC
           LIMIT 1
         `,

@@ -6,8 +6,9 @@
  * that reassigns without dragging, and a staleness chip that flags a plan whose
  * status disagrees with its commits.
  *
- * The DOM contract matters: the `tracker-kanban-card` class and `data-item-id`
- * are what the document-level drag handlers and the kanban E2E spec address.
+ * The DOM contract matters: the `tracker-kanban-card` class, `data-item-id` and
+ * `data-card-index` are what the document-level drag handlers and the kanban E2E
+ * spec address.
  */
 
 import React from 'react';
@@ -33,6 +34,12 @@ export interface TrackerBoardCardProps {
    * renders once per lane, and the drop needs to know which copy was picked up.
    */
   columnKey: string;
+  /**
+   * Position within the column. Published to the DOM because the column is
+   * virtualized: the drag handlers only see the mounted cards, so they cannot
+   * infer an index from sibling order.
+   */
+  cardIndex: number;
   /** In the board's multi-selection; drives the checkbox. */
   selected: boolean;
   /** Open in the detail panel. Outlined like a selected card, but not checked. */
@@ -54,6 +61,7 @@ export interface TrackerBoardCardProps {
 export const TrackerBoardCard: React.FC<TrackerBoardCardProps> = ({
   item,
   columnKey,
+  cardIndex,
   selected,
   highlighted,
   dragging,
@@ -78,6 +86,7 @@ export const TrackerBoardCard: React.FC<TrackerBoardCardProps> = ({
     <div
       data-testid="tracker-kanban-card"
       data-item-id={item.id}
+      data-card-index={cardIndex}
       role="button"
       tabIndex={0}
       draggable

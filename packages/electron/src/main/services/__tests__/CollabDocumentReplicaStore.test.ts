@@ -635,6 +635,46 @@ describe.each(["pglite", "sqlite"] as const)(
       });
     });
 
+    // The drainer decides whether to retry, back off, or report a document as
+    // stranded entirely from this metadata — it never decrypts an outbox row to
+    // find out. A document that is only `rejected` is a settled answer and must
+    // drop out of the enumeration rather than be re-examined every 30 seconds.
+    it("carries retry metadata and filters by batch state", async () => {
+      await store.appendLocalUpdate({
+        identity,
+        documentType: "markdown",
+        updateId: "batch-a",
+        update: new Uint8Array([1]),
+        snapshotGeneration: 0,
+      });
+      await store.claimOutboxBatch(identity, ["batch-a"]);
+      await store.recordOutboxError(identity, ["batch-a"], "HTTP 404", {
+        countAttempt: true,
+      });
+
+      const [pending] = await store.listPendingOutboxes(identity.accountId, {
+        states: ["queued", "inflight"],
+      });
+      expect(pending).toMatchObject({
+        inflightCount: 1,
+        maxAttemptCount: 2,
+        lastErrorCode: "HTTP 404",
+      });
+      expect(pending.lastAttemptAt).toBeTypeOf("number");
+      expect(pending.oldestCreatedAt).toBeTypeOf("number");
+
+      await store.setOutboxState(identity, ["batch-a"], "rejected");
+      expect(
+        await store.listPendingOutboxes(identity.accountId, {
+          states: ["queued", "inflight"],
+        })
+      ).toEqual([]);
+      // Unfiltered callers — the account-purge gate — still see it.
+      expect(
+        await store.listPendingOutboxes(identity.accountId)
+      ).toHaveLength(1);
+    });
+
     it("claims multiple rows atomically and preserves the last error on requeue", async () => {
       for (const updateId of ["batch-a", "batch-b"]) {
         await store.appendLocalUpdate({

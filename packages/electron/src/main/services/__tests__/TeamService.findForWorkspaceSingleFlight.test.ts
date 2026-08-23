@@ -123,6 +123,7 @@ import {
   bindWorkspaceToSharedProject,
   findTeamForWorkspace,
   invalidateListTeamsCache,
+  listTeams,
   registerTeamHandlers,
 } from '../TeamService';
 import { refreshPersonalSessionForAccount } from '../StytchAuthService';
@@ -790,5 +791,94 @@ describe('post-sign-in project walk', () => {
       })).rejects.toThrow(/clone/i);
       expect(workspaceStates.get('/projects/unrelated')?.localOrgBinding).toBeUndefined();
     });
+  });
+});
+
+describe('listTeams stampede on mid-flight invalidation (NIM-3711)', () => {
+  /** Let queued microtasks (the fetch call, the cache settle handler) run. */
+  const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+
+  /** A /api/teams response that does not resolve until the test releases it. */
+  function gatedTeamsFetch(): () => void {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    fetchMock.mockImplementation(async () => {
+      await gate;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          teams: [{
+            orgId: 'org-1', name: 'Widgets Team', gitRemoteHash: REMOTE_HASH,
+            createdAt: new Date().toISOString(), role: 'admin',
+          }],
+        }),
+      };
+    });
+    return release;
+  }
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    invalidateListTeamsCache();
+  });
+
+  afterEach(async () => {
+    await flush();
+    invalidateListTeamsCache();
+  });
+
+  it('does not open a second request when the cache is invalidated mid-flight', async () => {
+    const release = gatedTeamsFetch();
+
+    const first = listTeams();
+    await flush();
+    expect(apiTeamsFetchCallCount()).toBe(1);
+
+    // What actually happened at startup: fetchTeamApi refreshed an expiring
+    // personal JWT, the refresh emitted an authenticated auth-state change,
+    // and the change handler invalidated the directory cache -- while this
+    // request was still on the wire. The next caller must join it, not race it.
+    invalidateListTeamsCache();
+    const second = listTeams();
+    await flush();
+
+    release();
+    await Promise.all([first, second]);
+
+    expect(apiTeamsFetchCallCount()).toBe(1);
+  });
+
+  it('does not cache an answer that was invalidated while in flight', async () => {
+    const release = gatedTeamsFetch();
+
+    const first = listTeams();
+    await flush();
+    invalidateListTeamsCache();
+    release();
+    await first;
+    await flush();
+
+    // The answer satisfied its joined callers, but it predates the
+    // invalidation, so it must not be served to anyone new.
+    await listTeams();
+    expect(apiTeamsFetchCallCount()).toBe(2);
+  });
+
+  it('opens a fresh request for forceFresh callers even while one is on the wire', async () => {
+    const release = gatedTeamsFetch();
+
+    const background = listTeams();
+    await flush();
+    expect(apiTeamsFetchCallCount()).toBe(1);
+
+    // The manual Refresh affordance asks for state that may have changed since
+    // the outstanding request started, so joining it would defeat the point.
+    const refreshed = listTeams({ forceFresh: true });
+    await flush();
+    expect(apiTeamsFetchCallCount()).toBe(2);
+
+    release();
+    await Promise.all([background, refreshed]);
   });
 });

@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Creating an automation can now set where its output goes, what the output file is called, and whether it starts enabled.
 - Click a spot on a shared mockup to leave a comment there: pins are labeled with the author, sync live to everyone in the document, keep their place when an AI regenerates the mockup, and can be read and replied to by an agent — on the desktop and in the browser.
 - Trackers can record what an item is waiting on, and a built-in Ready view lists the open work whose blockers are all cleared, most-unblocking first, with blocked items showing what is holding them up and a warning when a set of items is waiting on itself.
+- Right-clicking a tracker item on the board or in the list jumps to the AI sessions already working on it, or launches a new session or worktree for it.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -24,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Saving a file, opening a folder and switching sessions no longer hang for seconds at a time on a busy workspace — several of the most frequent database queries were scanning whole tables or repeating work they had already done.
+- A tracker board with thousands of items now draws only the cards on screen, so the app no longer carries the whole board's weight in memory even while you are working somewhere else entirely.
 - Edits you make to a team tracker while offline — including archiving and deleting — now reach the team as soon as you reconnect, instead of waiting for the next app launch or being lost entirely.
 - Creating a published item while disconnected no longer claims the workspace has no team; it says the issue key is pending until you reconnect.
 - Turning off an automation now actually stops it — a disabled automation could keep running on its schedule while showing as Disabled.
@@ -34,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A background shell command killed when its turn ends is now reported as killed, with how long it ran, instead of vanishing silently and leaving the agent unable to tell it apart from work you stopped.
 - A file open in an editor tab no longer silently reverts changes an agent or another program makes to it on disk; if the tab cannot show you the new content it stops saving, retries, and tells you rather than overwriting.
 - Shared Docs no longer vanishes from the navigation rail for a project that belongs to a team when the team lookup is slow or times out at launch; it retries instead of staying hidden until you reopen the window.
+- Shared trackers and team documents connect within moments of launch instead of taking up to half a minute to appear.
+- The Set Status menu on a tracker card now scrolls instead of running off the bottom of the screen, and offers only statuses the selected items can actually hold — mixed selections get the shared lifecycle stages rather than every status in the workspace.
 
 ### Removed
 <!-- Removed features go here -->

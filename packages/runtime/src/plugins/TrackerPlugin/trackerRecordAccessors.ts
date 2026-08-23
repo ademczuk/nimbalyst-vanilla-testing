@@ -9,6 +9,13 @@ import type { TrackerRecord } from '../../core/TrackerRecord';
 import type { TrackerIdentity } from '../../core/DocumentService';
 import type { TrackerSchemaRole, FieldDefinition } from './models/TrackerDataModel';
 import { globalRegistry, getRoleField } from './models/TrackerDataModel';
+import {
+  STATUS_CATEGORIES,
+  STATUS_CATEGORY_LABELS,
+  getStatusValueForCategory,
+  getWorkflowStatusOptions,
+  isStatusCategory,
+} from './models/trackerStatusCategory';
 
 /**
  * Conventional field names for each role.
@@ -286,6 +293,78 @@ export function buildKanbanStatusColumns(
   const schemaOptions = type !== 'all' ? getStatusOptions(type) : [];
   const itemStatuses = items.map(r => getRecordStatus(r) || 'to-do');
   return orderKanbanColumns(schemaOptions, itemStatuses);
+}
+
+// ---------------------------------------------------------------------------
+// Status choices for a selection
+// ---------------------------------------------------------------------------
+
+/**
+ * One entry in a "Set Status" menu built for a specific selection.
+ *
+ * `kind` decides what the click writes. A `value` choice writes that literal
+ * status to every selected item, which is only sound when they share a type. A
+ * `category` choice writes each item the status *its own* type uses for that
+ * category, because there is no single value that means "done" across a bug
+ * (`done`), a plan (`completed`) and an idea (which cannot be done at all).
+ */
+export interface SelectionStatusChoice {
+  kind: 'value' | 'category';
+  /** The literal status, or the StatusCategory name for a category choice. */
+  value: string;
+  label: string;
+}
+
+/**
+ * The statuses a "Set Status" menu should offer for a given selection.
+ *
+ * Scoping to the selection is what keeps this menu honest. The board's *column*
+ * list is a different question — it unions every status present on the board so
+ * no item is hidden — and reusing it here offered a bug card the statuses of the
+ * `customer` and `user` types (`multiple-users`, `slowing`), writing values the
+ * bug schema does not declare. In an all-types workspace that list also ran past
+ * thirty entries.
+ *
+ * A single-type selection gets that type's declared options verbatim, in schema
+ * order. A mixed selection falls back to lifecycle categories, and offers only
+ * the categories that *every* selected type can express — a category one type
+ * cannot represent would otherwise apply to some of the selection and silently
+ * skip the rest.
+ */
+export function buildSelectionStatusChoices(items: TrackerRecord[]): SelectionStatusChoice[] {
+  const types = [...new Set(items.map(item => item.primaryType))];
+  if (types.length === 0) return [];
+
+  if (types.length === 1) {
+    return getWorkflowStatusOptions(types[0]).map(option => ({
+      kind: 'value' as const,
+      value: option.value,
+      label: option.label || titleCaseStatus(option.value),
+    }));
+  }
+
+  return STATUS_CATEGORIES
+    .filter(category => types.every(type => getStatusValueForCategory(type, category)))
+    .map(category => ({
+      kind: 'category' as const,
+      value: category,
+      label: STATUS_CATEGORY_LABELS[category],
+    }));
+}
+
+/**
+ * The status to write to one item for a chosen menu entry, or `undefined` when
+ * the item's type cannot express it (which `buildSelectionStatusChoices` already
+ * excludes, but callers should skip rather than write a bogus value).
+ */
+export function resolveSelectionStatusValue(
+  choice: SelectionStatusChoice,
+  type: string,
+): string | undefined {
+  if (choice.kind === 'value') return choice.value;
+  return isStatusCategory(choice.value)
+    ? getStatusValueForCategory(type, choice.value)
+    : undefined;
 }
 
 // ---------------------------------------------------------------------------

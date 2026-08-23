@@ -2,7 +2,12 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import type { TrackerRecord } from '../../../core/TrackerRecord';
 import { globalRegistry, type TrackerDataModel } from '../models/TrackerDataModel';
-import { orderKanbanColumns, buildKanbanStatusColumns } from '../trackerRecordAccessors';
+import {
+  orderKanbanColumns,
+  buildKanbanStatusColumns,
+  buildSelectionStatusChoices,
+  resolveSelectionStatusValue,
+} from '../trackerRecordAccessors';
 
 function makeRecord(primaryType: string, status: string): TrackerRecord {
   return {
@@ -111,6 +116,111 @@ describe('buildKanbanStatusColumns (schema-driven, via registry)', () => {
   it('falls back to defaults for the "all" pseudo-type', () => {
     const cols = buildKanbanStatusColumns('all', []);
     expect(cols.map(c => c.value)).toEqual(['to-do', 'in-progress', 'in-review', 'done']);
+  });
+});
+
+describe('buildSelectionStatusChoices (context-menu statuses, scoped to the selection)', () => {
+  const bugLike = 'selBug';
+  const planLike = 'selPlan';
+  const stateOnly = 'selCustomer';
+
+  afterEach(() => {
+    for (const t of [bugLike, planLike, stateOnly]) globalRegistry.unregister(t);
+  });
+
+  function register(type: string, options: Array<{ value: string; label: string }>): void {
+    globalRegistry.register({
+      type,
+      displayName: type,
+      displayNamePlural: type,
+      icon: 'x',
+      color: '#000',
+      modes: { inline: true, fullDocument: false },
+      idPrefix: type,
+      idFormat: 'ulid',
+      fields: [
+        { name: 'title', type: 'string', required: true },
+        { name: 'status', type: 'select', options },
+      ],
+      roles: { title: 'title', workflowStatus: 'status' },
+    } as TrackerDataModel);
+  }
+
+  function registerAll(): void {
+    register(bugLike, [
+      { value: 'to-do', label: 'To Do' },
+      { value: 'in-progress', label: 'In Progress' },
+      { value: 'done', label: 'Done' },
+      { value: 'wont-fix', label: "Won't Fix" },
+    ]);
+    register(planLike, [
+      { value: 'draft', label: 'Draft' },
+      { value: 'in-development', label: 'In Development' },
+      { value: 'completed', label: 'Completed' },
+      { value: 'rejected', label: 'Rejected' },
+    ]);
+    // An entity-state type: no status means "finished", so it shares no
+    // terminal category with the work types.
+    register(stateOnly, [
+      { value: 'prospect', label: 'Prospect' },
+      { value: 'paying-individual', label: 'Paying Individual' },
+    ]);
+  }
+
+  it('offers a single-type selection exactly its own schema options, in schema order', () => {
+    registerAll();
+    const choices = buildSelectionStatusChoices([
+      makeRecord(bugLike, 'to-do'),
+      makeRecord(bugLike, 'done'),
+    ]);
+    expect(choices.map(c => c.value)).toEqual(['to-do', 'in-progress', 'done', 'wont-fix']);
+    expect(choices.every(c => c.kind === 'value')).toBe(true);
+  });
+
+  it('never offers a status belonging to a type that is not selected', () => {
+    registerAll();
+    const choices = buildSelectionStatusChoices([makeRecord(bugLike, 'to-do')]);
+    // This is the bug: the board's column union handed a bug card
+    // `paying-individual`, and picking it wrote a status the schema never declared.
+    expect(choices.map(c => c.value)).not.toContain('paying-individual');
+    expect(choices.map(c => c.value)).not.toContain('completed');
+  });
+
+  it('falls back to lifecycle categories for a mixed-type selection', () => {
+    registerAll();
+    const choices = buildSelectionStatusChoices([
+      makeRecord(bugLike, 'to-do'),
+      makeRecord(planLike, 'draft'),
+    ]);
+    expect(choices.every(c => c.kind === 'category')).toBe(true);
+    expect(choices.map(c => c.value)).toContain('done');
+  });
+
+  it('drops categories a selected type cannot express, rather than partially applying them', () => {
+    registerAll();
+    const choices = buildSelectionStatusChoices([
+      makeRecord(bugLike, 'to-do'),
+      makeRecord(stateOnly, 'prospect'),
+    ]);
+    // The entity-state type has no done/cancelled status at all.
+    expect(choices.map(c => c.value)).not.toContain('done');
+    expect(choices.map(c => c.value)).not.toContain('cancelled');
+  });
+
+  it('resolves a category choice to each type own closing status', () => {
+    registerAll();
+    const [choice] = buildSelectionStatusChoices([
+      makeRecord(bugLike, 'to-do'),
+      makeRecord(planLike, 'draft'),
+    ]).filter(c => c.value === 'done');
+
+    expect(resolveSelectionStatusValue(choice, bugLike)).toBe('done');
+    expect(resolveSelectionStatusValue(choice, planLike)).toBe('completed');
+    expect(resolveSelectionStatusValue(choice, stateOnly)).toBeUndefined();
+  });
+
+  it('returns nothing for an empty selection', () => {
+    expect(buildSelectionStatusChoices([])).toEqual([]);
   });
 });
 

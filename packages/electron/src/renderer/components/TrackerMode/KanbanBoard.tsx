@@ -1,12 +1,20 @@
 import React, { useEffect, useMemo, useCallback, useRef, useState } from 'react';
 import { useAtomValue } from 'jotai';
-import { useFloating, offset, flip, shift, FloatingPortal } from '@floating-ui/react';
-import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
+import { VList } from 'virtua';
+import { FloatingPortal } from '@floating-ui/react';
+import { useScrollableMenuFloating } from '@nimbalyst/runtime/ui/floating/useScrollableMenuFloating';
 import { MaterialSymbol } from '@nimbalyst/runtime';
+import { ProviderIcon } from '@nimbalyst/runtime/ui/icons/ProviderIcons';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
-import { type TrackerItemType } from '@nimbalyst/runtime/plugins/TrackerPlugin';
+import { type TrackerItemType, type TrackerLinkedSessionOption } from '@nimbalyst/runtime/plugins/TrackerPlugin';
 import { MANUAL_TRACKER_ORDERING, type TrackerGroupBy, type TrackerOrdering } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
-import { buildKanbanStatusColumns, getRecordTitle, resolveRoleFieldName } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
+import {
+  buildSelectionStatusChoices,
+  getRecordTitle,
+  resolveRoleFieldName,
+  resolveSelectionStatusValue,
+  type SelectionStatusChoice,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { trackerRelationshipLabelAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import { trackerModeStatusScopeAtom } from '../../store/atoms/trackers';
 import {
@@ -20,7 +28,12 @@ import { registerKanbanDragCallbacks } from './kanbanDragListeners';
 import { KanbanContextSubmenu } from './KanbanContextSubmenu';
 import { KanbanBoardSelectionBar } from './KanbanBoardSelectionBar';
 import { TrackerBoardCard } from './TrackerBoardCard';
-import { NEUTRAL_SWATCH, PRIORITY_COLORS, STATUS_COLORS } from './trackerBoardTokens';
+import {
+  NEUTRAL_SWATCH,
+  PRIORITY_COLORS,
+  STATUS_CATEGORY_COLORS,
+  STATUS_COLORS,
+} from './trackerBoardTokens';
 
 interface KanbanBoardProps {
   filterType: TrackerItemType | 'all';
@@ -46,8 +59,32 @@ interface KanbanBoardProps {
   onCopyDeepLink?: (itemId: string) => void;
   /** Open a card's item as a document -- double-click and the card context menu. */
   onOpenDocument?: (itemId: string) => void;
+  /** AI sessions already linked to a card's item, for the context menu submenu. */
+  getLinkedSessions?: (itemId: string) => TrackerLinkedSessionOption[];
+  /** Jump to an existing linked session from the card context menu. */
+  onOpenSession?: (sessionId: string) => void;
+  /** Start a new AI session for a card's item. */
+  onLaunchSession?: (itemId: string) => void;
+  /** Start a new isolated worktree session for a card's item. */
+  onLaunchWorktree?: (itemId: string) => void;
   favoriteItemIds?: ReadonlySet<string>;
   onToggleFavorite?: (itemId: string) => void;
+}
+
+/**
+ * Indices virtua must mount regardless of scroll position.
+ *
+ * A native drag whose source element unmounts never fires `dragend`, which would
+ * leave the board holding a drag that has already finished. Pinning the dragged
+ * card costs one row and only while a drag is in flight.
+ */
+function dragKeepMounted(
+  colItems: readonly TrackerRecord[],
+  dragItemId: string | null,
+): readonly number[] | undefined {
+  if (!dragItemId) return undefined;
+  const index = colItems.findIndex(item => item.id === dragItemId);
+  return index >= 0 ? [index] : undefined;
 }
 
 export const KanbanBoard: React.FC<KanbanBoardProps> = ({
@@ -63,6 +100,10 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   onDeleteItems,
   onCopyDeepLink,
   onOpenDocument,
+  getLinkedSessions,
+  onOpenSession,
+  onLaunchSession,
+  onLaunchWorktree,
   favoriteItemIds = new Set<string>(),
   onToggleFavorite,
 }) => {
@@ -126,10 +167,8 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const lastClickedIdRef = useRef<string | null>(null);
 
   // Floating context menu
-  const { refs: contextRefs, floatingStyles: contextFloatingStyles } = useFloating({
-    placement: 'right-start',
-    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
-  });
+  const { refs: contextRefs, floatingStyles: contextFloatingStyles } =
+    useScrollableMenuFloating('right-start');
   useEffect(() => {
     if (contextAnchor) {
       contextRefs.setReference({ getBoundingClientRect: () => contextAnchor });
@@ -195,6 +234,27 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     await saveTrackerFieldsBatch(entries);
   }, [selectedIds, closeContextMenu]);
 
+  /**
+   * Status is written per item rather than as one shared value: a category
+   * choice means "close these", and each type spells that differently (a bug
+   * `done`, a plan `completed`). Items whose type cannot express the choice are
+   * skipped rather than given an out-of-schema status.
+   */
+  const handleBulkStatusUpdate = useCallback(async (choice: SelectionStatusChoice) => {
+    closeContextMenu();
+    const entries = [];
+    for (const item of allItemsRef.current) {
+      if (!selectedIds.has(item.id)) continue;
+      const value = resolveSelectionStatusValue(choice, item.primaryType);
+      if (!value) continue;
+      entries.push({
+        item,
+        updates: { [resolveRoleFieldName(item.primaryType, 'workflowStatus')]: value },
+      });
+    }
+    if (entries.length > 0) await saveTrackerFieldsBatch(entries);
+  }, [selectedIds, closeContextMenu]);
+
   const relationshipLabel = useAtomValue(trackerRelationshipLabelAtom);
   const boardAxis = resolveBoardAxis(groupBy);
   const statusScope = useAtomValue(trackerModeStatusScopeAtom);
@@ -212,10 +272,15 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     [allItems, columns, boardAxis, ordering],
   );
 
-  /** The context menu sets status whatever the board is grouped by. */
-  const statusColumns = useMemo(
-    () => buildKanbanStatusColumns(filterType, allItems),
-    [filterType, allItems],
+  /**
+   * The context menu sets status whatever the board is grouped by, but it offers
+   * only statuses the *selection* can actually hold — not the board's column
+   * union, which on an all-types board included statuses from every unrelated
+   * type and wrote values the item's schema never declared.
+   */
+  const statusChoices = useMemo(
+    () => buildSelectionStatusChoices(allItems.filter(item => selectedIds.has(item.id))),
+    [allItems, selectedIds],
   );
 
   // Flat ordered list of item IDs (column by column) for shift-range selection
@@ -298,6 +363,16 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     () => (selectedIds.size === 0 ? [] : allItems.filter(item => selectedIds.has(item.id))),
     [allItems, selectedIds],
   );
+
+  // Session actions are item-scoped, so they only make sense for one card.
+  const contextSingleId = selectedIds.size === 1 ? Array.from(selectedIds)[0] : null;
+  // Gated on the menu being open: `getLinkedSessions` walks the whole session
+  // registry, and the board re-renders far more often than the menu opens.
+  const contextSessions = contextAnchor && contextSingleId && getLinkedSessions && onOpenSession
+    ? getLinkedSessions(contextSingleId)
+    : [];
+  const hasSessionActions = contextSingleId != null
+    && (contextSessions.length > 0 || onLaunchSession != null || onLaunchWorktree != null);
 
   // The listeners on `document` are attached once and survive HMR; this only
   // points them at the mounted board.
@@ -389,38 +464,57 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               </span>
             </div>
 
-            {/* Column cards */}
-            <div className="kanban-cards-container flex-1 overflow-y-auto p-1.5">
-              {colItems.map((item, cardIndex) => (
-                <React.Fragment key={item.id}>
-                  {/* Drop insertion line */}
-                  {dragOverColumn === col.key && dropIndex === cardIndex && dragItemId !== item.id && (
-                    <div className="h-[2px] bg-[var(--nim-primary)] rounded-full mx-1 my-0.5" />
-                  )}
-                <TrackerBoardCard
-                  item={item}
-                  columnKey={col.key}
-                  selected={selectedIds.has(item.id)}
-                  highlighted={Boolean(selectedItemId) && item.id === selectedItemId}
-                  dragging={dragItemId === item.id}
-                  isFavorite={favoriteItemIds.has(item.id)}
-                  onToggleFavorite={onToggleFavorite}
-                  onDragStart={handleDragStart}
-                  onDragEnd={handleDragEnd}
-                  onSelect={handleCardSelect}
-                  onToggleSelected={handleToggleCardSelected}
-                  onContextMenu={handleCardContextMenu}
-                  onOpenDocument={onOpenDocument}
-                  onOpenItem={onItemSelect}
-                />
-                </React.Fragment>
-              ))}
-              {/* Drop indicator after last card */}
-              {dragOverColumn === col.key && dropIndex === colItems.length && (
-                <div className="h-[2px] bg-[var(--nim-primary)] rounded-full mx-1 my-0.5" />
-              )}
-              {/* Drop zone spacer -- ensures there's always a target area below the last card */}
-              <div className="min-h-[40px]" />
+            {/* Column cards.
+                Virtualized: a lane routinely holds thousands of items, and every
+                mode component stays mounted behind CSS `display`, so rendering
+                the full column kept its entire card DOM alive even while Tracker
+                Mode was hidden. The render prop is only called for the rows
+                virtua actually mounts. */}
+            <div className="kanban-cards-container flex-1 min-h-0 p-1.5">
+              <VList
+                className="!h-full"
+                style={{ overflowX: 'hidden' }}
+                data={colItems}
+                // A card dragged out of view must stay mounted, or it never
+                // fires dragend and the board is left in a stuck drag state.
+                keepMounted={dragKeepMounted(colItems, dragItemId)}
+              >
+                {(item, cardIndex) => (
+                  <div key={item.id}>
+                    {/* Drop insertion line */}
+                    {dragOverColumn === col.key && dropIndex === cardIndex && dragItemId !== item.id && (
+                      <div className="h-[2px] bg-[var(--nim-primary)] rounded-full mx-1 my-0.5" />
+                    )}
+                    <TrackerBoardCard
+                      item={item}
+                      columnKey={col.key}
+                      cardIndex={cardIndex}
+                      selected={selectedIds.has(item.id)}
+                      highlighted={Boolean(selectedItemId) && item.id === selectedItemId}
+                      dragging={dragItemId === item.id}
+                      isFavorite={favoriteItemIds.has(item.id)}
+                      onToggleFavorite={onToggleFavorite}
+                      onDragStart={handleDragStart}
+                      onDragEnd={handleDragEnd}
+                      onSelect={handleCardSelect}
+                      onToggleSelected={handleToggleCardSelected}
+                      onContextMenu={handleCardContextMenu}
+                      onOpenDocument={onOpenDocument}
+                      onOpenItem={onItemSelect}
+                    />
+                    {cardIndex === colItems.length - 1 && (
+                      <>
+                        {/* Drop indicator after last card */}
+                        {dragOverColumn === col.key && dropIndex === colItems.length && (
+                          <div className="h-[2px] bg-[var(--nim-primary)] rounded-full mx-1 my-0.5" />
+                        )}
+                        {/* Drop zone spacer -- always a target area below the last card */}
+                        <div className="min-h-[40px]" />
+                      </>
+                    )}
+                  </div>
+                )}
+              </VList>
             </div>
           </div>
         );
@@ -438,8 +532,8 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
         <FloatingPortal>
         <div
           ref={contextRefs.setFloating}
-          className="z-50 min-w-[180px] bg-nim-secondary border border-nim rounded-md shadow-lg py-1 text-[13px]"
-          style={contextFloatingStyles}
+          className="z-50 overflow-y-auto overscroll-contain bg-nim-secondary border border-nim rounded-md shadow-lg py-1"
+          style={{ ...contextFloatingStyles, minWidth: 180, fontSize: 13 }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="px-3 py-1 text-[11px] text-nim-faint font-medium">
@@ -449,17 +543,21 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
           {/* Set Status */}
           <KanbanContextSubmenu label="Set Status" icon="swap_horiz">
-            {statusColumns.map(col => (
+            {statusChoices.map(choice => (
               <button
-                key={col.value}
+                key={`${choice.kind}:${choice.value}`}
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-nim hover:bg-nim-tertiary cursor-pointer"
-                onClick={() => handleBulkRoleUpdate('workflowStatus', col.value)}
+                onClick={() => handleBulkStatusUpdate(choice)}
               >
                 <span
                   className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: STATUS_COLORS[col.value] || NEUTRAL_SWATCH }}
+                  style={{
+                    backgroundColor: (choice.kind === 'category'
+                      ? STATUS_CATEGORY_COLORS[choice.value]
+                      : STATUS_COLORS[choice.value]) || NEUTRAL_SWATCH,
+                  }}
                 />
-                {col.label}
+                {choice.label}
               </button>
             ))}
           </KanbanContextSubmenu>
@@ -480,6 +578,65 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               </button>
             ))}
           </KanbanContextSubmenu>
+
+          {hasSessionActions && (
+            <>
+              <div className="border-b border-nim my-1" />
+
+              {contextSessions.length > 0 && (
+                <KanbanContextSubmenu label={`Sessions (${contextSessions.length})`} icon="smart_toy">
+                  {contextSessions.map(session => (
+                    <button
+                      key={session.id}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-nim hover:bg-nim-tertiary cursor-pointer"
+                      data-testid="tracker-kanban-context-open-session"
+                      title={`Open session: ${session.title}`}
+                      onClick={() => {
+                        closeContextMenu();
+                        onOpenSession?.(session.id);
+                      }}
+                    >
+                      <span className="shrink-0 flex items-center text-nim-muted">
+                        <ProviderIcon provider={session.provider || 'claude'} size={14} />
+                      </span>
+                      <span className="flex-1 truncate max-w-[220px]">{session.title}</span>
+                      {session.timeLabel && (
+                        <span className="text-[11px] text-nim-faint shrink-0">{session.timeLabel}</span>
+                      )}
+                    </button>
+                  ))}
+                </KanbanContextSubmenu>
+              )}
+
+              {onLaunchSession && (
+                <button
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-nim hover:bg-nim-tertiary cursor-pointer"
+                  data-testid="tracker-kanban-context-launch-session"
+                  onClick={() => {
+                    closeContextMenu();
+                    onLaunchSession(contextSingleId!);
+                  }}
+                >
+                  <MaterialSymbol icon="add_circle" size={16} />
+                  Launch Session
+                </button>
+              )}
+
+              {onLaunchWorktree && (
+                <button
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-nim hover:bg-nim-tertiary cursor-pointer"
+                  data-testid="tracker-kanban-context-launch-worktree"
+                  onClick={() => {
+                    closeContextMenu();
+                    onLaunchWorktree(contextSingleId!);
+                  }}
+                >
+                  <MaterialSymbol icon="account_tree" size={16} />
+                  Launch Worktree
+                </button>
+              )}
+            </>
+          )}
 
           <div className="border-b border-nim my-1" />
 

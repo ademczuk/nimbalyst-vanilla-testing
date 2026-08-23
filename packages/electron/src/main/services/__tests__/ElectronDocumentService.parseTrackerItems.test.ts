@@ -76,9 +76,13 @@ afterEach(async () => {
 });
 
 async function parseFile(content: string): Promise<any[]> {
-  const filePath = path.join(tempDir, 'doc.md');
-  await fs.writeFile(filePath, content, 'utf-8');
-  return await (service as any).parseTrackerItems(filePath, 'doc.md');
+  return (service as any).parseTrackerItems(content, 'doc.md');
+}
+
+/** Write `doc.md` and run the full cache-update path over it. */
+async function refreshTrackerItems(content: string): Promise<void> {
+  await fs.writeFile(path.join(tempDir, 'doc.md'), content, 'utf-8');
+  await (service as any).updateTrackerItemsCache('doc.md');
 }
 
 describe('parseTrackerItems — correctness', () => {
@@ -193,5 +197,45 @@ describe('parseTrackerItems — regression: catastrophic backtracking', () => {
 
     expect(elapsedMs).toBeLessThan(1000);
     expect(items.map(i => i.id).sort()).toEqual(['b-1', 't-1']);
+  });
+});
+
+/**
+ * The parse is cheap; the two `tracker_items` round trips behind it are not.
+ * They ran on every metadata refresh regardless of whether the file contained
+ * a single marker — 14,709 calls in a five-minute window on a FIFO single-lane
+ * DB worker, where round-trip count is the cost that matters.
+ */
+describe('updateTrackerItemsCache — query frequency', () => {
+  beforeEach(() => {
+    mockQuery.mockResolvedValue({ rows: [] });
+  });
+
+  it('skips both queries when an unchanged file has no tracker items', async () => {
+    await refreshTrackerItems('Just prose, no markers.\n');
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+
+    mockQuery.mockClear();
+    await refreshTrackerItems('Just prose, no markers.\n');
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('re-queries once the file changes', async () => {
+    await refreshTrackerItems('Just prose, no markers.\n');
+    mockQuery.mockClear();
+
+    await refreshTrackerItems('Different prose, still no markers.\n');
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('never caches a file that owns rows, so orphans are still reconciled', async () => {
+    mockQuery.mockResolvedValue({
+      rows: [{ id: 'bug-1', type: 'bug', line_number: 1, title: 't', data: '{}', updated: null }],
+    });
+    await refreshTrackerItems('Marker was removed from this file.\n');
+    mockQuery.mockClear();
+
+    await refreshTrackerItems('Marker was removed from this file.\n');
+    expect(mockQuery).toHaveBeenCalled();
   });
 });

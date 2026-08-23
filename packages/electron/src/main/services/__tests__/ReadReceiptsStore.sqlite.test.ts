@@ -113,6 +113,69 @@ describe('ReadReceiptsStore (SQLite)', () => {
     expect(scoped[0].lastViewedAt).toBe(2000);
   });
 
+  // The merge used to run in JS between a SELECT and an upsert. It now lives in
+  // the conflict clause, so the null-version cases it has to get right are
+  // worth pinning against the real engine rather than the pure helper.
+  it('takes the max of each watermark independently', async () => {
+    await store.markViewed({
+      userEmail: ME, entityKind: 'tracker', entityId: 'item-1', scope: '/ws',
+      lastViewedAt: 2000, lastSeenVersion: 5,
+    });
+
+    // Version advances while the timestamp regresses: both must end up at the max.
+    const merged = await store.markViewed({
+      userEmail: ME, entityKind: 'tracker', entityId: 'item-1', scope: '/ws',
+      lastViewedAt: 1000, lastSeenVersion: 9,
+    });
+    expect(merged).toMatchObject({ lastViewedAt: 2000, lastSeenVersion: 9 });
+  });
+
+  it('adopts a version for a receipt that had none, and keeps one when the mark has none', async () => {
+    await store.markViewed({
+      userEmail: ME, entityKind: 'tracker', entityId: 'item-1', scope: '/ws',
+      lastViewedAt: 1000, lastSeenVersion: null,
+    });
+
+    const gained = await store.markViewed({
+      userEmail: ME, entityKind: 'tracker', entityId: 'item-1', scope: '/ws',
+      lastViewedAt: 1000, lastSeenVersion: 3,
+    });
+    expect(gained).toMatchObject({ lastViewedAt: 1000, lastSeenVersion: 3 });
+
+    // A later timestamp-only mark advances the clock without dropping the version.
+    const kept = await store.markViewed({
+      userEmail: ME, entityKind: 'tracker', entityId: 'item-1', scope: '/ws',
+      lastViewedAt: 5000, lastSeenVersion: null,
+    });
+    expect(kept).toMatchObject({ lastViewedAt: 5000, lastSeenVersion: 3 });
+  });
+
+  // Round-trip count is the lever on a FIFO single-lane worker: ~59 reads/s
+  // here were all paired with a write that could have carried the merge.
+  it('costs one round trip per mark, advancing or not', async () => {
+    let queries = 0;
+    const counting = {
+      query: (sql: string, params?: unknown[]) => {
+        queries += 1;
+        return sqlite.query(sql, params as never);
+      },
+    };
+    const countingStore = createReadReceiptsStore(counting as never);
+
+    await countingStore.markViewed({
+      userEmail: ME, entityKind: 'tracker', entityId: 'item-1', scope: '/ws',
+      lastViewedAt: 1000, lastSeenVersion: 5,
+    });
+    expect(queries).toBe(1);
+
+    const stale = await countingStore.markViewed({
+      userEmail: ME, entityKind: 'tracker', entityId: 'item-1', scope: '/ws',
+      lastViewedAt: 500, lastSeenVersion: 1,
+    });
+    expect(stale).toBeNull();
+    expect(queries).toBe(2);
+  });
+
   it('keeps receipts isolated by user, kind and scope', async () => {
     await store.markViewed({
       userEmail: ME,

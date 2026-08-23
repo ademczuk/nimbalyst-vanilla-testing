@@ -9,14 +9,44 @@
 
 import type { JSX } from 'react';
 import React, { useEffect, useRef, useState } from 'react';
-import { useFloating, offset, flip, shift, FloatingPortal } from '@floating-ui/react';
-import { windowControlsClearance } from '../../../ui/floating/windowControlsClearance';
+import { useFloating, FloatingPortal } from '@floating-ui/react';
+import { useScrollableMenuFloating } from '../../../ui/floating/useScrollableMenuFloating';
 import type { TrackerItemType } from '../../../core/DocumentService';
 import type { TrackerRecord } from '../../../core/TrackerRecord';
+import { ProviderIcon } from '../../../ui/icons/ProviderIcons';
 import { getRecordTitle } from '../trackerRecordAccessors';
 import { getStatusColor, getPriorityColor, getTypeColor, getTypeIcon } from './trackerColumns';
 
 const PRIORITIES = ['critical', 'high', 'medium', 'low'] as const;
+
+/**
+ * Panel chrome carried as inline style rather than Tailwind arbitrary values.
+ *
+ * `size()` makes the browser resolve computed style on these panels, and jsdom's
+ * selector engine cannot parse a `:has()` rule against an element whose class
+ * list contains `[...]` — it mangles `min-w-[140px]` into an invalid selector and
+ * throws, which surfaces as an unhandled rejection in any suite that renders this
+ * menu. Real browsers are fine either way; keeping these values off the class list
+ * simply avoids handing jsdom something it cannot read.
+ */
+const MENU_PANEL_STYLE: React.CSSProperties = {
+  backgroundColor: 'var(--nim-bg-secondary)',
+  borderColor: 'var(--nim-border)',
+};
+
+/**
+ * An AI session linked to a tracker item, shaped for menu display.
+ *
+ * Callers pre-resolve these: merging the two link directions and formatting the
+ * timestamp both live on the Electron side, so the menu stays presentational.
+ */
+export interface TrackerLinkedSessionOption {
+  id: string;
+  title: string;
+  provider?: string;
+  /** Pre-formatted relative time, e.g. "2h ago". */
+  timeLabel?: string;
+}
 
 export interface TrackerRowContextMenuProps {
   /** Anchor rect for the menu; `null` keeps it closed. */
@@ -35,6 +65,14 @@ export interface TrackerRowContextMenuProps {
   onCopyDeepLink?: (itemId: string) => void;
   /** Open the item as a document (focused document view); single selection only. */
   onOpenDocument?: (itemId: string) => void;
+  /** Sessions already linked to a single selected item. Omit to hide the submenu. */
+  getLinkedSessions?: (itemId: string) => TrackerLinkedSessionOption[];
+  /** Jump to an existing linked session. */
+  onOpenSession?: (sessionId: string) => void;
+  /** Start a new AI session seeded with the item's context. */
+  onLaunchSession?: (itemId: string) => void;
+  /** Start a new isolated worktree session for the item. */
+  onLaunchWorktree?: (itemId: string) => void;
   onArchiveItems?: (itemIds: string[], archive: boolean) => void;
   onDeleteItems?: (itemIds: string[]) => void;
   closeContextMenu: () => void;
@@ -54,6 +92,10 @@ export function TrackerRowContextMenu({
   onAddToCollection,
   onCopyDeepLink,
   onOpenDocument,
+  getLinkedSessions,
+  onOpenSession,
+  onLaunchSession,
+  onLaunchWorktree,
   onArchiveItems,
   onDeleteItems,
   closeContextMenu,
@@ -63,13 +105,21 @@ export function TrackerRowContextMenu({
 
   const statusType = activeTypeFilter !== 'all' ? activeTypeFilter : undefined;
 
+  // Session actions are item-scoped, so they only make sense for one row.
+  const singleId = selectedIds.size === 1 ? Array.from(selectedIds)[0] : null;
+  const linkedSessions = singleId && getLinkedSessions && onOpenSession
+    ? getLinkedSessions(singleId)
+    : [];
+  const hasSessionActions = singleId != null
+    && (linkedSessions.length > 0 || onLaunchSession != null || onLaunchWorktree != null);
+
   return (
     <FloatingPortal>
       <div
         ref={refs.setFloating}
         data-testid="tracker-row-context-menu"
-        className="tracker-row-context-menu z-50 min-w-[180px] bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded-md shadow-lg py-1 text-[13px]"
-        style={floatingStyles}
+        className="tracker-row-context-menu z-50 overflow-y-auto overscroll-contain border rounded-md shadow-lg py-1"
+        style={{ ...floatingStyles, ...MENU_PANEL_STYLE, minWidth: 180, fontSize: 13 }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-3 py-1 text-[11px] text-[var(--nim-text-faint)] font-medium">
@@ -133,6 +183,67 @@ export function TrackerRowContextMenu({
               </button>
             ))}
           </ContextSubmenu>
+        )}
+
+        {hasSessionActions && (
+          <>
+            <div className="border-b border-[var(--nim-border)] my-1" />
+
+            {linkedSessions.length > 0 && (
+              <ContextSubmenu label={`Sessions (${linkedSessions.length})`} icon="smart_toy">
+                {linkedSessions.map(session => (
+                  <button
+                    key={session.id}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] cursor-pointer"
+                    data-testid="tracker-row-context-open-session"
+                    title={`Open session: ${session.title}`}
+                    onClick={() => {
+                      closeContextMenu();
+                      onOpenSession?.(session.id);
+                    }}
+                  >
+                    <span className="shrink-0 flex items-center text-[var(--nim-text-muted)]">
+                      <ProviderIcon provider={session.provider || 'claude'} size={14} />
+                    </span>
+                    <span className="flex-1 truncate max-w-[220px]">{session.title}</span>
+                    {session.timeLabel && (
+                      <span className="text-[11px] text-[var(--nim-text-faint)] shrink-0">
+                        {session.timeLabel}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </ContextSubmenu>
+            )}
+
+            {onLaunchSession && (
+              <button
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] cursor-pointer"
+                data-testid="tracker-row-context-launch-session"
+                onClick={() => {
+                  closeContextMenu();
+                  onLaunchSession(singleId!);
+                }}
+              >
+                <span className="material-symbols-outlined text-sm">add_circle</span>
+                Launch Session
+              </button>
+            )}
+
+            {onLaunchWorktree && (
+              <button
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)] cursor-pointer"
+                data-testid="tracker-row-context-launch-worktree"
+                onClick={() => {
+                  closeContextMenu();
+                  onLaunchWorktree(singleId!);
+                }}
+              >
+                <span className="material-symbols-outlined text-sm">account_tree</span>
+                Launch Worktree
+              </button>
+            )}
+          </>
         )}
 
         <div className="border-b border-[var(--nim-border)] my-1" />
@@ -212,10 +323,7 @@ export const ContextSubmenu: React.FC<{
 }> = ({ label, icon, children }) => {
   const [open, setOpen] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { refs, floatingStyles } = useFloating({
-    placement: 'right-start',
-    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
-  });
+  const { refs, floatingStyles } = useScrollableMenuFloating('right-start');
 
   useEffect(() => () => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -244,8 +352,8 @@ export const ContextSubmenu: React.FC<{
         <FloatingPortal>
           <div
             ref={refs.setFloating}
-            className="min-w-[140px] bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded-md shadow-lg py-1 z-[60]"
-            style={floatingStyles}
+            className="tracker-context-submenu overflow-y-auto overscroll-contain border rounded-md shadow-lg py-1"
+            style={{ ...floatingStyles, ...MENU_PANEL_STYLE, minWidth: 140, maxWidth: 280, zIndex: 60 }}
             onMouseEnter={handleEnter}
             onMouseLeave={handleLeave}
           >

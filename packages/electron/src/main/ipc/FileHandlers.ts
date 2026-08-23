@@ -265,12 +265,11 @@ export function registerFileHandlers() {
                         // Add a small delay to ensure file is fully written before reading
                         setTimeout(async () => {
                             try {
+                                // refreshFileMetadata already calls
+                                // updateTrackerItemsCache for the same path;
+                                // calling it again here just doubled the
+                                // tracker_items queries on every save.
                                 await documentService.refreshFileMetadata(filePath);
-                                // Also refresh tracker items for this file
-                                const relativePath = relativeFilePath;
-                                // console.log('[SAVE] Updating tracker items for:', relativePath);
-                                await (documentService as any).updateTrackerItemsCache(relativePath);
-                                // console.log('[SAVE] Tracker items update completed');
                             } catch (err) {
                                 console.error('[SAVE] Failed to refresh metadata/tracker items:', err);
                             }

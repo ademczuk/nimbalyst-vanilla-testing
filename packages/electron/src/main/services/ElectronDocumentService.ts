@@ -407,6 +407,15 @@ export class ElectronDocumentService implements DocumentService {
   private metadataByPath: Map<string, DocumentMetadataEntry> = new Map();
   private metadataWatchers: Map<string, (change: MetadataChangeEvent) => void> = new Map();
   private fileStateCache: Map<string, { mtime: number; size: number; hash?: string }> = new Map();
+  /**
+   * Markdown files observed to contain no inline tracker markers and to own no
+   * `tracker_items` rows, keyed by the content hash that was true of. Lets
+   * `updateTrackerItemsCache` skip both of its queries for the common case.
+   * TTL-bounded because other writers can create a row for a path without
+   * touching the file.
+   */
+  private trackerItemsEmptyCache: Map<string, { hash: string; expiresAt: number }> = new Map();
+  private readonly TRACKER_ITEMS_EMPTY_TTL_MS = 5 * 60 * 1000;
   private initializationPromise: Promise<void> | null = null;
 
   // Tracker items cache
@@ -3076,9 +3085,8 @@ export class ElectronDocumentService implements DocumentService {
    * Parse tracker items from markdown content
    * Note: This function is only called for .md and .markdown files
    */
-  private async parseTrackerItems(filePath: string, relativePath: string): Promise<ParsedInlineTrackerCandidate[]> {
+  private parseTrackerItems(content: string, relativePath: string): ParsedInlineTrackerCandidate[] {
     try {
-      const content = await fs.readFile(filePath, 'utf-8');
       const items: ParsedInlineTrackerCandidate[] = [];
       const lines = content.split('\n');
 
@@ -3225,9 +3233,28 @@ export class ElectronDocumentService implements DocumentService {
     // console.log(`[DocumentService] updateTrackerItemsCache called for: ${relativePath}`);
     // console.log(`[DocumentService] Full path: ${fullPath}`);
 
+    // Most markdown files contain no inline tracker markers, and this runs on
+    // every metadata refresh — 14,709 calls in a five-minute window (~49/s),
+    // two tracker_items round trips each, on a FIFO single-lane DB worker where
+    // round-trip count is the cost. Once a file is known to have no markers and
+    // no rows, an unchanged copy of it has nothing to do; skip both queries.
+    let content: string;
+    try {
+      content = await fs.readFile(fullPath, 'utf-8');
+    } catch (error) {
+      console.error(`[DocumentService] Failed to read ${relativePath} for tracker items:`, error);
+      return;
+    }
+    const contentHash = crypto.createHash('md5').update(content).digest('hex');
+    const nowMs = Date.now();
+    const knownEmpty = this.trackerItemsEmptyCache.get(relativePath);
+    if (knownEmpty && knownEmpty.hash === contentHash && knownEmpty.expiresAt > nowMs) {
+      return;
+    }
+
     try {
       // Parse tracker items from the file
-      const parsedItems = await this.parseTrackerItems(fullPath, relativePath);
+      const parsedItems = this.parseTrackerItems(content, relativePath);
       // TODO: Debug logging - uncomment if needed for troubleshooting
       // console.log(`[DocumentService] Found ${items.length} tracker items in ${relativePath}`);
       // if (items.length > 0) {
@@ -3243,6 +3270,18 @@ export class ElectronDocumentService implements DocumentService {
         [this.workspacePath, relativePath]
       );
       // console.log(`[DocumentService] Found ${existingResult.rows.length} existing tracker items in database`);
+      // Nothing in the file, nothing in the table: remember it against this
+      // exact content so re-refreshes of an unchanged file cost no queries.
+      // The entry expires so a row written for this path by another writer
+      // (MCP tracker_create, the tracker store) still gets reconciled.
+      if (parsedItems.length === 0 && existingResult.rows.length === 0) {
+        this.trackerItemsEmptyCache.set(relativePath, {
+          hash: contentHash,
+          expiresAt: nowMs + this.TRACKER_ITEMS_EMPTY_TTL_MS,
+        });
+      } else {
+        this.trackerItemsEmptyCache.delete(relativePath);
+      }
       const existingIds = new Set(existingResult.rows.map(row => row.id));
       const items = resolveInlineTrackerIds(parsedItems, existingResult.rows, relativePath);
       const newIds = new Set(items.map(item => item.id));

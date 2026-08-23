@@ -3,11 +3,16 @@
  *
  * Positioned by floating-ui and rendered through FloatingPortal so it escapes the
  * board's scrolling, clipped columns.
+ *
+ * Sizing is inline style rather than Tailwind arbitrary values (`min-w-[140px]`)
+ * on purpose: the scrollable-menu config resolves computed style on this panel,
+ * and jsdom's selector engine throws on a `:has()` rule matched against a class
+ * list containing brackets. See the note in TrackerRowContextMenu.
  */
 
 import React, { useRef, useState } from 'react';
-import { useFloating, offset, flip, shift, FloatingPortal } from '@floating-ui/react';
-import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
+import { FloatingPortal } from '@floating-ui/react';
+import { useScrollableMenuFloating } from '@nimbalyst/runtime/ui/floating/useScrollableMenuFloating';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 
 export const KanbanContextSubmenu: React.FC<{
@@ -17,10 +22,7 @@ export const KanbanContextSubmenu: React.FC<{
 }> = ({ label, icon, children }) => {
   const [open, setOpen] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { refs, floatingStyles } = useFloating({
-    placement: 'right-start',
-    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 }), windowControlsClearance()],
-  });
+  const { refs, floatingStyles } = useScrollableMenuFloating('right-start');
 
   return (
     <div
@@ -38,8 +40,8 @@ export const KanbanContextSubmenu: React.FC<{
         <FloatingPortal>
           <div
             ref={refs.setFloating}
-            className="min-w-[140px] bg-nim-secondary border border-nim rounded-md shadow-lg py-1 z-[60]"
-            style={floatingStyles}
+            className="kanban-context-submenu-panel overflow-y-auto overscroll-contain bg-nim-secondary border border-nim rounded-md shadow-lg py-1"
+            style={{ ...floatingStyles, minWidth: 140, maxWidth: 280, zIndex: 60 }}
             onMouseEnter={() => { if (timeoutRef.current) clearTimeout(timeoutRef.current); setOpen(true); }}
             onMouseLeave={() => { timeoutRef.current = setTimeout(() => setOpen(false), 150); }}
           >

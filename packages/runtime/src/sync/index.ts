@@ -140,6 +140,10 @@ export {
   OutboxDrainer,
   OutboxWriteRejectedError,
   isConfirmedOutboxRevocationCode,
+  outboxRetryDelayMs,
+  OUTBOX_RETRY_BASE_MS,
+  OUTBOX_RETRY_MAX_MS,
+  OUTBOX_STUCK_ATTEMPTS,
 } from './OutboxDrainer';
 export {
   COLLAB_CLOSE_ACCESS_REVOKED,
@@ -153,6 +157,7 @@ export type {
   OutboxDrainTransport,
   OutboxDrainerOptions,
   OutboxDrainResult,
+  StuckOutboxDocument,
 } from './OutboxDrainer';
 export type {
   LocalDocumentReplicaOptions,

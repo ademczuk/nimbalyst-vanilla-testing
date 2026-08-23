@@ -140,20 +140,23 @@ export function setupSessionFileHandlers(): void {
    */
   safeHandle('session-files:get-stats', async (event, sessionId: string) => {
     try {
-      const [edited, referenced, read] = await Promise.all([
-        SessionFilesRepository.getFilesBySession(sessionId, 'edited'),
-        SessionFilesRepository.getFilesBySession(sessionId, 'referenced'),
-        SessionFilesRepository.getFilesBySession(sessionId, 'read')
-      ]);
+      // One round trip, counted in JS, sharing the linkType-less cache entry
+      // with `session-files:get-by-session`. This used to fire three queries
+      // over the same index for three subsets of the same rows — on a FIFO
+      // single-lane DB worker each one is an independent chance to queue
+      // behind an unrelated multi-second query.
+      const files = await sessionFilesCache.get(sessionId, undefined, () =>
+        SessionFilesRepository.getFilesBySession(sessionId)
+      );
+
+      const counts = { edited: 0, referenced: 0, read: 0 };
+      for (const file of files) {
+        if (file.linkType in counts) counts[file.linkType as keyof typeof counts] += 1;
+      }
 
       return {
         success: true,
-        stats: {
-          edited: edited.length,
-          referenced: referenced.length,
-          read: read.length,
-          total: edited.length + referenced.length + read.length
-        }
+        stats: { ...counts, total: counts.edited + counts.referenced + counts.read }
       };
     } catch (error) {
       logger.main.error('[SessionFileHandlers] Failed to get file stats:', error);

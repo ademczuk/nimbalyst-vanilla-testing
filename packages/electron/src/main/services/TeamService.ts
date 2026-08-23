@@ -1120,6 +1120,26 @@ export async function setAgentPosting(
 let listTeamsCache: { promise: Promise<TeamDirectory>; expiresAt: number } | null = null;
 const LIST_TEAMS_TTL_MS = 5 * 60_000;
 
+// The request currently on the wire, held separately from the cache so that
+// invalidating the cache cannot abandon it.
+//
+// NIM-3711: `fetchTeamApi` refreshes an expiring personal JWT, that refresh
+// emits an authenticated auth-state change, and the change handler calls
+// `invalidateListTeamsCache()` -- all while the request that triggered the
+// refresh is still in flight. The next caller therefore missed the cache and
+// started a *second* identical request, which could refresh again. At startup,
+// where three workspaces each run autoMatch and tracker-sync init, that put
+// four concurrent `GET /api/teams` calls on an endpoint whose cold latency is
+// already seconds; two of them blew the 15s deadline.
+//
+// Invalidation now means "do not cache the answer", not "start another one".
+let listTeamsInFlight: Promise<TeamDirectory> | null = null;
+// Set when an invalidation landed while `listTeamsInFlight` was outstanding.
+// Callers already waiting still get that answer -- it is the same answer they
+// would have got a moment earlier -- but it is not cached, so the next caller
+// re-reads.
+let listTeamsInFlightInvalidated = false;
+
 /**
  * The team list plus whether it can be trusted as the whole truth.
  *
@@ -1137,22 +1157,43 @@ export interface TeamDirectory {
 
 export function invalidateListTeamsCache(): void {
   listTeamsCache = null;
+  if (listTeamsInFlight) listTeamsInFlightInvalidated = true;
   teamAccountBindingHints.clear();
 }
 
-export async function listTeams(): Promise<TeamDetails[]> {
-  return (await listTeamDirectory()).teams;
+export interface ListTeamsOptions {
+  /**
+   * Open a new request even if one is already on the wire.
+   *
+   * For callers that just changed team membership themselves, or are acting on
+   * a change made elsewhere (the manual Refresh affordance, an invite accepted
+   * in the browser): an outstanding request was issued before that change and
+   * cannot answer for it. Ordinary discovery callers must leave this unset so
+   * they coalesce -- see `listTeamsInFlight`.
+   */
+  forceFresh?: boolean;
 }
 
-export async function listTeamDirectory(): Promise<TeamDirectory> {
+export async function listTeams(options?: ListTeamsOptions): Promise<TeamDetails[]> {
+  return (await listTeamDirectory(options)).teams;
+}
+
+export async function listTeamDirectory(options?: ListTeamsOptions): Promise<TeamDirectory> {
   if (!isAuthenticated()) {
     logger.main.info('[TeamService] listTeams: not authenticated, skipping');
     return { teams: [], complete: false };
   }
 
   const now = Date.now();
-  if (listTeamsCache && listTeamsCache.expiresAt > now) {
-    return listTeamsCache.promise;
+  if (!options?.forceFresh) {
+    if (listTeamsCache && listTeamsCache.expiresAt > now) {
+      return listTeamsCache.promise;
+    }
+    // A request is already on the wire for exactly this question. Join it
+    // rather than opening a second one; see `listTeamsInFlight`.
+    if (listTeamsInFlight) {
+      return listTeamsInFlight;
+    }
   }
 
   const promise = (async (): Promise<TeamDirectory> => {
@@ -1246,12 +1287,17 @@ export async function listTeamDirectory(): Promise<TeamDirectory> {
   })();
 
   listTeamsCache = { promise, expiresAt: now + LIST_TEAMS_TTL_MS };
+  listTeamsInFlight = promise;
+  listTeamsInFlightInvalidated = false;
   // A partial/failed account lookup is not authoritative. Return any teams we
   // did resolve to this caller, but evict the result immediately so a timeout
   // cannot pin "no teams" (or an incomplete list) for the full five minutes.
   void promise.then(
     (directory) => {
-      if (!directory.complete && listTeamsCache?.promise === promise) {
+      const invalidatedWhileInFlight = listTeamsInFlightInvalidated;
+      if (listTeamsInFlight === promise) listTeamsInFlight = null;
+      if ((!directory.complete || invalidatedWhileInFlight)
+          && listTeamsCache?.promise === promise) {
         listTeamsCache = null;
       }
       // Drive the Organization Messages menu item's visibility. A partial lookup
@@ -1263,6 +1309,7 @@ export async function listTeamDirectory(): Promise<TeamDirectory> {
       }
     },
     () => {
+      if (listTeamsInFlight === promise) listTeamsInFlight = null;
       if (listTeamsCache?.promise === promise) listTeamsCache = null;
     },
   );
@@ -1976,7 +2023,7 @@ export async function resolveInviteDeepLink(
     // the invitation in the browser, so a stale directory would report a team
     // the user "isn't in" moments after they joined it.
     invalidateListTeamsCache();
-    const team = (await listTeams()).find((candidate) => candidate.orgId === orgId);
+    const team = (await listTeams({ forceFresh: true })).find((candidate) => candidate.orgId === orgId);
     if (!team) return { status: 'not-found', orgId, email: normalizedEmail };
 
     if (team.membershipType && team.membershipType !== 'active_member') {
@@ -2510,7 +2557,7 @@ export function registerTeamHandlers(): void {
       // change); `forceRefresh` backs the manual Refresh affordance in Account
       // settings for the cases those events miss (e.g. invited from elsewhere).
       if (options?.forceRefresh) invalidateListTeamsCache();
-      const teams = await listTeams();
+      const teams = await listTeams(options?.forceRefresh ? { forceFresh: true } : undefined);
       return { success: true, teams };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };

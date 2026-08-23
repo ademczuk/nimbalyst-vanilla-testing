@@ -39,6 +39,7 @@ import {
   globalRegistry,
   TrackerRowContextMenu,
   type TrackerColumnDef,
+  type TrackerLinkedSessionOption,
   type TypeColumnConfig,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin';
 import { isCollectionType } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerCollections';
@@ -119,6 +120,14 @@ interface TrackerGridViewProps {
   onCopyDeepLink?: (itemId: string) => void;
   /** Open a row's item as a document -- double-click and the row context menu. */
   onOpenDocument?: (itemId: string) => void;
+  /** AI sessions already linked to a row's item, for the context menu submenu. */
+  getLinkedSessions?: (itemId: string) => TrackerLinkedSessionOption[];
+  /** Jump to an existing linked session from the row context menu. */
+  onOpenSession?: (sessionId: string) => void;
+  /** Start a new AI session for a row's item. */
+  onLaunchSession?: (itemId: string) => void;
+  /** Start a new isolated worktree session for a row's item. */
+  onLaunchWorktree?: (itemId: string) => void;
   favoriteItemIds?: ReadonlySet<string>;
   onToggleFavorite?: (itemId: string) => void;
 }
@@ -154,6 +163,10 @@ export function TrackerGridView({
   onNewItem,
   onCopyDeepLink,
   onOpenDocument,
+  getLinkedSessions,
+  onOpenSession,
+  onLaunchSession,
+  onLaunchWorktree,
   favoriteItemIds,
   onToggleFavorite,
 }: TrackerGridViewProps): JSX.Element {
@@ -991,6 +1004,10 @@ export function TrackerGridView({
         onAddToCollection={handleAddSelectionToCollection}
         onCopyDeepLink={onCopyDeepLink}
         onOpenDocument={onOpenDocument}
+        getLinkedSessions={getLinkedSessions}
+        onOpenSession={onOpenSession}
+        onLaunchSession={onLaunchSession}
+        onLaunchWorktree={onLaunchWorktree}
         onArchiveItems={onArchiveItems ? archiveWithUndo : undefined}
         onDeleteItems={onDeleteItems}
         closeContextMenu={closeContextMenu}

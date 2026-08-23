@@ -15,6 +15,20 @@ export const STATUS_COLORS: Record<string, string> = {
   'wont-fix': '#6b7280',
 };
 
+/**
+ * Swatches for the five lifecycle categories, used when a menu offers categories
+ * rather than literal statuses (a mixed-type selection has no shared status
+ * vocabulary). Deliberately echoes STATUS_COLORS so `Done` looks the same green
+ * whether it was reached as a category or as a bug's `done`.
+ */
+export const STATUS_CATEGORY_COLORS: Record<string, string> = {
+  backlog: '#6b7280',
+  unstarted: '#6b7280',
+  started: '#eab308',
+  done: '#22c55e',
+  cancelled: '#ef4444',
+};
+
 export const PRIORITY_COLORS: Record<string, string> = {
   critical: '#ef4444',
   high: '#f97316',

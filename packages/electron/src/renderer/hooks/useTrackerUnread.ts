@@ -26,6 +26,17 @@ import { readReceiptService } from '../services/RendererReadReceiptService';
 const MARK_VIEWED_DEBOUNCE_MS = 400;
 
 /**
+ * Highest watermark already written per (scope, item). The effect below refires
+ * whenever the open item's `updatedAt` advances, which with trackers syncing is
+ * near-continuous — and a mark that doesn't advance the receipt is a no-op the
+ * main process still has to serve behind every other query on the DB worker.
+ * Receipts are advance-only, so a watermark we already wrote can be dropped
+ * here without reaching IPC at all.
+ */
+const markedWatermarks = new Map<string, number>();
+const MARKED_WATERMARKS_MAX = 2000;
+
+/**
  * Load the current user's tracker receipts for the workspace and keep every
  * item's unread flag recomputed as items / receipts / identity change.
  */
@@ -88,6 +99,10 @@ export function useMarkTrackerViewed(
     const timer = setTimeout(() => {
       const updatedMs = Date.parse(updatedAt);
       const watermark = Number.isNaN(updatedMs) ? Date.now() : updatedMs;
+      const markKey = `${workspacePath}\x00${itemId}`;
+      const alreadyMarked = markedWatermarks.get(markKey);
+      if (alreadyMarked !== undefined && alreadyMarked >= watermark) return;
+
       const receipt: ReadReceipt = { lastSeenVersion: null, lastViewedAt: watermark };
       readReceiptService
         .markViewed({
@@ -98,7 +113,11 @@ export function useMarkTrackerViewed(
           lastSeenVersion: null,
           workspacePath,
         })
-        .then(() => applyReceipt({ itemId, workspace: workspacePath, receipt }))
+        .then(() => {
+          if (markedWatermarks.size >= MARKED_WATERMARKS_MAX) markedWatermarks.clear();
+          markedWatermarks.set(markKey, watermark);
+          applyReceipt({ itemId, workspace: workspacePath, receipt });
+        })
         .catch(() => {
           /* best-effort */
         });

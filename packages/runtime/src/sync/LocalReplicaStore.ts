@@ -38,6 +38,16 @@ export interface LocalReplicaPendingOutbox {
   queuedCount: number;
   inflightCount: number;
   rejectedCount: number;
+  /**
+   * Highest `attempt_count` across this document's batches, and when one was
+   * last written. The drainer needs both to back off: without them a document
+   * whose upload fails on every pass is retried every 30s for the life of the
+   * process, and nothing distinguishes "first try" from "four hundredth".
+   */
+  maxAttemptCount: number;
+  lastAttemptAt: number | null;
+  lastErrorCode: string | null;
+  oldestCreatedAt: number | null;
 }
 
 export interface LoadedLocalReplica {
@@ -117,11 +127,18 @@ export interface LocalReplicaStore {
   ): Promise<boolean>;
   /** Loads only a document's durable outbox; replica state is not loaded. */
   loadOutbox(identity: LocalReplicaIdentity): Promise<LocalReplicaOutboxEntry[]>;
-  /** Records a retryable failure without changing the claimed batch state. */
+  /**
+   * Records a retryable failure without changing the claimed batch state.
+   *
+   * `countAttempt` bumps `attemptCount`. Set it when this failure did NOT go
+   * through `claimOutboxBatch` (a replay of already-inflight rows), which is
+   * otherwise the one path that fails without ever being counted.
+   */
   recordOutboxError(
     identity: LocalReplicaIdentity,
     batchIds: string[],
-    errorCode: string
+    errorCode: string,
+    options?: { countAttempt?: boolean }
   ): Promise<void>;
   acknowledgeOutbox(
     identity: LocalReplicaIdentity,
@@ -139,8 +156,19 @@ export interface LocalReplicaStore {
   purgeByAccount(accountId: string): Promise<void>;
   purgeByOrg(accountId: string, orgId: string): Promise<void>;
   getStorageUsage(accountId: string): Promise<LocalReplicaStorageUsage>;
-  /** Enumerates metadata only; encrypted outbox payloads are not read/decrypted. */
-  listPendingOutboxes(accountId?: string): Promise<LocalReplicaPendingOutbox[]>;
+  /**
+   * Enumerates metadata only; encrypted outbox payloads are not read/decrypted.
+   *
+   * `states` narrows the enumeration to the batch states the caller can act on.
+   * The drainer passes `['queued','inflight']`: a document whose only rows are
+   * `rejected` is a settled answer, and leaving it in the listing re-enumerates
+   * it every 30 seconds forever. Callers that are asking "is there unsent work
+   * here?" (account purge) deliberately omit it and see every state.
+   */
+  listPendingOutboxes(
+    accountId?: string,
+    options?: { states?: LocalReplicaOutboxState[] }
+  ): Promise<LocalReplicaPendingOutbox[]>;
   /** Applies already-durable local updates broadcast by a sibling renderer. */
   subscribeToSiblingLocalUpdates?(
     identity: LocalReplicaIdentity,

@@ -29,12 +29,46 @@ export interface OutboxDrainerOptions {
     identity: LocalReplicaIdentity
   ) => Promise<OutboxDrainTransport>;
   isLiveProviderAttached?: (identity: LocalReplicaIdentity) => boolean;
+  /** Injectable for tests. */
+  now?: () => number;
 }
 
 export interface OutboxDrainResult {
   documentsExamined: number;
   batchesUploaded: number;
   rejectedBatches: number;
+  /** Documents skipped this pass because their retry backoff had not elapsed. */
+  documentsDeferred: number;
+  /** Documents that have failed repeatedly and are not converging. */
+  stuck: StuckOutboxDocument[];
+}
+
+export interface StuckOutboxDocument {
+  identity: LocalReplicaIdentity;
+  batchCount: number;
+  attemptCount: number;
+  lastErrorCode: string | null;
+  oldestCreatedAt: number | null;
+}
+
+/**
+ * Retry backoff for a document whose upload keeps failing.
+ *
+ * The periodic trigger fires every 30s. Without backoff a permanently-failing
+ * document is re-uploaded 2,880 times a day — one full WebSocket connect,
+ * merge and send per pass — and every one of those passes queues on the same
+ * single-lane DB worker as the rest of the app. A document stranded since
+ * 2026-08-05 against an HTTP 404 room did exactly that.
+ */
+export const OUTBOX_RETRY_BASE_MS = 30_000;
+export const OUTBOX_RETRY_MAX_MS = 30 * 60_000;
+/** Failures before a document is reported as not converging. */
+export const OUTBOX_STUCK_ATTEMPTS = 5;
+
+export function outboxRetryDelayMs(attemptCount: number): number {
+  if (attemptCount <= 1) return 0;
+  const exponent = Math.min(attemptCount - 1, 20);
+  return Math.min(OUTBOX_RETRY_BASE_MS * 2 ** (exponent - 1), OUTBOX_RETRY_MAX_MS);
 }
 
 export class OutboxWriteRejectedError extends Error {
@@ -89,17 +123,28 @@ export class OutboxDrainer {
   private readonly yieldedIdentities = new Set<string>();
   private readonly activeTransports = new Map<string, OutboxDrainTransport>();
   private readonly documentRuns = new Map<string, Promise<void>>();
+  private readonly now: () => number;
 
   constructor(options: OutboxDrainerOptions) {
     this.store = options.store;
     this.createTransport = options.createTransport;
     this.isLiveProviderAttached =
       options.isLiveProviderAttached ?? (() => false);
+    this.now = options.now ?? (() => Date.now());
   }
 
-  drainOnce(accountId?: string): Promise<OutboxDrainResult> {
+  /**
+   * `respectBackoff` is for the unconditional periodic cadence only. An
+   * event-driven trigger — network restored, auth restored, a live provider
+   * detaching — is new information that the previous failure may no longer
+   * apply, so it always retries immediately.
+   */
+  drainOnce(
+    accountId?: string,
+    options?: { respectBackoff?: boolean }
+  ): Promise<OutboxDrainResult> {
     if (this.activeRun) return this.activeRun;
-    this.activeRun = this.run(accountId).finally(() => {
+    this.activeRun = this.run(accountId, options?.respectBackoff === true).finally(() => {
       this.activeRun = null;
     });
     return this.activeRun;
@@ -126,18 +171,47 @@ export class OutboxDrainer {
     );
   }
 
-  private async run(accountId?: string): Promise<OutboxDrainResult> {
+  private async run(
+    accountId: string | undefined,
+    respectBackoff: boolean
+  ): Promise<OutboxDrainResult> {
     const result: OutboxDrainResult = {
       documentsExamined: 0,
       batchesUploaded: 0,
       rejectedBatches: 0,
+      documentsDeferred: 0,
+      stuck: [],
     };
-    // Metadata-only enumeration avoids decrypting rows for attached/skipped docs.
-    const pending = await this.store.listPendingOutboxes(accountId);
+    // Metadata-only enumeration avoids decrypting rows for attached/skipped
+    // docs. `rejected` is a settled answer, so those documents are not
+    // enumerated at all rather than re-examined every 30 seconds forever.
+    const pending = await this.store.listPendingOutboxes(accountId, {
+      states: ["queued", "inflight"],
+    });
 
     for (const document of pending) {
       result.documentsExamined += 1;
       if (this.shouldYield(document.identity)) continue;
+
+      if (document.maxAttemptCount >= OUTBOX_STUCK_ATTEMPTS) {
+        result.stuck.push({
+          identity: document.identity,
+          batchCount: document.queuedCount + document.inflightCount,
+          attemptCount: document.maxAttemptCount,
+          lastErrorCode: document.lastErrorCode,
+          oldestCreatedAt: document.oldestCreatedAt,
+        });
+      }
+
+      if (respectBackoff && document.lastAttemptAt !== null) {
+        const waitUntil =
+          document.lastAttemptAt + outboxRetryDelayMs(document.maxAttemptCount);
+        if (this.now() < waitUntil) {
+          result.documentsDeferred += 1;
+          continue;
+        }
+      }
+
       const key = identityKey(document.identity);
       const work = this.drainDocument(document, result);
       this.documentRuns.set(key, work);
@@ -157,6 +231,11 @@ export class OutboxDrainer {
     const key = identityKey(document.identity);
     let transport: OutboxDrainTransport | null = null;
     let batchIds: string[] = [];
+    // `claimOutboxBatch` counts the attempt it starts. A replay of rows that
+    // were ALREADY inflight never re-claims, so without this the counter froze
+    // at 1 no matter how many times the send failed — which is how a document
+    // retried every 30s for 17 days still looked like it had been tried once.
+    let attemptAlreadyCounted = false;
     try {
       const entries = sortEntries(await this.store.loadOutbox(document.identity));
       if (this.shouldYield(document.identity)) return;
@@ -175,6 +254,7 @@ export class OutboxDrainer {
           batchIds
         );
         if (!claimed) return;
+        attemptAlreadyCounted = true;
       }
       if (this.shouldYield(document.identity)) return;
 
@@ -202,7 +282,8 @@ export class OutboxDrainer {
           await this.store.recordOutboxError(
             document.identity,
             batchIds,
-            sendResult.errorCode
+            sendResult.errorCode,
+            { countAttempt: !attemptAlreadyCounted }
           );
         }
         return;
@@ -233,7 +314,8 @@ export class OutboxDrainer {
         await this.store.recordOutboxError(
           document.identity,
           batchIds,
-          errorCode
+          errorCode,
+          { countAttempt: !attemptAlreadyCounted }
         );
       }
     } finally {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { OUTBOX_STUCK_ATTEMPTS } from "../OutboxDrainer";
 import {
   HarnessClient,
   HarnessDocumentServer,
@@ -119,5 +120,105 @@ describe("OutboxDrainer", () => {
     expect(server.updates).toHaveLength(1);
     expect(server.content("handoff")).toBe("send once");
     expect(client.persistedOutboxStates()).toEqual([]);
+  });
+});
+
+/**
+ * A document whose room is permanently unreachable — on the measured install,
+ * 22 batches against a room that answered the WebSocket upgrade with HTTP 404
+ * since 2026-08-05. Every 30s pass reconnected, merged and re-sent, and
+ * `recordOutboxError` neither counted the attempt nor said anything, so the
+ * only trace was an idle-looking heartbeat reporting `batchesUploaded: 0`.
+ */
+describe("OutboxDrainer — a document that never converges", () => {
+  it("counts every failed replay, not just the first claim", async () => {
+    server = new HarnessDocumentServer();
+    server.failEveryDrainWith = "Outbox drain WebSocket rejected with HTTP 404";
+    client = new HarnessClient("user-a", server);
+    client.edit("stranded", "unsent work");
+    await waitFor(
+      () => client?.persistedOutboxStates()[0] === "queued",
+      "queued durable outbox"
+    );
+    client.closeEditor({ autoDrain: false });
+
+    await client.drainOutboxOnce();
+    await client.drainOutboxOnce();
+    await client.drainOutboxOnce();
+
+    expect(client.persistedOutboxStates()).toEqual(["inflight"]);
+    expect(client.outboxAttemptCounts()).toEqual([3]);
+    expect(server.updates).toHaveLength(0);
+  });
+
+  it("reports it as stuck once it has failed repeatedly", async () => {
+    server = new HarnessDocumentServer();
+    server.failEveryDrainWith = "Outbox drain WebSocket rejected with HTTP 404";
+    client = new HarnessClient("user-a", server);
+    client.edit("stranded", "unsent work");
+    await waitFor(
+      () => client?.persistedOutboxStates()[0] === "queued",
+      "queued durable outbox"
+    );
+    client.closeEditor({ autoDrain: false });
+
+    let result = await client.drainOutboxOnce();
+    expect(result.stuck).toEqual([]);
+    for (let i = 0; i < OUTBOX_STUCK_ATTEMPTS; i += 1) {
+      result = await client.drainOutboxOnce();
+    }
+
+    expect(result.stuck).toHaveLength(1);
+    expect(result.stuck[0]).toMatchObject({
+      batchCount: 1,
+      lastErrorCode: "Outbox drain WebSocket rejected with HTTP 404",
+    });
+    expect(result.stuck[0].attemptCount).toBeGreaterThanOrEqual(
+      OUTBOX_STUCK_ATTEMPTS
+    );
+  });
+
+  // The periodic tick is what fired 2,880 times a day. An event-driven trigger
+  // is new information and must still retry at once.
+  it("defers the periodic retry but never an event-driven one", async () => {
+    server = new HarnessDocumentServer();
+    server.failEveryDrainWith = "Outbox drain WebSocket rejected with HTTP 404";
+    client = new HarnessClient("user-a", server);
+    client.edit("stranded", "unsent work");
+    await waitFor(
+      () => client?.persistedOutboxStates()[0] === "queued",
+      "queued durable outbox"
+    );
+    client.closeEditor({ autoDrain: false });
+
+    await client.drainOutboxOnce();
+    await client.drainOutboxOnce();
+    const attemptsBefore = client.outboxAttemptCounts()[0];
+
+    const periodic = await client.drainOutboxOnce({ respectBackoff: true });
+    expect(periodic.documentsDeferred).toBe(1);
+    expect(client.outboxAttemptCounts()[0]).toBe(attemptsBefore);
+
+    const eventDriven = await client.drainOutboxOnce();
+    expect(eventDriven.documentsDeferred).toBe(0);
+    expect(client.outboxAttemptCounts()[0]).toBe(attemptsBefore + 1);
+  });
+
+  it("stops enumerating a document whose batches are all rejected", async () => {
+    server = new HarnessDocumentServer();
+    server.rejectNextDrainWith = "forbidden";
+    client = new HarnessClient("user-a", server);
+    client.edit("rejected", "preserve me");
+    client.closeEditor();
+    await waitFor(
+      () => client?.persistedOutboxStates()[0] === "rejected",
+      "rejected durable outbox"
+    );
+
+    const result = await client.drainOutboxOnce();
+
+    expect(result.documentsExamined).toBe(0);
+    // The row itself is untouched — not enumerating it is not discarding it.
+    expect(client.persistedOutboxStates()).toEqual(["rejected"]);
   });
 });

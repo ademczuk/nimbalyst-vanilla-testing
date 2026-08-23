@@ -20,6 +20,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import { parse as parseShellCommand } from 'shell-quote';
 import { database } from '../database/PGLiteDatabaseWorker';
+import { jsonKeyAccessor } from '../database/jsonKeyExpr';
 import { logger } from '../utils/logger';
 import { TranscriptMigrationRepository } from '@nimbalyst/runtime/storage/repositories/TranscriptMigrationRepository';
 import { AISessionsRepository } from '@nimbalyst/runtime';
@@ -1357,15 +1358,12 @@ class ToolCallMatcherImpl {
 
     // 4. All pre/post-edit history snapshots for the session (content is compressed;
     //    bounded by distinct edits, decompressed lazily per file in computeHistoryDiff).
-    //    SQLite must use json_extract (matching idx_history_preedit_session, migration
-    //    18) -- writing metadata->>'x' makes the dialect translator parameterize the
-    //    JSON key as metadata->>?, which no expression index can match. PGLite needs
-    //    the ->> operator (its metadata is jsonb; json_extract has no jsonb overload).
-    //    Same split as HistoryManager.getPendingFilesForSession.
-    const isSqlite = database.getEngine() === 'sqlite';
-    const sessionIdExpr = isSqlite ? `json_extract(metadata, '$.sessionId')` : `metadata->>'sessionId'`;
-    const typeExpr = isSqlite ? `json_extract(metadata, '$.type')` : `metadata->>'type'`;
-    const toolUseIdExpr = isSqlite ? `json_extract(metadata, '$.toolUseId')` : `metadata->>'toolUseId'`;
+    //    The accessor has to match idx_history_preedit_session (migration 18);
+    //    jsonKeyExpr picks the indexed form per backend.
+    const md = jsonKeyAccessor(database.getEngine(), 'metadata');
+    const sessionIdExpr = md('sessionId');
+    const typeExpr = md('type');
+    const toolUseIdExpr = md('toolUseId');
     const historyResult = await database.query<{
       file_path: string;
       content: Buffer;
@@ -2216,10 +2214,10 @@ class ToolCallMatcherImpl {
           ? ctx.postEditByFileAndTool.get(this.preEditKey(filePath, toolUseId))
           : undefined;
       } else {
-        const isSqlite = database.getEngine() === 'sqlite';
-        const sessionIdExpr = isSqlite ? `json_extract(metadata, '$.sessionId')` : `metadata->>'sessionId'`;
-        const typeExpr = isSqlite ? `json_extract(metadata, '$.type')` : `metadata->>'type'`;
-        const toolUseIdExpr = isSqlite ? `json_extract(metadata, '$.toolUseId')` : `metadata->>'toolUseId'`;
+        const md = jsonKeyAccessor(database.getEngine(), 'metadata');
+        const sessionIdExpr = md('sessionId');
+        const typeExpr = md('type');
+        const toolUseIdExpr = md('toolUseId');
 
         if (toolUseId) {
           const snapshots = await database.query<{

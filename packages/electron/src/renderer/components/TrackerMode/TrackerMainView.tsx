@@ -66,6 +66,9 @@ import { resolveTrackerWriteAccess } from '@nimbalyst/runtime/plugins/TrackerPlu
 import { useTrackerBodyPrewarm } from '../../hooks/useTrackerBodyPrewarm';
 import { setSelectedWorkstreamAtom, sessionRegistryAtom, refreshSessionListAtom, initSessionList } from '../../store/atoms/sessions';
 import { trackerItemsMapAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
+import { resolveLinkedSessions } from '../../utils/resolveLinkedSessions';
+import { getRelativeTimeString } from '../../utils/dateFormatting';
+import type { TrackerLinkedSessionOption } from '@nimbalyst/runtime/plugins/TrackerPlugin';
 import { resolveRoleFieldName } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { workstreamStateAtom } from '../../store/atoms/workstreamState';
 import { setWindowModeAtom } from '../../store/atoms/windowMode';
@@ -542,6 +545,24 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     });
     setWindowMode('agent');
   }, [workspacePath, setSelectedWorkstream, setWindowMode]);
+
+  /**
+   * Sessions linked to one item, shaped for the row/card context menus.
+   *
+   * Reads the registry through `store` rather than subscribing: the registry
+   * churns on every streaming token, and these menus only need a snapshot taken
+   * at the moment they open.
+   */
+  const getLinkedSessionOptions = useCallback((itemId: string): TrackerLinkedSessionOption[] => {
+    const item = store.get(trackerItemsMapAtom).get(itemId);
+    if (!item) return [];
+    return resolveLinkedSessions(item, store.get(sessionRegistryAtom)).map(session => ({
+      id: session.id,
+      title: session.title || 'Untitled session',
+      provider: session.provider,
+      timeLabel: getRelativeTimeString(session.updatedAt),
+    }));
+  }, []);
 
   /** Launch a new AI session linked to a tracker item */
   const handleLaunchSession = useCallback(async (trackerItemId: string) => {
@@ -1561,6 +1582,10 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               onDeleteItems={handleDeleteItems}
               onCopyDeepLink={teamOrgId ? handleCopyDeepLink : undefined}
               onOpenDocument={handleOpenItemAsDocument}
+              getLinkedSessions={getLinkedSessionOptions}
+              onOpenSession={handleSwitchToAgentMode}
+              onLaunchSession={handleLaunchSession}
+              onLaunchWorktree={isWorktreesFeatureAvailable && isGitRepo ? handleLaunchWorktree : undefined}
               favoriteItemIds={favoriteItemIds}
               onToggleFavorite={handleToggleFavorite}
               searchQuery={searchQuery}
@@ -1627,6 +1652,10 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               onDeleteItems={handleDeleteItems}
               onCopyDeepLink={teamOrgId ? handleCopyDeepLink : undefined}
               onOpenDocument={handleOpenItemAsDocument}
+              getLinkedSessions={getLinkedSessionOptions}
+              onOpenSession={handleSwitchToAgentMode}
+              onLaunchSession={handleLaunchSession}
+              onLaunchWorktree={isWorktreesFeatureAvailable && isGitRepo ? handleLaunchWorktree : undefined}
               favoriteItemIds={favoriteItemIds}
               onToggleFavorite={handleToggleFavorite}
             />
