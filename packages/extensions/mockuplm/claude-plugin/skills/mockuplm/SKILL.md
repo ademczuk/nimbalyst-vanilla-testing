@@ -62,6 +62,7 @@ When the user draws on a mockup:
 
 - **Realistic appearance**: Mockups should look like finished UI, not sketches
 - **Clean HTML/CSS**: Use semantic HTML and minimal, well-organized CSS
+- **Stable selectors**: When regenerating a mockup, preserve existing `id` and `class` values on elements that still represent the same UI; rename or remove them only when that element genuinely changes
 - **Modern patterns**: Use flexbox, grid, CSS variables
 - **Placeholder content**: Use realistic sample data (lorem ipsum, example names, etc.)
 - **Responsive design**: Consider mobile breakpoints when appropriate

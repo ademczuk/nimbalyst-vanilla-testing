@@ -14,6 +14,7 @@ const {
   listPendingOutboxesMock,
   prepareForAppendMock,
   registerCollabAssetDocumentMock,
+  resolveTeamForWorkspaceMock,
   safeHandleMock,
 } = vi.hoisted(() => {
   const handlers = new Map<string, (...args: any[]) => any>();
@@ -28,6 +29,7 @@ const {
     },
     estimateLocalAppendBytesMock: vi.fn(),
     findTeamForWorkspaceMock: vi.fn(),
+    resolveTeamForWorkspaceMock: vi.fn(),
     handlers,
     listPendingOutboxesMock: vi.fn(),
     prepareForAppendMock: vi.fn(),
@@ -72,6 +74,7 @@ vi.mock('../../services/StytchAuthService', () => ({
 
 vi.mock('../../services/TeamService', () => ({
   findTeamForWorkspace: findTeamForWorkspaceMock,
+  resolveTeamForWorkspace: resolveTeamForWorkspaceMock,
   getOrgScopedJwt: vi.fn(async () => 'org-jwt'),
 }));
 
@@ -189,6 +192,10 @@ describe('document-sync:open performs no client-side key work (NIM-2036)', () =>
     handlers.clear();
     vi.clearAllMocks();
     findTeamForWorkspaceMock.mockResolvedValue({ orgId: 'org-1', teamProjectId: null });
+    resolveTeamForWorkspaceMock.mockResolvedValue({
+      team: { orgId: 'org-1', teamProjectId: null },
+      complete: true,
+    });
     listPendingOutboxesMock.mockResolvedValue([]);
     registerDocumentSyncHandlers();
   });
@@ -263,10 +270,55 @@ describe('document-sync:open performs no client-side key work (NIM-2036)', () =>
   });
 });
 
+/**
+ * A team lookup that could not be carried out is not the same answer as "this
+ * project has no team", and the renderer acts on the difference: it treats a
+ * terminal answer as permanent, marks the scope unavailable, and stops
+ * retrying, which hides Shared Docs (plus the quick-open Team tab and "Share to
+ * team") for the rest of the app session.
+ *
+ * On 2026-08-23 `GET /api/teams` timed out after 15s during launch. The lookup
+ * returned `complete: false`, the handler reported the terminal message anyway,
+ * and the mode stayed gone across a restart even though the very next request
+ * for the same workspace succeeded.
+ */
+describe('document-sync:resolve-index-config lookup completeness', () => {
+  beforeEach(() => {
+    handlers.clear();
+    resolveTeamForWorkspaceMock.mockReset();
+    listPendingOutboxesMock.mockReset().mockResolvedValue([]);
+    registerDocumentSyncHandlers();
+  });
+
+  it('reports an incomplete lookup as retryable rather than as a missing team', async () => {
+    resolveTeamForWorkspaceMock.mockResolvedValue({ team: null, complete: false });
+
+    const result = await handlers.get('document-sync:resolve-index-config')!(
+      null,
+      { workspacePath: '/workspace/one' },
+    );
+
+    expect(result).toMatchObject({ success: false, retryable: true });
+    expect(result.error).not.toContain('No team found');
+  });
+
+  it('reports a conclusive miss as terminal', async () => {
+    resolveTeamForWorkspaceMock.mockResolvedValue({ team: null, complete: true });
+
+    await expect(
+      handlers.get('document-sync:resolve-index-config')!(null, { workspacePath: '/workspace/one' }),
+    ).resolves.toMatchObject({
+      success: false,
+      retryable: false,
+      error: 'No team found for this workspace.',
+    });
+  });
+});
+
 describe('document-sync:resolve-index-config single-flight (RC4)', () => {
   beforeEach(() => {
     handlers.clear();
-    findTeamForWorkspaceMock.mockReset();
+    resolveTeamForWorkspaceMock.mockReset();
     listPendingOutboxesMock.mockReset();
     listPendingOutboxesMock.mockResolvedValue([]);
 
@@ -287,9 +339,9 @@ describe('document-sync:resolve-index-config single-flight (RC4)', () => {
     ).rejects.toThrow('Local replica account does not match the active account');
   });
 
-  it('collapses N concurrent calls for the same workspace into one findTeamForWorkspace resolution', async () => {
+  it('collapses N concurrent calls for the same workspace into one team resolution', async () => {
     let resolveTeam: (value: unknown) => void;
-    findTeamForWorkspaceMock.mockImplementation(() => new Promise((resolve) => { resolveTeam = resolve; }));
+    resolveTeamForWorkspaceMock.mockImplementation(() => new Promise((resolve) => { resolveTeam = resolve; }));
 
     const handler = handlers.get('document-sync:resolve-index-config');
     expect(handler).toBeTruthy();
@@ -297,20 +349,23 @@ describe('document-sync:resolve-index-config single-flight (RC4)', () => {
     const calls = Array.from({ length: 5 }, () => handler!(null, { workspacePath: '/workspace/one' }));
     await Promise.resolve();
     await Promise.resolve();
-    resolveTeam!({ orgId: 'org-1', teamProjectId: null });
+    resolveTeam!({ team: { orgId: 'org-1', teamProjectId: null }, complete: true });
 
     const results = await Promise.all(calls);
 
-    expect(findTeamForWorkspaceMock).toHaveBeenCalledTimes(1);
+    expect(resolveTeamForWorkspaceMock).toHaveBeenCalledTimes(1);
     for (const result of results) {
       expect(result).toEqual(expect.objectContaining({ success: true }));
     }
   });
 
   it('does not dedupe calls for different workspaces', async () => {
-    findTeamForWorkspaceMock.mockImplementation(async (workspacePath: string) => ({
-      orgId: workspacePath === '/workspace/one' ? 'org-1' : 'org-2',
-      teamProjectId: null,
+    resolveTeamForWorkspaceMock.mockImplementation(async (workspacePath: string) => ({
+      team: {
+        orgId: workspacePath === '/workspace/one' ? 'org-1' : 'org-2',
+        teamProjectId: null,
+      },
+      complete: true,
     }));
 
     const handler = handlers.get('document-sync:resolve-index-config')!;
@@ -319,17 +374,20 @@ describe('document-sync:resolve-index-config single-flight (RC4)', () => {
       handler(null, { workspacePath: '/workspace/two' }),
     ]);
 
-    expect(findTeamForWorkspaceMock).toHaveBeenCalledTimes(2);
+    expect(resolveTeamForWorkspaceMock).toHaveBeenCalledTimes(2);
   });
 
   it('runs a fresh resolution for a later, non-overlapping call', async () => {
-    findTeamForWorkspaceMock.mockResolvedValue({ orgId: 'org-1', teamProjectId: null });
+    resolveTeamForWorkspaceMock.mockResolvedValue({
+      team: { orgId: 'org-1', teamProjectId: null },
+      complete: true,
+    });
 
     const handler = handlers.get('document-sync:resolve-index-config')!;
     await handler(null, { workspacePath: '/workspace/one' });
     await handler(null, { workspacePath: '/workspace/one' });
 
-    expect(findTeamForWorkspaceMock).toHaveBeenCalledTimes(2);
+    expect(resolveTeamForWorkspaceMock).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -8,7 +8,7 @@
 
 import { atom } from 'jotai';
 import type { TeamSyncProvider as TeamSyncProviderType } from '@nimbalyst/runtime/sync';
-import type { CollabScope } from '@nimbalyst/collab-client/core';
+import { CollabScopeResolutionError, type CollabScope } from '@nimbalyst/collab-client/core';
 import {
   createCollabDocsSession,
   getCollabDocsSession,
@@ -122,8 +122,10 @@ export async function resolveDesktopCollabScope(scopeKey: string): Promise<{
     setCollabScopeAvailability(scopeKey, true);
     return { scope, retryable: false };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const retryable = !message.includes('Not authenticated') && !message.includes('No team found');
+    // Only the resolver can tell a terminal answer from a lookup that never
+    // ran; marking availability false on the latter hides Shared Docs until the
+    // window is reopened.
+    const retryable = error instanceof CollabScopeResolutionError ? error.retryable : true;
     if (!retryable) setCollabScopeAvailability(scopeKey, false);
     return { scope: null, retryable };
   }

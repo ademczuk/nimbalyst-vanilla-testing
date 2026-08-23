@@ -1428,6 +1428,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
           teamMemberId: TeamMemberId;
         };
         error?: string;
+        retryable?: boolean;
       }>,
     // WebSocket proxy: create WebSocket connections in main process (Node.js)
     // to work around Cloudflare blocking browser WebSocket upgrades

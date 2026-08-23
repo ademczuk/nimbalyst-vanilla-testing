@@ -38,7 +38,11 @@ export const TrackerSavedViewsSection: React.FC<{
               onClick={() => onApplyView(view)}
               title={`Apply view: ${view.name}`}
             >
-              <MaterialSymbol icon="bookmark" size={13} className="shrink-0" />
+              <MaterialSymbol
+                icon={view.builtIn ? 'bolt' : 'bookmark'}
+                size={13}
+                className="shrink-0"
+              />
               <span className="flex-1 truncate">{view.name}</span>
               {view.shared && (
                 <MaterialSymbol
@@ -49,7 +53,7 @@ export const TrackerSavedViewsSection: React.FC<{
                 />
               )}
             </button>
-            {isSharedLayout && (
+            {isSharedLayout && !view.builtIn && (
               <button
                 className={view.shared
                   ? 'px-1.5 text-[var(--nim-primary)]'
@@ -61,14 +65,16 @@ export const TrackerSavedViewsSection: React.FC<{
                 <MaterialSymbol icon={view.shared ? 'group' : 'group_add'} size={13} />
               </button>
             )}
-            <button
-              className="opacity-0 group-hover:opacity-100 px-1.5 text-nim-faint hover:text-[#ef4444] transition-opacity"
-              onClick={() => onDeleteView(view)}
-              title={view.shared ? 'Delete view for the whole team' : 'Delete view'}
-              data-testid="tracker-saved-view-delete"
-            >
-              <MaterialSymbol icon="close" size={13} />
-            </button>
+            {!view.builtIn && (
+              <button
+                className="opacity-0 group-hover:opacity-100 px-1.5 text-nim-faint hover:text-[#ef4444] transition-opacity"
+                onClick={() => onDeleteView(view)}
+                title={view.shared ? 'Delete view for the whole team' : 'Delete view'}
+                data-testid="tracker-saved-view-delete"
+              >
+                <MaterialSymbol icon="close" size={13} />
+              </button>
+            )}
           </div>
         ))}
       </div>

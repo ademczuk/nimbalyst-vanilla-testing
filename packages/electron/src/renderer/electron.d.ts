@@ -1493,6 +1493,8 @@ interface ElectronAPI {
         urlExtraQuery?: string;
       };
       error?: string;
+      /** Whether asking again could succeed. Absent on success. */
+      retryable?: boolean;
     }>;
     // WebSocket proxy (Cloudflare blocks browser WS upgrades; proxy through main process)
     wsConnect: (url: string) => Promise<{ success: boolean; wsId?: string; error?: string }>;

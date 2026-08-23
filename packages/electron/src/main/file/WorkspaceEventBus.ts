@@ -3,7 +3,7 @@ import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import chokidar, { FSWatcher as ChokidarFSWatcher } from 'chokidar';
 import ignore, { Ignore } from 'ignore';
-import { ATOMIC_WRITE_TEMP_SUFFIX } from './safeFileWrite';
+import { ATOMIC_WRITE_TEMP_SUFFIX, RECOVERY_SNAPSHOT_INFIX } from './safeFileWrite';
 import { logger } from '../utils/logger';
 import { shouldExcludeDir } from '../utils/fileFilters';
 import { isPathInWorkspace } from '../utils/workspaceDetection';
@@ -287,6 +287,13 @@ function shouldIgnoreHardcoded(relativePath: string): boolean {
   // Scratch files from an atomic save. They exist for microseconds inside the
   // workspace, and surfacing them would emit an add/unlink pair per autosave.
   if (basename.endsWith(ATOMIC_WRITE_TEMP_SUFFIX)) {
+    return true;
+  }
+
+  // Snapshots of content an unconditional overwrite was about to destroy
+  // (#3684). They sit beside the file so the user can find them, but they are
+  // recovery artifacts, not documents -- keep them out of the tree.
+  if (basename.includes(RECOVERY_SNAPSHOT_INFIX)) {
     return true;
   }
 

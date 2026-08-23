@@ -22,7 +22,7 @@ import type { TrackerDataModel } from './TrackerDataModel';
  * The settled wording for an item that has no key yet. An unkeyed draft is
  * normal and intentional, not a failure -- this sentence is what says so.
  *
- * This module is the single source for all four sentences below. The agent
+ * This module is the single source for the sentences below. The agent
  * tools import them directly; the CLI cannot (it vendors rather than depending
  * on the runtime, see `packages/cli/src/vendor/trackerRecord.ts`) and carries a
  * marked copy. Two hand-copies previously drifted here: only this file grew
@@ -52,6 +52,30 @@ export const TRACKER_NO_TEAM_ISSUE_KEY_MESSAGE =
 export const TRACKER_LOCAL_ISSUE_KEY_MESSAGE =
   'This number is private to this project on this machine. It is not a shared key — '
   + 'do not use it in commit messages or anywhere another person will read it.';
+
+/**
+ * The same point in one line, for a diagnostic surface that lists several refs
+ * at once and would be drowned by the full sentence. Lifted verbatim from the
+ * wording `TrackerBlockedChip` states inline; that component should import this
+ * rather than restate it, so the two never drift into different advice.
+ */
+export const TRACKER_LOCAL_ISSUE_KEY_BRIEF_MESSAGE =
+  'Dotted refs are numbered on this machine only — they will not resolve for anyone else.';
+
+/**
+ * What a dependency cycle means and what to do about it. Two surfaces explain
+ * this one deadlock -- `TrackerDependencyCycleBanner` and the hover card in
+ * `TrackerBlockedChip` -- and hand-maintained copies of an explanation are how
+ * two surfaces end up giving different advice about the same hazard.
+ *
+ * Verbatim from the chip, so adopting it there is a no-op: that component still
+ * states the sentence inline and should import this instead. It reads correctly
+ * in both placements -- the banner introduces the cycle in the sentence before,
+ * and the chip's card has no antecedent, which is why the subject is named
+ * rather than pronominal.
+ */
+export const TRACKER_DEPENDENCY_CYCLE_MESSAGE =
+  'These items depend on each other, so none of them can become ready until one of the links is removed.';
 
 /** Whether a tracker has been retired. Absent means active. */
 export function isTrackerArchived(model: Pick<TrackerDataModel, 'archived'> | null | undefined): boolean {

@@ -1,6 +1,5 @@
 export { FeedbackSection } from './FeedbackSection';
 export { FeedbackRow } from './FeedbackRow';
-export { SharedFeedbackTabButton } from './SharedFeedbackTabButton';
 export {
   FEEDBACK_LIST_FILTERS,
   feedbackAuthorLabel,

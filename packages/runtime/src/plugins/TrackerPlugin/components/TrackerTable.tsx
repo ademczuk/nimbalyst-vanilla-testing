@@ -49,6 +49,9 @@ import {
 } from './trackerColumns';
 import { UserAvatar } from './UserAvatar';
 import { TrackerPublicationChip } from './TrackerPublicationChip';
+import { TrackerBlockedChip } from './TrackerBlockedChip';
+import type { Readiness } from '../models/trackerReadiness';
+import type { BlockerVisibilityScope } from '../models/trackerBlockerVisibility';
 import { TrackerUnreadDot } from '../../../readReceipts/TrackerUnreadDot';
 import { DisplayOptionsPanel } from './DisplayOptionsPanel';
 import { useTrackerRows } from './useTrackerRows';
@@ -108,6 +111,19 @@ interface TrackerTableProps {
   onColumnConfigChange?: (config: import('./trackerColumns').TypeColumnConfig) => void;
   favoriteItemIds?: ReadonlySet<string>;
   onToggleFavorite?: (itemId: string) => void;
+  /**
+   * Dependency readiness, derived once by the host from the full tracker
+   * corpus. Rows with open blockers get a chip explaining why; omit it and the
+   * table renders exactly as before.
+   */
+  readinessByItemId?: ReadonlyMap<string, Readiness>;
+  /**
+   * The type/archive scope these rows were selected under. Blockers outside it
+   * keep their count and state but withhold title and reference; omit it and
+   * every blocker is named in full, which is right for a host showing the whole
+   * corpus.
+   */
+  blockerScope?: BlockerVisibilityScope;
   preserveItemOrder?: boolean;
   /** Parent renders the shared tracker-view controls. */
   hideToolbar?: boolean;
@@ -770,6 +786,8 @@ export function TrackerTable({
   onColumnConfigChange,
   favoriteItemIds = new Set<string>(),
   onToggleFavorite,
+  readinessByItemId,
+  blockerScope,
   preserveItemOrder = false,
   hideToolbar = false,
 }: TrackerTableProps): JSX.Element {
@@ -1399,6 +1417,8 @@ export function TrackerTable({
                     </div>
                   )}
                 </div>
+
+                <TrackerBlockedChip readiness={readinessByItemId?.get(item.id)} scope={blockerScope} />
 
                 {/* Right-side metadata: render visible columns (except type/title which are already shown) */}
                 <div className="tracker-table-row-meta flex items-center gap-2 shrink-0">

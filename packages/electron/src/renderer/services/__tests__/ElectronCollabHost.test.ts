@@ -251,4 +251,24 @@ describe('ElectronCollabHost personal state', () => {
       orgId: 'org-1',
     });
   });
+
+  // Main answers whether a failed lookup can be retried; the renderer used to
+  // decide by substring-matching the message, so a transient team-directory
+  // failure that happened to read "No team found" was latched as permanent and
+  // Shared Docs stayed hidden for the session.
+  it('carries the retryable flag from the resolver instead of reading the message', async () => {
+    // Flag and wording deliberately disagree: only reading the flag can pass.
+    (window as any).electronAPI.documentSync.resolveIndexConfig = vi.fn(async () => ({
+      success: false,
+      error: 'No team found for this workspace.',
+      retryable: true,
+    }));
+
+    const host = new ElectronCollabHost({ scopeKey: '/workspace/flaky' });
+
+    await expect(host.resolveScope()).rejects.toMatchObject({
+      name: 'CollabScopeResolutionError',
+      retryable: true,
+    });
+  });
 });

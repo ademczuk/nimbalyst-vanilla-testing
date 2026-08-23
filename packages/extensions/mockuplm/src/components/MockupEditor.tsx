@@ -7,6 +7,10 @@
  * - Save handling
  * - Source mode via host.toggleSourceMode() (TabEditor renders Monaco)
  * - Diff mode via host.onDiffRequested() + host.reportDiffResult()
+ *
+ * Toolbar markup lives in MockupToolbar, drawing in useMockupDrawing,
+ * screenshots in useMockupScreenshot, and comment pins in
+ * components/comments/. This file owns state, effects, and the frame.
  */
 
 import React, {
@@ -21,15 +25,19 @@ import {
   useCollaborativeEditor,
   type EditorHostProps,
 } from "@nimbalyst/extension-sdk";
-import {
-  captureMockupComposite,
-  base64ToBlob,
-  describeScreenshotCaptureError,
-  sanitizeScreenshotCloneForXml,
-} from "../utils/screenshotUtils";
+import { base64ToBlob, captureMockupComposite } from "../utils/screenshotUtils";
 import { mockupHasScript, renderMockupHtml } from "../utils/mockupDomUtils";
+// The single selector generator in the tree. The editor used to carry an
+// inline copy that disagreed with the one pin healing resolves against.
+import { generateSelector } from "../utils/generateSelector";
 import { remapCaretAcrossReplace } from "../utils/sourcePaneCaret";
 import { MockupDiffViewer } from "./MockupDiffViewer";
+import { MockupToolbar } from "./MockupToolbar";
+import { useMockupDrawing } from "./useMockupDrawing";
+import { useMockupScreenshot } from "./useMockupScreenshot";
+import { useMockupInteractionMode } from "./useMockupInteractionMode";
+import { MockupCommentOverlay } from "./comments/MockupCommentOverlay";
+import { COMMENT_MODE_STYLES } from "./comments/commentModeStyles";
 import { injectTheme, type MockupTheme } from "../utils/themeEngine";
 import { MockupBinding } from "../collab/mockupBinding";
 import {
@@ -37,20 +45,22 @@ import {
   isMockupYDocEmpty,
   seedMockupYDoc,
 } from "../collab/seed";
+import { useMockupComments } from "./comments/useMockupComments";
 
-// Shared types for mockup annotations. These resolve against the ambient
-// `declare module '@nimbalyst/runtime'` in globals.d.ts and are erased at build
-// time, so they cost the bundle nothing.
-//
-// There is deliberately no side-effect import of the runtime beside them. The
-// desktop host maps that specifier to a curated re-export of a handful of UI
-// members, which registers no globals; the Window members this editor uses are
-// declared in globals.d.ts and set by the editor itself. In the browser console
-// the specifier has no provider at all, so importing it for its non-existent
-// side effect made the whole extension unresolvable there.
-import type { DrawingPath, MockupSelection } from "@nimbalyst/runtime";
+// Type-only, resolved against the ambient `declare module '@nimbalyst/runtime'`
+// in globals.d.ts and erased at build time. Never import the bare specifier for
+// a side effect: the browser console has no provider for it, and doing so made
+// the whole extension unresolvable there.
+import type { MockupSelection } from "@nimbalyst/runtime";
 
 // electronAPI is declared globally in electron.d.ts
+
+/** Select mode's outline is a class on the frame's own DOM, not React state. */
+function clearSelectionOutline(frame: Document | null | undefined): void {
+  frame
+    ?.querySelectorAll(".nimbalyst-selected")
+    .forEach((element) => element.classList.remove("nimbalyst-selected"));
+}
 
 export const MockupEditor = forwardRef<any, EditorHostProps>(
   function MockupEditor({ host }, ref) {
@@ -68,12 +78,26 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
       });
     }, [host]);
 
-    // Refs for clearAllAnnotations (defined early so hook can reference)
-    const iframeRef = useRef<HTMLIFrameElement>(null);
-    const drawingCanvasRef = useRef<HTMLCanvasElement>(null);
-    const isDrawingRef = useRef(false);
-    const lastPointRef = useRef<{ x: number; y: number } | null>(null);
-    const drawingPathsRef = useRef<DrawingPath[]>([]);
+    const iframeRef = useRef<HTMLIFrameElement | null>(null);
+    /**
+     * The mounted frame, held as state as well as in the ref above.
+     *
+     * The render effect below writes the mockup into the frame, and a ref alone
+     * cannot wake it: no frame is mounted while the editor is loading, in diff
+     * mode, or across the read-only/editing swap, and by the time one appears
+     * nothing that effect depends on has changed. A cold open of an
+     * already-populated shared mockup went blank on exactly that -- the
+     * collaborative binding fills `contentRef` and bumps the version behind the
+     * loading view, and nothing bumps it a second time -- so the reader saw an
+     * empty document until some unrelated Y.Doc edit happened to arrive.
+     */
+    const [frameElement, setFrameElement] = useState<HTMLIFrameElement | null>(
+      null
+    );
+    const attachFrame = useCallback((frame: HTMLIFrameElement | null) => {
+      iframeRef.current = frame;
+      setFrameElement(frame);
+    }, []);
 
     // Content lives in a ref -- iframe rendering is imperative, not React state
     const contentRef = useRef<string | null>(null);
@@ -101,24 +125,22 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
     }, []);
 
     // UI state that clearAllAnnotations modifies
-    const [drawingDataUrl, setDrawingDataUrl] = useState<string | null>(null);
     const [selectedElement, setSelectedElement] =
       useState<MockupSelection | null>(null);
     const [annotationTimestamp, setAnnotationTimestamp] = useState<
       number | null
     >(null);
 
+    const stampAnnotation = useCallback(() => {
+      setAnnotationTimestamp(Date.now());
+    }, []);
+
+    const drawing = useMockupDrawing({ iframeRef, onStroke: stampAnnotation });
+    const { reset: resetDrawing, setDrawingMode } = drawing;
+
     // Clear all annotations
     const clearAllAnnotations = useCallback(() => {
-      const canvas = drawingCanvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-        }
-      }
-      drawingPathsRef.current = [];
-      setDrawingDataUrl(null);
+      resetDrawing();
       setSelectedElement(null);
       setAnnotationTimestamp(null);
 
@@ -128,10 +150,18 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
           el.classList.remove("nimbalyst-selected");
         });
       }
-    }, []);
+    }, [resetDrawing]);
 
     // Track content version to trigger iframe re-render
     const [contentVersion, setContentVersion] = useState(0);
+    // Bumped AFTER the HTML has been written into the frame. The pin overlay
+    // measures off this: measuring off `contentVersion` would read the previous
+    // document, because child effects run before the parent's render effect.
+    // Counted independently of `contentVersion` because a paint into a *new*
+    // frame carries the same content version, and everything downstream --
+    // pin measurement, comment-mode listeners, the element picker -- is bound
+    // to a document that no longer exists until this changes.
+    const [renderedVersion, setRenderedVersion] = useState(0);
 
     // Collab binding ref, populated by useCollaborativeEditor when collab is
     // active. Held in a ref (not state) so applyContent's stable closure can
@@ -175,8 +205,8 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
             throw new Error("Mockup iframe is not ready");
           }
           const paths =
-            drawingPathsRef.current.length > 0
-              ? drawingPathsRef.current
+            drawing.drawingPathsRef.current.length > 0
+              ? drawing.drawingPathsRef.current
               : undefined;
           return base64ToBlob(
             await captureMockupComposite(iframeRef.current, null, paths)
@@ -185,7 +215,7 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
       });
 
       return () => host.registerEditorAPI(null);
-    }, [host, isLoading, error]);
+    }, [host, isLoading, error, drawing.drawingPathsRef]);
 
     // ---- Collaborative wiring (no-op when host.collaboration is undefined) ----
     // Single Y.Text carries the canonical HTML. Local edits arrive through
@@ -233,6 +263,29 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
           },
         };
       },
+    });
+
+    // ---- Comment pins and threads ---------------------------------------
+    // The toolbar toggle and the composer are gated on `canComment`, which is
+    // the host's comment capability and nothing else. It is deliberately NOT
+    // stacked on document editability: comment access is granted separately
+    // from write access, and a reviewer who holds it has no write access by
+    // definition -- gating placement on `!isReadOnlyViewer` denied a pin to
+    // precisely the people the feature exists for. Where there is no comments
+    // service at all -- an unshared mockup, the transcript embed -- the
+    // capability is absent and the whole affordance stays hidden.
+    // The anchor adapter is not read here: `useMockupComments` registers it
+    // with the host, and the host's own comments panel resolves every mockup
+    // anchor -- state, label, and focus -- through that one registration.
+    const {
+      store: pinStore,
+      source: commentSource,
+      canComment,
+    } = useMockupComments({
+      yDoc: host.collaboration?.yDoc ?? null,
+      service: host.collaboration?.comments,
+      user: host.collaboration?.user,
+      iframeRef,
     });
 
     // Publish selection to awareness so remote clients can render "X is
@@ -305,123 +358,95 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
       | undefined;
 
     // Additional UI state
-    const [isCapturing, setIsCapturing] = useState(false);
-    const [isDrawingMode, setIsDrawingMode] = useState(false);
-    const [isInteractive, setIsInteractive] = useState(isReadOnlyViewer);
     const [mockupTheme, setMockupTheme] = useState<MockupTheme>("dark");
-    const [drawingColor, setDrawingColor] = useState("#FF0000");
-    const [scrollOffset, setScrollOffset] = useState({ x: 0, y: 0 });
+
+    const { isCapturing, captureScreenshot } = useMockupScreenshot({
+      iframeRef,
+      filePath,
+      fileName,
+      drawingPathsRef: drawing.drawingPathsRef,
+    });
 
     // Clear annotations when filePath changes
     useEffect(() => {
       clearAllAnnotations();
     }, [filePath, clearAllAnnotations]);
 
-    // Generate CSS selector for element
-    const generateSelector = useCallback((element: Element): string => {
-      if (element.id) {
-        return `#${element.id}`;
-      }
-
-      if (element.className && typeof element.className === "string") {
-        const classes = element.className
-          .trim()
-          .split(/\s+/)
-          .filter((c) => c);
-        if (classes.length > 0) {
-          const classSelector = "." + classes.join(".");
-          const parent = element.parentElement;
-          if (parent) {
-            const siblings = Array.from(parent.querySelectorAll(classSelector));
-            if (siblings.length === 1) {
-              return classSelector;
-            }
-          }
-        }
-      }
-
-      const tagName = element.tagName.toLowerCase();
-      const parent = element.parentElement;
-      if (parent) {
-        const siblings = Array.from(parent.children).filter(
-          (e) => e.tagName === element.tagName
-        );
-        const index = siblings.indexOf(element);
-        if (index >= 0) {
-          const parentSelector = parent.tagName.toLowerCase();
-          return `${parentSelector} > ${tagName}:nth-child(${index + 1})`;
-        }
-      }
-
-      return tagName;
-    }, []);
-
     // Handle element click in preview
-    const handleElementClick = useCallback(
-      (event: MouseEvent) => {
-        const target = event.target as HTMLElement;
+    const handleElementClick = useCallback((event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.tagName === "BODY" || target.tagName === "HTML") return;
 
-        if (target.tagName === "BODY" || target.tagName === "HTML") return;
+      event.preventDefault();
+      event.stopPropagation();
 
-        event.preventDefault();
-        event.stopPropagation();
-
-        const selector = generateSelector(target);
-        const outerHTML = target.outerHTML;
-        const tagName = target.tagName.toLowerCase();
-
-        setSelectedElement({ selector, outerHTML, tagName });
-        setAnnotationTimestamp(Date.now());
-
-        const iframeDoc = iframeRef.current?.contentDocument;
-        if (iframeDoc) {
-          iframeDoc.querySelectorAll(".nimbalyst-selected").forEach((el) => {
-            el.classList.remove("nimbalyst-selected");
-          });
-          target.classList.add("nimbalyst-selected");
-        }
-      },
-      [generateSelector]
-    );
+      setSelectedElement({
+        selector: generateSelector(target),
+        outerHTML: target.outerHTML,
+        tagName: target.tagName.toLowerCase(),
+      });
+      setAnnotationTimestamp(Date.now());
+      clearSelectionOutline(iframeRef.current?.contentDocument);
+      target.classList.add("nimbalyst-selected");
+    }, []);
 
     // Deselect element
     const handleDeselectElement = useCallback(() => {
       setSelectedElement(null);
-
-      const iframeDoc = iframeRef.current?.contentDocument;
-      if (iframeDoc) {
-        iframeDoc.querySelectorAll(".nimbalyst-selected").forEach((el) => {
-          el.classList.remove("nimbalyst-selected");
-        });
-      }
+      clearSelectionOutline(iframeRef.current?.contentDocument);
     }, []);
 
+    const exitDrawingMode = useCallback(
+      () => setDrawingMode(false),
+      [setDrawingMode]
+    );
+
+    const { isInteractive, isCommentMode, toggleInteractive, toggleCommentMode, exitCommentMode } =
+      useMockupInteractionMode({
+        isReadOnlyViewer,
+        onLeaveSelectMode: handleDeselectElement,
+        onEnterCommentMode: exitDrawingMode,
+      });
+
+    // The thread list is the platform's: the host docks its own comments panel
+    // beside this editor and drives it through `openPanel`. All the extension
+    // keeps is which thread is selected, so the matching pin renders
+    // highlighted -- markers are its half of the contract, the panel is not.
+    const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+
+    // Entering comment mode is the user saying they are here to review, so the
+    // conversation comes with it -- the same thing the editor's own pane used
+    // to do when it existed. `openPanel` is conditionally present (a host with
+    // no panel surface, e.g. the browser console, omits it), so this is a
+    // request the host may simply not honour, never a hard dependency.
+    const commentsService = host.collaboration?.comments;
     useEffect(() => {
-      if (!isReadOnlyViewer) {
-        return;
-      }
+      if (isCommentMode) commentsService?.openPanel?.();
+    }, [isCommentMode, commentsService]);
 
-      setIsInteractive(true);
-      setIsDrawingMode(false);
-      handleDeselectElement();
-    }, [isReadOnlyViewer, handleDeselectElement]);
+    // Drawing is the third claim on the same clicks.
+    const handleToggleDrawing = useCallback(() => {
+      if (!drawing.isDrawingMode) exitCommentMode();
+      drawing.toggleDrawingMode();
+    }, [drawing, exitCommentMode]);
 
     useEffect(() => {
-      if (!isReadOnlyViewer) {
-        return;
-      }
+      if (isReadOnlyViewer) exitDrawingMode();
+    }, [isReadOnlyViewer, exitDrawingMode]);
 
-      setMockupTheme(theme === "light" ? "light" : "dark");
+    useEffect(() => {
+      if (isReadOnlyViewer) setMockupTheme(theme === "light" ? "light" : "dark");
     }, [isReadOnlyViewer, theme]);
 
-    // Update iframe when content changes or when exiting diff mode
+    // Paint the frame: on a content change, on leaving diff mode, and on the
+    // frame itself appearing (see `frameElement`).
     useEffect(() => {
       // Skip if in diff mode - MockupDiffViewer handles its own rendering
-      if (diffState || !iframeRef.current || !contentRef.current) {
+      if (diffState || !frameElement || !contentRef.current) {
         return;
       }
 
-      const { scriptsRan } = renderMockupHtml(iframeRef.current, contentRef.current, {
+      const { scriptsRan } = renderMockupHtml(frameElement, contentRef.current, {
         onAfterRender: (iframeDoc) => {
           injectTheme(iframeDoc, mockupTheme);
 
@@ -432,6 +457,7 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
             outline-offset: 2px !important;
             box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2) !important;
           }
+          ${COMMENT_MODE_STYLES}
         `;
           iframeDoc.head.appendChild(style);
         },
@@ -440,11 +466,12 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
       // Only worth saying when this mockup actually has a script to lose. Most
       // do not, and a notice on every mockup in the browser would be noise.
       setAreScriptsBlocked(!scriptsRan && mockupHasScript(contentRef.current));
-    }, [contentVersion, diffState, mockupTheme]);
+      setRenderedVersion((rendered) => rendered + 1);
+    }, [contentVersion, diffState, frameElement, mockupTheme]);
 
     // Separate effect for click handler -- toggling interactive mode shouldn't re-render iframe
     useEffect(() => {
-      if (diffState || isInteractive) return;
+      if (diffState || isInteractive || isCommentMode) return;
 
       const iframeDoc = iframeRef.current?.contentDocument;
       if (!iframeDoc) return;
@@ -453,11 +480,18 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
       return () => {
         iframeDoc.removeEventListener("click", handleElementClick as any);
       };
-    }, [contentVersion, handleElementClick, diffState, isInteractive]);
+    }, [
+      renderedVersion,
+      handleElementClick,
+      diffState,
+      isInteractive,
+      isCommentMode,
+    ]);
 
     // Store annotations in per-file map so they persist when tab becomes inactive.
     // This is critical for screenshot capture which may happen when tab is not focused.
     // Also handles legacy globals and event dispatch in a single consolidated effect.
+    const { drawingDataUrl, drawingPathsRef } = drawing;
     useEffect(() => {
       // Initialize the map if it doesn't exist
       if (!window.__mockupAnnotations) {
@@ -526,6 +560,7 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
     }, [
       filePath,
       drawingDataUrl,
+      drawingPathsRef,
       selectedElement,
       annotationTimestamp,
       isActive,
@@ -538,363 +573,6 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
         window.__mockupAnnotations?.delete(filePath);
       };
     }, [filePath]);
-
-    // Redraw canvas
-    const redrawCanvas = useCallback(() => {
-      const canvas = drawingCanvasRef.current;
-      if (!canvas) return;
-
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      drawingPathsRef.current.forEach((path) => {
-        if (path.points.length < 2) return;
-
-        ctx.strokeStyle = path.color;
-        ctx.lineWidth = 3;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-
-        ctx.beginPath();
-        const firstPoint = path.points[0];
-        ctx.moveTo(
-          firstPoint.x - scrollOffset.x,
-          firstPoint.y - scrollOffset.y
-        );
-
-        for (let i = 1; i < path.points.length; i++) {
-          const point = path.points[i];
-          ctx.lineTo(point.x - scrollOffset.x, point.y - scrollOffset.y);
-        }
-        ctx.stroke();
-      });
-    }, [scrollOffset]);
-
-    // Clear drawing
-    const handleClearDrawing = useCallback(() => {
-      const canvas = drawingCanvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          drawingPathsRef.current = [];
-          setDrawingDataUrl(null);
-        }
-      }
-    }, []);
-
-    // Toggle drawing mode
-    const handleToggleDrawing = useCallback(() => {
-      setIsDrawingMode((prev) => !prev);
-      if (isDrawingMode) {
-        const canvas = drawingCanvasRef.current;
-        if (canvas) {
-          const dataUrl = canvas.toDataURL("image/png");
-          setDrawingDataUrl(dataUrl);
-        }
-      }
-    }, [isDrawingMode]);
-
-    // Drawing event handlers
-    const handleDrawingMouseDown = useCallback(
-      (e: React.MouseEvent<HTMLCanvasElement>) => {
-        if (!isDrawingMode) return;
-
-        const canvas = drawingCanvasRef.current;
-        if (!canvas || canvas.width === 0 || canvas.height === 0) return;
-
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left + scrollOffset.x;
-        const y = e.clientY - rect.top + scrollOffset.y;
-
-        isDrawingRef.current = true;
-        lastPointRef.current = { x, y };
-        setAnnotationTimestamp(Date.now());
-
-        drawingPathsRef.current.push({
-          points: [{ x, y }],
-          color: drawingColor,
-        });
-      },
-      [isDrawingMode, scrollOffset, drawingColor]
-    );
-
-    const handleDrawingMouseMove = useCallback(
-      (e: React.MouseEvent<HTMLCanvasElement>) => {
-        if (!isDrawingMode || !isDrawingRef.current) return;
-
-        const canvas = drawingCanvasRef.current;
-        if (!canvas) return;
-
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left + scrollOffset.x;
-        const y = e.clientY - rect.top + scrollOffset.y;
-
-        if (lastPointRef.current && drawingPathsRef.current.length > 0) {
-          const currentPath =
-            drawingPathsRef.current[drawingPathsRef.current.length - 1];
-          currentPath.points.push({ x, y });
-
-          ctx.strokeStyle = drawingColor;
-          ctx.lineWidth = 3;
-          ctx.lineCap = "round";
-          ctx.lineJoin = "round";
-
-          ctx.beginPath();
-          ctx.moveTo(
-            lastPointRef.current.x - scrollOffset.x,
-            lastPointRef.current.y - scrollOffset.y
-          );
-          ctx.lineTo(x - scrollOffset.x, y - scrollOffset.y);
-          ctx.stroke();
-        }
-
-        lastPointRef.current = { x, y };
-      },
-      [isDrawingMode, drawingColor, scrollOffset]
-    );
-
-    const handleDrawingMouseUp = useCallback(() => {
-      isDrawingRef.current = false;
-      lastPointRef.current = null;
-
-      const canvas = drawingCanvasRef.current;
-      if (canvas) {
-        const dataUrl = canvas.toDataURL("image/png");
-        setDrawingDataUrl(dataUrl);
-      }
-    }, []);
-
-    const handleDrawingMouseLeave = useCallback(() => {
-      isDrawingRef.current = false;
-      lastPointRef.current = null;
-    }, []);
-
-    // Setup canvas size
-    useEffect(() => {
-      const iframe = iframeRef.current;
-      const canvas = drawingCanvasRef.current;
-
-      if (!iframe || !canvas) {
-        return;
-      }
-
-      const updateCanvasSize = () => {
-        const width = iframe.offsetWidth;
-        const height = iframe.offsetHeight;
-
-        if (width > 0 && height > 0) {
-          canvas.width = width;
-          canvas.height = height;
-          redrawCanvas();
-        }
-      };
-
-      updateCanvasSize();
-
-      let drawModeTimeoutId: ReturnType<typeof setTimeout> | null = null;
-      if (isDrawingMode) {
-        drawModeTimeoutId = setTimeout(updateCanvasSize, 100);
-      }
-
-      const iframeDoc = iframe.contentDocument;
-      const handleScroll = () => {
-        if (iframeDoc) {
-          const scrollX =
-            iframeDoc.documentElement.scrollLeft || iframeDoc.body.scrollLeft;
-          const scrollY =
-            iframeDoc.documentElement.scrollTop || iframeDoc.body.scrollTop;
-          setScrollOffset({ x: scrollX, y: scrollY });
-        }
-      };
-
-      if (iframeDoc) {
-        iframeDoc.addEventListener("scroll", handleScroll);
-      }
-
-      window.addEventListener("resize", updateCanvasSize);
-
-      return () => {
-        if (drawModeTimeoutId) {
-          clearTimeout(drawModeTimeoutId);
-        }
-        if (iframeDoc) {
-          iframeDoc.removeEventListener("scroll", handleScroll);
-        }
-        window.removeEventListener("resize", updateCanvasSize);
-      };
-    }, [isDrawingMode, redrawCanvas]);
-
-    // Redraw when scroll changes
-    useEffect(() => {
-      redrawCanvas();
-    }, [scrollOffset, redrawCanvas]);
-
-    // Handle MCP screenshot requests
-    useEffect(() => {
-      const electronAPI = window.electronAPI;
-      if (!electronAPI?.on || !electronAPI?.invoke) {
-        return;
-      }
-
-      const handleCaptureRequest = async (data: {
-        requestId: string;
-        filePath: string;
-      }) => {
-        if (data.filePath !== filePath) return;
-
-        console.log("[MockupEditor] Received MCP screenshot request");
-
-        try {
-          if (!iframeRef.current) {
-            throw new Error("Iframe not ready");
-          }
-
-          const paths =
-            drawingPathsRef.current.length > 0
-              ? drawingPathsRef.current
-              : undefined;
-          const base64Data = await captureMockupComposite(
-            iframeRef.current,
-            null,
-            paths
-          );
-
-          await electronAPI.invoke("mockup:screenshot-result", {
-            requestId: data.requestId,
-            success: true,
-            imageBase64: base64Data,
-            mimeType: "image/png",
-          });
-        } catch (err) {
-          const errorMessage = describeScreenshotCaptureError(err);
-          await electronAPI.invoke("mockup:screenshot-result", {
-            requestId: data.requestId,
-            success: false,
-            error: errorMessage,
-          });
-        }
-      };
-
-      const cleanup = electronAPI.on(
-        "mockup:capture-screenshot",
-        handleCaptureRequest
-      );
-      return cleanup;
-    }, [filePath]);
-
-    // Screenshot capture
-    const handleCaptureScreenshot = useCallback(async () => {
-      if (!iframeRef.current) {
-        alert("Screenshot failed: iframe not ready");
-        return;
-      }
-
-      setIsCapturing(true);
-
-      try {
-        const iframe = iframeRef.current;
-        const iframeWindow = iframe.contentWindow;
-        const iframeDoc = iframe.contentDocument || iframeWindow?.document;
-
-        if (!iframeDoc || !iframeDoc.body) {
-          throw new Error("Cannot access iframe document");
-        }
-
-        if (iframeDoc.readyState !== "complete") {
-          await new Promise((resolve) => {
-            iframeWindow?.addEventListener("load", resolve, { once: true });
-            setTimeout(resolve, 5000);
-          });
-        }
-
-        const html2canvas = (await import("html2canvas")).default;
-        const targetElement = iframeDoc.body;
-        const elemWidth =
-          targetElement.scrollWidth ||
-          targetElement.offsetWidth ||
-          iframe.offsetWidth;
-        const elemHeight =
-          targetElement.scrollHeight ||
-          targetElement.offsetHeight ||
-          iframe.offsetHeight;
-
-        if (elemWidth === 0 || elemHeight === 0) {
-          throw new Error("Target element has zero dimensions");
-        }
-
-        const canvas = await html2canvas(targetElement, {
-          backgroundColor: "#ffffff",
-          scale: 2,
-          logging: false,
-          useCORS: false,
-          allowTaint: true,
-          foreignObjectRendering: true,
-          imageTimeout: 0,
-          width: elemWidth,
-          height: elemHeight,
-          windowWidth: elemWidth,
-          windowHeight: elemHeight,
-          onclone: sanitizeScreenshotCloneForXml,
-        });
-
-        canvas.toBlob(async (blob) => {
-          if (!blob) {
-            throw new Error("Failed to create image blob");
-          }
-
-          try {
-            await navigator.clipboard.write([
-              new ClipboardItem({ "image/png": blob }),
-            ]);
-            const notification = document.createElement("div");
-            notification.textContent = "Screenshot copied to clipboard";
-            notification.style.cssText = `
-            position: fixed;
-            top: 60px;
-            right: 20px;
-            background: var(--nim-bg-secondary);
-            border: 1px solid var(--nim-border);
-            color: var(--nim-text);
-            padding: 12px 20px;
-            border-radius: 6px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            z-index: 10000;
-            font-size: 14px;
-          `;
-            document.body.appendChild(notification);
-            setTimeout(() => notification.remove(), 3000);
-          } catch {
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            const timestamp = new Date()
-              .toISOString()
-              .replace(/[:.]/g, "-")
-              .slice(0, -5);
-            a.href = url;
-            a.download = `${fileName.replace(
-              ".mockup.html",
-              ""
-            )}-screenshot-${timestamp}.png`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-          }
-        }, "image/png");
-      } catch (err) {
-        console.error("[MockupEditor] Screenshot capture failed:", err);
-        const errorMessage = describeScreenshotCaptureError(err);
-        alert("Failed to capture screenshot: " + errorMessage);
-      } finally {
-        setIsCapturing(false);
-      }
-    }, [fileName]);
 
     // Render loading state
     if (isLoading) {
@@ -928,14 +606,24 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
       );
     }
 
+    // The read-only viewer still shows pins -- a review thread should be
+    // visible in context -- but placement is off.
     if (isReadOnlyViewer) {
       return (
         <div className="mockup-editor h-full overflow-hidden bg-white relative">
           <iframe
-            ref={iframeRef}
+            ref={attachFrame}
             className="w-full h-full border-none absolute top-0 left-0"
             sandbox="allow-scripts allow-same-origin"
             title={`Mockup: ${fileName}`}
+          />
+          <MockupCommentOverlay
+            iframeRef={iframeRef}
+            store={pinStore}
+            source={commentSource}
+            contentVersion={renderedVersion}
+            viewportWidth={null}
+            isCommentMode={false}
           />
         </div>
       );
@@ -944,197 +632,80 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
     // Render preview mode
     return (
       <div className="mockup-editor flex flex-col h-full bg-nim relative">
-        {/* Toolbar */}
-        <div className="px-4 py-2 border-b border-nim bg-nim-secondary flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {projectOrigin ? (
-              <span className="text-sm flex items-center gap-1">
-                <button
-                  onClick={() => {
-                    const workspacePath = window.__workspacePath;
-                    if (workspacePath && projectOrigin) {
-                      window.electronAPI?.invoke("workspace:open-file", {
-                        workspacePath,
-                        filePath: projectOrigin,
-                      });
-                    }
-                  }}
-                  className="text-nim-primary bg-transparent border-none cursor-pointer text-sm font-medium p-0 hover:underline"
-                  title={`Back to project: ${projectOrigin.split("/").pop()}`}
-                >
-                  {projectOrigin
-                    .split("/")
-                    .pop()
-                    ?.replace(".mockupproject", "")}
-                </button>
-                <span className="text-nim-faint text-xs">/</span>
-                <span className="text-nim-muted">{fileName}</span>
-              </span>
-            ) : (
-              <span className="text-sm text-nim-muted">{fileName}</span>
-            )}
-            <button
-              onClick={() => {
-                setIsInteractive((prev) => !prev);
-                if (!isInteractive) {
-                  handleDeselectElement();
-                }
-              }}
-              className={`px-3 py-1 text-xs border rounded cursor-pointer ${
-                isInteractive
-                  ? "bg-nim-primary text-nim-on-primary border-nim-primary font-bold"
-                  : "bg-nim border-nim text-nim font-normal"
-              }`}
-              title={
-                isInteractive
-                  ? "Switch to Select mode (click to select elements)"
-                  : "Switch to Interactive mode (click to interact with mockup)"
-              }
-            >
-              {isInteractive ? "Interactive" : "Select"}
-            </button>
-            {selectedElement && (
-              <div className="flex items-center gap-2 px-2 py-1 bg-[rgba(0,122,255,0.1)] rounded border border-[rgba(0,122,255,0.3)]">
-                <span className="text-xs text-nim">
-                  Selected: {selectedElement.tagName}
-                </span>
-                <button
-                  onClick={handleDeselectElement}
-                  className="px-1.5 py-0.5 text-[11px] bg-transparent border border-nim rounded-sm text-nim cursor-pointer"
-                  title="Deselect element"
-                >
-                  Clear
-                </button>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() =>
-                setMockupTheme((prev) => (prev === "dark" ? "light" : "dark"))
-              }
-              className="px-2 py-1 text-xs bg-nim border border-nim rounded text-nim cursor-pointer"
-              title={
-                mockupTheme === "dark"
-                  ? "Switch to light theme"
-                  : "Switch to dark theme"
-              }
-            >
-              {mockupTheme === "dark" ? (
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="5" />
-                  <line x1="12" y1="1" x2="12" y2="3" />
-                  <line x1="12" y1="21" x2="12" y2="23" />
-                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                  <line x1="1" y1="12" x2="3" y2="12" />
-                  <line x1="21" y1="12" x2="23" y2="12" />
-                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-                </svg>
-              ) : (
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                </svg>
-              )}
-            </button>
-            <button
-              onClick={handleToggleDrawing}
-              className={`px-3 py-1 text-xs border border-nim rounded cursor-pointer ${
-                isDrawingMode
-                  ? "bg-nim-primary text-nim-on-primary font-bold"
-                  : "bg-nim text-nim font-normal"
-              }`}
-              title={
-                isDrawingMode ? "Exit drawing mode" : "Draw annotations for AI"
-              }
-            >
-              {isDrawingMode ? "Done Drawing" : "Draw"}
-            </button>
-            {isDrawingMode && (
-              <>
-                <input
-                  type="color"
-                  value={drawingColor}
-                  onChange={(e) => setDrawingColor(e.target.value)}
-                  className="w-8 h-6 border border-nim rounded cursor-pointer"
-                  title="Choose drawing color"
-                />
-                <button
-                  onClick={handleClearDrawing}
-                  className="px-3 py-1 text-xs bg-nim border border-nim rounded text-nim cursor-pointer"
-                  title="Clear all drawings"
-                >
-                  Clear
-                </button>
-              </>
-            )}
-            <button
-              onClick={handleCaptureScreenshot}
-              disabled={isCapturing}
-              className={`px-3 py-1 text-xs bg-nim border border-nim rounded text-nim ${
-                isCapturing
-                  ? "cursor-wait opacity-60"
-                  : "cursor-pointer opacity-100"
-              }`}
-              title="Capture screenshot of mockup"
-            >
-              {isCapturing ? "Capturing..." : "Screenshot"}
-            </button>
-          </div>
-        </div>
+        <MockupToolbar
+          fileName={fileName}
+          projectOrigin={projectOrigin}
+          onOpenProject={() => {
+            const workspacePath = window.__workspacePath;
+            if (workspacePath && projectOrigin) {
+              window.electronAPI?.invoke("workspace:open-file", {
+                workspacePath,
+                filePath: projectOrigin,
+              });
+            }
+          }}
+          isInteractive={isInteractive}
+          onToggleInteractive={toggleInteractive}
+          canComment={canComment}
+          isCommentMode={isCommentMode}
+          onToggleCommentMode={toggleCommentMode}
+          selectedElement={selectedElement}
+          onDeselect={handleDeselectElement}
+          mockupTheme={mockupTheme}
+          onToggleTheme={() =>
+            setMockupTheme((prev) => (prev === "dark" ? "light" : "dark"))
+          }
+          isDrawingMode={drawing.isDrawingMode}
+          onToggleDrawing={handleToggleDrawing}
+          drawingColor={drawing.drawingColor}
+          onDrawingColorChange={drawing.setDrawingColor}
+          onClearDrawing={drawing.clearDrawing}
+          isCapturing={isCapturing}
+          onCaptureScreenshot={captureScreenshot}
+        />
 
-        {/* Content Area */}
-        <div className="flex-1 overflow-hidden bg-white relative">
+        {/* Canvas only. The comments panel is docked by the host beside this
+            editor, not rendered here. */}
+        <div className="flex-1 min-h-0 overflow-hidden bg-white relative">
           <iframe
-            ref={iframeRef}
+            ref={attachFrame}
             className="w-full h-full border-none absolute top-0 left-0"
             sandbox="allow-scripts allow-same-origin"
             title={`Mockup: ${fileName}`}
           />
           {/* Drawing Canvas Overlay */}
           <canvas
-            ref={drawingCanvasRef}
-            onMouseDown={handleDrawingMouseDown}
-            onMouseMove={handleDrawingMouseMove}
-            onMouseUp={handleDrawingMouseUp}
-            onMouseLeave={handleDrawingMouseLeave}
-            onWheel={(e) => {
-              if (isDrawingMode && iframeRef.current?.contentDocument) {
-                const iframeDoc = iframeRef.current.contentDocument;
-                iframeDoc.documentElement.scrollTop += e.deltaY;
-                iframeDoc.documentElement.scrollLeft += e.deltaX;
-              }
-            }}
+            ref={drawing.canvasRef}
+            {...drawing.canvasHandlers}
             className="absolute top-0 left-0 w-full h-full"
             style={{
-              pointerEvents: isDrawingMode ? "auto" : "none",
-              cursor: isDrawingMode ? "crosshair" : "default",
-              zIndex: isDrawingMode ? 1000 : 10,
+              pointerEvents: drawing.isDrawingMode ? "auto" : "none",
+              cursor: drawing.isDrawingMode ? "crosshair" : "default",
+              zIndex: drawing.isDrawingMode ? 1000 : 10,
             }}
           />
-          {isDrawingMode && (
+
+          <MockupCommentOverlay
+            iframeRef={iframeRef}
+            store={pinStore}
+            source={commentSource}
+            contentVersion={renderedVersion}
+            viewportWidth={null}
+            isCommentMode={isCommentMode}
+            activeThreadId={activeThreadId}
+            onSelectThread={setActiveThreadId}
+          />
+
+          {drawing.isDrawingMode && (
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-nim-secondary border border-nim rounded-md px-4 py-2 shadow-lg z-[1001] text-xs text-nim">
               Drawing mode active - Circle elements, draw arrows, or annotate
               for AI
+            </div>
+          )}
+
+          {isCommentMode && (
+            <div className="mockup-comment-mode-hint absolute bottom-4 left-1/2 -translate-x-1/2 bg-nim-secondary border border-nim rounded-md px-4 py-2 shadow-lg z-[1001] text-xs text-nim">
+              Click anywhere on the mockup to leave a comment
             </div>
           )}
 

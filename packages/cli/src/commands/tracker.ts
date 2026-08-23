@@ -2,7 +2,7 @@
  * `nim tracker <verb>` — the v1 noun, fully wired for reads.
  */
 import type { ParsedArgs } from '../cli/parse.js';
-import { flagStr, flagBool, flagInt } from '../cli/parse.js';
+import { flagStr, flagBool, flagInt, flagList } from '../cli/parse.js';
 import { usageError, notFoundError, writeNotPermittedError } from '../cli/exitCodes.js';
 import {
   makeGateway,
@@ -22,6 +22,7 @@ import {
   renderResnapshot,
   getAssignedIssueKey,
   getTrackerDisplayRef,
+  localRefNotice,
   UNASSIGNED_ISSUE_KEY_MESSAGE,
 } from '../cli/output.js';
 import { loadTypeSchema } from './typeSchema.js';
@@ -33,6 +34,8 @@ export async function runTracker(args: ParsedArgs): Promise<number> {
   switch (verb) {
     case 'list':
       return trackerList(args);
+    case 'ready':
+      return trackerReady(args);
     case 'get':
     case 'show':
       return trackerGet(args, verb === 'show');
@@ -56,10 +59,34 @@ export async function runTracker(args: ParsedArgs): Promise<number> {
       return trackerImport(args);
     default:
       throw usageError(
-        `Unknown tracker command '${verb ?? ''}'. Try: list, get, show, types, create, update, ` +
+        `Unknown tracker command '${verb ?? ''}'. Try: list, ready, get, show, types, create, update, ` +
           `comment, archive, link-session, importers, import.`,
       );
   }
+}
+
+/**
+ * The caveat for machine-private numbers goes to stderr so that `-q` stays a
+ * clean pipe and `--csv` stays a clean file, while the person at the terminal
+ * still sees it. `localRefNotice` decides whether there is anything to say.
+ */
+function writeLocalRefNotice(
+  records: { issueKey?: string; localKey?: string }[],
+  opts: ReturnType<typeof outputOptions>,
+): void {
+  const notice = localRefNotice(records, opts);
+  if (notice) process.stderr.write(dim(notice) + '\n');
+}
+
+async function trackerReady(args: ParsedArgs): Promise<number> {
+  return trackerList({
+    ...args,
+    verb: 'list',
+    flags: {
+      ...args.flags,
+      where: [...flagList(args, 'where'), 'readiness=ready'],
+    },
+  });
 }
 
 async function trackerList(args: ParsedArgs): Promise<number> {
@@ -68,7 +95,9 @@ async function trackerList(args: ParsedArgs): Promise<number> {
     const workspace = await resolveWorkspace(gateway, flagStr(args, 'workspace'));
     const filters = buildFilters(args, workspace);
     const records = await gateway.listTrackers(filters);
-    process.stdout.write(renderList(records, outputOptions(args)) + '\n');
+    const opts = outputOptions(args);
+    writeLocalRefNotice(records, opts);
+    process.stdout.write(renderList(records, opts) + '\n');
     return 0;
   } finally {
     gateway.close();
@@ -93,7 +122,9 @@ async function trackerGet(args: ParsedArgs, withBody: boolean): Promise<number> 
 
     const wantBody = withBody || flagBool(args, 'body') || flagBool(args, 'json');
     const body = wantBody ? await gateway.getTrackerBody(workspace, record) : undefined;
-    process.stdout.write(renderRecord(record, body, outputOptions(args)) + '\n');
+    const opts = outputOptions(args);
+    writeLocalRefNotice([record], opts);
+    process.stdout.write(renderRecord(record, body, opts) + '\n');
     return 0;
   } finally {
     gateway.close();

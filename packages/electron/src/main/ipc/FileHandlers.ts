@@ -4,7 +4,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { basename, join, dirname, extname } from 'path';
 import { windowStates, savingWindows, recentlyDeletedFiles, findWindowByFilePath, createWindow, getWindowId, windows, documentServices } from '../window/WindowManager';
 import { loadFileIntoWindow, saveFile } from '../file/FileOperations';
-import { shouldBlockEmptyOverwrite } from '../file/safeFileWrite';
+import { shouldBlockEmptyOverwrite, wouldDiscardUnseenContent, writeRecoverySnapshot } from '../file/safeFileWrite';
 import { openFileWithDialog, openFile } from '../file/FileOpener';
 import { startFileWatcher, stopFileWatcher } from '../file/FileWatcher';
 import { AUTOSAVE_DELAY } from '../utils/constants';
@@ -219,6 +219,26 @@ export function registerFileHandlers() {
                 if (shouldBlockEmptyOverwrite({ content, diskContent, source: saveSource })) {
                     logger.main.warn(`[SAVE] Refused empty autosave over non-empty file: ${filePath}`);
                     return { success: false, errorType: 'empty_write_blocked', filePath };
+                }
+            }
+
+            // #3684: a write with no baseline skipped the conflict check above,
+            // so nothing established that this writer ever saw what is on disk.
+            // Snapshot it before it is gone. Emitted *before* the destructive
+            // act, per .claude/rules/destructive-data-paths.md -- a crash
+            // mid-write must not take the evidence with it.
+            if (existsSync(filePath)) {
+                try {
+                    const diskContent = readFileSync(filePath, 'utf-8');
+                    if (wouldDiscardUnseenContent({ content, diskContent, lastKnownContent })) {
+                        const snapshotPath = writeRecoverySnapshot(filePath, diskContent, Date.now());
+                        logger.main.warn(
+                            `[SAVE] Unconditional overwrite of ${filePath}; discarded content saved to ${snapshotPath}`,
+                        );
+                    }
+                } catch (snapshotError) {
+                    // Best effort -- never block the write the user asked for.
+                    logger.main.error('[SAVE] Failed to snapshot discarded content:', snapshotError);
                 }
             }
 

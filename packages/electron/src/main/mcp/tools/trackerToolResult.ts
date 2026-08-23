@@ -3,13 +3,20 @@ import {
   TRACKER_NO_TEAM_ISSUE_KEY_MESSAGE,
   TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerLifecycle';
-import { isLocalIssueKey, resolveDisplayIssueKey } from '../../../shared/localIssueKey';
+import {
+  isLocalIssueKey,
+  resolveDisplayIssueKey,
+  type IssueKeyStatus,
+} from '../../../shared/localIssueKey';
 import { TrackerSchemaChangeBlockedError } from '../../services/tracker/trackerSchemaChangeGuard';
 
 export type McpToolResult = {
   content: Array<{ type: string; text?: string }>;
   isError: boolean;
 };
+
+export const TRACKER_TRACKS_EXPLANATION =
+  'Items in different tracks have no declared dependency edge between them, but may still touch the same files and conflict.';
 
 /**
  * A tool call cannot show a modal, so the confirmation an agent needs has to be
@@ -98,18 +105,12 @@ export function getTrackerDisplayRef(item: { issueKey?: string; localKey?: strin
 }
 
 /**
- * Three states, because there are three, and collapsing them is what produced
- * #1346. `assigned` is a key the room owns and everyone resolves the same way.
- * `local` is this machine's private number: real, stable, and safe to hold --
- * but not safe to put anywhere another person reads. `unassigned` shrinks back
- * to its true meaning, a team draft genuinely waiting on the room.
- *
- * Reporting a numbered item as `unassigned` was not merely imprecise. It sent
- * agents to a publish action that a personal tracker refuses outright, and told
- * users of team-less workspaces that a key was still coming when nothing would
- * ever mint one.
+ * `IssueKeyStatus` is re-exported, not restated: the runtime owns it (see
+ * `localIssueKey`), and the three states exist because reporting a numbered
+ * item as `unassigned` sent agents to a publish action that a personal tracker
+ * refuses outright (#1346).
  */
-export type IssueKeyStatus = 'assigned' | 'local' | 'unassigned';
+export type { IssueKeyStatus };
 
 export interface IssueKeyContext {
   /** Whether the item has been published to its team room. */
@@ -149,6 +150,18 @@ export function issueKeyMessage(item: IssueKeyRef, context: IssueKeyContext = {}
   }
   if (!published) return TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE;
   return canIssueKeys ? PUBLISHED_ISSUE_KEY_PENDING_MESSAGE : TRACKER_NO_TEAM_ISSUE_KEY_MESSAGE;
+}
+
+/**
+ * A list response explains private local numbers once, after all rows. The
+ * wording still comes from `issueKeyMessage`; this helper only deduplicates it.
+ */
+export function localIssueKeyResponseMessage(
+  items: readonly IssueKeyRef[],
+  context: IssueKeyContext = {},
+): string {
+  const localItem = items.find((item) => issueKeyStatus(item) === 'local');
+  return localItem ? issueKeyMessage(localItem, context) : '';
 }
 
 export function issueKeyAvailabilityNote(item: IssueKeyRef, context: IssueKeyContext = {}): string {

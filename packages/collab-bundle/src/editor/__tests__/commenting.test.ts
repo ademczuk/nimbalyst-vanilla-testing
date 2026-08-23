@@ -1,13 +1,15 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { deriveCollabEditorCommentsState } from '../commenting';
+import {
+  deriveCollabEditorCommentsState,
+  resolveDocumentCommentCapabilities,
+} from '../commenting';
 
 describe('collab editor comments state', () => {
   it('combines the host role answer with server access, and hydrates on first connection', () => {
-    // The regression this replaces: `unknown` was treated as "no comments".
-    // `writable` is only ever reached from a write acknowledgement, so a writer
-    // who had not typed yet never left `unknown` and never got the affordance.
+    // A roster-derived role is not authoritative for this document. Until the
+    // server has acknowledged access, authoring must fail closed.
     const beforeAnyWrite = deriveCollabEditorCommentsState({
       connection: 'syncing',
       serverAccess: 'unknown',
@@ -17,7 +19,7 @@ describe('collab editor comments state', () => {
     expect(beforeAnyWrite).toEqual({
       hasConnectedOnce: false,
       isHydrated: false,
-      capabilities: { read: true, comment: true },
+      capabilities: { read: true, comment: false },
     });
 
     // The host's answer is authoritative in the other direction: a viewer is
@@ -31,8 +33,8 @@ describe('collab editor comments state', () => {
       }).capabilities).toEqual({ read: true, comment: false });
     }
 
-    // And a server restriction overrides a host that says yes.
-    for (const serverAccess of ['read-only', 'revoked'] as const) {
+    // Every unavailable or negative server answer overrides a host that says yes.
+    for (const serverAccess of ['unknown', 'read-only', 'revoked', 'not-applicable'] as const) {
       expect(deriveCollabEditorCommentsState({
         connection: 'connected',
         serverAccess,
@@ -58,5 +60,24 @@ describe('collab editor comments state', () => {
       hasConnectedOnce: connected.hasConnectedOnce,
       hostCanComment: true,
     }).isHydrated).toBe(true);
+  });
+});
+
+describe('document comment access', () => {
+  it('grants comment capability without requiring edit access', async () => {
+    const canAccess = vi.fn(async (input: { action: 'view' | 'edit' | 'admin' }) => ({
+      allowed: input.action === 'view',
+    }));
+
+    await expect(resolveDocumentCommentCapabilities(canAccess, {
+      orgId: 'org-1',
+      projectId: 'project-1',
+    })).resolves.toEqual({ read: true, comment: true });
+    expect(canAccess).toHaveBeenCalledTimes(1);
+    expect(canAccess).toHaveBeenCalledWith({
+      orgId: 'org-1',
+      projectId: 'project-1',
+      action: 'view',
+    });
   });
 });

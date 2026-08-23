@@ -87,7 +87,22 @@ export class DocumentModel {
   // -- Coordination state ---------------------------------------------------
 
   /** Last content that was persisted to the backing store. */
+  /**
+   * Content the attached editors are known to be in sync with. This is the
+   * conflict baseline handed to the backing store, so it must never describe
+   * content no editor accepted -- otherwise a stale editor's save passes the
+   * conflict check and clobbers whoever wrote the file (#3684).
+   */
   private lastPersistedContent: string | ArrayBuffer | null = null;
+  /**
+   * The last content we observed on disk, whether or not any editor took it.
+   * Split out from `lastPersistedContent` because echo suppression wants "have
+   * I already seen these bytes" while the conflict baseline wants "are my
+   * editors in sync". Conflating them is what let the file watcher advance the
+   * baseline past a dirty editor and mask a divergence -- named in
+   * HiddenTabManager's NIM-905 comment, worked around there, fixed here.
+   */
+  private lastSeenDiskContent: string | ArrayBuffer | null = null;
 
   /**
    * Diff state (pending AI edits).
@@ -221,6 +236,7 @@ export class DocumentModel {
       notifySiblingsSaved: (content: string | ArrayBuffer) => {
         this.resetAutosaveFailureState();
         this.lastPersistedContent = content;
+        this.lastSeenDiskContent = content;
         this.notifyFileChanged(content, id);
       },
 
@@ -344,6 +360,7 @@ export class DocumentModel {
    */
   setLastPersistedContent(content: string | ArrayBuffer): void {
     this.lastPersistedContent = content;
+    this.lastSeenDiskContent = content;
   }
 
   /**
@@ -366,6 +383,7 @@ export class DocumentModel {
     // file later arrives via the watcher, echo suppression must NOT compare
     // against the pre-deletion content.
     this.lastPersistedContent = null;
+    this.lastSeenDiskContent = null;
   }
 
   /**
@@ -428,6 +446,7 @@ export class DocumentModel {
   async loadContent(): Promise<string | ArrayBuffer> {
     const content = await this.backingStore.load();
     this.lastPersistedContent = content;
+    this.lastSeenDiskContent = content;
 
     // A successful load means the file is back. Reopen for saves and let
     // the main process know we've observed the recreation (for lifecycle
@@ -477,11 +496,16 @@ export class DocumentModel {
 
     this.isSaving = true;
     try {
+      // The baseline the store must check against is what we believed was on
+      // disk *before* this write, so capture it before advancing (#3684).
+      const expectedDiskContent =
+        typeof this.lastPersistedContent === 'string' ? this.lastPersistedContent : undefined;
       // Update lastPersistedContent BEFORE writing to disk.
       // The file watcher can fire before save() returns, and we need
       // echo suppression to see the new content as "ours".
       this.lastPersistedContent = content;
-      await this.backingStore.save(content);
+      this.lastSeenDiskContent = content;
+      await this.backingStore.save(content, expectedDiskContent);
       this.resetAutosaveFailureState();
 
       // Clear dirty flag for the saving editor
@@ -550,7 +574,8 @@ export class DocumentModel {
 
     // Echo suppression: skip if content matches last-persisted.
     // This catches our own saves echoing back through the file watcher.
-    const isEcho = this.lastPersistedContent !== null && info.content === this.lastPersistedContent;
+    const echoBaseline = this.lastSeenDiskContent ?? this.lastPersistedContent;
+    const isEcho = echoBaseline !== null && info.content === echoBaseline;
     if (isEcho && !info.checkPendingTags) {
       diffTrace('DocumentModel.handleExternalChange echo-skip', { path: this.filePath, t: performance.now() });
       return;
@@ -663,7 +688,7 @@ export class DocumentModel {
         contentLen: typeof info.content === 'string' ? info.content.length : -1,
         t: performance.now(),
       });
-      this.lastPersistedContent = info.content;
+      this.lastSeenDiskContent = info.content;
       // A successful external read means the file is back. Clear the deleted
       // flag so saves can resume against the fresh baseline. Also notify the
       // main process so the recentlyDeleted entry can be released.
@@ -671,7 +696,18 @@ export class DocumentModel {
         this.deleted = false;
         this.notifyMainEditorReleasedDeletedPath();
       }
-      this.notifyFileChanged(info.content);
+      // The conflict baseline may only advance if every editor actually took
+      // the content. A dirty editor is skipped above; advancing anyway would
+      // let its next save sail through the conflict check and overwrite this
+      // external write (#3684).
+      if (this.notifyFileChanged(info.content)) {
+        this.lastPersistedContent = info.content;
+      } else {
+        console.warn(
+          `[DocumentModel] External change not delivered to every editor for ${this.filePath}; ` +
+            `holding the conflict baseline so a stale buffer cannot overwrite it`,
+        );
+      }
     }
   }
 
@@ -777,9 +813,14 @@ export class DocumentModel {
     // Mark the tag as reviewed
     await this.options.updateTagStatus(this.filePath, tagId, 'reviewed');
 
-    // Save the final content
-    await this.backingStore.save(finalContent);
+    // Save the final content. Disk currently holds the agent's write, which is
+    // the diff's `newContent` -- that, not lastPersistedContent, is the honest
+    // baseline here. Rejecting a diff writes `oldContent` back, so this is
+    // exactly the path that must not clobber blind (#3684).
+    const expectedDiskContent = this.currentSession?.appliedContent ?? this.diffState?.newContent;
+    await this.backingStore.save(finalContent, expectedDiskContent);
     this.lastPersistedContent = finalContent;
+    this.lastSeenDiskContent = finalContent;
 
     // End the session and clear diff state.
     if (this.currentSession?.phase === 'resolving-all') {
@@ -894,19 +935,25 @@ export class DocumentModel {
    * Skips editors that are dirty (have unsaved in-flight edits) to avoid
    * overwriting user work. Also optionally excludes a specific editor.
    */
-  private notifyFileChanged(content: string | ArrayBuffer, excludeEditorId?: string): void {
+  private notifyFileChanged(content: string | ArrayBuffer, excludeEditorId?: string): boolean {
+    let deliveredToAll = true;
     for (const [attId, att] of this.attachments) {
       if (attId === excludeEditorId) continue;
       // Don't overwrite dirty editors -- they have unsaved user edits.
-      if (att.isDirty) continue;
+      if (att.isDirty) {
+        deliveredToAll = false;
+        continue;
+      }
       for (const cb of att.fileChangedCallbacks) {
         try {
           cb(content);
         } catch (err) {
           console.error('[DocumentModel] Error in file changed callback:', err);
+          deliveredToAll = false;
         }
       }
     }
+    return deliveredToAll;
   }
 
   // -- Event system ---------------------------------------------------------

@@ -14,8 +14,11 @@
  *   active workspace changes (covers rail-switch flows too).
  */
 
+import { buildCollabUri } from '@nimbalyst/collab-protocol';
+
 import { store } from '../index';
 import { setWindowModeAtom } from '../atoms/windowMode';
+import { requestCommentPanel } from '../../components/TabEditor/collabCommentPanelRequests';
 import { pendingCollabDocumentAtom, pendingCollabFolderAtom } from '../atoms/collabDocuments';
 import {
   openTrackerItemAsDocumentAtom,
@@ -38,6 +41,8 @@ interface SharedDocPayload {
   documentId: string;
   orgId: string;
   workspacePath: string;
+  /** Set when the link came from a comment notification. Thread identity only. */
+  threadId?: string;
 }
 
 interface SharedFolderPayload {
@@ -72,6 +77,17 @@ function applySharedDocPayload(data: SharedDocPayload): void {
   if (!data?.documentId || !data?.orgId || !data?.workspacePath) return;
   ensureActiveWorkspace(data.workspacePath);
   store.set(setWindowModeAtom, 'collab');
+  // A comment notification wants the thread, not just the document. The request
+  // is queued against the document's URI before the tab exists; the tab's
+  // comments pane drains it when it mounts, selects the thread, and asks the
+  // mounted anchor adapter to bring the target into view. If the anchor is gone
+  // the thread still opens and the pane says why the jump did not happen.
+  if (data.threadId) {
+    requestCommentPanel(buildCollabUri(data.orgId, data.documentId), {
+      threadId: data.threadId,
+      source: 'deep-link',
+    });
+  }
   store.set(pendingCollabDocumentAtom, {
     scopeKey: data.workspacePath,
     orgId: data.orgId,

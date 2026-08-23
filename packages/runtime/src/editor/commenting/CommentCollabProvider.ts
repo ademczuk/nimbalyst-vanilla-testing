@@ -7,13 +7,16 @@
  * content, so they ride the document's already-open encrypted WebSocket — no
  * separate room, connection, or awareness channel is needed.
  *
- * `CommentStore` only ever reads `provider.doc` and calls `connect()` /
- * `disconnect()`. The connection is owned by the host's DocumentSyncProvider,
- * so connect/disconnect here are intentional no-ops; awareness is a stub.
+ * The provider exposes the runtime-neutral repository plus the Provider shape
+ * Lexical's compatibility adapter expects. The connection is owned by the
+ * host's DocumentSyncProvider, so connect/disconnect here are intentional
+ * no-ops; awareness is a stub.
  */
 
 import type { Provider, ProviderAwareness } from '@lexical/yjs';
 import type { Doc } from 'yjs';
+
+import { YDocCommentRepository } from './YDocCommentRepository';
 
 const STUB_AWARENESS: ProviderAwareness = {
   getLocalState: () => null,
@@ -27,12 +30,15 @@ const STUB_AWARENESS: ProviderAwareness = {
 };
 
 export class CommentCollabProvider implements Provider {
-  /** The shared document Y.Doc. `CommentStore` reads this via `provider.doc`. */
+  /** The shared document Y.Doc used by the repository. */
   doc: Doc;
+  /** Canonical comments view shared by Lexical and runtime-neutral consumers. */
+  commentRepository: YDocCommentRepository;
   awareness: ProviderAwareness = STUB_AWARENESS;
 
   constructor(doc: Doc) {
     this.doc = doc;
+    this.commentRepository = new YDocCommentRepository(doc);
   }
 
   // The document connection is owned elsewhere; comments sync as part of the

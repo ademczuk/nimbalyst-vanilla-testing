@@ -8,7 +8,7 @@ import {
   type LexicalEditor,
 } from 'lexical';
 import { describe, expect, it, vi } from 'vitest';
-import { Doc } from 'yjs';
+import { applyUpdate, Doc, encodeStateAsUpdate } from 'yjs';
 
 import {
   CommentStore,
@@ -18,8 +18,16 @@ import {
 } from '../index';
 import { CommentCollabProvider } from '../CommentCollabProvider';
 import {
+  createCommentSharedMap,
+  getCommentAnchorSupport,
+  YDocCommentRepository,
+} from '../YDocCommentRepository';
+import {
+  collabCommentAnchorAdapterRegistry,
   createCollabCommentController,
+  createRepositoryCollabCommentController,
 } from '../CollabCommentControllerRegistry';
+import type { CommentAnchor } from '../types';
 import { reanchorOrphanedThreads } from '../reanchorOrphanedThreads';
 
 function createFixture(
@@ -109,7 +117,7 @@ describe('CollabCommentController', () => {
   });
 
   it('creates an exact-text anchor with structured agent attribution', async () => {
-    const { controller, onCommitted } = createFixture();
+    const { commentStore, controller, onCommitted } = createFixture();
     const actor = controller.createAgentActor({
       sessionId: 'session-1',
       sessionName: 'Design reviewer',
@@ -138,6 +146,14 @@ describe('CollabCommentController', () => {
       id: result.threadId,
       quote: 'target',
       anchorState: 'attached',
+    });
+    expect(commentStore.getComments()[0]).toMatchObject({
+      anchor: {
+        kind: 'text-quote',
+        exact: 'target',
+        prefix: 'Alpha ',
+        suffix: ' Omega',
+      },
     });
     expect(onCommitted).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -413,6 +429,289 @@ describe('CollabCommentController', () => {
     ]);
     unregister();
   });
+
+  it('keeps legacy and unknown-anchor records lossless in immutable snapshots', () => {
+    const legacyComment = createComment(
+      'Legacy body',
+      'Legacy Author',
+      'comment-legacy',
+      123,
+      false,
+    );
+    const legacyThread = createThread(
+      'legacy quote',
+      [legacyComment],
+      'thread-legacy',
+    );
+    const legacyMap = createCommentSharedMap(legacyThread);
+
+    const doc = new Doc();
+    doc.getArray('comments').insert(0, [legacyMap]);
+    expect(legacyMap.has('anchor')).toBe(false);
+    const repository = new YDocCommentRepository(doc);
+    expect(JSON.stringify(repository.getSnapshot()[0])).toBe(
+      JSON.stringify({
+        comments: [
+          {
+            actor: { kind: 'user', displayName: 'Legacy Author' },
+            author: 'Legacy Author',
+            content: 'Legacy body',
+            deleted: false,
+            id: 'comment-legacy',
+            timeStamp: 123,
+            type: 'comment',
+          },
+        ],
+        id: 'thread-legacy',
+        quote: 'legacy quote',
+        resolved: false,
+        type: 'thread',
+      }),
+    );
+
+    legacyMap.set('anchor', {
+      kind: 'future-canvas-region',
+      region: { x: 12, y: 24 },
+    });
+    const futureThread = repository.getSnapshot()[0];
+    expect(futureThread.type).toBe('thread');
+    if (futureThread.type !== 'thread') throw new Error('Expected a thread.');
+    expect(futureThread.anchor).toEqual({
+      kind: 'future-canvas-region',
+      region: { x: 12, y: 24 },
+    });
+    expect(getCommentAnchorSupport(futureThread.anchor)).toBe('unsupported');
+    const mounted = createFixture();
+    const unregister = mounted.commentStore.registerCollaboration(
+      new CommentCollabProvider(doc),
+    );
+    expect(mounted.controller.list().threads[0]).toMatchObject({
+      id: 'thread-legacy',
+      anchorState: 'unsupported',
+    });
+    unregister();
+    expect(Object.isFrozen(repository.getSnapshot())).toBe(true);
+    expect(Object.isFrozen(futureThread)).toBe(true);
+    expect(Object.isFrozen(futureThread.comments)).toBe(true);
+    expect(Object.isFrozen(futureThread.anchor)).toBe(true);
+    expect(repository.deleteComment('thread-legacy', 'comment-legacy')).toEqual(
+      {
+        index: 0,
+        markedComment: expect.objectContaining({
+          id: 'comment-legacy',
+          content: '[Deleted Comment]',
+          deleted: true,
+        }),
+      },
+    );
+    expect(repository.getSnapshot()[0]).toMatchObject({ comments: [] });
+    expect(repository.deleteThread('thread-legacy')).toBe(true);
+    expect(repository.getSnapshot()).toEqual([]);
+    repository.destroy();
+  });
+
+  it('creates an entity-anchored thread without coercing it to a text selector', async () => {
+    const doc = new Doc();
+    const repository = new YDocCommentRepository(doc);
+    const documentUri = 'collab://org:org-1:doc:mockup-1';
+    const anchor: CommentAnchor = {
+      kind: 'entity',
+      entityType: 'mockup-pin',
+      entityId: 'pin-1',
+      labelSnapshot: 'button:Save changes',
+    };
+    const validated: CommentAnchor[] = [];
+    const unregister = collabCommentAnchorAdapterRegistry.register({
+      documentUri,
+      instanceId: 'mounted-tab',
+      isActive: () => true,
+      isVisible: () => true,
+      adapter: {
+        handles: (candidate) => candidate.kind === 'entity',
+        getState: (candidate) => {
+          validated.push(candidate);
+          return 'attached';
+        },
+        describe: () => 'Pin 1 — Save changes button',
+        focus: () => true,
+      },
+    });
+    const controller = createRepositoryCollabCommentController({
+      repository,
+      documentUri,
+      currentUser: { id: 'user-1', name: 'Ada' },
+      getCapabilities: () => ({ read: true, comment: true }),
+      getMembers: () => [],
+      isHydrated: () => true,
+      isVisible: () => true,
+      now: () => 1_000,
+    });
+    const actor = controller.createAgentActor({
+      sessionId: 'session-1',
+      sessionName: 'Mockup agent',
+    });
+    const base = {
+      body: 'Shorten this label.',
+      clientMutationId: 'mutation-pin',
+    };
+
+    try {
+      const created = await controller.createAnchored({ ...base, anchor }, actor);
+      expect(created).toMatchObject({ anchor, duplicate: false });
+      expect(validated).toContainEqual(anchor);
+
+      // The adapter that validated the target and the repository that stored
+      // the thread are the same Y.Doc handle: an independent reader over that
+      // doc sees the thread the controller just wrote.
+      const reader = new YDocCommentRepository(doc);
+      expect(reader.getSnapshot()).toEqual([
+        expect.objectContaining({
+          anchor,
+          id: created.threadId,
+          quote: 'Pin 1 — Save changes button',
+        }),
+      ]);
+      reader.destroy();
+
+      await expect(
+        controller.createAnchored({ ...base, anchor }, actor),
+      ).resolves.toMatchObject({
+        anchor,
+        duplicate: true,
+        threadId: created.threadId,
+      });
+
+      // Every other anchor shape fails closed rather than being reshaped.
+      await expect(
+        controller.createAnchored(
+          { ...base, clientMutationId: 'mutation-text', anchor: { exact: 'Save' } },
+          actor,
+        ),
+      ).rejects.toMatchObject({ code: 'DOCUMENT_NOT_MOUNTED' });
+      await expect(
+        controller.createAnchored(
+          {
+            ...base,
+            clientMutationId: 'mutation-region',
+            anchor: { kind: 'region', page: 2 } as never,
+          },
+          actor,
+        ),
+      ).rejects.toMatchObject({ code: 'DOCUMENT_NOT_MOUNTED' });
+      await expect(
+        controller.createAnchored(
+          {
+            ...base,
+            clientMutationId: 'mutation-partial',
+            anchor: { kind: 'entity', entityType: 'mockup-pin' } as never,
+          },
+          actor,
+        ),
+      ).rejects.toMatchObject({ code: 'ANCHOR_NOT_FOUND' });
+      await expect(
+        controller.createAnchored(
+          { ...base, clientMutationId: 'mutation-spoofed', anchor },
+          { kind: 'user', userId: 'user-1', displayName: 'Ada' },
+        ),
+      ).rejects.toMatchObject({ code: 'COMMENT_FORBIDDEN' });
+      expect(controller.list().threads).toHaveLength(1);
+    } finally {
+      unregister();
+      repository.destroy();
+    }
+  });
+
+  it('converges entity anchors, replies, and resolve state across two Y.Docs', () => {
+    const firstDoc = new Doc();
+    const secondDoc = new Doc();
+    const first = new YDocCommentRepository(firstDoc);
+    const second = new YDocCommentRepository(secondDoc);
+    const rootComment = createComment('Review this node.', 'Owner', {
+      actor: { kind: 'user', userId: 'owner-1', displayName: 'Owner' },
+      clientMutationId: 'mutation-root',
+      id: 'comment-root',
+      timeStamp: 1,
+    });
+    first.addThread(
+      createThread('Node: Launch plan', [rootComment], 'thread-entity', false, {
+        kind: 'entity',
+        entityType: 'mindmap-node',
+        entityId: 'node-launch',
+        field: 'title',
+        labelSnapshot: 'Launch plan',
+      }),
+    );
+    applyUpdate(secondDoc, encodeStateAsUpdate(firstDoc));
+
+    const firstUpdates: Uint8Array[] = [];
+    const secondUpdates: Uint8Array[] = [];
+    firstDoc.on('update', (update) => firstUpdates.push(update));
+    secondDoc.on('update', (update) => secondUpdates.push(update));
+    const firstChanges = vi.fn();
+    const secondChanges = vi.fn();
+    first.subscribe(firstChanges);
+    second.subscribe(secondChanges);
+
+    first.setThreadResolved('thread-entity', true);
+    const reply = createComment(
+      'The launch dependency is explicit.',
+      'Reviewer',
+      {
+        actor: {
+          kind: 'user',
+          userId: 'reviewer-1',
+          displayName: 'Reviewer',
+        },
+        clientMutationId: 'mutation-reply',
+        id: 'comment-reply',
+        replyToCommentId: 'comment-root',
+        timeStamp: 2,
+      },
+    );
+    second.appendReply('thread-entity', reply);
+
+    firstUpdates.forEach((update) => applyUpdate(secondDoc, update));
+    secondUpdates.forEach((update) => applyUpdate(firstDoc, update));
+    expect(first.getSnapshot()).toEqual(second.getSnapshot());
+    const converged = first.getSnapshot()[0];
+    expect(converged).toMatchObject({
+      type: 'thread',
+      resolved: true,
+      anchor: {
+        kind: 'entity',
+        entityType: 'mindmap-node',
+        entityId: 'node-launch',
+        field: 'title',
+        labelSnapshot: 'Launch plan',
+      },
+      comments: [
+        { id: 'comment-root' },
+        {
+          id: 'comment-reply',
+          clientMutationId: 'mutation-reply',
+          replyToCommentId: 'comment-root',
+          actor: {
+            kind: 'user',
+            userId: 'reviewer-1',
+            displayName: 'Reviewer',
+          },
+        },
+      ],
+    });
+    expect(second.appendReply('thread-entity', reply).duplicate).toBe(true);
+    expect(second.getSnapshot()[0]).toMatchObject({ comments: [{}, {}] });
+
+    const unresolveUpdates: Uint8Array[] = [];
+    secondDoc.on('update', (update) => unresolveUpdates.push(update));
+    second.setThreadResolved('thread-entity', false);
+    unresolveUpdates.forEach((update) => applyUpdate(firstDoc, update));
+    expect(first.getSnapshot()[0]).toMatchObject({ resolved: false });
+    expect(firstChanges).toHaveBeenCalled();
+    expect(secondChanges).toHaveBeenCalled();
+    first.destroy();
+    second.destroy();
+  });
+
 
   it('broadcasts an agent reply through the shared Y.Doc to another store', async () => {
     const source = createFixture();

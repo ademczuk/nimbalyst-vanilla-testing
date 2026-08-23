@@ -21,6 +21,7 @@
  * has no document at all, so the factory requires it.
  */
 
+import type { CollaborationCommentsService } from '@nimbalyst/extension-sdk/types/comments';
 import type {
   CollaborationContext,
   CollaborationStatus,
@@ -67,6 +68,13 @@ export interface BrowserCollaborationContextOptions {
   hasUndecodedContent?(): boolean;
   reportSeedOutcome?(outcome: { ok: boolean; error?: unknown }): void;
   onRevisionAdapterChange?(adapter: RevisionSnapshotAdapter | null): void;
+  /**
+   * Host-owned collaborative comments. Omitted -- not stubbed -- when the
+   * embedding page cannot answer identity, roster and comment permission from
+   * its own authenticated session, which is how extensions feature-detect the
+   * capability. See `extensionComments.ts`.
+   */
+  comments?: CollaborationCommentsService;
 }
 
 /**
@@ -92,6 +100,7 @@ export function createBrowserCollaborationContext(
     flushWithAck: (timeoutMs) => options.flushWithAck(timeoutMs),
     hasUndecodedContent: () => options.hasUndecodedContent?.() ?? false,
     reportSeedOutcome: (outcome) => options.reportSeedOutcome?.(outcome),
+    ...(options.comments ? { comments: options.comments } : {}),
     registerRevisionAdapter: (adapter) => {
       currentAdapter = adapter;
       options.onRevisionAdapterChange?.(adapter);

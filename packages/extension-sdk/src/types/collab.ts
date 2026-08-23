@@ -30,6 +30,7 @@
  * @see CollabContentAdapter -- the former name, kept as a deprecated alias.
  */
 import type { Doc } from 'yjs';
+import type { CommentAnchor } from './comments';
 
 export type CollabContentFileSource = string | Uint8Array;
 
@@ -55,6 +56,18 @@ export interface CollabCodecMigration {
   from: number;
   to: number;
   run(yDoc: Doc): void;
+}
+
+/**
+ * Structured-comment anchor support for headless hosts. Hosts invoke these
+ * reads against a detached, disposable Y.Doc snapshot rather than the live
+ * collaborative document, so an accidental mutation cannot alter or sync the
+ * real document. Codecs should still treat the snapshot as read-only.
+ */
+export interface CollabCommentAnchorCodec {
+  handles(anchor: CommentAnchor): boolean;
+  getState(snapshot: Doc, anchor: CommentAnchor): 'attached' | 'orphaned';
+  describe(snapshot: Doc, anchor: CommentAnchor): string;
 }
 
 /** @deprecated Renamed to {@link CollabCodecMigration}. */
@@ -116,6 +129,9 @@ export interface CollabCodec<TStructured = unknown> {
    *  both this and `toStructured`. */
   applyStructuredPatch?(yDoc: Doc, patch: unknown): void;
 
+  /** Optional snapshot-isolated resolver for structured comment anchors. */
+  commentAnchors?: CollabCommentAnchorCodec;
+
   /** Optional: produce a snapshot for revision history. Defaults to
    *  `Y.encodeStateAsUpdateV2(yDoc)`. Override if you need a denser
    *  snapshot format. */
@@ -137,7 +153,8 @@ export interface CollabCodec<TStructured = unknown> {
  * `file bytes <-> Y.Doc shape` contract. Kept so existing extensions and the
  * host-internal `@nimbalyst/collab-adapters` registry keep compiling.
  */
-export type CollabContentAdapter<TStructured = unknown> = CollabCodec<TStructured>;
+export type CollabContentAdapter<TStructured = unknown> =
+  CollabCodec<TStructured>;
 
 /**
  * The collab surface on the extension context. Extensions call into

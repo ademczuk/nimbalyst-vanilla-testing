@@ -11,6 +11,10 @@ import {
 } from '../../atoms/trackers';
 import { windowModeAtom } from '../../atoms/windowMode';
 import { initDeepLinkListeners } from '../deepLinkListeners';
+import {
+  resetCommentPanelRequests,
+  subscribeCommentPanelRequests,
+} from '../../../components/TabEditor/collabCommentPanelRequests';
 import { normalizeSettingsDestination } from '../../../components/Settings/settingsRoutes';
 import {
   consumeInboxRowSelectionRequest,
@@ -78,6 +82,7 @@ describe('tracker deep-link routing', () => {
     store.set(windowModeAtom, 'files');
     store.set(pendingCollabDocumentAtom, null);
     consumeInboxRowSelectionRequest(PROJECT_ORG_MODE_SURFACE_ID);
+    resetCommentPanelRequests();
   });
 
   it('binds a shared-document link to the workspace scope selected by the desktop host', () => {
@@ -97,6 +102,29 @@ describe('tracker deep-link routing', () => {
       orgId: 'org-target',
       analyticsSource: 'deep_link',
     });
+  });
+
+  it('carries a comment notification thread target to the document comments pane', () => {
+    cleanup = initDeepLinkListeners();
+
+    handlers['deep-link:open-shared-document']({
+      documentId: 'doc-target',
+      orgId: 'org-target',
+      workspacePath: '/workspace/target',
+      threadId: 'thread-7',
+    });
+
+    // The pane does not exist yet -- the document is still opening -- so the
+    // request has to be waiting for it under the document's own URI. Thread
+    // identity only: nothing about where the anchor is travels with the link.
+    const delivered: unknown[] = [];
+    const unsubscribe = subscribeCommentPanelRequests(
+      'collab://org:org-target:doc:doc-target',
+      (request) => delivered.push(request),
+    );
+    unsubscribe();
+
+    expect(delivered).toEqual([{ threadId: 'thread-7', source: 'deep-link' }]);
   });
 
   it('keeps links without view on the plain tracker selection path', () => {

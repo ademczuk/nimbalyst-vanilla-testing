@@ -8,6 +8,7 @@
 export {
   LOCAL_ISSUE_KEY_PREFIX,
   LOCAL_KEY_SEPARATOR,
+  type IssueKeyStatus,
   describeIssueKey,
   formatLocalIssueKey,
   formatLocalKey,

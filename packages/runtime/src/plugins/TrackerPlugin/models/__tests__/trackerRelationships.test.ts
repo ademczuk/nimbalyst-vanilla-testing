@@ -12,6 +12,7 @@ import {
   deriveRelationshipEdges,
   computeInverseFieldDeltas,
 } from '../trackerRelationships';
+import { parseBuiltinTrackers } from '../ModelLoader';
 import type { FieldDefinition, TrackerRelationshipValue } from '../TrackerDataModel';
 
 /**
@@ -220,5 +221,53 @@ describe('computeInverseFieldDeltas (Phase 3)', () => {
 
   it('no-ops when the target set is unchanged', () => {
     expect(computeInverseFieldDeltas(def, source, [{ itemId: 'bug-1' }], [{ itemId: 'bug-1' }])).toEqual([]);
+  });
+
+  it('materializes and reverses a cross-type builtin bug-to-plan dependency', () => {
+    const models = new Map(parseBuiltinTrackers().map((model) => [model.type, model]));
+    const bugDependsOn = models.get('bug')!.fields.find((field) => field.name === 'dependsOn')!;
+    const planBlocks = models.get('plan')!.fields.find((field) => field.name === 'blocks')!;
+
+    expect(validateRelationshipValue(
+      bugDependsOn,
+      [{ itemId: 'plan-1', trackerType: 'plan' }],
+      { sourceItemId: 'bug-1' },
+    )).toEqual([]);
+
+    const [materializeOnPlan] = computeInverseFieldDeltas(
+      bugDependsOn,
+      { itemId: 'bug-1', issueKey: 'NIM-1', trackerType: 'bug' },
+      [],
+      [{ itemId: 'plan-1', trackerType: 'plan' }],
+    );
+    expect(materializeOnPlan).toMatchObject({
+      targetItemId: 'plan-1',
+      inverseFieldId: planBlocks.name,
+      op: 'add',
+      value: {
+        itemId: 'bug-1',
+        trackerType: 'bug',
+        relationshipTypeKey: 'blocks',
+      },
+    });
+
+    const materializedBlocks = addRelationshipValue(planBlocks, undefined, materializeOnPlan.value);
+    expect(computeInverseFieldDeltas(
+      planBlocks,
+      { itemId: 'plan-1', trackerType: 'plan' },
+      [],
+      materializedBlocks,
+    )).toEqual([
+      expect.objectContaining({
+        targetItemId: 'bug-1',
+        inverseFieldId: bugDependsOn.name,
+        op: 'add',
+        value: expect.objectContaining({
+          itemId: 'plan-1',
+          trackerType: 'plan',
+          relationshipTypeKey: 'depends-on',
+        }),
+      }),
+    ]);
   });
 });

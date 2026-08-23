@@ -13,17 +13,31 @@
 import type * as Y from 'yjs';
 import type { CollabContentAdapter } from '@nimbalyst/extension-sdk';
 import {
+  describeMockupPinTarget,
+  isMockupPinAnchor,
+  mockupPinIdFromAnchor,
+} from '../comments/mockupPinAnchor';
+import { resolveMockupPin } from '../comments/resolveMockupPin';
+import {
   Y_MOCKUP_HTML,
   Y_PROJECT_CONNECTIONS,
   Y_PROJECT_META,
   Y_PROJECT_MOCKUPS,
   getYMockupText,
+  getYMockupPins,
   isMockupProjectYDocEmpty,
   isMockupYDocEmpty,
   readProjectFromYDoc,
   seedMockupProjectYDoc,
   seedMockupYDoc,
 } from './seed';
+
+function parseMockupHtml(yDoc: Y.Doc): Document {
+  return new DOMParser().parseFromString(
+    getYMockupText(yDoc).toString(),
+    'text/html',
+  );
+}
 
 function decodeSource(source: string | Uint8Array): string {
   if (typeof source === 'string') return source;
@@ -66,6 +80,31 @@ export const MockupHtmlCollabContentAdapter: CollabContentAdapter = {
 
   toPlainText(yDoc) {
     return getYMockupText(yDoc).toString();
+  },
+
+  commentAnchors: {
+    handles(anchor) {
+      return isMockupPinAnchor(anchor);
+    },
+
+    getState(yDoc, anchor) {
+      const pinId = mockupPinIdFromAnchor(anchor);
+      const pin = pinId ? getYMockupPins(yDoc).get(pinId) : undefined;
+      if (!pin) return 'orphaned';
+
+      return resolveMockupPin(parseMockupHtml(yDoc), pin).status === 'detached'
+        ? 'orphaned'
+        : 'attached';
+    },
+
+    describe(yDoc, anchor) {
+      const pinId = mockupPinIdFromAnchor(anchor);
+      const pin = pinId ? getYMockupPins(yDoc).get(pinId) : undefined;
+      const labelSnapshot =
+        pin?.labelSnapshot ??
+        (isMockupPinAnchor(anchor) ? anchor.labelSnapshot ?? '' : '');
+      return describeMockupPinTarget(labelSnapshot);
+    },
   },
 };
 

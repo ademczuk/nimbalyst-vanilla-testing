@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useCallback } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { globalRegistry, loadBuiltinTrackers } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
+import { trackerItemsArrayAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin';
+import { computeReadiness } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerReadiness';
+import { getRecordStatus } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { TrackerSidebar } from './TrackerSidebar';
 import { TrackerMainView } from './TrackerMainView';
 import { type TrackerViewMode } from './trackerViewModes';
@@ -23,6 +26,7 @@ import {
   type SavedView,
   type SavedViewDefinition,
 } from './trackerSavedViews';
+import { withBuiltInSavedViews } from './trackerReadyQueue';
 import type { TrackerNavigationEntry } from '@nimbalyst/runtime/sync';
 import {
   deleteTrackerFolderAtom,
@@ -127,6 +131,11 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
   const [currentIdentity, setCurrentIdentity] = React.useState<TrackerIdentity | null>(null);
   const favoriteItemIds = useAtomValue(favoriteTrackerItemIdsAtom);
   const viewedAtByItemId = useAtomValue(trackerViewedAtByItemIdAtom);
+  const trackerItems = useAtomValue(trackerItemsArrayAtom);
+  const readinessByItemId = useMemo(
+    () => computeReadiness(trackerItems, getRecordStatus),
+    [trackerItems],
+  );
   const personalStateHydrated = useAtomValue(trackerPersonalStateHydratedAtom);
   const hydratePersonalState = useSetAtom(hydrateTrackerPersonalStateAtom);
 
@@ -194,7 +203,11 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
   }, [setModeLayout]);
 
   // Saved views (NIM-788)
-  const savedViews = useAtomValue(allTrackerSavedViewsAtom);
+  const persistedSavedViews = useAtomValue(allTrackerSavedViewsAtom);
+  const savedViews = useMemo(
+    () => withBuiltInSavedViews(persistedSavedViews),
+    [persistedSavedViews],
+  );
   const saveView = useSetAtom(saveTrackerViewAtom);
   const removeView = useSetAtom(removeTrackerViewAtom);
   const shareView = useSetAtom(shareTrackerViewAtom);
@@ -224,8 +237,12 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
     () => savedViews.find(view => view.id === activeSavedViewId) ?? null,
     [activeSavedViewId, savedViews],
   );
+  // A built-in view is rebuilt from code on every load, so "Save changes" would
+  // have nowhere to write; narrowing the filters simply leaves the view.
+  const savedViewEditable = !activeSavedView?.builtIn;
   const savedViewDirty = Boolean(
     activeSavedView
+    && savedViewEditable
     && !savedViewMatchesCurrent(activeSavedView.definition, currentViewDefinition),
   );
   const hasSavableCurrentView = hasSavableViewState(currentViewDefinition);
@@ -241,7 +258,7 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
   }, [currentViewDefinition, saveView]);
 
   const handleUpdateView = useCallback(() => {
-    if (!activeSavedView) return;
+    if (!activeSavedView || activeSavedView.builtIn) return;
     const updatedView = { ...activeSavedView, definition: currentViewDefinition };
     if (activeSavedView.shared) {
       void shareView(updatedView);
@@ -255,7 +272,7 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
   }, []);
 
   const handleRenameView = useCallback((name: string) => {
-    if (!activeSavedView) return;
+    if (!activeSavedView || activeSavedView.builtIn) return;
     const renamedView = { ...activeSavedView, name };
     if (activeSavedView.shared) {
       void shareView(renamedView);
@@ -292,6 +309,7 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
   }, [setModeLayout, modeLayout.typeColumnConfigs, modeLayout.typeColumnFilters]);
 
   const handleDeleteView = useCallback((view: SavedView) => {
+    if (view.builtIn) return;
     // Deleting a shared view removes it for the whole team and can't be undone,
     // so make the team-wide consequence explicit before acting.
     if (view.shared && !window.confirm(
@@ -304,6 +322,7 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
   }, [activeSavedViewId, removeView]);
 
   const handleToggleShareView = useCallback((view: SavedView) => {
+    if (view.builtIn) return;
     void (view.shared ? unshareView(view) : shareView(view));
   }, [shareView, unshareView]);
 
@@ -330,6 +349,7 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
       currentIdentity={currentIdentity}
       favoriteItemIds={favoriteItemIds}
       viewedAtByItemId={viewedAtByItemId}
+      readinessByItemId={readinessByItemId}
       personalStateHydrated={personalStateHydrated}
       recentlyViewedDays={modeLayout.recentlyViewedDays}
       columnFilters={modeLayout.typeColumnFilters[modeLayout.selectedType] ?? null}
@@ -369,9 +389,11 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
       currentIdentity={currentIdentity}
       favoriteItemIds={favoriteItemIds}
       viewedAtByItemId={viewedAtByItemId}
+      readinessByItemId={readinessByItemId}
       personalStateHydrated={personalStateHydrated}
       activeSavedView={activeSavedView}
       savedViewDirty={savedViewDirty}
+      savedViewEditable={savedViewEditable}
       showSaveViewAction={!activeSavedView && hasSavableCurrentView}
       onSaveView={handleSaveView}
       onRenameSavedView={handleRenameView}

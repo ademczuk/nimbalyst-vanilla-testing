@@ -36,6 +36,7 @@ import * as lexicalMarkdown from '@lexical/markdown';
 
 // Import runtime UI components that extensions can use
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
+import * as CollaborativeCommentUI from '@nimbalyst/runtime/editor/commenting/ui';
 
 // Import screenshot service and document path context from runtime
 import {
@@ -171,6 +172,10 @@ ${exportNames.map((name) => `export const ${name} = __mod?.${name};`).join('\n')
     imports['@nimbalyst/runtime/ui/icons/MaterialSymbol'] = createModuleUrl(
       '@nimbalyst/runtime/ui/icons/MaterialSymbol',
       deps['@nimbalyst/runtime/ui/icons/MaterialSymbol']
+    );
+    imports['@nimbalyst/runtime/editor/commenting/ui'] = createModuleUrl(
+      '@nimbalyst/runtime/editor/commenting/ui',
+      deps['@nimbalyst/runtime/editor/commenting/ui']
     );
     imports['@nimbalyst/screenshot-service'] = createModuleUrl(
       '@nimbalyst/screenshot-service',
@@ -455,6 +460,7 @@ CHECK:
       '@nimbalyst/editor-context': { useDocumentPath },
       // Runtime UI components
       '@nimbalyst/runtime/ui/icons/MaterialSymbol': { MaterialSymbol },
+      '@nimbalyst/runtime/editor/commenting/ui': CollaborativeCommentUI,
       // Core services for extensions
       '@nimbalyst/screenshot-service': {
         screenshotService,

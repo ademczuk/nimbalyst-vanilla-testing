@@ -259,6 +259,9 @@ export function statusValuesInCategories(
  */
 export const STATUS_CATEGORY_FILTER_FIELD = 'statusCategory';
 
+/** Synthetic dependency-readiness field shared by tracker filter accessors. */
+export const READINESS_FILTER_FIELD = 'readiness';
+
 /** The categories an "open work" scope keeps. */
 export const OPEN_CATEGORIES: readonly StatusCategory[] = ['backlog', 'unstarted', 'started'];
 

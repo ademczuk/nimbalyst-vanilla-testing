@@ -37,15 +37,19 @@ function primeFeedbackRequestIndex(target: FeedbackRequestIndexTarget): void {
 }
 
 /**
- * The shared area's feedback surface: every request this member is party to.
+ * The organization's feedback surface: every request this member is party to.
  *
  * A request is a resource, not a message, and until now it only existed as one
  * dismissible inbox delivery (recipient) or one closable results tab (author).
  * This is where it stays findable afterwards — open, answered and closed — and
  * where opening one lands on the same rich request UI it was delivered in.
  *
- * It lives beside the shared documents because that is what the feedback is
- * usually about; the organization window's Inbox remains the delivery path.
+ * It sits beside the Inbox, as its own destination rather than a seventh Inbox
+ * row, because the two read different sources: every Inbox row is an
+ * `InboxDelivery` addressed to one recipient, so a request *you* sent has no
+ * delivery and can never appear there (#3704). This list is the org-scoped
+ * index, which does carry it. The Inbox remains the delivery path; this is the
+ * inventory.
  *
  * The list is the org-scoped index, which the server already filtered to the
  * viewer's participation. Nothing here re-implements that gate; a request this
@@ -137,7 +141,7 @@ export function FeedbackSection({
       className="feedback-surface flex h-full min-h-0 flex-col [container-name:feedback-surface] [container-type:inline-size]"
       data-testid="feedback-surface"
       data-component="FeedbackSection"
-      data-source="packages/electron/src/renderer/components/CollabMode/Feedback/FeedbackSection.tsx"
+      data-source="packages/electron/src/renderer/components/TeamMode/Feedback/FeedbackSection.tsx"
     >
       <header className="feedback-header shrink-0 border-b border-[var(--nim-border)] px-5 py-4">
         <div className="feedback-header-title flex items-center gap-2">

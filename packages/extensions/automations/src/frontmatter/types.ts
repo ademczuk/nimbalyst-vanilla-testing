@@ -58,7 +58,11 @@ export interface AutomationOutput {
   mode: OutputMode;
   /** Relative path from workspace root to output directory or file */
   location: string;
-  /** Template for new-file mode. Supports {{date}}, {{time}}, {{id}} */
+  /**
+   * Names the output file in every mode. Supports {{date}}, {{time}}, {{id}}.
+   * Defaults to `{{date}}-output.md` for new-file and `output.md` for
+   * append/replace.
+   */
   fileNameTemplate?: string;
 }
 

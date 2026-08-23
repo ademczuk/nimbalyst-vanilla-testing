@@ -15,7 +15,7 @@ import { safeHandle } from '../utils/ipcRegistry';
 import { logger } from '../utils/logger';
 import { getCollabSyncWsUrl, getCollabSyncHttpUrl } from '../utils/collabSyncUrl';
 import { isAuthenticated, getStytchUserId, getUserEmail, getAuthState, getPersonalUserId, getPersonalSessionJwt, refreshPersonalSessionDetailed } from '../services/StytchAuthService';
-import { findTeamForWorkspace, getOrgScopedJwt } from '../services/TeamService';
+import { findTeamForWorkspace, resolveTeamForWorkspace, getOrgScopedJwt } from '../services/TeamService';
 import { getOrgIdFromJwt, getJwtExp, getSubFromJwt } from '../services/jwtOrg';
 import { getWorkspaceState, updateWorkspaceState } from '../utils/store';
 import { createSingleFlight } from '../utils/asyncCache';
@@ -1000,18 +1000,25 @@ export function registerDocumentSyncHandlers(): void {
     workspacePath: string;
   }) {
     if (!isAuthenticated()) {
-      return { success: false, error: 'Not authenticated. Sign in first.' };
+      return { success: false, error: 'Not authenticated. Sign in first.', retryable: false };
     }
 
-    const team = await findTeamForWorkspace(payload.workspacePath);
+    // `complete: false` means the lookup could not be carried out -- the team
+    // directory fetch timed out, or one account's fetch failed. Answering with
+    // the terminal "no team" message makes the renderer mark the scope
+    // permanently unavailable, which hides Shared Docs for the rest of the app
+    // session even though the next request would succeed.
+    const { team, complete } = await resolveTeamForWorkspace(payload.workspacePath);
     if (!team) {
-      return { success: false, error: 'No team found for this workspace.' };
+      return complete
+        ? { success: false, error: 'No team found for this workspace.', retryable: false }
+        : { success: false, error: 'Team lookup did not complete.', retryable: true };
     }
     const orgId = team.orgId;
     const teamJwt = await getOrgScopedJwt(orgId);
     const teamMemberId = getSubFromJwt(teamJwt);
     if (!teamMemberId) {
-      return { success: false, error: 'No team member ID available.' };
+      return { success: false, error: 'No team member ID available.', retryable: true };
     }
 
     const serverUrl = getCollabSyncWsUrl();

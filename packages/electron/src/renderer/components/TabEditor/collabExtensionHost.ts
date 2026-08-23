@@ -40,6 +40,11 @@ import {
   registerEditorAPI,
   unregisterEditorAPI,
 } from '@nimbalyst/runtime';
+import {
+  createHostedCollaborationComments,
+  type CollaborationCommentsHostConfig,
+  type HostedCollaborationComments,
+} from './collaborationCommentsService';
 
 /**
  * The DocumentSync -> y-protocols awareness bridge now lives in the runtime so
@@ -66,6 +71,8 @@ export function createCollaborationContext(args: {
   syncProvider: DocumentSyncProvider;
   awareness: Awareness;
   activeConfig: CollabDocumentConfig;
+  /** Omit when this host cannot provide live document-comment authority. */
+  comments?: CollaborationCommentsHostConfig;
   /**
    * Called whenever a custom editor registers (or unregisters) a revision
    * snapshot adapter. The CollaborativeTabEditor uses this to publish a
@@ -74,18 +81,29 @@ export function createCollaborationContext(args: {
    */
   onRevisionAdapterChange?: (adapter: RevisionSnapshotAdapter | null) => void;
 }): CollaborationContext {
-  const { syncProvider, awareness, activeConfig, onRevisionAdapterChange } = args;
+  const {
+    syncProvider,
+    awareness,
+    activeConfig,
+    comments,
+    onRevisionAdapterChange,
+  } = args;
   let currentAdapter: RevisionSnapshotAdapter | null = null;
   const contentFlushes = new Set<() => void | Promise<void>>();
+  const yDoc = syncProvider.getYDoc();
+  const hostedComments = comments
+    ? createHostedCollaborationComments({ yDoc, host: comments })
+    : null;
 
   const context: CollaborationContext = {
-    yDoc: syncProvider.getYDoc(),
+    yDoc,
     awareness,
     user: {
       id: activeConfig.teamMemberId,
       name: activeConfig.userName ?? activeConfig.teamMemberId,
       color: pickCursorColor(activeConfig.teamMemberId),
     },
+    ...(hostedComments ? { comments: hostedComments.service } : {}),
     getStatus: () => syncProvider.getStatus() as CollaborationStatus,
     onStatusChange: (cb) => statusFanout(syncProvider).subscribe(cb),
     loadInitialContent: async () => {
@@ -124,7 +142,40 @@ export function createCollaborationContext(args: {
   };
 
   contentFlushRegistry.set(context, contentFlushes);
+  if (hostedComments) {
+    commentsCleanupRegistry.set(context, hostedComments.destroy);
+    hostedCommentsRegistry.set(context, hostedComments);
+  }
   return context;
+}
+
+const commentsCleanupRegistry = new WeakMap<CollaborationContext, () => void>();
+const hostedCommentsRegistry = new WeakMap<
+  CollaborationContext,
+  HostedCollaborationComments
+>();
+
+/**
+ * The host's own handle on this tab's comments — the panel source and the
+ * platform-only mutations behind the comments pane.
+ *
+ * Kept off `CollaborationContext` deliberately: the context is what an
+ * extension receives, and it must expose only `comments.service`. Undefined
+ * when this host cannot provide comment authority for the document.
+ */
+export function getHostedCollaborationComments(
+  collaboration: CollaborationContext,
+): HostedCollaborationComments | undefined {
+  return hostedCommentsRegistry.get(collaboration);
+}
+
+/** Release tab-scoped comment adapters, controller, and repository lease. */
+export function disposeCollaborationContext(
+  collaboration: CollaborationContext,
+): void {
+  const cleanup = commentsCleanupRegistry.get(collaboration);
+  commentsCleanupRegistry.delete(collaboration);
+  cleanup?.();
 }
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@
     "rootDir": ".."
   },
   "include": [
+    "src/commenting-ui.ts",
     "src/docs-ui.ts",
     "src/feedback-ui.ts",
     "src/inbox.ts",

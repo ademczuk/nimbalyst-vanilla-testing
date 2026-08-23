@@ -29,6 +29,7 @@ Nouns:
   status      what nim is connected to (live or direct), schema, workspaces
 
 Tracker (read):
+  nim tracker ready  [--type T] [--limit N | --all] [--json|--csv|-q]
   nim tracker list   [--type T] [--status open|closed|<s>] [--priority P]
                      [--owner me|<o>] [--since 1d] [--until 2026-06-01]
                      [--where field=value] [--limit N | --all] [--json|--csv|-q]

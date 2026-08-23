@@ -64,6 +64,7 @@ import {
 } from "./tools/requestFeedbackToolHandler";
 import {
   handleTrackerList,
+  handleTrackerReady,
   handleTrackerGet,
   handleTrackerListTypes,
   handleTrackerDefineType,
@@ -589,6 +590,9 @@ function createSharedMcpServer(
 
         case "tracker_list":
           return handleTrackerList(args, workspacePath);
+
+        case "tracker_ready":
+          return handleTrackerReady(args, workspacePath);
 
         case "tracker_get":
           return handleTrackerGet(args, workspacePath);

@@ -21,6 +21,11 @@ const reportPath = path.join(distRoot, 'bundle-report.json');
 // 27,754 gzip bytes; the inbox transport measured 4,586 gzip bytes. Their
 // ceilings leave ~26% headroom so shell growth is a conscious review decision.
 export const COLLAB_BUNDLE_EAGER_GZIP_BUDGET_BYTES = {
+  // The comment panel/composer/mention primitives a browser extension host
+  // hands to a pinned extension, and nothing else. If this jumps, the comment
+  // UI has grown an editor or transport dependency it should not have.
+  // Initially 29,203 gzip bytes; same ~26% headroom as the shells above.
+  'commenting-ui': 37_000,
   editor: 320_000,
   'docs-ui': 70_000,
   'feedback-ui': 35_000,

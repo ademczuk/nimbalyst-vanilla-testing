@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { CommentMember } from '../../commenting/types';
+
+import type { CommentMember } from '../types';
 
 /**
  * Keep the `@`-mention roster current for an open composer.
@@ -53,4 +54,22 @@ export function filterMentionCandidates(
   return members.filter((member) =>
     member.name.toLowerCase().includes(q)
     || (member.email ?? '').toLowerCase().includes(q));
+}
+
+/**
+ * Drop mentions for users the roster no longer offers.
+ *
+ * The picker only ever offers roster members, but a composer can stay open
+ * across a roster change (someone leaves the org mid-draft). Submitting a
+ * mention for a non-member is rejected downstream by `validateCommentMentions`
+ * with `MENTION_FORBIDDEN`, which would fail the whole comment; dropping the
+ * mention here posts the comment and simply does not notify a user we are no
+ * longer allowed to notify.
+ */
+export function retainMentionableUserIds(
+  mentionedUserIds: string[],
+  members: CommentMember[],
+): string[] {
+  const allowed = new Set(members.map((member) => member.userId));
+  return mentionedUserIds.filter((userId) => allowed.has(userId));
 }

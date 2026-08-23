@@ -22,7 +22,12 @@ import type { OrgMessagingGating } from './orgSidebarViewModel';
  * an admin route left over from before that — a stale hand-off, a deep link —
  * is redirected to the messaging landing view rather than rendering nothing.
  */
-export type OrgWindowView = 'inbox' | 'conversation' | 'directory' | 'admin';
+export type OrgWindowView =
+  | 'inbox'
+  | 'feedback'
+  | 'conversation'
+  | 'directory'
+  | 'admin';
 
 /** The administration panels, which are the management dialog's tabs. */
 export type AdminTab =
@@ -72,6 +77,17 @@ export const INBOX_ROUTE: OrgWindowRoute = {
   filter: DEFAULT_INBOX_FILTER,
 };
 export const DIRECTORY_ROUTE: OrgWindowRoute = { view: 'directory' };
+
+/**
+ * The feedback-request inventory, beside the Inbox rather than inside it.
+ *
+ * Not an `InboxFilterId`: the six Inbox rows all cut the delivery pool on its
+ * reason axis, and a delivery is addressed to one recipient — so a request this
+ * member *sent* has no delivery and no Inbox row can hold it (#3704). This
+ * destination reads the org-scoped request index instead, which is why it is a
+ * view of its own and not a seventh filter.
+ */
+export const FEEDBACK_ROUTE: OrgWindowRoute = { view: 'feedback' };
 
 /**
  * The Inbox without naming a row — "put me in the Inbox, leave the filter

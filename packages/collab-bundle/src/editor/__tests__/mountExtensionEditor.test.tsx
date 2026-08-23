@@ -126,3 +126,76 @@ describe('mounting an extension editor over a collaborative document', () => {
     expect(() => handle.destroy()).not.toThrow();
   });
 });
+
+describe('the comments service the mount puts on the collaboration context', () => {
+  const SEAM = {
+    currentUser: { id: 'member-ada', name: 'Ada' },
+    getMembers: () => [
+      { userId: 'member-ada', name: 'Ada' },
+      { userId: 'member-bo', name: 'Bo' },
+    ],
+    documentTitle: 'budget.csv',
+    documentId: 'doc-1',
+    documentUri: 'nimbalyst://doc/doc-1',
+  };
+
+  /**
+   * The absent case is the whole point of the capability being optional. A
+   * page that cannot answer who the author is or who may comment -- the
+   * in-memory harness, a signed-out surface -- must leave the extension with
+   * nothing to feature-detect against, not a service that accepts comments
+   * into a document no one else will ever see.
+   */
+  it('leaves comments absent, not stubbed, when the page supplies no seam', async () => {
+    const { observed } = await mount();
+    const collaboration = observed.host!.collaboration!;
+
+    expect(collaboration.comments).toBeUndefined();
+    expect('comments' in collaboration).toBe(false);
+  });
+
+  it('reads the same shared document the extension was handed', async () => {
+    const { observed } = await mount({ comments: SEAM });
+    const collaboration = observed.host!.collaboration!;
+    const comments = collaboration.comments!;
+
+    expect(comments.getMentionableMembers().map((member) => member.userId))
+      .toEqual(['member-bo']);
+    // A peer's thread already in the room, not one this client authored.
+    collaboration.yDoc.getArray('comments').insert(0, [(() => {
+      const thread = new Y.Map<unknown>();
+      thread.set('type', 'thread');
+      thread.set('id', 'thread-1');
+      thread.set('quote', 'Pin 1 — Save changes');
+      thread.set('resolved', false);
+      thread.set('comments', new Y.Array());
+      return thread;
+    })()]);
+
+    expect(comments.getSnapshot()).toHaveLength(1);
+  });
+
+  /**
+   * `canComment` is answered from a roster that resolves after this mount, so
+   * the first answer on a cold open is "not yet known". Without a way to
+   * re-publish it the affordance would stay hidden for the rest of the session.
+   */
+  it('republishes a resolved host answer without bypassing missing server authority', async () => {
+    let permitted = false;
+    const { handle, observed } = await mount({
+      comments: { ...SEAM, canComment: () => permitted },
+    });
+    const comments = observed.host!.collaboration!.comments!;
+    const seen: boolean[] = [];
+    comments.subscribe(() => seen.push(comments.getCapabilities().comment));
+
+    expect(comments.getCapabilities().comment).toBe(false);
+    permitted = true;
+    handle.refreshCommentAccess();
+
+    // This harness is in-memory (`serverAccess: not-applicable`), so the
+    // notification is delivered but cannot turn a local role answer into
+    // server-authorized comment access.
+    expect(seen).toEqual([false]);
+  });
+});

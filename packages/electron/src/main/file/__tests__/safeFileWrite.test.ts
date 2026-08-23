@@ -14,7 +14,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { writeFileAtomicSync, shouldBlockEmptyOverwrite } from '../safeFileWrite';
+import {
+  writeFileAtomicSync,
+  shouldBlockEmptyOverwrite,
+  wouldDiscardUnseenContent,
+  writeRecoverySnapshot,
+  RECOVERY_SNAPSHOT_INFIX,
+} from '../safeFileWrite';
 
 describe('writeFileAtomicSync', () => {
   let dir: string;
@@ -110,5 +116,78 @@ describe('shouldBlockEmptyOverwrite', () => {
 
   it('allows an autosave with real content', () => {
     expect(shouldBlockEmptyOverwrite({ content: '# Notes', diskContent: '# Old', source: 'auto' })).toBe(false);
+  });
+});
+
+/**
+ * #3684: the same shape as #647 above, one level more general. #647 refused one
+ * *value* of wrong buffer (empty); this refuses to lose disk content the writer
+ * never demonstrably saw, whatever it contains.
+ */
+describe('wouldDiscardUnseenContent', () => {
+  const seen = { content: 'new', diskContent: 'on disk', lastKnownContent: 'on disk' };
+
+  it('is false when a baseline was supplied -- saveFile already proved disk matches it', () => {
+    expect(wouldDiscardUnseenContent(seen)).toBe(false);
+  });
+
+  it('is true when no baseline was supplied and disk holds something else', () => {
+    expect(wouldDiscardUnseenContent({ ...seen, lastKnownContent: undefined })).toBe(true);
+  });
+
+  it('is false when the write is a no-op', () => {
+    expect(
+      wouldDiscardUnseenContent({ content: 'same', diskContent: 'same', lastKnownContent: undefined }),
+    ).toBe(false);
+  });
+
+  it('is false when there is nothing on disk worth keeping', () => {
+    expect(
+      wouldDiscardUnseenContent({ content: 'new', diskContent: '  \n', lastKnownContent: undefined }),
+    ).toBe(false);
+  });
+
+  it('still fires when the baseline is absent but disk matches nothing the writer holds', () => {
+    // The forced-overwrite retry lands here: the user chose to discard external
+    // changes, and this is the only copy of what they discarded.
+    expect(
+      wouldDiscardUnseenContent({
+        content: 'my version',
+        diskContent: 'their version',
+        lastKnownContent: undefined,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('writeRecoverySnapshot', () => {
+  let dir: string;
+  let target: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nim-recovery-'));
+    target = path.join(dir, 'plan.md');
+    fs.writeFileSync(target, 'the agent wrote this', 'utf-8');
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes the discarded content beside the file and leaves the file alone', () => {
+    const snapshot = writeRecoverySnapshot(target, 'the agent wrote this', Date.parse('2026-08-22T18:00:00Z'));
+
+    expect(fs.readFileSync(snapshot, 'utf-8')).toBe('the agent wrote this');
+    expect(fs.readFileSync(target, 'utf-8')).toBe('the agent wrote this');
+    expect(path.dirname(snapshot)).toBe(dir);
+    expect(path.basename(snapshot)).toContain(RECOVERY_SNAPSHOT_INFIX);
+  });
+
+  it('does not collide across snapshots of the same file at different times', () => {
+    const a = writeRecoverySnapshot(target, 'v1', Date.parse('2026-08-22T18:00:00Z'));
+    const b = writeRecoverySnapshot(target, 'v2', Date.parse('2026-08-22T18:00:01Z'));
+    expect(a).not.toBe(b);
+    expect(fs.readFileSync(a, 'utf-8')).toBe('v1');
+    expect(fs.readFileSync(b, 'utf-8')).toBe('v2');
   });
 });

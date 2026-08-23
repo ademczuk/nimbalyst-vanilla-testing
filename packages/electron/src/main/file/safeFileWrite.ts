@@ -123,3 +123,57 @@ export function shouldBlockEmptyOverwrite({ content, diskContent, source }: Empt
   if (content.trim().length > 0) return false;
   return diskContent.trim().length > 0;
 }
+
+/** Marks a snapshot of content a write was about to destroy. */
+export const RECOVERY_SNAPSHOT_INFIX = '.nimbalyst-discarded-';
+
+export interface DiscardRiskCheck {
+  content: string;
+  diskContent: string;
+  /**
+   * The conflict baseline the caller supplied. `undefined` means the write
+   * asked for the conflict check to be skipped, so nothing verified that the
+   * writer had ever seen what is currently on disk.
+   */
+  lastKnownContent: string | undefined;
+}
+
+/**
+ * True when a write is about to destroy disk content the writer never
+ * demonstrably saw.
+ *
+ * With a baseline present, `saveFile` has already proved disk matches it, so
+ * the writer is up to date and nothing is silently lost. Without one, the
+ * write is an unconditional overwrite -- a forced conflict resolution, or a
+ * caller that omitted the argument. #3684 was three callers in the second
+ * category. Snapshotting first is the "leave a recoverable artifact"
+ * requirement in .claude/rules/destructive-data-paths.md: we may still be
+ * wrong about which side is right, and the user has no other copy.
+ */
+export function wouldDiscardUnseenContent({
+  content,
+  diskContent,
+  lastKnownContent,
+}: DiscardRiskCheck): boolean {
+  if (lastKnownContent !== undefined) return false;
+  if (diskContent.trim().length === 0) return false;
+  return diskContent !== content;
+}
+
+/**
+ * Persist `diskContent` beside the file before it is overwritten, and return
+ * the snapshot path. Best effort: a failure here must never block the write
+ * the user asked for, so callers log and continue.
+ *
+ * The snapshot sits next to the file rather than in a hidden cache so the user
+ * can actually find it, and carries the atomic-write temp suffix's sibling
+ * treatment in the workspace watcher's ignore list.
+ */
+export function writeRecoverySnapshot(filePath: string, diskContent: string, now: number): string {
+  const dir = path.dirname(filePath);
+  const base = path.basename(filePath);
+  const stamp = new Date(now).toISOString().replace(/[:.]/g, '-');
+  const snapshotPath = path.join(dir, `${base}${RECOVERY_SNAPSHOT_INFIX}${stamp}`);
+  fs.writeFileSync(snapshotPath, diskContent, 'utf-8');
+  return snapshotPath;
+}

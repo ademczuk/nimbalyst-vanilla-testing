@@ -161,41 +161,90 @@ export interface TaskTerminalNotification {
   status: 'completed' | 'failed' | 'stopped';
   summary?: string;
   outputFile?: string;
+  /**
+   * The task reported 'stopped' because OUR teardown killed it — the drain
+   * grace timer expired, we closed the prompt stream, and the CLI killed the
+   * task along with its own process. Distinct from a user stop, which reaches
+   * this struct identically. A background shell (local_bash) streams no chunks
+   * while it runs, so it never resets the grace timer and this is its normal
+   * fate on any run longer than the window. See GitHub #1355.
+   */
+  killedByTeardown?: boolean;
+  /** How long the task had been running when it was killed, for the report. */
+  elapsedMs?: number;
+}
+
+/** True for a task that ended only because our own teardown killed it. */
+function wasKilledByTeardown(n: TaskTerminalNotification): boolean {
+  return n.status === 'stopped' && n.killedByTeardown === true;
+}
+
+/** A notification worth telling the session about. */
+function isReportable(n: TaskTerminalNotification): boolean {
+  return n.status !== 'stopped' || wasKilledByTeardown(n);
 }
 
 /**
  * After a clean drain resolve, decide whether to wake the session with a
- * visible continuation turn carrying the task results. Only completed/failed
- * tasks warrant one — a task stopped by the user should stay stopped.
+ * visible continuation turn carrying the task results. Completed/failed tasks
+ * warrant one, and so does a task our own teardown killed — silence there left
+ * the agent unable to tell "killed" from "stopped" and cost the reporter a
+ * duplicate paid re-run (#1355). A task the USER stopped stays stopped.
  */
 export function shouldContinueWithTaskResults(
   cause: DrainExitCause,
   notifications: TaskTerminalNotification[],
 ): boolean {
-  return cause === 'resolved' && notifications.some(n => n.status !== 'stopped');
+  return cause === 'resolved' && notifications.some(isReportable);
+}
+
+/** "13m 42s" / "47s" — coarse duration for the report line. */
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
 /**
  * Build the continuation prompt delivered (via the idle-message path) when
- * background tasks finished after the lead turn ended. Visible to the user,
- * so it reads as a system notification rather than an internal nudge.
+ * background tasks settled after the lead turn ended. Visible to the user, so
+ * it reads as a system notification rather than an internal nudge.
+ *
+ * A teardown kill is named as a kill, not left as a bare "stopped": the agent
+ * reads this to decide whether the work still needs doing. See #1355.
  */
 export function buildTaskResultContinuationMessage(
   notifications: TaskTerminalNotification[],
 ): string {
-  const lines = notifications
-    .filter(n => n.status !== 'stopped')
-    .map(n => {
-      const parts = [`- "${n.description || n.taskId}" ${n.status}`];
-      if (n.summary) parts.push(`  Summary: ${n.summary}`);
-      if (n.outputFile) parts.push(`  Output file: ${n.outputFile}`);
-      return parts.join('\n');
-    });
-  return (
-    '[System: background task(s) you launched have finished:\n'
-    + lines.join('\n')
-    + '\nContinue the work that was waiting on them.]'
-  );
+  const reportable = notifications.filter(isReportable);
+  const killed = reportable.filter(wasKilledByTeardown);
+
+  const lines = reportable.map(n => {
+    const parts = wasKilledByTeardown(n)
+      ? [
+          `- "${n.description || n.taskId}" was KILLED at process exit`
+          + (n.elapsedMs !== undefined ? ` after running ${formatElapsed(n.elapsedMs)}` : '')
+          + ' — it did not finish on its own.',
+        ]
+      : [`- "${n.description || n.taskId}" ${n.status}`];
+    if (n.summary) parts.push(`  Summary: ${n.summary}`);
+    if (n.outputFile) parts.push(`  Output file: ${n.outputFile}`);
+    return parts.join('\n');
+  });
+
+  const header =
+    killed.length === reportable.length
+      ? '[System: background task(s) you launched were killed before finishing:'
+      : '[System: background task(s) you launched have settled:';
+
+  const footer = killed.length > 0
+    ? '\nAny output file above holds only partial output, up to the moment of the kill.'
+      + ' Treat the killed work as NOT done: re-run it, or report that it could not complete.'
+      + ' Continue the work that was waiting on the rest.]'
+    : '\nContinue the work that was waiting on them.]';
+
+  return header + '\n' + lines.join('\n') + footer;
 }
 
 /** True if any tracked sub-agent task is still running. */

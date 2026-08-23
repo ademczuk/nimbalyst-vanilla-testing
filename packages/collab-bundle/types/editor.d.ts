@@ -560,6 +560,12 @@ export interface ExtensionEditorMountOptions {
   initialContent?: string;
   initialBinaryContent?: ArrayBuffer;
   permissions?: BrowserExtensionPermissions;
+  /**
+   * The page's comment seam, the same object `mountCollabEditor` takes.
+   * Supplying it puts a `comments` service on the collaboration context the
+   * extension receives; omitting it leaves `collaboration.comments` absent.
+   */
+  comments?: CollabEditorCommentsOptions;
   readOnly?: boolean;
   theme?: string;
   onStateChange?(state: CollabEditorState): void;
@@ -598,6 +604,8 @@ export interface ExtensionEditorHandle {
   flushContent(): Promise<boolean>;
   flush(options?: { timeoutMs?: number }): Promise<CollabEditorFlushResult>;
   markClean(): void;
+  /** Re-publish comment capability to the mounted extension. */
+  refreshCommentAccess(): void;
   destroy(): void;
 }
 

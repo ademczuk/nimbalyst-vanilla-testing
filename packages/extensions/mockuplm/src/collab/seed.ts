@@ -27,22 +27,41 @@
  *   pre-collab Zustand store).
  */
 
-import * as Y from 'yjs';
+import * as Y from "yjs";
 import {
   createEmptyProject,
   type Connection,
   type MockupProjectFile,
   type MockupReference,
-} from '../types/project';
+} from "../types/project";
 
 // =====================================================================
 // .mockup.html (single mockup) -- Y.Text shape
 // =====================================================================
 
-export const Y_MOCKUP_HTML = 'html';
+export const Y_MOCKUP_HTML = "html";
+export const Y_MOCKUP_PINS = "mockupPins";
+
+export interface MockupPin {
+  id: string;
+  /** CSS selector captured at placement. Null for a free-floating pin. */
+  selector: string | null;
+  /** Tag + normalized text of the target, used to heal a broken selector. */
+  labelSnapshot: string;
+  /** Position inside the target's box (or inside the document box when free). */
+  offset: { xPct: number; yPct: number };
+  /** Viewport preset active at placement, for the "placed at Desktop" hint. */
+  viewport: { width: number; label: string };
+  createdAt: number;
+  createdBy: string;
+}
 
 export function getYMockupText(yDoc: Y.Doc): Y.Text {
   return yDoc.getText(Y_MOCKUP_HTML);
+}
+
+export function getYMockupPins(yDoc: Y.Doc): Y.Map<MockupPin> {
+  return yDoc.getMap<MockupPin>(Y_MOCKUP_PINS);
 }
 
 export function isMockupYDocEmpty(yDoc: Y.Doc): boolean {
@@ -51,9 +70,12 @@ export function isMockupYDocEmpty(yDoc: Y.Doc): boolean {
 
 export function seedMockupYDoc(
   yDoc: Y.Doc,
-  content: string | ArrayBuffer,
+  content: string | ArrayBuffer
 ): void {
-  const text = typeof content === 'string' ? content : decodeBuffer(content);
+  // Register the sibling top-level type even though seeding never writes pins.
+  // Pins belong to comment history, not to the replaceable HTML projection.
+  getYMockupPins(yDoc);
+  const text = typeof content === "string" ? content : decodeBuffer(content);
   if (!text) return;
   const yText = getYMockupText(yDoc);
   // Belt-and-suspenders: the SDK hook re-checks emptiness before calling
@@ -66,9 +88,9 @@ export function seedMockupYDoc(
 // .mockupproject (canvas) -- keyed entities shape
 // =====================================================================
 
-export const Y_PROJECT_MOCKUPS = 'mockups';
-export const Y_PROJECT_CONNECTIONS = 'connections';
-export const Y_PROJECT_META = 'meta';
+export const Y_PROJECT_MOCKUPS = "mockups";
+export const Y_PROJECT_CONNECTIONS = "connections";
+export const Y_PROJECT_META = "meta";
 
 /** Schema version stored in `meta.version`. Bump if the on-wire shape changes. */
 export const PROJECT_SCHEMA_VERSION = 1;
@@ -103,7 +125,7 @@ export interface YConnectionFields {
   toMockupId: string;
   fromElementSelector?: string;
   label?: string;
-  trigger?: 'click' | 'hover' | 'navigate';
+  trigger?: "click" | "hover" | "navigate";
 }
 
 /**
@@ -124,7 +146,7 @@ export function isMockupProjectYDocEmpty(yDoc: Y.Doc): boolean {
 
 export function seedMockupProjectYDoc(
   yDoc: Y.Doc,
-  content: string | ArrayBuffer,
+  content: string | ArrayBuffer
 ): void {
   // A recipient opening a shared project with no in-memory initial-content
   // payload gets `''` (or an empty buffer) from `loadInitialContent`. There
@@ -133,7 +155,7 @@ export function seedMockupProjectYDoc(
   // "New Project" and the viewport to `(0, 0, 1)`, last-write-win clobbering
   // whatever the sender's seed wrote. Bail and wait for the server's sync
   // response instead.
-  const text = typeof content === 'string' ? content : decodeBuffer(content);
+  const text = typeof content === "string" ? content : decodeBuffer(content);
   if (!text.trim()) return;
 
   const file = parseProjectFile(text);
@@ -143,14 +165,16 @@ export function seedMockupProjectYDoc(
 
   // Meta first -- always written so subsequent loads can detect a seeded doc
   // even if it had zero mockups.
-  yMeta.set('version', PROJECT_SCHEMA_VERSION);
-  yMeta.set('name', file.name ?? 'New Project');
-  if (file.description !== undefined) yMeta.set('description', file.description);
-  if (file.designSystem !== undefined) yMeta.set('designSystem', file.designSystem);
+  yMeta.set("version", PROJECT_SCHEMA_VERSION);
+  yMeta.set("name", file.name ?? "New Project");
+  if (file.description !== undefined)
+    yMeta.set("description", file.description);
+  if (file.designSystem !== undefined)
+    yMeta.set("designSystem", file.designSystem);
   if (file.viewport) {
-    yMeta.set('viewportX', file.viewport.x);
-    yMeta.set('viewportY', file.viewport.y);
-    yMeta.set('viewportZoom', file.viewport.zoom);
+    yMeta.set("viewportX", file.viewport.x);
+    yMeta.set("viewportY", file.viewport.y);
+    yMeta.set("viewportZoom", file.viewport.zoom);
   }
 
   for (const mockup of file.mockups ?? []) {
@@ -179,36 +203,36 @@ export function seedMockupProjectYDoc(
  */
 export function writeMockupFields(
   yEntry: Y.Map<unknown>,
-  mockup: MockupReference,
+  mockup: MockupReference
 ): void {
-  yEntry.set('path', mockup.path);
-  yEntry.set('label', mockup.label);
-  yEntry.set('positionX', mockup.position.x);
-  yEntry.set('positionY', mockup.position.y);
-  yEntry.set('sizeWidth', mockup.size.width);
-  yEntry.set('sizeHeight', mockup.size.height);
+  yEntry.set("path", mockup.path);
+  yEntry.set("label", mockup.label);
+  yEntry.set("positionX", mockup.position.x);
+  yEntry.set("positionY", mockup.position.y);
+  yEntry.set("sizeWidth", mockup.size.width);
+  yEntry.set("sizeHeight", mockup.size.height);
 }
 
 export function writeConnectionFields(
   yEntry: Y.Map<unknown>,
-  conn: Connection,
+  conn: Connection
 ): void {
-  yEntry.set('fromMockupId', conn.fromMockupId);
-  yEntry.set('toMockupId', conn.toMockupId);
+  yEntry.set("fromMockupId", conn.fromMockupId);
+  yEntry.set("toMockupId", conn.toMockupId);
   if (conn.fromElementSelector !== undefined) {
-    yEntry.set('fromElementSelector', conn.fromElementSelector);
+    yEntry.set("fromElementSelector", conn.fromElementSelector);
   } else {
-    yEntry.delete('fromElementSelector');
+    yEntry.delete("fromElementSelector");
   }
   if (conn.label !== undefined) {
-    yEntry.set('label', conn.label);
+    yEntry.set("label", conn.label);
   } else {
-    yEntry.delete('label');
+    yEntry.delete("label");
   }
   if (conn.trigger !== undefined) {
-    yEntry.set('trigger', conn.trigger);
+    yEntry.set("trigger", conn.trigger);
   } else {
-    yEntry.delete('trigger');
+    yEntry.delete("trigger");
   }
 }
 
@@ -218,14 +242,14 @@ export function writeConnectionFields(
  */
 export function readMockupFields(
   id: string,
-  yEntry: Y.Map<unknown>,
+  yEntry: Y.Map<unknown>
 ): MockupReference {
-  const path = (yEntry.get('path') as string) ?? '';
-  const label = (yEntry.get('label') as string) ?? '';
-  const positionX = numberOr(yEntry.get('positionX'), 0);
-  const positionY = numberOr(yEntry.get('positionY'), 0);
-  const sizeWidth = numberOr(yEntry.get('sizeWidth'), 400);
-  const sizeHeight = numberOr(yEntry.get('sizeHeight'), 300);
+  const path = (yEntry.get("path") as string) ?? "";
+  const label = (yEntry.get("label") as string) ?? "";
+  const positionX = numberOr(yEntry.get("positionX"), 0);
+  const positionY = numberOr(yEntry.get("positionY"), 0);
+  const sizeWidth = numberOr(yEntry.get("sizeWidth"), 400);
+  const sizeHeight = numberOr(yEntry.get("sizeHeight"), 300);
   return {
     id,
     path,
@@ -237,18 +261,18 @@ export function readMockupFields(
 
 export function readConnectionFields(
   id: string,
-  yEntry: Y.Map<unknown>,
+  yEntry: Y.Map<unknown>
 ): Connection {
-  const fromMockupId = (yEntry.get('fromMockupId') as string) ?? '';
-  const toMockupId = (yEntry.get('toMockupId') as string) ?? '';
-  const fromElementSelector = yEntry.get('fromElementSelector') as
+  const fromMockupId = (yEntry.get("fromMockupId") as string) ?? "";
+  const toMockupId = (yEntry.get("toMockupId") as string) ?? "";
+  const fromElementSelector = yEntry.get("fromElementSelector") as
     | string
     | undefined;
-  const label = yEntry.get('label') as string | undefined;
-  const trigger = yEntry.get('trigger') as
-    | 'click'
-    | 'hover'
-    | 'navigate'
+  const label = yEntry.get("label") as string | undefined;
+  const trigger = yEntry.get("trigger") as
+    | "click"
+    | "hover"
+    | "navigate"
     | undefined;
   return {
     id,
@@ -275,14 +299,14 @@ export function readProjectFromYDoc(yDoc: Y.Doc): MockupProjectFile {
     connections.push(readConnectionFields(key, value));
   });
 
-  const name = (yMeta.get('name') as string) ?? 'New Project';
-  const description = yMeta.get('description') as string | undefined;
-  const designSystem = yMeta.get('designSystem') as
-    | MockupProjectFile['designSystem']
+  const name = (yMeta.get("name") as string) ?? "New Project";
+  const description = yMeta.get("description") as string | undefined;
+  const designSystem = yMeta.get("designSystem") as
+    | MockupProjectFile["designSystem"]
     | undefined;
-  const viewportX = numberOr(yMeta.get('viewportX'), 0);
-  const viewportY = numberOr(yMeta.get('viewportY'), 0);
-  const viewportZoom = numberOr(yMeta.get('viewportZoom'), 1);
+  const viewportX = numberOr(yMeta.get("viewportX"), 0);
+  const viewportY = numberOr(yMeta.get("viewportY"), 0);
+  const viewportZoom = numberOr(yMeta.get("viewportZoom"), 1);
 
   return {
     version: 1,
@@ -300,7 +324,7 @@ export function readProjectFromYDoc(yDoc: Y.Doc): MockupProjectFile {
 // =====================================================================
 
 function parseProjectFile(content: string | ArrayBuffer): MockupProjectFile {
-  if (typeof content !== 'string') {
+  if (typeof content !== "string") {
     try {
       content = new TextDecoder().decode(content);
     } catch {
@@ -319,10 +343,10 @@ function decodeBuffer(buf: ArrayBuffer): string {
   try {
     return new TextDecoder().decode(buf);
   } catch {
-    return '';
+    return "";
   }
 }
 
 function numberOr(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }

@@ -838,7 +838,26 @@ let pendingDeepLinkUrl: string | null = null;
 // Per-workspace queue of shared-document deep links waiting for the renderer
 // to be ready (e.g., a window we just created for the project). Drained via
 // the `deep-link:consume-pending-shared-doc` IPC during listener init.
-const pendingSharedDocLinks = new Map<string, { documentId: string; orgId: string }>();
+const pendingSharedDocLinks = new Map<string, { documentId: string; orgId: string; threadId?: string }>();
+
+/**
+ * A comment notification carries the thread it is about, and nothing else about
+ * where that thread lives. Identity only — no DOM selector, node key, or
+ * coordinate ever goes in a notification URL, because the anchor is resolved by
+ * whichever editor is mounted when the link is followed.
+ */
+const MAX_DEEP_LINK_THREAD_ID_CHARS = 200;
+
+function parseDeepLinkThreadId(parsed: URL): string | undefined {
+    const raw = parsed.searchParams.get('threadId');
+    if (!raw) return undefined;
+    const threadId = raw.trim();
+    if (!threadId || threadId.length > MAX_DEEP_LINK_THREAD_ID_CHARS) return undefined;
+    // Control characters cannot appear in a thread id and are how a crafted
+    // link would smuggle a newline into a log line or a renderer payload.
+    if (/[\u0000-\u001F\u007F]/u.test(threadId)) return undefined;
+    return threadId;
+}
 
 safeHandle('deep-link:consume-pending-shared-doc', (_event, workspacePath: string) => {
     if (!workspacePath) return null;
@@ -911,7 +930,9 @@ async function openInboxSourceFromDeepLink(rawUrl: string): Promise<boolean> {
         }
         if (parsed.host === 'doc' && orgId) {
             const documentId = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
-            return documentId ? openSharedDocumentFromDeepLink(documentId, orgId) : false;
+            return documentId
+                ? openSharedDocumentFromDeepLink(documentId, orgId, parseDeepLinkThreadId(parsed))
+                : false;
         }
         if (parsed.host === 'conversation' && orgId) {
             const conversation = parseConversationDeepLink(rawUrl);
@@ -1050,7 +1071,7 @@ async function handleDeepLink(url: string): Promise<void> {
                 return;
             }
 
-            await openSharedDocumentFromDeepLink(documentId, orgId);
+            await openSharedDocumentFromDeepLink(documentId, orgId, parseDeepLinkThreadId(parsed));
         } else if (parsed.host === 'folder' || parsed.pathname?.startsWith('/folder/')) {
             // Handle shared folder link: nimbalyst://folder/{folderId}?orgId={orgId}
             const encoded = parsed.host === 'folder'
@@ -1240,8 +1261,13 @@ async function findWorkspaceForOrgId(orgId: string): Promise<string | null> {
  * Route a shared-document deep link to the renderer holding the matching
  * team workspace. Queues the payload in `pendingSharedDocLinks` so a freshly
  * created window's renderer can drain it on listener init.
+ *
+ * `threadId` is present when the link came from a comment notification. It is
+ * carried verbatim to the renderer, which opens the document's comments panel
+ * on that thread; resolving where the thread is anchored is the mounted
+ * editor's job, never this payload's.
  */
-async function openSharedDocumentFromDeepLink(documentId: string, orgId: string): Promise<boolean> {
+async function openSharedDocumentFromDeepLink(documentId: string, orgId: string, threadId?: string): Promise<boolean> {
     const reason = !isAuthenticated() ? 'not-authenticated' : 'no-workspace';
     const workspacePath = isAuthenticated() ? await findWorkspaceForOrgId(orgId) : null;
 
@@ -1259,7 +1285,7 @@ async function openSharedDocumentFromDeepLink(documentId: string, orgId: string)
     // Queue first; the renderer drains by workspacePath on listener init.
     // For an already-loaded window we also fire the live event below; the
     // renderer treats it as idempotent against the pending queue.
-    pendingSharedDocLinks.set(workspacePath, { documentId, orgId });
+    pendingSharedDocLinks.set(workspacePath, { documentId, orgId, ...(threadId ? { threadId } : {}) });
 
     const existing = findWindowByWorkspace(workspacePath);
     if (existing && !existing.isDestroyed()) {
@@ -1269,6 +1295,7 @@ async function openSharedDocumentFromDeepLink(documentId: string, orgId: string)
             documentId,
             orgId,
             workspacePath,
+            ...(threadId ? { threadId } : {}),
         });
         logger.main.info('[DeepLink] Routed shared doc to existing window:', { workspacePath, documentId });
         return true;

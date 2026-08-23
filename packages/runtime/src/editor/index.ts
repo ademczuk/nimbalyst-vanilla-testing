@@ -49,12 +49,15 @@ export {
 } from './commenting';
 export { CommentCollabProvider } from './commenting/CommentCollabProvider';
 export {
+  classifyCommentAnchorInput,
+  collabCommentAnchorAdapterRegistry,
   collabCommentControllerRegistry,
   CollabCommentControllerError,
   createCollabCommentController,
 } from './commenting/CollabCommentControllerRegistry';
 export type {
   CollabCommentController,
+  CommentAnchorInput,
   CommentAnchorSelector,
   CommentControllerErrorCode,
   CommentControllerListResult,

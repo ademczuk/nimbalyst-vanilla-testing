@@ -163,6 +163,28 @@ describe('OrgSidebar', () => {
     expect(onNavigate.mock.calls.every(([route]) => route.view !== 'admin')).toBe(true);
   });
 
+  // The feedback index is not the delivery pool. A delivery is addressed to one
+  // recipient, so a request this member *sent* has none — routing Feedback as an
+  // InboxFilterId would put the inventory behind the one source that structurally
+  // cannot hold half of it (#3704).
+  it('routes Feedback to its own view rather than a seventh inbox filter', () => {
+    const onNavigate = vi.fn();
+    render(<OrgSidebar model={model} onNavigate={onNavigate} />);
+
+    fireEvent.click(screen.getByTestId('org-feedback'));
+
+    expect(onNavigate).toHaveBeenCalledWith({ view: 'feedback' });
+    expect(onNavigate.mock.calls.every(([route]) => route.view !== 'inbox')).toBe(true);
+  });
+
+  it('keeps the Feedback row out of the collapsible Inbox section', () => {
+    const { container } = render(<OrgSidebar model={model} onNavigate={vi.fn()} />);
+
+    const inboxSection = container.querySelector('[data-testid="org-inbox-section"]');
+    expect(inboxSection?.querySelector('.org-feedback-item')).toBeNull();
+    expect(container.querySelector('.org-feedback-item')).not.toBeNull();
+  });
+
   // A failed directory read used to render "No rooms yet. Create one with + or
   // browse below." — telling a member to create rooms the org may already have.
   it('says the directory could not be loaded instead of claiming it is empty', () => {

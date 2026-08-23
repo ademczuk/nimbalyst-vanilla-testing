@@ -118,7 +118,15 @@ export class AutomationScheduler {
             existing.status.enabled !== status.enabled;
 
           existing.status = status;
-          if (scheduleChanged) {
+          if (!status.enabled) {
+            // Level-triggered, not edge-triggered: a disabled automation must
+            // hold no timer after *every* scan. Clearing only on the scan that
+            // observes the transition means one missed edge leaves a timer that
+            // no later scan ever clears, because both sides then read false.
+            // #1351: the edge was routinely missed while a run was in flight.
+            this.clearTimer(existing);
+            existing.nextRunAt = null;
+          } else if (scheduleChanged) {
             // Schedule or enabled flag changed — recompute the target from the
             // updated status (honoring a freshly-written nextRun) rather than
             // keeping the old one.
@@ -272,14 +280,51 @@ export class AutomationScheduler {
         return;
       }
 
+      // The in-memory status can be minutes stale — the file may have been
+      // disabled since this timer was armed, and the 30s poll may not have run
+      // yet. The scheduled path decides from disk, never from memory (#1351).
+      // `runNow` deliberately still honors a manual trigger on a disabled
+      // automation; only the automatic path is gated.
+      if (!(await this.refreshEnabledFromDisk(automation))) {
+        this.clearTimer(automation);
+        automation.nextRunAt = null;
+        return;
+      }
+
       await this.runNow(automation.filePath);
 
       // Compute the next target from a fresh now (a single overdue run catches
       // up, then cadence resumes going forward).
       const next = calculateNextRun(automation.status.schedule);
       automation.nextRunAt = next ? next.getTime() : null;
-      if (automation.nextRunAt !== null) this.armTimer(automation);
+      // Re-arm through scheduleNext so the enabled check sits on the only path
+      // that arms a timer — a run that finishes after a disable must not
+      // resurrect the chain. A null target means the schedule can never fire
+      // again, so stay unarmed rather than letting scheduleNext fall back to a
+      // stale persisted nextRun.
+      if (automation.nextRunAt !== null) this.scheduleNext(automation);
     }, cappedMs);
+  }
+
+  /**
+   * Re-read the automation from disk and adopt its status, returning whether it
+   * is still enabled. Used by the timer callback so an automatic run is decided
+   * from the file rather than from a possibly-stale in-memory copy. Adopting the
+   * status also lets the next rescan see a later re-enable as a transition.
+   *
+   * An unreadable or no-longer-parseable file reports "not enabled" — declining
+   * to run is the safe direction, and the next rescan removes or repairs it.
+   */
+  private async refreshEnabledFromDisk(automation: ScheduledAutomation): Promise<boolean> {
+    try {
+      const status = parseAutomationStatus(await this.fs.readFile(automation.filePath));
+      if (!status) return false;
+      automation.status = status;
+      return status.enabled;
+    } catch (err) {
+      console.error(`[Automations] Failed to re-read ${automation.filePath} before firing:`, err);
+      return false;
+    }
   }
 
   /**

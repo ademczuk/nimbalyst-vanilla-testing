@@ -8,6 +8,7 @@ import {
   OrgConversationRow,
   OrgDirectoryLoadError,
   OrgInboxNavRow,
+  OrgSidebarRow,
   OrgSidebarSectionNote,
 } from './OrgSidebarRows';
 import { OrgSidebarSectionAdd } from './OrgSidebarSectionMenu';
@@ -25,6 +26,7 @@ import { filterOrgSidebarModel, matchesOrgSidebarQuery } from './orgSidebarViewM
 import type { OrgWindowRoute } from './orgWindowState';
 import {
   DIRECTORY_ROUTE,
+  FEEDBACK_ROUTE,
   ORG_WINDOW_SURFACE_ID,
 } from './orgWindowState';
 
@@ -173,6 +175,25 @@ export const OrgSidebar = React.memo(function OrgSidebar({
             />
           ))}
         </SidebarSection>
+
+        {/* Outside the Inbox section on purpose. Every row above is a cut of the
+            delivery pool; this one reads the org's feedback-request index, which
+            is the only source that holds a request this member sent (#3704).
+            Folding it in with the six would make it read as a seventh filter
+            over the same deliveries, which it is not. */}
+        {matchesOrgSidebarQuery('Feedback', query) && (
+          <div className="org-feedback-nav mt-0.5">
+            <OrgSidebarRow
+              surfaceId={surfaceId}
+              className="org-feedback-item"
+              testId="org-feedback"
+              icon="ballot"
+              label="Feedback"
+              route={FEEDBACK_ROUTE}
+              onNavigate={onNavigate}
+            />
+          </div>
+        )}
 
         {gating.roomsVisible && (
           <SidebarSection

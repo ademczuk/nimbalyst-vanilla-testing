@@ -213,6 +213,20 @@ describe('shouldContinueWithTaskResults', () => {
     ).toBe(false);
   });
 
+  // Regression: GitHub #1355. A background shell (local_bash) streams no chunks
+  // while it runs, so the drain grace timer never resets and closes stdin after
+  // its window — the CLI then kills the shell and reports it 'stopped'. That is
+  // OUR teardown, not a user stop, but it took the same silent path: the session
+  // woke with no message at all and neither the agent nor the user could tell
+  // "killed" from "stopped". A killed-by-teardown task must be reported.
+  it('continues for a task our own teardown killed, unlike a user stop', () => {
+    expect(
+      shouldContinueWithTaskResults('resolved', [
+        { taskId: 'b1', description: 'gh run watch', status: 'stopped', killedByTeardown: true },
+      ]),
+    ).toBe(true);
+  });
+
   it('does not continue when the drain did not resolve cleanly', () => {
     expect(
       shouldContinueWithTaskResults('aborted', [
@@ -240,6 +254,26 @@ describe('buildTaskResultContinuationMessage', () => {
     expect(msg).toContain('BUILD_EXIT=0');
     expect(msg).toContain('/tmp/tasks/b1.output');
     expect(msg).not.toContain('stopped watcher');
+  });
+
+  // #1355: name the cause instead of leaving a bare "stopped". The agent reads
+  // this to decide whether to re-run the work — an ambiguous status caused a
+  // duplicate paid re-run in the reporter's workspace.
+  it('reports a teardown kill as killed, names the grace window, and keeps a user stop out', () => {
+    const msg = buildTaskResultContinuationMessage([
+      {
+        taskId: 'b1',
+        description: 'gh run watch 32603089993',
+        status: 'stopped',
+        killedByTeardown: true,
+        outputFile: '/tmp/tasks/b1.output',
+      },
+      { taskId: 'b2', description: 'user stopped watcher', status: 'stopped' },
+    ]);
+    expect(msg).toContain('gh run watch 32603089993');
+    expect(msg).toContain('killed');
+    expect(msg).toContain('/tmp/tasks/b1.output');
+    expect(msg).not.toContain('user stopped watcher');
   });
 });
 

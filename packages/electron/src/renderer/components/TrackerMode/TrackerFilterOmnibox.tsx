@@ -21,7 +21,7 @@
  */
 
 import type { JSX, KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import {
   isClauseComplete,
@@ -41,6 +41,7 @@ import {
   type TagTokenOption,
   type TokenSuggestion,
 } from './trackerFilterTokens';
+import { TRACKER_FOCUS_SEARCH_EVENT } from './trackerSearchFocus';
 
 interface TrackerFilterOmniboxProps {
   /** The shared free-text query. Same state the toolbar search input drives. */
@@ -141,6 +142,20 @@ export function TrackerFilterOmnibox({
       return Math.min(current, suggestions.length - 1);
     });
   }, [suggestions.length]);
+
+  // Cmd+F (Edit > Find, routed by content mode) lands here. Selecting the text
+  // matches every other find box: the next keystroke starts a new search rather
+  // than appending to whatever the box was last filtered by.
+  useEffect(() => {
+    const focusSearch = () => {
+      const node = inputRef.current;
+      if (!node) return;
+      node.focus();
+      node.select();
+    };
+    window.addEventListener(TRACKER_FOCUS_SEARCH_EVENT, focusSearch);
+    return () => window.removeEventListener(TRACKER_FOCUS_SEARCH_EVENT, focusSearch);
+  }, []);
 
   const applyInput = useCallback((value: string, autoHighlight: boolean) => {
     const next = parseOmniboxInput(value, fields);

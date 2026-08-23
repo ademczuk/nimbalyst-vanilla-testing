@@ -1,7 +1,7 @@
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
 import type { TrackerItem } from '@nimbalyst/runtime';
 import type { ElectronDocumentService } from '../../services/ElectronDocumentService';
-import { isTrackerSyncActive } from '../../services/TrackerSyncManager';
+import { isTrackerSyncActive, isTrackerSyncConfigured } from '../../services/TrackerSyncManager';
 import { awaitServerIssueKey } from '../../services/tracker/awaitServerIssueKey';
 import { resolveTrackerRowByReference } from './trackerToolItemAccess';
 import {
@@ -54,13 +54,16 @@ export async function handleTrackerPublicationUpdate(
   }
 
   const existingKey = getAssignedIssueKey(item);
-  // Whether anything could mint a key at all. Without this the sync-inactive
-  // path below is silently skipped and the result still claims a key is
-  // "pending" -- the exact report in #1346, where the item was published and
-  // then waited nine days on a room that did not exist.
-  const canIssueKeys = isTrackerSyncActive(workspacePath);
+  // Two different questions, and conflating them misreports one case or the
+  // other. Whether a key can EVER arrive is about the team: without a room,
+  // claiming a key is "pending" is #1346, where the item was published and then
+  // waited nine days on a room that did not exist. Whether to WAIT for one now
+  // is about the socket: offline there is nothing to wait for, and asking would
+  // just spend the timeout (NIM-3659).
+  const canIssueKeys = isTrackerSyncConfigured(workspacePath);
+  const canAwaitKey = isTrackerSyncActive(workspacePath);
   let publishedItem = await docService.setTrackerItemPublished(item.id, args.published);
-  if (args.published && !existingKey && !getAssignedIssueKey(publishedItem) && canIssueKeys) {
+  if (args.published && !existingKey && !getAssignedIssueKey(publishedItem) && canAwaitKey) {
     const serverKey = await awaitServerIssueKey(db, publishedItem.id);
     if (serverKey) {
       const keyedRow = await resolveTrackerRowByReference(db, publishedItem.id, workspacePath);

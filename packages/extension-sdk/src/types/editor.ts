@@ -16,6 +16,7 @@
 import type { Doc as YDoc } from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import type { ExtensionStorage } from './panel.js';
+import type { CollaborationCommentsService } from './comments.js';
 
 // ============================================================================
 // Collaboration types
@@ -88,6 +89,13 @@ export interface CollaborationContext {
 
   /** Identity used to drive `awareness` and presence display. */
   readonly user: { id: string; name: string; color: string };
+
+  /**
+   * Host-owned collaborative comments for this document. Absent when the host
+   * cannot provide live authorization, hydration, identity, and notification
+   * routing for the capability.
+   */
+  readonly comments?: CollaborationCommentsService;
 
   /** Current connection status. */
   getStatus(): CollaborationStatus;

@@ -188,6 +188,10 @@ export default defineConfig({
     minify: 'esbuild',
     lib: {
       entry: {
+        // Not consumed by this package's own entries. It exists so a browser
+        // host can resolve an extension's externalized comment-UI import to the
+        // one instance this build already owns. See src/commenting-ui.ts.
+        'commenting-ui': resolve(import.meta.dirname, 'src/commenting-ui.ts'),
         editor: resolve(import.meta.dirname, 'src/editor/index.ts'),
         'docs-ui': resolve(import.meta.dirname, 'src/docs-ui.ts'),
         'feedback-ui': resolve(import.meta.dirname, 'src/feedback-ui.ts'),

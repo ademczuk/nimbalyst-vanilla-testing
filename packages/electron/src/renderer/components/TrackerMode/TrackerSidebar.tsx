@@ -4,6 +4,7 @@ import { MaterialSymbol } from '@nimbalyst/runtime';
 import type { TrackerIdentity, TrackerItemType } from '@nimbalyst/runtime';
 import { trackerDataLoadedAtom, trackerItemsArrayAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin';
 import type { TrackerDataModel, TrackerFilterSet } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
+import type { Readiness } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerReadiness';
 import { generateKeyBetween } from '@nimbalyst/runtime/utils/fractionalIndex';
 import type { TrackerNavigationEntry, TrackerNavigationFolder, TrackerTypePlacement } from '@nimbalyst/runtime/sync';
 import {
@@ -60,6 +61,7 @@ interface TrackerSidebarProps {
   currentIdentity: TrackerIdentity | null;
   favoriteItemIds: ReadonlySet<string>;
   viewedAtByItemId: ReadonlyMap<string, number>;
+  readinessByItemId: ReadonlyMap<string, Readiness>;
   personalStateHydrated: boolean;
   recentlyViewedDays: 7 | 30 | 90 | null;
   columnFilters: TrackerFilterSet | null;
@@ -95,6 +97,7 @@ interface SidebarCountProps {
   currentIdentity: TrackerIdentity | null;
   favoriteItemIds: ReadonlySet<string>;
   viewedAtByItemId: ReadonlyMap<string, number>;
+  readinessByItemId: ReadonlyMap<string, Readiness>;
   personalStateHydrated: boolean;
   recentlyViewedDays: 7 | 30 | 90 | null;
   columnFilters: TrackerFilterSet | null;
@@ -115,6 +118,7 @@ function SidebarTypeCount({
   currentIdentity,
   favoriteItemIds,
   viewedAtByItemId,
+  readinessByItemId,
   personalStateHydrated,
   recentlyViewedDays,
   columnFilters,
@@ -127,8 +131,8 @@ function SidebarTypeCount({
     items,
     [type],
     { activeFilters, tagFilter, sourceFilter, recentlyViewedDays, columnFilters, statusScope },
-    { identity: currentIdentity, favoriteItemIds, viewedAtByItemId, nowMs },
-  ), [items, type, activeFilters, tagFilter, sourceFilter, currentIdentity, favoriteItemIds, viewedAtByItemId, recentlyViewedDays, columnFilters, statusScope, nowMs]);
+    { identity: currentIdentity, favoriteItemIds, viewedAtByItemId, readinessByItemId, nowMs },
+  ), [items, type, activeFilters, tagFilter, sourceFilter, currentIdentity, favoriteItemIds, viewedAtByItemId, readinessByItemId, recentlyViewedDays, columnFilters, statusScope, nowMs]);
   // NIM-631: before the tracker atoms finish hydrating, the count map is empty,
   // so populated types would flash "0" during a sync reconnect + renderer
   // reload. Suppress the badge until hydration completes rather than showing a
@@ -176,6 +180,7 @@ function SidebarFolderCount({
   currentIdentity,
   favoriteItemIds,
   viewedAtByItemId,
+  readinessByItemId,
   personalStateHydrated,
   recentlyViewedDays,
   columnFilters,
@@ -188,8 +193,8 @@ function SidebarFolderCount({
     items,
     types,
     { activeFilters, tagFilter, sourceFilter, recentlyViewedDays, columnFilters, statusScope },
-    { identity: currentIdentity, favoriteItemIds, viewedAtByItemId, nowMs },
-  ), [items, types, activeFilters, tagFilter, sourceFilter, currentIdentity, favoriteItemIds, viewedAtByItemId, recentlyViewedDays, columnFilters, statusScope, nowMs]);
+    { identity: currentIdentity, favoriteItemIds, viewedAtByItemId, readinessByItemId, nowMs },
+  ), [items, types, activeFilters, tagFilter, sourceFilter, currentIdentity, favoriteItemIds, viewedAtByItemId, readinessByItemId, recentlyViewedDays, columnFilters, statusScope, nowMs]);
   if (!loaded || (!personalStateHydrated && (
     activeFilters.some((filter) => filter === 'favorites' || filter === 'recently-viewed')
     || (columnFilters?.clauses ?? []).some(clause => clause.field === 'favorite' || clause.field === 'viewed')
@@ -209,6 +214,7 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
   currentIdentity,
   favoriteItemIds,
   viewedAtByItemId,
+  readinessByItemId,
   personalStateHydrated,
   recentlyViewedDays,
   columnFilters,
@@ -444,6 +450,7 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
           currentIdentity={currentIdentity}
           favoriteItemIds={favoriteItemIds}
           viewedAtByItemId={viewedAtByItemId}
+          readinessByItemId={readinessByItemId}
           personalStateHydrated={personalStateHydrated}
           recentlyViewedDays={recentlyViewedDays}
           columnFilters={columnFilters}
@@ -789,6 +796,7 @@ export const TrackerSidebar: React.FC<TrackerSidebarProps> = ({
                     currentIdentity={currentIdentity}
                     favoriteItemIds={favoriteItemIds}
                     viewedAtByItemId={viewedAtByItemId}
+                    readinessByItemId={readinessByItemId}
                     personalStateHydrated={personalStateHydrated}
                     recentlyViewedDays={recentlyViewedDays}
                     columnFilters={columnFilters}

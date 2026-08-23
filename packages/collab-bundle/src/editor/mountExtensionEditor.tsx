@@ -39,7 +39,13 @@ import type {
 } from './browserEditorCapabilities';
 import { resolveCollabEditorUser } from './presence';
 import { createCollabDocumentSession } from './session';
+import { deriveCollabEditorCommentsState } from './commenting';
+import {
+  createExtensionCommentsService,
+  type HostedExtensionComments,
+} from './extensionComments';
 import type {
+  CollabEditorCommentsOptions,
   CollabEditorFlushResult,
   CollabEditorPresence,
   CollabEditorSource,
@@ -77,6 +83,15 @@ export interface ExtensionEditorMountOptions {
 
   /** The extension's manifest permissions, so the host can answer them. */
   permissions?: BrowserExtensionPermissions;
+
+  /**
+   * The page's comment seam -- the same object the Lexical mount takes.
+   * Supplying it puts a `comments` service on the collaboration context the
+   * extension receives; omitting it leaves `collaboration.comments` absent, and
+   * an extension that offers commenting hides the affordance rather than
+   * simulating it locally.
+   */
+  comments?: CollabEditorCommentsOptions;
 
   readOnly?: boolean;
   theme?: string;
@@ -128,6 +143,15 @@ export interface ExtensionEditorHandle {
   /** Wait for the room's persisted ack without draining bindings first. */
   flush(options?: { timeoutMs?: number }): Promise<CollabEditorFlushResult>;
   markClean(): void;
+  /**
+   * Re-publish comment capability to the mounted extension.
+   *
+   * The counterpart of `CollabEditorHandle.refreshCommentAccess`. `canComment`
+   * is answered by the page from a roster that resolves after this mount, so
+   * the first answer on a cold open is "not yet known" and the affordance is
+   * correctly absent; this is what makes it appear once the real answer lands.
+   */
+  refreshCommentAccess(): void;
   destroy(): void;
 }
 
@@ -178,12 +202,18 @@ export function mountExtensionEditor(
   // read-only demotion from inside its own construction, before there is a
   // host to tell.
   let notifyReadOnlyChanged: (readOnly: boolean) => void = () => {};
+  // Same reason, and the same guard: the session reports its first status from
+  // inside its own construction, before this has been built.
+  let hostedComments: HostedExtensionComments | null = null;
+
+  const hostCanComment = (): boolean => options.comments?.canComment?.() ?? true;
 
   const session = createCollabDocumentSession({
     source: options.source,
     memberId: resolvedUser.memberId,
     readOnly: options.readOnly,
     lifecycleElement: options.element,
+    hostCanComment,
     onStateChange: options.onStateChange,
     onPresenceChange: (presence) => options.onPresenceChange?.(presence),
     onWriteRejected: options.onWriteRejected,
@@ -193,12 +223,16 @@ export function mountExtensionEditor(
     onStatusChange: () => {
       const status = statusFromState(session.getState());
       for (const listener of statusListeners) listener(status);
+      // Hydration and comment capability both move with the connection, and an
+      // extension subscribed to the comments service is otherwise not told.
+      hostedComments?.notifyCapabilitiesChanged();
     },
     onSurfaceInvalidated: () => {
       // Effective read-only can change without any user action: the server can
       // demote a writer mid-session. The extension is told through the host it
       // already holds, so nothing has to remount.
       notifyReadOnlyChanged(session.getState().readOnly);
+      hostedComments?.notifyCapabilitiesChanged();
     },
   });
 
@@ -216,8 +250,38 @@ export function mountExtensionEditor(
     heartbeatIntervalMs: 0,
   });
 
+  // Built only when the page supplied a comment seam. Everything it needs --
+  // who the author is, who can be mentioned, whether this role may comment at
+  // all -- comes from the page's authenticated session; there is no honest way
+  // to synthesize any of it here, so the absent case stays absent.
+  const commentsOptions = options.comments;
+  hostedComments = commentsOptions
+    ? createExtensionCommentsService({
+      yDoc: session.sharedDocument,
+      host: {
+        currentUser: commentsOptions.currentUser,
+        documentId: commentsOptions.documentId,
+        documentTitle: commentsOptions.documentTitle,
+        documentUri: commentsOptions.documentUri,
+        // Two tabs on one document must not share anchor registrations.
+        instanceId: `${commentsOptions.documentUri}#${crypto.randomUUID()}`,
+        getMembers: () => commentsOptions.getMembers(),
+        getCapabilities: () => deriveCollabEditorCommentsState({
+          connection: session.getState().connection,
+          serverAccess: session.getState().serverAccess,
+          hasConnectedOnce: session.hasConnectedOnce(),
+          hostCanComment: hostCanComment(),
+        }).capabilities,
+        isHydrated: () => session.hasConnectedOnce(),
+        onMention: commentsOptions.onMention,
+        onReply: commentsOptions.onReply,
+      },
+    })
+    : null;
+
   const collaboration = createBrowserCollaborationContext({
     yDoc: session.sharedDocument,
+    ...(hostedComments ? { comments: hostedComments.service } : {}),
     awareness: awarenessBridge.awareness,
     user: {
       id: resolvedUser.memberId,
@@ -306,10 +370,12 @@ export function mountExtensionEditor(
     flushContent: () => flushBrowserCollaborativeContent(collaboration),
     flush: (flushOptions) => session.flush(flushOptions),
     markClean: () => session.markClean(),
+    refreshCommentAccess: () => hostedComments?.notifyCapabilitiesChanged(),
     destroy() {
       if (destroyed) return;
       destroyed = true;
       statusListeners.clear();
+      hostedComments?.destroy();
       session.destroy({
         beforeTransportTeardown: () => {
           root?.unmount();

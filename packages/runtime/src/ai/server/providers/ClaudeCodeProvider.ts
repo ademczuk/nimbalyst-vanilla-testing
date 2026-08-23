@@ -317,6 +317,13 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   // session with a visible continuation turn carrying the results. NIM-1470.
   private drainTerminalNotifications: TaskTerminalNotification[] = [];
 
+  // The drain grace timer expired while background tasks were still running, so
+  // we closed the prompt stream and the CLI killed them along with its process.
+  // Any 'stopped' that lands after this is OUR kill, not a user stop — without
+  // the distinction both took the same silent path and the agent could not tell
+  // "killed" from "stopped". See GitHub #1355.
+  private drainGraceExpired = false;
+
   // SDK-native task-list tracking (TaskCreate/TaskUpdate tools — the shared,
   // dependency-aware work queue, distinct from the sub-agent telemetry above).
   // Reconstructed incrementally from tool args/results because TaskUpdate only
@@ -977,6 +984,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       this.drainingBackgroundTasks = false;
       this.drainExitCause = 'resolved';
       this.drainTerminalNotifications = [];
+      this.drainGraceExpired = false;
       const queryIterator = leadQuery as AsyncIterable<any>;
       const queryCallDuration = Date.now() - queryCallStart;
       if (queryCallDuration > 5000) {
@@ -1052,6 +1060,14 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         const delay = this.hasRunningTasks() ? SUBAGENT_DRAIN_GRACE_MS : PROMPT_GRACE_MS;
         this.promptEndTimer = setTimeout(() => {
           this.promptEndTimer = null;
+          // Record that WE ended the stream on a still-running task. Ending it
+          // closes the CLI's stdin, which kills every live background task with
+          // the process — they then report 'stopped', indistinguishable from a
+          // user stop unless we remember that we caused it. See #1355.
+          if (this.hasRunningTasks()) {
+            this.drainGraceExpired = true;
+            console.warn(`[CLAUDE-CODE] SUBAGENT_DRAIN: grace window (${delay}ms) expired with ${countRunningTasks(this.activeTasks.values())} task(s) still running; ending stream will kill them`);
+          }
           this.promptController?.end(reason);
         }, delay);
       };
@@ -2074,6 +2090,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       this.drainingBackgroundTasks = false;
       this.drainExitCause = 'resolved';
       this.drainTerminalNotifications = [];
+      this.drainGraceExpired = false;
 
       // Note: markMessagesAsHidden is reset at the START of sendMessage to prevent race conditions
 
@@ -2795,12 +2812,17 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         // the results (the CLI's own continuation turn cannot be surfaced —
         // the consumer already received complete). NIM-1470.
         if (this.drainingBackgroundTasks) {
+          const status = existing.status === 'running' ? 'completed' : existing.status;
           this.drainTerminalNotifications.push({
             taskId: chunk.task_id,
             description: existing.description,
-            status: existing.status === 'running' ? 'completed' : existing.status,
+            status,
             summary: chunk.summary,
             outputFile: chunk.output_file,
+            // A 'stopped' that arrives after our grace timer closed the stream
+            // is our own kill, not a user stop — report it as one. #1355.
+            killedByTeardown: status === 'stopped' && this.drainGraceExpired,
+            elapsedMs: Date.now() - existing.startedAt,
           });
         }
         this.emitTaskUpdate(sessionId).catch(() => {});

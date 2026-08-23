@@ -80,6 +80,24 @@ fields:
   - name: description
     type: text
 
+  # Dependency pair. `dependsOn` records work this item waits on; `blocks` records
+  # work waiting on this item. Writing either side materializes the other.
+  - name: dependsOn
+    type: relationship
+    relationshipTypeKey: depends-on
+    inverseRelationshipTypeKey: blocks
+    inverseFieldId: blocks
+    targetTrackerTypes: "*"
+    multiValue: true
+
+  - name: blocks
+    type: relationship
+    relationshipTypeKey: blocks
+    inverseRelationshipTypeKey: depends-on
+    inverseFieldId: dependsOn
+    targetTrackerTypes: "*"
+    multiValue: true
+
   # Collection membership. Written directly, or by inverse propagation when an
   # item is added to a milestone/release from the collection side.
   - name: collection

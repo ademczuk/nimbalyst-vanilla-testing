@@ -6,6 +6,8 @@ interface TrackerViewTitleProps {
   fallbackTitle: string;
   activeSavedViewName?: string | null;
   savedViewDirty?: boolean;
+  /** False for a built-in view: its name and definition come from code. */
+  savedViewEditable?: boolean;
   showSaveViewAction?: boolean;
   onSaveView: (name: string) => void;
   onRenameSavedView: (name: string) => void;
@@ -17,6 +19,7 @@ export function TrackerViewTitle({
   fallbackTitle,
   activeSavedViewName = null,
   savedViewDirty = false,
+  savedViewEditable = true,
   showSaveViewAction = false,
   onSaveView,
   onRenameSavedView,
@@ -99,7 +102,15 @@ export function TrackerViewTitle({
 
   return (
     <div className="flex min-w-0 shrink-0 items-center gap-2">
-      {activeSavedViewName ? (
+      {activeSavedViewName && !savedViewEditable ? (
+        <span
+          className="max-w-56 truncate text-sm font-semibold text-nim"
+          data-testid="tracker-view-title"
+          title={activeSavedViewName}
+        >
+          {activeSavedViewName}
+        </span>
+      ) : activeSavedViewName ? (
         <button
           type="button"
           className="group inline-flex min-w-0 max-w-56 items-center gap-1 truncate rounded px-0.5 text-sm font-semibold text-nim hover:bg-nim-tertiary"

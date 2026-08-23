@@ -37,6 +37,7 @@ vi.mock('../../../services/TrackerPolicyService', () => ({
 
 vi.mock('../../../services/TrackerSyncManager', () => ({
   isTrackerSyncActive: vi.fn(() => false),
+  isTrackerSyncConfigured: vi.fn(() => false),
   syncTrackerItem: vi.fn(),
 }));
 

@@ -3,6 +3,8 @@ import { useAtomValue, useSetAtom } from 'jotai';
 import { copyToClipboard, MaterialSymbol } from '@nimbalyst/runtime';
 import type { TrackerIdentity } from '@nimbalyst/runtime';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
+import type { Readiness } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerReadiness';
+import type { BlockerVisibilityScope } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerBlockerVisibility';
 import {
   filterTrackerRecords,
   getCellValue,
@@ -44,6 +46,7 @@ import { TrackerActiveFilterPills } from './TrackerActiveFilterPills';
 import { TrackerFilterOmnibox } from './TrackerFilterOmnibox';
 import { TrackerSyncRejectionBanner } from './TrackerSyncRejectionBanner';
 import { TrackerSharingMigrationBanner } from './TrackerSharingMigrationBanner';
+import { TrackerDependencyCycleBanner } from './TrackerDependencyCycleBanner';
 import { ImportFromSourceDialog } from './ImportFromSourceDialog';
 import { TrackerDocumentView } from './TrackerDocumentView';
 import {
@@ -78,6 +81,8 @@ import {
   STATUS_CHANGED_TO_FILTER_FIELD,
   type SavedView,
 } from './trackerSavedViews';
+import { orderTrackerItemsByLeverage, READINESS_LEVERAGE_SORT } from './trackerReadyQueue';
+import { READINESS_FILTER_FIELD } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
 import { useTrackerUnread } from '../../hooks/useTrackerUnread';
 import {
   createNewWorktreeSessionActionAtom,
@@ -127,9 +132,12 @@ interface TrackerMainViewProps {
   currentIdentity: TrackerIdentity | null;
   favoriteItemIds: ReadonlySet<string>;
   viewedAtByItemId: ReadonlyMap<string, number>;
+  readinessByItemId: ReadonlyMap<string, Readiness>;
   personalStateHydrated: boolean;
   activeSavedView: SavedView | null;
   savedViewDirty: boolean;
+  /** False for a built-in view, whose name and definition come from code. */
+  savedViewEditable?: boolean;
   showSaveViewAction: boolean;
   onSaveView: (name: string) => void;
   onRenameSavedView: (name: string) => void;
@@ -154,9 +162,11 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   currentIdentity,
   favoriteItemIds,
   viewedAtByItemId,
+  readinessByItemId,
   personalStateHydrated,
   activeSavedView,
   savedViewDirty,
+  savedViewEditable = true,
   showSaveViewAction,
   onSaveView,
   onRenameSavedView,
@@ -261,8 +271,9 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     identity: currentIdentity,
     favoriteItemIds,
     viewedAtByItemId,
+    readinessByItemId,
     nowMs: filterClockMs,
-  }), [currentIdentity, favoriteItemIds, filterClockMs, viewedAtByItemId]);
+  }), [currentIdentity, favoriteItemIds, filterClockMs, readinessByItemId, viewedAtByItemId]);
   const filterEvaluationContext = useMemo<TrackerFilterEvaluationContext>(() => ({
     currentUser: currentIdentity,
     nowMs: filterClockMs,
@@ -425,6 +436,22 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     }
     if (!fields.some(field => field.id === 'archived')) {
       fields.push({ id: 'archived', label: 'Archived', type: 'boolean', group: 'system' });
+    }
+    if (!fields.some(field => field.id === READINESS_FILTER_FIELD)) {
+      // Derived from the dependency graph rather than stored on a record, so it
+      // has no column -- but it reads and removes like any other clause, which
+      // is what lets the built-in Ready view be an ordinary saved view.
+      fields.push({
+        id: READINESS_FILTER_FIELD,
+        label: 'Readiness',
+        type: 'select',
+        group: 'system',
+        options: [
+          { value: 'ready', label: 'Ready' },
+          { value: 'blocked', label: 'Blocked' },
+          { value: 'closed', label: 'Closed' },
+        ],
+      });
     }
     const statusOptions = new Map<string, {
       value: string;
@@ -753,15 +780,56 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     onClearSidebarFilters();
   }, [handleColumnFiltersChange, onClearSidebarFilters]);
 
-  const viewItemsWithPersonalFields = useMemo(() => viewFilteredItems.map(item => ({
-    ...item,
-    fields: {
-      ...item.fields,
-      viewed: viewedAtByItemId.has(item.id)
-        ? new Date(viewedAtByItemId.get(item.id)!)
-        : undefined,
-    },
-  })), [viewFilteredItems, viewedAtByItemId]);
+  // `unblocks` is derived from the dependency graph, not read off a record, so
+  // the leverage order is applied here and the surfaces are told to preserve it
+  // rather than being taught a synthetic sort column.
+  const leverageOrderActive = sortBy === READINESS_LEVERAGE_SORT;
+  const preserveOrder = recencyOrderActive || leverageOrderActive;
+
+  const viewItemsWithPersonalFields = useMemo(() => {
+    const ordered = leverageOrderActive
+      ? orderTrackerItemsByLeverage(viewFilteredItems, readinessByItemId)
+      : viewFilteredItems;
+    return ordered.map(item => ({
+      ...item,
+      fields: {
+        ...item.fields,
+        viewed: viewedAtByItemId.has(item.id)
+          ? new Date(viewedAtByItemId.get(item.id)!)
+          : undefined,
+      },
+    }));
+  }, [leverageOrderActive, readinessByItemId, viewFilteredItems, viewedAtByItemId]);
+
+  // Which blockers this view is entitled to name. Readiness is derived over the
+  // whole corpus and stays that way -- narrowing it here would report blocked
+  // work as ready -- so what narrows is only the explanation: a blocker in a
+  // type or an archive scope the user is not looking at is still counted and
+  // still shows its state, but not its title or its private reference.
+  //
+  // Only the scoping filters belong here. Search and status narrow within a
+  // scope the user is already looking at, and a blocker almost never matches
+  // the same search text as its dependent.
+  const blockerScope = useMemo<BlockerVisibilityScope>(() => {
+    const type = filterType === 'all' ? undefined : filterType;
+    const showArchived = activeFilters.includes('archived');
+    const filtersArchived = (columnFilters?.clauses ?? []).some(clause => clause.field === 'archived');
+    if (filtersArchived) return { type };
+    const excluded = showArchived ? allActiveItems : allArchivedItems;
+    return { type, excludedItemIds: new Set(excluded.map(item => item.id)) };
+  }, [activeFilters, allActiveItems, allArchivedItems, columnFilters, filterType]);
+
+  // Cycle members are open by construction, but an archived item can still be
+  // open, so both sets are searched. Workspace-wide on purpose: a deadlock is a
+  // property of the graph, not of whichever type is selected in the sidebar.
+  const dependencyCycleItems = useMemo(() => {
+    const cycleIds = new Set<string>();
+    for (const [itemId, readiness] of readinessByItemId) {
+      if (readiness.inCycle) cycleIds.add(itemId);
+    }
+    if (cycleIds.size === 0) return [];
+    return [...allActiveItems, ...allArchivedItems].filter(item => cycleIds.has(item.id));
+  }, [allActiveItems, allArchivedItems, readinessByItemId]);
 
   const removeTagFilter = useCallback((tag: string) => {
     setTagFilter((current) => current.filter((candidate) => candidate !== tag));
@@ -1187,7 +1255,9 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       groupBy={modeLayout.groupBy}
       hideTypeTabs
       hideToolbar
-      preserveItemOrder={recencyOrderActive}
+      preserveItemOrder={preserveOrder}
+      readinessByItemId={readinessByItemId}
+      blockerScope={blockerScope}
       favoriteItemIds={favoriteItemIds}
       onToggleFavorite={handleToggleFavorite}
       onItemSelect={handleOpenItemAsDocument}
@@ -1227,6 +1297,11 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       <TrackerSyncRejectionBanner workspacePath={workspacePath} />
       {/* One-time summary of what the sharing-model upgrade moved (PRD D6) */}
       <TrackerSharingMigrationBanner workspacePath={workspacePath} teamName={teamName} />
+      {/* Dependency deadlock: items that can never reach the ready queue */}
+      <TrackerDependencyCycleBanner
+        items={dependencyCycleItems}
+        onOpenItem={handleItemSelect}
+      />
       {/* Toolbar */}
       <div className="tracker-toolbar flex items-center gap-2 px-3 py-2 border-b border-nim bg-nim shrink-0">
         {/* Title */}
@@ -1234,6 +1309,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
           fallbackTitle={title}
           activeSavedViewName={activeSavedView?.name}
           savedViewDirty={savedViewDirty}
+          savedViewEditable={savedViewEditable}
           showSaveViewAction={showSaveViewAction}
           onSaveView={onSaveView}
           onRenameSavedView={onRenameSavedView}
@@ -1447,7 +1523,9 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
                 trackTableSort();
                 setModeLayout({ sortBy: column, sortDirection: direction });
               }}
-              preserveItemOrder={recencyOrderActive}
+              preserveItemOrder={preserveOrder}
+              readinessByItemId={readinessByItemId}
+              blockerScope={blockerScope}
               favoriteItemIds={favoriteItemIds}
               onToggleFavorite={handleToggleFavorite}
               onSwitchToFilesMode={onSwitchToFilesMode}
@@ -1472,7 +1550,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               sortBy={sortBy}
               sortDirection={sortDirection}
               groupBy={modeLayout.groupBy}
-              preserveItemOrder={recencyOrderActive}
+              preserveItemOrder={preserveOrder}
               onSwitchToFilesMode={onSwitchToFilesMode}
               onNewItem={handleNewItem}
               onItemSelect={handleItemSelect}

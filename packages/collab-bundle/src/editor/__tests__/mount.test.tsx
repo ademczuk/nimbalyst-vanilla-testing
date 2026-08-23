@@ -224,6 +224,12 @@ class FakeRoomSocket {
     });
   }
 
+  deliverWriteAcknowledged(): void {
+    this.emit('message', {
+      data: JSON.stringify({ type: 'docUpdateAck', clientUpdateId: 'probe-access' }),
+    });
+  }
+
   private emit(type: string, event: unknown): void {
     for (const listener of this.listeners.get(type) ?? []) listener(event);
   }
@@ -285,16 +291,33 @@ describe('comment authoring on a document that has not been written to', () => {
     return controller.getCapabilities().comment;
   }
 
-  it('offers authoring to a writer and withholds it from a viewer', async () => {
-    // The bug this covers: comment capability was derived from `serverAccess`
-    // alone, which only reaches `writable` after the server acknowledges a
-    // write. Opening a document performs no write, so every writer sat at
-    // `unknown` and commenting was unreachable for the whole session.
+  function commentController(documentUri: string) {
+    const controller = collabCommentControllerRegistry.get(documentUri);
+    if (!controller) throw new Error('the comment plugin never registered a controller');
+    return controller;
+  }
+
+  it('withholds authoring until server access is known, then follows host permission', async () => {
     const writer = await openTeamDocument('doc-writer', () => true);
     expect(writer.handle.getState()).toMatchObject({
       connection: 'connected',
       serverAccess: 'unknown',
     });
+    expect(commentCapability(writer.documentUri)).toBe(false);
+    await expect(commentController(writer.documentUri).createAnchored({
+      anchor: { exact: 'not present' },
+      body: 'Must not be written locally',
+      clientMutationId: 'unknown-access-attempt',
+    }, {
+      kind: 'user',
+      userId: 'member-reader',
+      displayName: 'Reader',
+    })).rejects.toMatchObject({ code: 'COMMENT_FORBIDDEN' });
+    expect(writer.handle.getDocument().getArray('comments')).toHaveLength(0);
+
+    const writerSocket = FakeRoomSocket.opened[0];
+    if (!writerSocket) throw new Error('the writer never opened a room socket');
+    await act(async () => writerSocket.deliverWriteAcknowledged());
     expect(commentCapability(writer.documentUri)).toBe(true);
 
     const viewer = await openTeamDocument('doc-viewer', () => false);

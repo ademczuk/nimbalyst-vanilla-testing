@@ -6,20 +6,9 @@
  */
 
 import { memo } from 'react';
+import { VIEWPORT_PRESETS } from './viewportPresets';
 
-export interface ViewportPreset {
-  label: string;
-  width: number | null; // null = full width (responsive)
-  icon: string;
-}
-
-const PRESETS: ViewportPreset[] = [
-  { label: 'Full', width: null, icon: 'monitor' },
-  { label: 'Desktop', width: 1440, icon: 'desktop' },
-  { label: 'Laptop', width: 1024, icon: 'laptop' },
-  { label: 'Tablet', width: 768, icon: 'tablet' },
-  { label: 'Mobile', width: 375, icon: 'mobile' },
-];
+export type { ViewportPreset } from './viewportPresets';
 
 interface ViewportSelectorProps {
   activeWidth: number | null;
@@ -32,7 +21,7 @@ export const ViewportSelector = memo(function ViewportSelector({
 }: ViewportSelectorProps) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-      {PRESETS.map((preset) => {
+      {VIEWPORT_PRESETS.map((preset) => {
         const isActive = activeWidth === preset.width;
         return (
           <button

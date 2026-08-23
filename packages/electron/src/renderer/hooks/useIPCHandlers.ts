@@ -11,6 +11,8 @@ import {
 } from '@nimbalyst/runtime';
 import { editorRegistry } from '@nimbalyst/runtime/ai/EditorRegistry';
 import {
+  classifyCommentAnchorInput,
+  collabCommentAnchorAdapterRegistry,
   collabCommentControllerRegistry,
   CollabCommentControllerError,
 } from '@nimbalyst/runtime/editor';
@@ -44,6 +46,7 @@ import {
   menuFindPreviousCommandAtom,
 } from '../store/atoms/menuCommands';
 import { openEditorFind } from '../components/TabEditor/editorFindCommand';
+import { dispatchTrackerFocusSearch } from '../components/TrackerMode/trackerSearchFocus';
 import { acquireHeadlessCollabCommentController } from '../services/HeadlessCollabCommentController';
 import {
   trackDocumentAction,
@@ -707,11 +710,28 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
           }
           let controller =
             collabCommentControllerRegistry.get(targetFilePath);
-          if (!controller) {
-            if (operation === 'createAnchored') {
+          const entityCreation =
+            operation === 'createAnchored' &&
+            classifyCommentAnchorInput(input?.anchor).kind === 'entity';
+          // An entity anchor is only creatable where something can confirm the
+          // target exists. A mounted adapter is registered by the same host
+          // that owns the mounted controller's repository, so when it reports
+          // `attached` one Y.Doc handle both validates and persists. Otherwise
+          // fall back to the headless acquisition, whose codec adapter answers
+          // over the Y.Doc it also writes to. Either way validation and
+          // persistence never straddle two document handles.
+          const mountedAdapterOwnsAnchor =
+            entityCreation &&
+            !!controller &&
+            collabCommentAnchorAdapterRegistry.getState(
+              targetFilePath,
+              input.anchor,
+            ) === 'attached';
+          if (!controller || (entityCreation && !mountedAdapterOwnsAnchor)) {
+            if (operation === 'createAnchored' && !entityCreation) {
               throw new CollabCommentControllerError(
                 'DOCUMENT_NOT_MOUNTED',
-                `Creating an anchored comment requires ${targetFilePath} to be open in a collaborative editor.`,
+                `Creating a text-quote comment requires ${targetFilePath} to be open in a collaborative Markdown editor.`,
               );
             }
             const currentWorkspacePath =
@@ -1397,6 +1417,8 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
       }
     } else if (mode === 'agent') {
       window.dispatchEvent(new CustomEvent('menu:find'));
+    } else if (mode === 'tracker') {
+      dispatchTrackerFocusSearch();
     }
   }, [collabModeRef, menuFindVersion]);
 

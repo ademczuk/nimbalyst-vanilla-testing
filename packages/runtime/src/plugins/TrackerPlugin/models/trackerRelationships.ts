@@ -26,8 +26,22 @@ export interface TrackerRelationshipType {
 
 /** Built-in relationship vocabulary. Custom keys may be added per workspace. */
 export const BUILTIN_RELATIONSHIP_TYPES: TrackerRelationshipType[] = [
-  { key: 'depends-on', displayName: 'Depends on', inverseKey: 'blocks', inverseDisplayName: 'Blocks', category: 'dependency' },
-  { key: 'blocks', displayName: 'Blocks', inverseKey: 'depends-on', inverseDisplayName: 'Depends on', category: 'dependency' },
+  {
+    key: 'depends-on',
+    displayName: 'Depends on',
+    inverseKey: 'blocks',
+    inverseDisplayName: 'Blocks',
+    category: 'dependency',
+    description: 'Work this item is waiting on.',
+  },
+  {
+    key: 'blocks',
+    displayName: 'Blocks',
+    inverseKey: 'depends-on',
+    inverseDisplayName: 'Depends on',
+    category: 'dependency',
+    description: 'Work that is waiting on this item.',
+  },
   { key: 'relates-to', displayName: 'Relates to', category: 'reference', symmetric: true },
   { key: 'duplicates', displayName: 'Duplicates', category: 'reference' },
   { key: 'supersedes', displayName: 'Supersedes', category: 'reference' },

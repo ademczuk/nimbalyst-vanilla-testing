@@ -38,10 +38,12 @@ import {
   resolveRoleFieldName,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import {
+  READINESS_FILTER_FIELD,
   STATUS_CATEGORY_FILTER_FIELD,
   isTerminalStatus,
   statusCategoryOfItem,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+import type { Readiness } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerReadiness';
 import {
   normalizeTrackerStatusScope,
   type TrackerFilterChip,
@@ -108,6 +110,12 @@ export interface SavedView {
    * Absent on views saved before sharing existed, which are local.
    */
   shared?: boolean;
+  /**
+   * Ships with the app rather than being saved by a user: it is never
+   * persisted, renamed, shared, or deleted, and its definition is rebuilt from
+   * code on every load.
+   */
+  builtIn?: boolean;
 }
 
 export function createDefaultViewDefinition(): SavedViewDefinition {
@@ -286,6 +294,8 @@ export function mergeSavedViews(local: SavedView[], shared: SavedView[]): SavedV
 export interface FilterContext {
   /** Current user identity, required for the `mine` chip. */
   identity?: TrackerIdentity | null;
+  /** Dependency readiness derived once from the full tracker corpus. */
+  readinessByItemId?: ReadonlyMap<string, Readiness>;
   /** Personal favorite ids for this identity and workspace scope. */
   favoriteItemIds?: ReadonlySet<string>;
   /** Genuine last-opened timestamps by tracker item id. */
@@ -329,6 +339,8 @@ export function getTrackerFilterValue(
       return getStatusTransitionValues(record, 'to');
     case STATUS_CHANGED_FROM_FILTER_FIELD:
       return getStatusTransitionValues(record, 'from');
+    case READINESS_FILTER_FIELD:
+      return context.readinessByItemId?.get(record.id)?.state;
     case STATUS_CATEGORY_FILTER_FIELD:
       return statusCategoryOfItem(record.primaryType, field => record.fields[field]);
     default:

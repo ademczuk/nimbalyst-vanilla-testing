@@ -11,14 +11,17 @@ function createMockStore(initialContent = 'hello world'): {
     dispose: () => void;
   };
   saved: (string | ArrayBuffer)[];
+  baselines: (string | undefined)[];
 } {
   const saved: (string | ArrayBuffer)[] = [];
+  const baselines: (string | undefined)[] = [];
   const changeCallbacks = new Set<ExternalChangeCallback>();
 
   const store = {
     load: vi.fn(async () => initialContent),
-    save: vi.fn(async (content: string | ArrayBuffer) => {
+    save: vi.fn(async (content: string | ArrayBuffer, expectedDiskContent?: string) => {
       saved.push(content);
+      baselines.push(expectedDiskContent);
     }),
     onExternalChange: vi.fn((cb: ExternalChangeCallback) => {
       changeCallbacks.add(cb);
@@ -32,7 +35,7 @@ function createMockStore(initialContent = 'hello world'): {
     dispose: vi.fn(),
   };
 
-  return { store, saved };
+  return { store, saved, baselines };
 }
 
 // -- Tests -------------------------------------------------------------------
@@ -221,6 +224,72 @@ describe('DocumentModel', () => {
 
       // Give async handler time to run
       await vi.advanceTimersByTimeAsync(100);
+      expect(cb).not.toHaveBeenCalled();
+    });
+
+    /**
+     * #3684. NIM-905 named this exact hazard in a HiddenTabManager comment --
+     * "the file watcher may advance [the shared baseline] to an agent's
+     * out-of-band write and thereby mask a divergence" -- and worked around it
+     * with a private baseline for hidden editors. Every visible tab stayed on
+     * the masked one, so a dirty tab's next save sailed through the conflict
+     * check and reverted the agent.
+     */
+    it('holds the conflict baseline when an external change reaches no editor', async () => {
+      await model.loadContent(); // 'hello world'
+      const handle = model.attach();
+      const cb = vi.fn();
+      handle.onFileChanged(cb);
+      handle.setDirty(true); // dirty editors are skipped, to protect their edits
+
+      mockStore.triggerExternalChange('written by an agent');
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(cb).not.toHaveBeenCalled();
+      // The editor never saw the agent's write, so the baseline must not claim it.
+      expect(model.getLastPersistedContent()).toBe('hello world');
+    });
+
+    it('sends the pre-write baseline to the store so it can refuse a clobber', async () => {
+      const mock = createMockStore('hello world');
+      const m = new DocumentModel('/test/baseline.md', mock.store, {
+        autosaveInterval: 0,
+        getPendingTags: async () => [],
+      });
+      try {
+        await m.loadContent();
+        const handle = m.attach();
+        handle.setDirty(true);
+
+        mock.store.triggerExternalChange('written by an agent');
+        await vi.advanceTimersByTimeAsync(100);
+
+        await handle.saveContent('what the stale editor holds');
+
+        // Not 'written by an agent': the store is told what this editor last
+        // agreed with, so the main-process conflict check can trip.
+        expect(mock.baselines).toEqual(['hello world']);
+      } finally {
+        m.dispose();
+      }
+    });
+
+    it('still suppresses the echo of content no editor took', async () => {
+      // The baseline split must not cost us echo suppression: disk-seen and
+      // editors-in-sync are now separate facts, and echo keys off the former.
+      await model.loadContent();
+      const handle = model.attach();
+      const cb = vi.fn();
+      handle.onFileChanged(cb);
+      handle.setDirty(true);
+
+      mockStore.triggerExternalChange('written by an agent');
+      await vi.advanceTimersByTimeAsync(100);
+
+      handle.setDirty(false);
+      mockStore.triggerExternalChange('written by an agent'); // same bytes again
+      await vi.advanceTimersByTimeAsync(100);
+
       expect(cb).not.toHaveBeenCalled();
     });
   });

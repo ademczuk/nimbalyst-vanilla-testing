@@ -15,7 +15,7 @@
 import type {
   CommentMentionPayload,
   CommentReplyPayload,
-} from '@nimbalyst/runtime/editor';
+} from '@nimbalyst/runtime/editor/commenting/types';
 
 import { getTeamSyncProviderForScopeKey } from '../store/atoms/collabDocuments';
 

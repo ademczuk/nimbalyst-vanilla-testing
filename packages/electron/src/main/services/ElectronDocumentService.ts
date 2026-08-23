@@ -1334,8 +1334,13 @@ export class ElectronDocumentService implements DocumentService {
   }
 
   private async listMergedTrackerItems(): Promise<TrackerItem[]> {
+    // `deleted_at IS NULL` because a tombstone is a row, not an absence: both a
+    // teammate's delta (`applyRemoteItem`) and our own queued offline delete
+    // (`applyOptimistic`) mark the row rather than removing it. Without this
+    // filter the deleted item vanished from the atoms via the `removed`
+    // broadcast and then came back on the next full list.
     const result = await database.query<any>(
-      `SELECT * FROM tracker_items WHERE workspace = $1 ORDER BY kanban_sort_order ASC NULLS LAST, last_indexed DESC`,
+      `SELECT * FROM tracker_items WHERE workspace = $1 AND deleted_at IS NULL ORDER BY kanban_sort_order ASC NULLS LAST, last_indexed DESC`,
       [this.workspacePath]
     );
     await this.assignLocalKeysFrom(result.rows);
@@ -2330,7 +2335,13 @@ export class ElectronDocumentService implements DocumentService {
       // so a draft item's body save would otherwise leak to
       // the room. The legit frontmatter body-share path (shareFrontmatterBody)
       // still passes here because by then the row carries the share flag.
-      if (isTrackerSyncActive(item.workspace) && this.shouldSyncItemNow(item)) {
+      //
+      // Offline, mark the row pending instead. Without the else the bumped
+      // `body_version` never reached the room, so cold peers kept reading a
+      // stale body version indefinitely (NIM-3657).
+      if (this.shouldSyncItemNow(item) && !isTrackerSyncActive(item.workspace)) {
+        await this.updateTrackerItemSyncStatus(item.id, 'pending');
+      } else if (isTrackerSyncActive(item.workspace) && this.shouldSyncItemNow(item)) {
         try {
           await syncTrackerItem(item);
         } catch (syncErr) {
@@ -2496,12 +2507,18 @@ export class ElectronDocumentService implements DocumentService {
 
     // Push archived state to sync server so other clients see it. Gate on the
     // per-item publication state (NIM-880) so a draft item doesn't leak to the
-    // room just because it was archived.
-    if (isTrackerSyncActive(item.workspace) && this.shouldSyncItemNow(item)) {
-      try {
-        await syncTrackerItem(item);
-      } catch (syncErr) {
-        console.error('[DocumentService] archiveTrackerItem sync failed:', syncErr);
+    // room just because it was archived. Offline, mark the row pending so the
+    // reconnect drain pushes it -- without the else, an offline archive of an
+    // already-synced item never entered the candidate set (NIM-3657).
+    if (this.shouldSyncItemNow(item)) {
+      if (isTrackerSyncActive(item.workspace)) {
+        try {
+          await syncTrackerItem(item);
+        } catch (syncErr) {
+          console.error('[DocumentService] archiveTrackerItem sync failed:', syncErr);
+        }
+      } else {
+        await this.updateTrackerItemSyncStatus(item.id, 'pending');
       }
     }
 
@@ -2540,13 +2557,21 @@ export class ElectronDocumentService implements DocumentService {
       [rowId]
     );
 
-    // Notify sync server so other clients remove the item too
-    if (isTrackerSyncActive(this.workspacePath)) {
-      try {
-        await unsyncTrackerItem(rowId, this.workspacePath);
-      } catch (syncErr) {
-        console.error('[DocumentService] deleteTrackerItem sync failed:', syncErr);
-      }
+    // Notify sync server so other clients remove the item too.
+    //
+    // Deliberately NOT gated on `isTrackerSyncActive`. The local row is already
+    // hard-deleted, so an offline delete that skips the engine leaves nothing
+    // behind to carry the intent -- not even for the next launch's drain, which
+    // selects surviving rows. Deleting the newest item also lowers
+    // `MAX(sync_id)`, so the next bootstrap re-delivers it and re-inserts it
+    // (NIM-3658). The engine is the right place to decide: it enqueues into
+    // `tracker_transactions`, sends now if the socket is open, and otherwise
+    // replays on the next reconnect and across restarts. `unsyncTrackerItem`
+    // is already a no-op for a workspace with no engine.
+    try {
+      await unsyncTrackerItem(rowId, this.workspacePath);
+    } catch (syncErr) {
+      console.error('[DocumentService] deleteTrackerItem sync failed:', syncErr);
     }
 
     const changeEvent: TrackerItemChangeEvent = {

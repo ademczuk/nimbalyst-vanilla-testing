@@ -2,7 +2,12 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { dbRowToRecord, type TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { loadBuiltinTrackers } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/ModelLoader';
-import { STATUS_CATEGORY_FILTER_FIELD } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+import {
+  READINESS_FILTER_FIELD,
+  STATUS_CATEGORY_FILTER_FIELD,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+import { computeReadiness } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerReadiness';
+import { getRecordStatus } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import type { TrackerIdentity } from '@nimbalyst/runtime';
 import {
   countFilteredTrackerItemsByTypes,
@@ -21,6 +26,12 @@ import {
   STATUS_CHANGED_TO_FILTER_FIELD,
   type SavedView,
 } from '../trackerSavedViews';
+import {
+  createReadySavedView,
+  orderTrackerItemsByLeverage,
+  READY_SAVED_VIEW_ID,
+  withBuiltInSavedViews,
+} from '../trackerReadyQueue';
 
 function makeItem(
   id: string,
@@ -788,6 +799,45 @@ describe('the statusCategory filter field', () => {
   });
 });
 
+describe('the readiness filter field', () => {
+  beforeAll(() => {
+    loadBuiltinTrackers();
+  });
+
+  it('uses full-corpus readiness after lifecycle scoping', () => {
+    const terminalBlocker = makeItem('terminal-blocker', { status: 'done' });
+    const openBlocker = makeItem('open-blocker', { status: 'in-progress' });
+    const clearedDependent = makeItem('cleared-dependent', {
+      status: 'to-do',
+      dependsOn: [{ itemId: terminalBlocker.id }],
+    });
+    const blockedDependent = makeItem('blocked-dependent', {
+      status: 'to-do',
+      dependsOn: [{ itemId: openBlocker.id }],
+    });
+    const corpus = [terminalBlocker, openBlocker, clearedDependent, blockedDependent];
+    const readinessByItemId = computeReadiness(corpus, getRecordStatus);
+
+    const readyOpenItems = filterTrackerItems(
+      corpus,
+      {
+        activeFilters: [],
+        tagFilter: [],
+        statusScope: 'open',
+        columnFilters: {
+          clauses: [{ field: READINESS_FILTER_FIELD, op: '=', value: 'ready' }],
+        },
+      },
+      { readinessByItemId },
+    );
+
+    expect(readyOpenItems.map(item => item.id)).toContain(clearedDependent.id);
+    expect(readyOpenItems.map(item => item.id)).not.toContain(blockedDependent.id);
+    expect(getTrackerFilterValue(blockedDependent, READINESS_FILTER_FIELD, { readinessByItemId }))
+      .toBe('blocked');
+  });
+});
+
 describe('the lifecycle scope', () => {
   beforeAll(() => {
     loadBuiltinTrackers();
@@ -816,5 +866,64 @@ describe('the lifecycle scope', () => {
     const scoped = { activeFilters: [], tagFilter: [], statusScope: 'open' as const };
     expect(countFilteredTrackerItemsByTypes(mixed, ['task', 'idea'], scoped)).toBe(1);
     expect(countFilteredTrackerItemsByTypes(mixed, ['task', 'idea'], { ...scoped, statusScope: 'all' })).toBe(3);
+  });
+});
+
+describe('the built-in Ready view', () => {
+  beforeAll(() => {
+    loadBuiltinTrackers();
+  });
+
+  // Leverage and priority are made to disagree on purpose: ranking by priority
+  // alone would put the critical item first and leave two dependents waiting on
+  // the low-priority item that actually gates them.
+  const highLeverageLowPriority = makeItem('blocker-a', { status: 'to-do', priority: 'low' });
+  const someLeverageTopPriority = makeItem('blocker-b', { status: 'to-do', priority: 'critical' });
+  const noLeverageHighPriority = makeItem('solo-c', { status: 'to-do', priority: 'high' });
+  const noLeverageTopPriority = makeItem('solo-d', { status: 'to-do', priority: 'critical' });
+  const corpus = [
+    highLeverageLowPriority,
+    someLeverageTopPriority,
+    noLeverageHighPriority,
+    noLeverageTopPriority,
+    makeItem('dependent-1', { status: 'to-do', dependsOn: [{ itemId: 'blocker-a' }] }),
+    makeItem('dependent-2', { status: 'to-do', dependsOn: [{ itemId: 'blocker-a' }] }),
+    makeItem('dependent-3', { status: 'to-do', dependsOn: [{ itemId: 'blocker-b' }] }),
+    makeItem('shipped', { status: 'done', priority: 'critical' }),
+  ];
+
+  it('queues open unblocked work by leverage first, then priority', () => {
+    const readinessByItemId = computeReadiness(corpus, getRecordStatus);
+    const { definition } = createReadySavedView();
+
+    const ready = filterTrackerItems(
+      corpus,
+      {
+        activeFilters: definition.activeFilters,
+        tagFilter: definition.tagFilter,
+        statusScope: definition.statusScope,
+        columnFilters: definition.columnFilters,
+      },
+      { readinessByItemId },
+    );
+
+    expect(orderTrackerItemsByLeverage(ready, readinessByItemId).map(item => item.id)).toEqual([
+      'blocker-a',
+      'blocker-b',
+      'solo-d',
+      'solo-c',
+    ]);
+  });
+
+  it('keeps a persisted view from shadowing the built-in id', () => {
+    const impostor: SavedView = {
+      id: READY_SAVED_VIEW_ID,
+      name: 'Ready (stale local copy)',
+      definition: createDefaultViewDefinition(),
+    };
+    const merged = withBuiltInSavedViews([impostor, { id: 'mine', name: 'Mine', definition: createDefaultViewDefinition() }]);
+
+    expect(merged.map(view => view.name)).toEqual(['Ready', 'Mine']);
+    expect(merged[0].builtIn).toBe(true);
   });
 });

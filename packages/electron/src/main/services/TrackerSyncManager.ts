@@ -79,7 +79,8 @@ import {
   registerTrackerSavedViewFlushHandler,
 } from './TrackerSavedViewService';
 import { windows, windowStates } from '../window/windowState';
-import { getEffectiveTrackerSharingPolicy, decideBackfillAction } from './TrackerPolicyService';
+import { getEffectiveTrackerSharingPolicy } from './TrackerPolicyService';
+import { drainPendingTrackerItems } from './tracker/trackerItemBackfill';
 import { rowToTrackerItem } from '../mcp/tools/trackerToolHandlers';
 import { getWorkspaceState, updateWorkspaceState } from '../utils/store';
 import { AnalyticsService } from './analytics/AnalyticsService';
@@ -240,7 +241,9 @@ export function reconnectAllTrackerSyncs(): void {
   }
 }
 
-/** Whether a connected engine exists for the workspace. */
+/** Whether a connected engine exists for the workspace. Ask this before doing
+ * anything that needs the socket right now: pushing a mutation, or waiting on
+ * an ack. */
 export function isTrackerSyncActive(workspacePath?: string): boolean {
   if (!workspacePath) {
     for (const entry of engines.values()) {
@@ -250,6 +253,20 @@ export function isTrackerSyncActive(workspacePath?: string): boolean {
   }
   const entry = engines.get(workspacePath);
   return !!entry && entry.status === 'connected';
+}
+
+/**
+ * Whether a tracker room exists for this workspace at all, connected or not.
+ *
+ * The distinction from `isTrackerSyncActive` is the difference between "not
+ * right now" and "not ever", and it is the only honest basis for telling a
+ * reader whether an issue key is coming. Answering that question with the
+ * connected predicate reported "this workspace has no team" during an ordinary
+ * disconnection (NIM-3659) -- the inverse of #1346, and just as misleading.
+ */
+export function isTrackerSyncConfigured(workspacePath?: string): boolean {
+  if (!workspacePath) return engines.size > 0;
+  return engines.has(workspacePath);
 }
 
 /**
@@ -381,13 +398,11 @@ async function doInitializeTrackerSync(workspacePath: string): Promise<void> {
       }
       notifyStatus(status);
       broadcastToAllWindows('tracker-sync:status-changed', { workspacePath, status, shared: true });
-      // First successful connect to this room: catch up the server with
-      // any items that were created locally before the engine existed (or
-      // before the team's TrackerRoom DO was minted). Without this, a user
-      // who has 163 local bugs and flips a tracker to "Shared" never sees
-      // those bugs on their other devices -- the new engine only knows
-      // what was queued through it. Gated on `sync_id IS NULL` so we don't
-      // re-push items the server already confirmed.
+      // Every connect drains the items the room has not confirmed: ones
+      // created before the engine existed (a user with 163 local bugs who
+      // flips a tracker to "Shared"), and ones an offline write left at
+      // `sync_status='pending'`. This must fire on reconnects too, not just
+      // the first connect -- that was NIM-3657.
       if (status === 'connected') {
         void backfillSharedLocalItems(workspacePath).catch(err => {
           logger.main.warn('[TrackerSyncManager] backfillSharedLocalItems failed for', workspacePath, err);
@@ -517,125 +532,47 @@ export async function reinitializeTrackerSync(workspacePath: string): Promise<vo
 }
 
 /**
- * Per-workspace guard so we only run the historical backfill once per engine
- * lifecycle. Idempotent within an engine but prevents redundant scans on
- * reconnect / status flapping.
- */
-const backfilledWorkspaces = new Set<string>();
-
-/**
- * Drop the once-per-engine backfill guard for a workspace and re-run the
- * scan immediately if an engine is connected. Called when a tracker becomes
- * team-shared -- without this hook
- * the items they already have locally would never make it to the room.
+ * Run the item drain now, if an engine is connected. Called when a tracker
+ * becomes team-shared -- without this hook the items they already have locally
+ * would wait for the next reconnect to reach the room.
  *
- * Safe to call when no engine exists; it's a no-op until the engine
- * connects (the on-connect path will run backfill anyway).
+ * Safe to call when no engine exists; it's a no-op until the engine connects
+ * (the on-connect path drains anyway).
  */
 export async function requestTrackerBackfillForWorkspace(workspacePath: string): Promise<void> {
-  backfilledWorkspaces.delete(workspacePath);
   const entry = engines.get(workspacePath);
   if (!entry || entry.status !== 'connected') return;
   await backfillSharedLocalItems(workspacePath);
 }
 
 /**
- * Push every workspace-local tracker item that should be shared but has
- * never been confirmed by the new TrackerSyncEngine (`sync_id IS NULL`)
- * up to the room.
+ * Push workspace-local tracker items the room has not confirmed: rows that
+ * never went through `syncTrackerItem` at all (`sync_id IS NULL`, e.g. created
+ * before the team's TrackerRoom existed) and rows an offline write left at
+ * `sync_status='pending'`.
  *
- * Why this exists: items created before the engine was running -- or
- * before the team's TrackerRoom DO was minted -- never went through
- * `syncTrackerItem`, so the server room is empty and other devices see
- * nothing. The historical `sync_status='synced'` flag was set by the
- * previous sync system and means nothing to the new engine.
- *
- * We only push published items from team trackers. Personal tracker items and
- * drafts stay local.
- * Idempotent: the engine's `engines.has()` guard prevents repeats, and
- * once an item's `sync_id` is populated by `applyRemoteItem` (on
- * server-confirmed apply) it falls out of the candidate set.
+ * Runs on EVERY connect, not once per process. The decision and the loop live
+ * in `trackerItemBackfill.ts`; this is the port that binds them to the engine
+ * registry and the database. See that module's header for why the old
+ * once-per-process guard lost offline edits (NIM-3657).
  */
 async function backfillSharedLocalItems(workspacePath: string): Promise<void> {
-  if (backfilledWorkspaces.has(workspacePath)) return;
-  backfilledWorkspaces.add(workspacePath);
-
   const entry = engines.get(workspacePath);
-  if (!entry) {
-    backfilledWorkspaces.delete(workspacePath);
-    return;
-  }
+  if (!entry) return;
   const db = getDatabase();
-  if (!db) {
-    backfilledWorkspaces.delete(workspacePath);
-    return;
-  }
+  if (!db) return;
 
-  // Candidates: never-synced items (`sync_id IS NULL`) plus items left
-  // `sync_status='pending'` by an offline mutation -- including the `nim` CLI
-  // writing directly to SQLite while the app was closed. Re-pushing an
-  // already-synced item is idempotent: `applyRemoteItem` flips it back to
-  // 'synced' on ack, so it falls out of this set on the next launch.
-  const candidates = await db.query(
-    `SELECT * FROM tracker_items
-     WHERE workspace = $1
-       AND (sync_id IS NULL OR sync_status = 'pending')
-       AND deleted_at IS NULL
-     ORDER BY created ASC`,
-    [workspacePath],
-  );
-
-  if (candidates.rows.length === 0) {
-    logger.main.info('[TrackerSyncManager] backfill: no candidate items for', workspacePath);
-    return;
-  }
-
-  let queued = 0;
-  let skipped = 0;
-  let deleted = 0;
-  for (const row of candidates.rows) {
-    const policy = getEffectiveTrackerSharingPolicy(workspacePath, row.type as string);
-    const item = rowToTrackerItem(row) as TrackerItem;
-    // Per-item gate (NIM-876 / NIM-880): team drafts sync only once published.
-    //   - published                  -> upsert
-    //   - previously published (sync_id set) but now draft -> delete from the
-    //       room (propagates an offline unshare; previously this re-uploaded the
-    //       item or left a stale copy behind)
-    //   - never published draft     -> skip (local-only, no leak)
-    const previouslyShared = row.sync_id != null;
-    const action = decideBackfillAction(policy, item, previouslyShared);
-    if (action === 'skip') {
-      skipped++;
-      continue;
-    }
-    if (action === 'delete') {
-      try {
-        await entry.engine.deleteItem(row.id as string);
-        // Reset the local row so it isn't re-processed (or re-deleted) on the
-        // next reconnect.
-        await db.query(
-          `UPDATE tracker_items SET sync_status = 'local', sync_id = NULL WHERE id = $1`,
-          [row.id],
-        );
-        deleted++;
-      } catch (err) {
-        logger.main.warn('[TrackerSyncManager] backfill deleteItem failed for item', row.id, err);
-      }
-      continue;
-    }
-    try {
-      const payload = trackerItemToPayload(item);
-      await entry.engine.upsertItem(payload);
-      queued++;
-    } catch (err) {
-      logger.main.warn('[TrackerSyncManager] backfill upsertItem failed for item', row.id, err);
-    }
-  }
-
-  logger.main.info(
-    '[TrackerSyncManager] backfill complete for', workspacePath,
-    'queued:', queued, 'deleted:', deleted, 'skipped-local-only:', skipped, 'total-candidates:', candidates.rows.length,
-  );
+  await drainPendingTrackerItems(workspacePath, {
+    query: (sql, params) => db.query(sql, params),
+    upsertItem: async (item) => { await entry.engine.upsertItem(trackerItemToPayload(item)); },
+    deleteItem: async (itemId) => { await entry.engine.deleteItem(itemId); },
+    resolvePolicy: (path, type) => getEffectiveTrackerSharingPolicy(path, type),
+    toItem: (row) => rowToTrackerItem(row) as TrackerItem,
+    log: {
+      info: (...args) => logger.main.info(...(args as [string, ...unknown[]])),
+      warn: (...args) => logger.main.warn(...(args as [string, ...unknown[]])),
+    },
+  });
 }
 
 /**

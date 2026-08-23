@@ -39,6 +39,7 @@ import { OrgWindowTitleBar } from './OrgWindowTitleBar';
 import { useOrgModeDialogs } from './OrgModeDialogs';
 import { useOrgModeRoute } from './useOrgModeRoute';
 import { InboxSection } from './Inbox';
+import { FeedbackSection } from './Feedback';
 import { InboxProviderContext, useInboxProvider } from './Inbox/inboxProvider';
 import { buildOrgSidebar, isOrgAdminRole } from './orgSidebarViewModel';
 import { shouldRenderOrgRail } from './orgWindowRailViewModel';
@@ -361,6 +362,14 @@ export function OrgModeBody({
                     />
                   </InboxProviderContext.Provider>
                 </div>
+              )}
+              {/* Unmounted when it is not the destination, unlike the Inbox
+                  above: the index arrives by push into atoms that outlive this
+                  component, so remounting re-reads state rather than refetching
+                  it, and there is no search or selection worth preserving
+                  across a navigation the way the Inbox has. */}
+              {route.view === 'feedback' && (
+                <FeedbackSection orgId={orgId} workspacePath={workspacePath} />
               )}
               {route.view === 'directory' && gating.roomsVisible && (
                 <RoomsDirectory

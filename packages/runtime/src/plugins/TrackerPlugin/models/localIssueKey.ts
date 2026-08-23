@@ -128,6 +128,21 @@ export function describeIssueKey(
 }
 
 /**
+ * How an item's reference relates to the room's namespace, in three states
+ * because there are three. `assigned` is a key the room owns and everyone
+ * resolves the same way. `local` is this machine's private number: real and
+ * stable, but not safe to put anywhere another person reads. `unassigned` is a
+ * team draft genuinely waiting on the room. Collapsing `local` into
+ * `unassigned` sent agents at a publish action a personal tracker refuses
+ * outright (#1346).
+ *
+ * This module owns the type; electron imports it from here. `packages/cli`
+ * hand-vendors runtime sources and cannot import the package, so its copy in
+ * `src/cli/output.ts` is a deliberate duplicate -- change both together.
+ */
+export type IssueKeyStatus = 'assigned' | 'local' | 'unassigned';
+
+/**
  * The key to show for an item, or nothing when it has none worth showing.
  *
  * A team key first: it is the only form that means the same thing to everyone.

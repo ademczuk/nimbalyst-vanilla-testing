@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const typesRoot = path.join(packageRoot, 'types');
 const internalRoot = path.join(typesRoot, 'internal');
-const publicEntries = ['docs-ui', 'feedback-ui', 'inbox'].map((entryName) => ({
+const publicEntries = ['commenting-ui', 'docs-ui', 'feedback-ui', 'inbox'].map((entryName) => ({
   generated: path.join(internalRoot, `collab-bundle/src/${entryName}.d.ts`),
   public: path.join(typesRoot, `${entryName}.d.ts`),
 }));

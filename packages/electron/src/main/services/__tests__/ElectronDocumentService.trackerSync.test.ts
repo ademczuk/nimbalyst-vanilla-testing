@@ -174,15 +174,23 @@ describe('deleteTrackerItem sync integration', () => {
     expect(mockUnsyncTrackerItem).toHaveBeenCalledWith('bug-001', tempDir);
   });
 
-  it('should NOT call unsyncTrackerItem when sync is not active', async () => {
+  it('queues the room tombstone while disconnected instead of dropping the delete', async () => {
+    // NIM-3658: the local row is hard-deleted, so an offline delete that skips
+    // the engine leaves nothing behind to carry the intent -- not even for the
+    // next launch's drain, which selects surviving rows. Worse, deleting the
+    // newest item lowers `MAX(sync_id)`, so the next bootstrap re-delivers the
+    // item and re-inserts it. Handing it to the engine regardless of status
+    // puts it in `tracker_transactions`, which replays on every reconnect and
+    // survives a restart.
     mockIsTrackerSyncActive.mockReturnValue(false);
+    mockUnsyncTrackerItem.mockResolvedValue(undefined);
 
     mockQuery.mockResolvedValueOnce({ rows: [{ source: 'tracked', document_path: '' }] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
 
     await service.deleteTrackerItem('bug-001');
 
-    expect(mockUnsyncTrackerItem).not.toHaveBeenCalled();
+    expect(mockUnsyncTrackerItem).toHaveBeenCalledWith('bug-001', tempDir);
   });
 
   it('should still delete locally even if sync fails', async () => {
@@ -445,15 +453,25 @@ describe('archiveTrackerItem sync integration', () => {
     expect(mockSyncTrackerItem).toHaveBeenCalled();
   });
 
-  it('should NOT call syncTrackerItem when sync is not active', async () => {
+  it('marks the row pending when sync is not active so the reconnect drain pushes it', async () => {
+    // NIM-3657: the `if (connected)` here had no `else`, so an offline archive
+    // of an already-synced item (sync_status='synced', sync_id set) never
+    // entered the drain's candidate set and never reached the room at all.
     mockIsTrackerSyncActive.mockReturnValue(false);
 
     mockQuery.mockResolvedValueOnce({ rows: [makeTrackerRow({ source: 'tracked' })] });
     mockQuery.mockResolvedValueOnce({ rows: [makeTrackerRow({ archived: true })] });
+    // `updateTrackerItemSyncStatus` re-resolves the row and re-reads it for the
+    // watcher broadcast, so every later lookup must find the item.
+    mockQuery.mockResolvedValue({ rows: [makeTrackerRow({ archived: true })] });
 
     await service.archiveTrackerItem('bug-001', true);
 
     expect(mockSyncTrackerItem).not.toHaveBeenCalled();
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('SET sync_status = $1'),
+      ['pending', 'bug-001'],
+    );
   });
 
   it('should still archive locally if sync fails', async () => {

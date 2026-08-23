@@ -36,6 +36,7 @@ nim <noun> <verb> [--flags]
 
 nim status
 nim workspace list
+nim tracker ready --type bug
 nim tracker list --type bug --status open --priority high --since 1d --limit 20
 nim tracker list --where severity=critical --where tags~auth --json
 nim tracker get  NIM-123
@@ -81,6 +82,7 @@ nim tracker import resnapshot github://owner/repo#42
   `--date-field created` switches off the default `updated`.
 - `--where field<op>value` (repeatable) — ops `=`, `!=`, `~` (contains),
   `=in:a,b,c`.
+- `nim tracker ready` is the preset for `nim tracker list --where readiness=ready`.
 - `--limit <n>` / `--all`, `--archived`.
 
 ### Output
@@ -114,6 +116,10 @@ DB, or a live-only command in offline mode).
   mirrors those handlers (not `recordToDbParams`) so a CLI-written row is
   byte-for-byte identical to an app-written one. Keep these in sync if the
   handlers change.
+- `src/vendor/trackerReadiness.ts` and `trackerStatusCategory.ts` mirror the
+  runtime readiness graph, relationship normalization, and lifecycle-category
+  resolution. Change them with the runtime modules named in their headers;
+  direct mode reads materialized type models alongside the full item corpus.
 - `better-sqlite3` is a native dependency and must match the version the app
   ships, but built for the **Node** ABI (the app's copy is built for Electron's
   ABI and cannot be shared). Publishing should ship prebuilt Node-ABI binaries.

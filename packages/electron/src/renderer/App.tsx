@@ -13,6 +13,9 @@ import type { LexicalCommand } from '@nimbalyst/runtime';
 // aiChatBridge has been replaced by editorRegistry
 // Import editor styles (CSS side-effect)
 import '../../../runtime/src/editor/index.css';
+// Shared runtime UI rendered by extensions lives in the host document, so its
+// styles must be injected by the host rather than imported by extension code.
+import '../../../runtime/src/editor/commenting/ui/comments.css';
 // Import refactored hooks and utilities
 import { useIPCHandlers } from './hooks/useIPCHandlers';
 import { useWindowLifecycle } from './hooks/useWindowLifecycle';

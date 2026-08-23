@@ -444,9 +444,10 @@ export class ElectronCollabHost implements CollabHost<ElectronDocsCapability> {
     }
     if (!result.success || !result.config) {
       const message = result.error || 'No team found for this project';
-      throw new CollabScopeResolutionError(message, {
-        retryable: !message.includes('Not authenticated') && !message.includes('No team found'),
-      });
+      // The resolver knows whether its own failure was terminal; classifying by
+      // substring here read a timed-out team-directory fetch as a definitive
+      // "this project has no team" and latched the mode off for the session.
+      throw new CollabScopeResolutionError(message, { retryable: result.retryable === true });
     }
     const { orgId, teamProjectId, serverUrl, teamMemberId, userName, userEmail, urlExtraQuery } = result.config;
     return {

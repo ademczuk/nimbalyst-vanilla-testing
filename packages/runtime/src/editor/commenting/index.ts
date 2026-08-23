@@ -3,234 +3,94 @@
  *
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
- *
  */
 
-import type {LexicalEditor} from 'lexical';
+import type { LexicalEditor } from 'lexical';
 
-import {Provider, TOGGLE_CONNECT_COMMAND} from '@lexical/yjs';
-import {COMMAND_PRIORITY_LOW} from 'lexical';
-import {useEffect, useState} from 'react';
+import { TOGGLE_CONNECT_COMMAND, type Provider } from '@lexical/yjs';
+import { COMMAND_PRIORITY_LOW } from 'lexical';
+import { useSyncExternalStore } from 'react';
+import { Doc, type Array as YArray, type Map as YMap } from 'yjs';
+
 import {
-  Array as YArray,
-  Map as YMap,
-  Transaction,
-  YArrayEvent,
-  YEvent,
-  YMapEvent,
-} from 'yjs';
+  asComments,
+  createComment,
+  createCommentSharedMap,
+  createThread,
+  normalizeCommentActor,
+  YDocCommentRepository,
+} from './YDocCommentRepository';
+import type { Comment, Comments, Thread } from './types';
 
-export type UserCommentActor = {
-  kind: 'user';
-  userId?: string;
-  displayName: string;
+export type {
+  AgentCommentActor,
+  Comment,
+  CommentActor,
+  CommentAnchor,
+  Comments,
+  EntityCommentAnchor,
+  TextQuoteCommentAnchor,
+  Thread,
+  UserCommentActor,
+} from './types';
+export {
+  CommentRepositoryMutationError,
+  createComment,
+  createCommentSharedMap,
+  createThread,
+  getCommentAnchorSupport,
+  materializeSharedComment,
+  normalizeCommentActor,
+  YDocCommentRepository,
+} from './YDocCommentRepository';
+export {
+  COMMENT_BOUNDS,
+  normalizeCommentPage,
+  normalizeVisibleCommentText,
+  truncateCommentUtf8,
+  utf8ByteLength,
+  validateCommentBody,
+  validateCommentMentions,
+  validateCommentMutationId,
+  validateTextQuoteSelector,
+} from './commentValidation';
+export type {
+  CommentAnchorSupport,
+  CommentRepositorySnapshot,
+  CommentSnapshot,
+  CreateCommentOptions,
+  RepositoryMutationResult,
+  ThreadSnapshot,
+} from './YDocCommentRepository';
+// Editor-neutral comment UI. Importing it here also loads the shared
+// stylesheet, so a host that pulls the barrel gets a styled panel.
+export * from './ui';
+
+type CommentRepositoryProvider = Provider & {
+  commentRepository?: YDocCommentRepository;
+  doc?: Doc;
 };
 
-export type AgentCommentActor = {
-  kind: 'agent';
-  sessionId: string;
-  sessionName: string;
-  onBehalfOfUserId: string;
-  onBehalfOfDisplayName?: string;
-};
-
-export type CommentActor = UserCommentActor | AgentCommentActor;
-
-export type Comment = {
-  actor?: CommentActor;
-  author: string;
-  clientMutationId?: string;
-  content: string;
-  deleted: boolean;
-  id: string;
-  replyToCommentId?: string;
-  timeStamp: number;
-  type: 'comment';
-};
-
-export type Thread = {
-  comments: Array<Comment>;
-  id: string;
-  quote: string;
-  resolved: boolean;
-  type: 'thread';
-};
-
-export type Comments = Array<Thread | Comment>;
-
-function createUID(): string {
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID();
-  }
-  return Math.random()
-    .toString(36)
-    .replace(/[^a-z]+/g, '')
-    .substring(0, 12);
-}
-
-export type CreateCommentOptions = {
-  actor?: CommentActor;
-  clientMutationId?: string;
-  deleted?: boolean;
-  id?: string;
-  replyToCommentId?: string;
-  timeStamp?: number;
-};
-
-function isCreateCommentOptions(
-  value: string | CreateCommentOptions | undefined,
-): value is CreateCommentOptions {
-  return typeof value === 'object' && value !== null;
-}
-
-export function normalizeCommentActor(
-  actor: unknown,
-  fallbackAuthor: string,
-): CommentActor {
-  if (actor && typeof actor === 'object') {
-    const value = actor as Record<string, unknown>;
-    if (
-      value.kind === 'agent' &&
-      typeof value.sessionId === 'string' &&
-      typeof value.sessionName === 'string' &&
-      typeof value.onBehalfOfUserId === 'string'
-    ) {
-      return {
-        kind: 'agent',
-        sessionId: value.sessionId,
-        sessionName: value.sessionName,
-        onBehalfOfUserId: value.onBehalfOfUserId,
-        ...(typeof value.onBehalfOfDisplayName === 'string'
-          ? { onBehalfOfDisplayName: value.onBehalfOfDisplayName }
-          : {}),
-      };
-    }
-    if (value.kind === 'user' && typeof value.displayName === 'string') {
-      return {
-        kind: 'user',
-        displayName: value.displayName,
-        ...(typeof value.userId === 'string' ? { userId: value.userId } : {}),
-      };
-    }
-  }
-  return { kind: 'user', displayName: fallbackAuthor };
-}
-
-export function createComment(
-  content: string,
-  author: string,
-  options?: CreateCommentOptions,
-): Comment;
-export function createComment(
-  content: string,
-  author: string,
-  id?: string,
-  timeStamp?: number,
-  deleted?: boolean,
-  options?: Omit<CreateCommentOptions, 'id' | 'timeStamp' | 'deleted'>,
-): Comment;
-export function createComment(
-  content: string,
-  author: string,
-  idOrOptions?: string | CreateCommentOptions,
-  timeStamp?: number,
-  deleted?: boolean,
-  options?: Omit<CreateCommentOptions, 'id' | 'timeStamp' | 'deleted'>,
-): Comment {
-  const normalizedOptions = isCreateCommentOptions(idOrOptions)
-    ? idOrOptions
-    : {
-        ...options,
-        id: idOrOptions,
-        timeStamp,
-        deleted,
-      };
-  return {
-    ...(normalizedOptions.actor ? { actor: normalizedOptions.actor } : {}),
-    author,
-    ...(normalizedOptions.clientMutationId
-      ? { clientMutationId: normalizedOptions.clientMutationId }
-      : {}),
-    content,
-    deleted:
-      normalizedOptions.deleted === undefined
-        ? false
-        : normalizedOptions.deleted,
-    id: normalizedOptions.id === undefined ? createUID() : normalizedOptions.id,
-    ...(normalizedOptions.replyToCommentId
-      ? { replyToCommentId: normalizedOptions.replyToCommentId }
-      : {}),
-    timeStamp:
-      normalizedOptions.timeStamp === undefined
-        ? performance.timeOrigin + performance.now()
-        : normalizedOptions.timeStamp,
-    type: 'comment',
-  };
-}
-
-export function createThread(
-  quote: string,
-  comments: Array<Comment>,
-  id?: string,
-  resolved?: boolean,
-): Thread {
-  return {
-    comments,
-    id: id === undefined ? createUID() : id,
-    quote,
-    // Backward-compatible: threads created/synced before resolve existed have
-    // no `resolved` field, so default to unresolved.
-    resolved: resolved === undefined ? false : resolved,
-    type: 'thread',
-  };
-}
-
-function cloneThread(thread: Thread): Thread {
-  return {
-    comments: Array.from(thread.comments),
-    id: thread.id,
-    quote: thread.quote,
-    resolved: thread.resolved,
-    type: 'thread',
-  };
-}
-
-function markDeleted(comment: Comment): Comment {
-  return {
-    ...(comment.actor ? { actor: comment.actor } : {}),
-    author: comment.author,
-    ...(comment.clientMutationId
-      ? { clientMutationId: comment.clientMutationId }
-      : {}),
-    content: '[Deleted Comment]',
-    deleted: true,
-    id: comment.id,
-    ...(comment.replyToCommentId
-      ? { replyToCommentId: comment.replyToCommentId }
-      : {}),
-    timeStamp: comment.timeStamp,
-    type: 'comment',
-  };
-}
-
-function triggerOnChange(commentStore: CommentStore): void {
-  const listeners = commentStore._changeListeners;
-  for (const listener of listeners) {
-    listener();
-  }
-}
-
+/**
+ * Lexical compatibility adapter over the runtime-neutral Y.Doc repository.
+ * It retains the upstream API and connection command, but owns no materialized
+ * comment graph of its own.
+ */
 export class CommentStore {
   _editor: LexicalEditor;
-  _comments: Comments;
   _changeListeners: Set<() => void>;
   _collabProvider: null | Provider;
+  private repository: YDocCommentRepository;
+  private unsubscribeRepository: () => void;
 
   constructor(editor: LexicalEditor) {
-    this._comments = [];
     this._editor = editor;
     this._collabProvider = null;
     this._changeListeners = new Set();
+    this.repository = new YDocCommentRepository(new Doc());
+    this.unsubscribeRepository = this.repository.subscribe(
+      this.triggerOnChange,
+    );
   }
 
   isCollaborative(): boolean {
@@ -238,7 +98,11 @@ export class CommentStore {
   }
 
   getComments(): Comments {
-    return this._comments;
+    return asComments(this.repository.getSnapshot());
+  }
+
+  getRepository(): YDocCommentRepository {
+    return this.repository;
   }
 
   addComment(
@@ -246,419 +110,130 @@ export class CommentStore {
     thread?: Thread,
     offset?: number,
   ): void {
-    const nextComments = Array.from(this._comments);
-    // The YJS types explicitly use `any` as well.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sharedCommentsArray: YArray<any> | null = this._getCollabComments();
-
     if (thread !== undefined && commentOrThread.type === 'comment') {
-      for (let i = 0; i < nextComments.length; i++) {
-        const comment = nextComments[i];
-        if (comment.type === 'thread' && comment.id === thread.id) {
-          const newThread = cloneThread(comment);
-          nextComments.splice(i, 1, newThread);
-          const insertOffset =
-            offset !== undefined ? offset : newThread.comments.length;
-          if (this.isCollaborative() && sharedCommentsArray !== null) {
-            const parentSharedArray = sharedCommentsArray
-              .get(i)
-              .get('comments');
-            this._withRemoteTransaction(() => {
-              const sharedMap = this._createCollabSharedMap(commentOrThread);
-              parentSharedArray.insert(insertOffset, [sharedMap]);
-            });
-          }
-          newThread.comments.splice(insertOffset, 0, commentOrThread);
-          break;
-        }
-      }
+      this.repository.appendReply(thread.id, commentOrThread, offset);
+    } else if (commentOrThread.type === 'thread') {
+      this.repository.addThread(commentOrThread, offset);
     } else {
-      const insertOffset = offset !== undefined ? offset : nextComments.length;
-      if (this.isCollaborative() && sharedCommentsArray !== null) {
-        this._withRemoteTransaction(() => {
-          const sharedMap = this._createCollabSharedMap(commentOrThread);
-          sharedCommentsArray.insert(insertOffset, [sharedMap]);
-        });
-      }
-      nextComments.splice(insertOffset, 0, commentOrThread);
+      this.repository.addTopLevelComment(commentOrThread, offset);
     }
-    this._comments = nextComments;
-    triggerOnChange(this);
   }
 
   deleteCommentOrThread(
     commentOrThread: Comment | Thread,
     thread?: Thread,
-  ): {markedComment: Comment; index: number} | null {
-    const nextComments = Array.from(this._comments);
-    // The YJS types explicitly use `any` as well.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sharedCommentsArray: YArray<any> | null = this._getCollabComments();
-    let commentIndex: number | null = null;
-
-    if (thread !== undefined) {
-      for (let i = 0; i < nextComments.length; i++) {
-        const nextComment = nextComments[i];
-        if (nextComment.type === 'thread' && nextComment.id === thread.id) {
-          const newThread = cloneThread(nextComment);
-          nextComments.splice(i, 1, newThread);
-          const threadComments = newThread.comments;
-          commentIndex = threadComments.indexOf(commentOrThread as Comment);
-          if (this.isCollaborative() && sharedCommentsArray !== null) {
-            const parentSharedArray = sharedCommentsArray
-              .get(i)
-              .get('comments');
-            this._withRemoteTransaction(() => {
-              parentSharedArray.delete(commentIndex);
-            });
-          }
-          threadComments.splice(commentIndex, 1);
-          break;
-        }
-      }
-    } else {
-      commentIndex = nextComments.indexOf(commentOrThread);
-      if (this.isCollaborative() && sharedCommentsArray !== null) {
-        this._withRemoteTransaction(() => {
-          sharedCommentsArray.delete(commentIndex as number);
-        });
-      }
-      nextComments.splice(commentIndex, 1);
+  ): { markedComment: Comment; index: number } | null {
+    if (commentOrThread.type === 'comment' && thread !== undefined) {
+      return this.repository.deleteComment(thread.id, commentOrThread.id);
     }
-    this._comments = nextComments;
-    triggerOnChange(this);
-
     if (commentOrThread.type === 'comment') {
-      return {
-        index: commentIndex as number,
-        markedComment: markDeleted(commentOrThread as Comment),
-      };
+      return this.repository.deleteTopLevelComment(commentOrThread.id);
     }
-
+    if (commentOrThread.type === 'thread') {
+      this.repository.deleteThread(commentOrThread.id);
+    }
     return null;
   }
 
-  /**
-   * Mark a thread resolved (or unresolved). Unlike delete, this preserves the
-   * thread, its comments, and the document MarkNode -- it only flips a flag.
-   * Updates both the local array and the shared Y.Map so the state syncs to
-   * collaborators. Mirrors `addComment`'s index-based lookup of the thread's
-   * shared map.
-   */
   setThreadResolved(thread: Thread, resolved: boolean): void {
-    const nextComments = Array.from(this._comments);
-    // The YJS types explicitly use `any` as well.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sharedCommentsArray: YArray<any> | null = this._getCollabComments();
-
-    for (let i = 0; i < nextComments.length; i++) {
-      const comment = nextComments[i];
-      if (comment.type === 'thread' && comment.id === thread.id) {
-        if (comment.resolved === resolved) {
-          return;
-        }
-        const newThread = cloneThread(comment);
-        newThread.resolved = resolved;
-        nextComments.splice(i, 1, newThread);
-        if (this.isCollaborative() && sharedCommentsArray !== null) {
-          this._withRemoteTransaction(() => {
-            sharedCommentsArray.get(i).set('resolved', resolved);
-          });
-        }
-        this._comments = nextComments;
-        triggerOnChange(this);
-        return;
-      }
-    }
+    this.repository.setThreadResolved(thread.id, resolved);
   }
 
   registerOnChange(onChange: () => void): () => void {
-    const changeListeners = this._changeListeners;
-    changeListeners.add(onChange);
-    return () => {
-      changeListeners.delete(onChange);
-    };
+    this._changeListeners.add(onChange);
+    return () => this._changeListeners.delete(onChange);
   }
 
-  _withRemoteTransaction(fn: () => void): void {
-    const provider = this._collabProvider;
-    if (provider !== null) {
-      // @ts-expect-error doc does exist
-      const doc = provider.doc;
-      doc.transact(fn, this);
-    }
+  // Kept for compatibility with focused storage tests and older headless code.
+  _getCollabComments(): null | YArray<YMap<unknown>> {
+    if (!this.isCollaborative()) return null;
+    return (
+      (this._collabProvider as CommentRepositoryProvider).doc?.getArray<
+        YMap<unknown>
+      >('comments') ?? null
+    );
   }
 
-  _withLocalTransaction(fn: () => void): void {
-    const collabProvider = this._collabProvider;
-    try {
-      this._collabProvider = null;
-      fn();
-    } finally {
-      this._collabProvider = collabProvider;
-    }
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  _getCollabComments(): null | YArray<any> {
-    const provider = this._collabProvider;
-    if (provider !== null) {
-      // @ts-expect-error doc does exist
-      const doc = provider.doc;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return doc.get('comments', YArray) as YArray<any>;
-    }
-    return null;
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  _createCollabSharedMap(commentOrThread: Comment | Thread): YMap<any> {
-    const sharedMap = new YMap();
-    const type = commentOrThread.type;
-    const id = commentOrThread.id;
-    sharedMap.set('type', type);
-    sharedMap.set('id', id);
-    if (type === 'comment') {
-      if (commentOrThread.actor) {
-        sharedMap.set('actor', commentOrThread.actor);
-      }
-      sharedMap.set('author', commentOrThread.author);
-      if (commentOrThread.clientMutationId) {
-        sharedMap.set('clientMutationId', commentOrThread.clientMutationId);
-      }
-      sharedMap.set('content', commentOrThread.content);
-      sharedMap.set('deleted', commentOrThread.deleted);
-      if (commentOrThread.replyToCommentId) {
-        sharedMap.set('replyToCommentId', commentOrThread.replyToCommentId);
-      }
-      sharedMap.set('timeStamp', commentOrThread.timeStamp);
-    } else {
-      sharedMap.set('quote', commentOrThread.quote);
-      sharedMap.set('resolved', commentOrThread.resolved);
-      const commentsArray = new YArray();
-      commentOrThread.comments.forEach((comment, i) => {
-        const sharedChildComment = this._createCollabSharedMap(comment);
-        commentsArray.insert(i, [sharedChildComment]);
-      });
-      sharedMap.set('comments', commentsArray);
-    }
-    return sharedMap;
+  _createCollabSharedMap(commentOrThread: Comment | Thread): YMap<unknown> {
+    return createCommentSharedMap(commentOrThread);
   }
 
   registerCollaboration(provider: Provider): () => void {
     this._collabProvider = provider;
-    const sharedCommentsArray = this._getCollabComments();
+    const commentProvider = provider as CommentRepositoryProvider;
+    const doc = commentProvider.doc;
+    if (!doc) {
+      throw new Error('The comment collaboration provider has no Y.Doc.');
+    }
+    this.replaceRepository(
+      commentProvider.commentRepository ?? new YDocCommentRepository(doc),
+    );
 
-    const connect = () => {
-      provider.connect();
-    };
-
+    const connect = () => provider.connect();
     const disconnect = () => {
       try {
         provider.disconnect();
-      } catch (e) {
-        // Do nothing
+      } catch {
+        // The document connection is owned by the host.
       }
     };
 
-    const unsubscribe = this._editor.registerCommand(
+    const unsubscribeCommand = this._editor.registerCommand(
       TOGGLE_CONNECT_COMMAND,
-      (payload) => {
-        if (connect !== undefined && disconnect !== undefined) {
-          const shouldConnect = payload;
-
-          if (shouldConnect) {
-            // eslint-disable-next-line no-console
-            console.log('Comments connected!');
-            connect();
-          } else {
-            // eslint-disable-next-line no-console
-            console.log('Comments disconnected!');
-            disconnect();
-          }
+      (shouldConnect) => {
+        if (shouldConnect) {
+          // eslint-disable-next-line no-console
+          console.log('Comments connected!');
+          connect();
+        } else {
+          // eslint-disable-next-line no-console
+          console.log('Comments disconnected!');
+          disconnect();
         }
-
         return false;
       },
       COMMAND_PRIORITY_LOW,
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const materializeSharedComment = (map: YMap<any>): Comment | Thread => {
-      const id = map.get('id');
-      const type = map.get('type');
-      if (type === 'thread') {
-        return createThread(
-          map.get('quote'),
-          map
-            .get('comments')
-            .toArray()
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            .map((innerComment: YMap<any>) =>
-              createComment(
-                innerComment.get('content') as string,
-                innerComment.get('author') as string,
-                innerComment.get('id') as string,
-                innerComment.get('timeStamp') as number,
-                innerComment.get('deleted') as boolean,
-                {
-                  actor: normalizeCommentActor(
-                    innerComment.get('actor'),
-                    innerComment.get('author') as string,
-                  ),
-                  clientMutationId: innerComment.get('clientMutationId') as
-                    | string
-                    | undefined,
-                  replyToCommentId: innerComment.get('replyToCommentId') as
-                    | string
-                    | undefined,
-                },
-              ),
-            ),
-          id,
-          map.get('resolved') as boolean | undefined,
-        );
-      }
-      return createComment(
-        map.get('content'),
-        map.get('author'),
-        id,
-        map.get('timeStamp'),
-        map.get('deleted'),
-        {
-          actor: normalizeCommentActor(map.get('actor'), map.get('author')),
-          clientMutationId: map.get('clientMutationId'),
-          replyToCommentId: map.get('replyToCommentId'),
-        },
-      );
-    };
-
-    const onSharedCommentChanges = (
-      // The YJS types explicitly use `any` as well.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      events: Array<YEvent<any>>,
-      transaction: Transaction,
-    ) => {
-      if (transaction.origin !== this) {
-        for (let i = 0; i < events.length; i++) {
-          const event = events[i];
-
-          if (event instanceof YArrayEvent) {
-            const target = event.target;
-            const deltas = event.delta;
-            let offset = 0;
-
-            for (let s = 0; s < deltas.length; s++) {
-              const delta = deltas[s];
-              const insert = delta.insert;
-              const retain = delta.retain;
-              const del = delta.delete;
-              const parent = target.parent;
-              const parentThread =
-                target === sharedCommentsArray
-                  ? undefined
-                  : parent instanceof YMap &&
-                    (this._comments.find((t) => t.id === parent.get('id')) as
-                      | Thread
-                      | undefined);
-
-              if (Array.isArray(insert)) {
-                insert
-                  .slice()
-                  .reverse()
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  .forEach((map: YMap<any>) => {
-                    const commentOrThread = materializeSharedComment(map);
-                    this._withLocalTransaction(() => {
-                      this.addComment(
-                        commentOrThread,
-                        parentThread as Thread,
-                        offset,
-                      );
-                    });
-                  });
-              } else if (typeof retain === 'number') {
-                offset += retain;
-              } else if (typeof del === 'number') {
-                for (let d = 0; d < del; d++) {
-                  const commentOrThread =
-                    parentThread === undefined || parentThread === false
-                      ? this._comments[offset]
-                      : parentThread.comments[offset];
-                  this._withLocalTransaction(() => {
-                    this.deleteCommentOrThread(
-                      commentOrThread,
-                      parentThread as Thread,
-                    );
-                  });
-                  offset++;
-                }
-              }
-            }
-          } else if (event instanceof YMapEvent) {
-            // A field on a thread's shared map changed (e.g. `resolved` toggled
-            // by a collaborator). The thread/comment array structure is
-            // unchanged, so reflect the new value onto the local thread.
-            const target = event.target;
-            if (
-              target instanceof YMap &&
-              event.keysChanged.has('resolved') &&
-              target.get('type') === 'thread'
-            ) {
-              const threadId = target.get('id');
-              const resolved = target.get('resolved') === true;
-              const existing = this._comments.find(
-                (t) => t.type === 'thread' && t.id === threadId,
-              ) as Thread | undefined;
-              if (existing && existing.resolved !== resolved) {
-                this._withLocalTransaction(() => {
-                  this.setThreadResolved(existing, resolved);
-                });
-              }
-            }
-          }
-        }
-      }
-    };
-
-    if (sharedCommentsArray === null) {
-      return () => null;
-    }
-
-    sharedCommentsArray.observeDeep(onSharedCommentChanges);
-
-    // Headless consumers may attach after the Y.Doc is already hydrated.
-    // Materialize that canonical snapshot immediately; the mounted plugin
-    // normally attaches before sync and continues to populate through the
-    // observer above.
-    if (this._comments.length === 0 && sharedCommentsArray.length > 0) {
-      this._withLocalTransaction(() => {
-        sharedCommentsArray.toArray().forEach((map, index) => {
-          this.addComment(materializeSharedComment(map), undefined, index);
-        });
-      });
-    }
-
     connect();
-
     return () => {
-      sharedCommentsArray.unobserveDeep(onSharedCommentChanges);
-      unsubscribe();
+      unsubscribeCommand();
+      this.unsubscribeRepository();
+      this.repository.destroy();
       this._collabProvider = null;
     };
+  }
+
+  private readonly triggerOnChange = (): void => {
+    for (const listener of this._changeListeners) listener();
+  };
+
+  private replaceRepository(repository: YDocCommentRepository): void {
+    const pending = this.repository.getSnapshot();
+    this.unsubscribeRepository();
+    this.repository.destroy();
+    this.repository = repository;
+    const existingIds = new Set(
+      repository.getSnapshot().map((comment) => comment.id),
+    );
+    for (const commentOrThread of pending) {
+      if (existingIds.has(commentOrThread.id)) continue;
+      if (commentOrThread.type === 'thread') {
+        repository.addThread(commentOrThread as unknown as Thread);
+      } else {
+        repository.addTopLevelComment(commentOrThread as unknown as Comment);
+      }
+      existingIds.add(commentOrThread.id);
+    }
+    this.unsubscribeRepository = repository.subscribe(this.triggerOnChange);
+    this.triggerOnChange();
   }
 }
 
 export function useCommentStore(commentStore: CommentStore): Comments {
-  const [comments, setComments] = useState<Comments>(
-    commentStore.getComments(),
+  return useSyncExternalStore(
+    (listener) => commentStore.registerOnChange(listener),
+    () => commentStore.getComments(),
+    () => commentStore.getComments(),
   );
-
-  useEffect(() => {
-    return commentStore.registerOnChange(() => {
-      setComments(commentStore.getComments());
-    });
-  }, [commentStore]);
-
-  return comments;
 }

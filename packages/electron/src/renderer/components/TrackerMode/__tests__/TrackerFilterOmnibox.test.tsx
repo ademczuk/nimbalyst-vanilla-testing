@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { useState } from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { TrackerFilterSet } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import { TrackerFilterOmnibox } from '../TrackerFilterOmnibox';
+import { dispatchTrackerFocusSearch } from '../trackerSearchFocus';
 import type { TrackerFilterField } from '../TrackerViewHeaderControls';
 
 const FIELDS: TrackerFilterField[] = [
@@ -355,5 +356,22 @@ describe('TrackerFilterOmnibox', () => {
 
     fireEvent.click(screen.getByTestId('tracker-filter-omnibox-clear'));
     expect(onTagFilterChange).toHaveBeenCalledWith([]);
+  });
+
+  // Cmd+F arrives as an Edit > Find menu IPC, not a keystroke, so the mode
+  // router dispatches this event instead of the box binding the chord itself.
+  it('takes focus and selects the query when Tracker Mode routes Find to it', () => {
+    const { unmount } = render(<Harness initialQuery="auth" />);
+
+    // Focusing opens the suggestion menu, same as clicking into the box.
+    act(() => dispatchTrackerFocusSearch());
+
+    expect(document.activeElement).toBe(input());
+    expect(input().selectionStart).toBe(0);
+    expect(input().selectionEnd).toBe('auth'.length);
+
+    // An unmounted box must not answer a later Find.
+    unmount();
+    expect(() => dispatchTrackerFocusSearch()).not.toThrow();
   });
 });

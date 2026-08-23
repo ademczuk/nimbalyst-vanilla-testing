@@ -26,8 +26,17 @@ export interface DocumentBackingStore {
   /** Load the document content from the backing store. */
   load(): Promise<string | ArrayBuffer>;
 
-  /** Save content to the backing store. */
-  save(content: string | ArrayBuffer): Promise<void>;
+  /**
+   * Save content to the backing store.
+   *
+   * `expectedDiskContent` is the conflict baseline: what the caller believes is
+   * currently persisted. Stores that can detect a conflict must refuse the
+   * write when it does not match. Passing `undefined` disables that check and
+   * is an unconditional overwrite -- #3684 was partly caused by three callers
+   * omitting this argument by accident, so pass it unless you specifically
+   * intend to clobber.
+   */
+  save(content: string | ArrayBuffer, expectedDiskContent?: string): Promise<void>;
 
   /**
    * Subscribe to external content changes (e.g. file watcher, collab sync).

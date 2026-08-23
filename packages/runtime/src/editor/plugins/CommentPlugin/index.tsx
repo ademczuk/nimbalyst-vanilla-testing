@@ -6,42 +6,35 @@
  * comments panel with an `@`-mention composer. Comments anchor to the text via
  * `@lexical/mark` `MarkNode`s and persist in the document's shared Y.Doc
  * (top-level `comments` YArray) through the orphaned-upstream `CommentStore`.
- * A side panel lists threads, supports reply / resolve / delete, and clicking
- * a mark focuses its thread.
  *
- * When a comment `@`-mentions members, the host's `onMention` callback is
- * invoked. It is currently unwired: the personal-index fanout lane was removed
- * and the org-scoped TeamInboxRoom replacement is not shipped.
+ * What is left here is only the Lexical half: mark tracking, selection, mark
+ * highlighting, re-anchoring, and the store wiring. Everything that draws a
+ * thread, a comment, or the composer is the shared editor-neutral UI in
+ * `commenting/ui`, which extension editors mount over their own entities.
+ * This file is the Markdown *adapter* for those primitives — it translates
+ * MarkNode presence into an anchor state and a selection into a thread.
  *
- * The MarkNode + `INSERT_INLINE_COMMENT_COMMAND` live in `CommentsExtension`;
- * this component owns the React UI and store wiring.
+ * The MarkNode + `INSERT_INLINE_COMMENT_COMMAND` live in `CommentsExtension`.
  */
 
 import type { JSX } from 'react';
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
-import { LexicalComposer } from '@lexical/react/LexicalComposer';
-import { PlainTextPlugin } from '@lexical/react/LexicalPlainTextPlugin';
-import { ContentEditable } from '@lexical/react/LexicalContentEditable';
-import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary';
-import { $isMarkNode, $unwrapMarkNode, $getMarkIDs, MarkNode } from '@lexical/mark';
+import {
+  $isMarkNode,
+  $unwrapMarkNode,
+  $getMarkIDs,
+  MarkNode,
+} from '@lexical/mark';
 import { mergeRegister } from '@lexical/utils';
 import {
   $getNodeByKey,
-  $getRoot,
   $getSelection,
   $isRangeSelection,
   $isTextNode,
   COMMAND_PRIORITY_HIGH,
-  KEY_ENTER_COMMAND,
   type NodeKey,
 } from 'lexical';
 
@@ -49,7 +42,6 @@ import {
   CommentStore,
   createComment,
   createThread,
-  normalizeCommentActor,
   useCommentStore,
   type Comment,
   type CommentActor,
@@ -57,6 +49,7 @@ import {
 } from '../../commenting';
 import {
   collabCommentControllerRegistry,
+  collectMarkIds,
   createCollabCommentController,
 } from '../../commenting/CollabCommentControllerRegistry';
 import { CommentCollabProvider } from '../../commenting/CommentCollabProvider';
@@ -64,21 +57,25 @@ import {
   canAuthorComments,
   resolveCommentCapabilities,
 } from '../../commenting/capabilities';
+import {
+  assertCommentMutationAllowed,
+  validateCommentBody,
+  validateCommentMentions,
+  validateTextQuoteSelector,
+} from '../../commenting/commentValidation';
 import { reanchorOrphanedThreads } from '../../commenting/reanchorOrphanedThreads';
 import type {
-  CommentMember,
   CommentsConfig,
   CommentMentionPayload,
 } from '../../commenting/types';
+import {
+  CollaborativeCommentsPanel,
+  CommentCountBadge,
+  type CommentThreadView,
+} from '../../commenting/ui';
 import { INSERT_INLINE_COMMENT_COMMAND } from '../../extensions/builtin/CommentsExtension';
 import { OPEN_COMMENT_COMPOSER_COMMAND } from './commands';
 import { scrollToCommentAnchor } from './scrollToCommentAnchor';
-import { filterMentionCandidates, useMentionRoster } from './useMentionRoster';
-import {
-  TypeaheadMenuPlugin,
-  type TypeaheadMenuOption,
-} from '../TypeaheadPlugin/TypeaheadMenuPlugin';
-import { createBasicTriggerFunction } from '../TypeaheadPlugin/TypeaheadMenu';
 
 import './CommentPlugin.css';
 
@@ -87,20 +84,9 @@ type MarkNodeMap = Map<string, Set<NodeKey>>;
 /** Coalesce the mark mutations a document rebuild fires before healing. */
 const REANCHOR_DEBOUNCE_MS = 250;
 
-export { OPEN_COMMENT_COMPOSER_COMMAND } from './commands';
+const NO_ORPHANS: ReadonlySet<string> = new Set();
 
-function formatTimestamp(ts: number): string {
-  try {
-    return new Date(ts).toLocaleString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  } catch {
-    return '';
-  }
-}
+export { OPEN_COMMENT_COMPOSER_COMMAND } from './commands';
 
 function createClientMutationId(): string {
   return typeof globalThis.crypto?.randomUUID === 'function'
@@ -108,480 +94,21 @@ function createClientMutationId(): string {
     : `comment-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function getActorName(comment: Comment): string {
-  const actor = normalizeCommentActor(comment.actor, comment.author);
-  return actor.kind === 'agent' ? actor.sessionName : actor.displayName;
+function sameIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  return a.size === b.size && [...a].every((id) => b.has(id));
 }
 
-function getReplyTargetName(thread: Thread, comment: Comment): string {
-  const target = thread.comments.find(
-    (candidate) => candidate.id === comment.replyToCommentId,
-  );
-  return target ? getActorName(target) : 'an earlier comment';
-}
-
-function CommentActorLabel({ comment }: { comment: Comment }): JSX.Element {
-  const actor = normalizeCommentActor(comment.actor, comment.author);
-  if (actor.kind === 'user') {
-    return <span className="nim-comment-author">{actor.displayName}</span>;
-  }
-  return (
-    <button
-      type="button"
-      className="nim-comment-agent-author"
-      title={`Open agent session ${actor.sessionName}`}
-      onClick={(event) => {
-        event.stopPropagation();
-        window.dispatchEvent(
-          new CustomEvent('open-ai-session', {
-            detail: { sessionId: actor.sessionId },
-          }),
-        );
-      }}
-    >
-      <span className="material-symbols-outlined">smart_toy</span>
-      <span>{actor.sessionName}</span>
-      <span className="nim-comment-agent-badge">Agent</span>
-      {actor.onBehalfOfDisplayName && (
-        <span className="nim-comment-agent-owner">
-          for {actor.onBehalfOfDisplayName}
-        </span>
-      )}
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Composer (nested plain-text Lexical editor + @-mention typeahead)
-// ---------------------------------------------------------------------------
-
-interface ComposerSubmit {
-  (text: string, mentionedUserIds: string[]): void;
-}
-
-function CommentComposerInner({
-  getMembers,
-  onSubmit,
-  onCancel,
-  submitLabel,
-  placeholder,
-  autoFocus,
-}: {
-  getMembers: () => CommentMember[];
-  onSubmit: ComposerSubmit;
-  onCancel: () => void;
-  submitLabel: string;
-  placeholder: string;
-  autoFocus: boolean;
-}): JSX.Element {
-  const [editor] = useLexicalComposerContext();
-  // displayName -> userId for mentions the user actually picked.
-  const mentionsRef = useRef<Map<string, string>>(new Map());
-  const [canSubmit, setCanSubmit] = useState(false);
-  const [queryString, setQueryString] = useState<string | null>(null);
-  const members = useMentionRoster(getMembers, queryString);
-
-  useEffect(() => {
-    if (autoFocus) {
-      editor.focus();
-    }
-  }, [editor, autoFocus]);
-
-  const readTextAndMentions = useCallback((): {
-    text: string;
-    mentionedUserIds: string[];
-  } => {
-    let text = '';
-    editor.getEditorState().read(() => {
-      text = $getRoot().getTextContent();
-    });
-    const trimmed = text.trim();
-    const mentionedUserIds: string[] = [];
-    for (const [name, userId] of mentionsRef.current) {
-      if (text.includes('@' + name)) {
-        mentionedUserIds.push(userId);
-      }
-    }
-    return { text: trimmed, mentionedUserIds: [...new Set(mentionedUserIds)] };
-  }, [editor]);
-
-  const submit = useCallback(() => {
-    const { text, mentionedUserIds } = readTextAndMentions();
-    if (!text) {
-      onCancel();
-      return;
-    }
-    onSubmit(text, mentionedUserIds);
-    editor.update(() => {
-      $getRoot().clear();
-    });
-    mentionsRef.current.clear();
-    setCanSubmit(false);
-  }, [readTextAndMentions, onSubmit, onCancel, editor]);
-
-  useEffect(() => {
-    return editor.registerUpdateListener(() => {
-      editor.getEditorState().read(() => {
-        setCanSubmit($getRoot().getTextContent().trim().length > 0);
-      });
-    });
-  }, [editor]);
-
-  // Cmd/Ctrl+Enter submits; plain Enter inserts a newline.
-  useEffect(() => {
-    return editor.registerCommand(
-      KEY_ENTER_COMMAND,
-      (event: KeyboardEvent | null) => {
-        if (event && (event.metaKey || event.ctrlKey)) {
-          event.preventDefault();
-          submit();
-          return true;
-        }
-        return false;
-      },
-      COMMAND_PRIORITY_HIGH,
+function allowsMountedCommentMutation(config: CommentsConfig): boolean {
+  try {
+    assertCommentMutationAllowed(
+      resolveCommentCapabilities(config),
+      config.isHydrated?.() ?? config.getYDoc() !== null,
     );
-  }, [editor, submit]);
-
-  const triggerFn = useMemo(
-    () => createBasicTriggerFunction('@', { minLength: 0 }),
-    [],
-  );
-
-  const options = useMemo<TypeaheadMenuOption[]>(() => {
-    return filterMentionCandidates(members, queryString)
-      .slice(0, 10)
-      .map((m) => ({
-        id: 'mention-' + m.userId,
-        label: m.name,
-        // Only when it adds information: `name` already falls back to the
-        // email for members with no display name, and repeating it there
-        // would read as two different people.
-        secondaryText: m.email && m.email !== m.name ? m.email : undefined,
-        onSelect: () => {
-          editor.update(() => {
-            const selection = $getSelection();
-            if ($isRangeSelection(selection)) {
-              selection.insertText('@' + m.name + ' ');
-            }
-          });
-          mentionsRef.current.set(m.name, m.userId);
-        },
-      }));
-  }, [members, queryString, editor]);
-
-  const handleSelectOption = useCallback(
-    (option: TypeaheadMenuOption, _node: unknown, closeMenu: () => void) => {
-      option.onSelect();
-      closeMenu();
-    },
-    [],
-  );
-
-  return (
-    <div className="nim-comment-composer" data-testid="comment-composer">
-      {/* Wrapper gives the placeholder a positioning context. Lexical renders
-          the placeholder as a sibling of the contenteditable, so without a
-          positioned wrapper its `position: absolute` resolves against
-          `.nim-comments-panel` and pins "Reply..." to the panel's top-left
-          corner, behind the header icon. */}
-      <div className="nim-comment-composer-editor">
-        <PlainTextPlugin
-          contentEditable={
-            <ContentEditable
-              className="nim-comment-composer-input"
-              aria-placeholder={placeholder}
-              placeholder={
-                <div className="nim-comment-composer-placeholder">
-                  {placeholder}
-                </div>
-              }
-            />
-          }
-          ErrorBoundary={LexicalErrorBoundary}
-        />
-      </div>
-      <TypeaheadMenuPlugin
-        options={options}
-        triggerFn={triggerFn}
-        onQueryChange={setQueryString}
-        onSelectOption={handleSelectOption}
-        maxHeight={240}
-        minWidth={200}
-        maxWidth={280}
-      />
-      <div className="nim-comment-composer-actions">
-        <button
-          type="button"
-          className="nim-comment-btn nim-comment-btn-cancel"
-          onClick={onCancel}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          className="nim-comment-btn nim-comment-btn-submit"
-          disabled={!canSubmit}
-          onClick={submit}
-        >
-          {submitLabel}
-        </button>
-      </div>
-    </div>
-  );
+    return true;
+  } catch {
+    return false;
+  }
 }
-
-function CommentComposer(props: {
-  getMembers: () => CommentMember[];
-  onSubmit: ComposerSubmit;
-  onCancel: () => void;
-  submitLabel: string;
-  placeholder: string;
-  autoFocus: boolean;
-}): JSX.Element {
-  const initialConfig = useMemo(
-    () => ({
-      namespace: 'NimbalystCommentComposer',
-      theme: {},
-      onError: (error: Error) => {
-        throw error;
-      },
-      nodes: [],
-    }),
-    [],
-  );
-
-  return (
-    <LexicalComposer initialConfig={initialConfig}>
-      <CommentComposerInner {...props} />
-    </LexicalComposer>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Thread side-panel
-// ---------------------------------------------------------------------------
-
-function CommentsPanel({
-  threads,
-  activeThreadId,
-  canComment,
-  getMembers,
-  onSelectThread,
-  onSetThreadResolved,
-  onDeleteThread,
-  onDeleteComment,
-  onReply,
-  onClose,
-}: {
-  threads: Thread[];
-  activeThreadId: string | null;
-  /** False for a read-only viewer: reading stays, authoring disappears. */
-  canComment: boolean;
-  getMembers: () => CommentMember[];
-  onSelectThread: (id: string) => void;
-  onSetThreadResolved: (thread: Thread, resolved: boolean) => void;
-  onDeleteThread: (thread: Thread) => void;
-  onDeleteComment: (comment: Comment, thread: Thread) => void;
-  onReply: (thread: Thread, text: string, mentionedUserIds: string[]) => void;
-  onClose: () => void;
-}): JSX.Element {
-  return (
-    <div className="nim-comments-panel" data-testid="comments-panel">
-      <div className="nim-comments-panel-header">
-          <span className="material-symbols-outlined nim-comments-panel-icon">
-            chat_bubble
-          </span>
-          <span className="nim-comments-panel-title">Comments</span>
-          <button
-            type="button"
-            className="nim-comments-panel-close"
-            onClick={onClose}
-            aria-label="Close comments"
-            title="Close"
-          >
-            <span className="material-symbols-outlined">close</span>
-          </button>
-        </div>
-        {/* Explain the missing affordances once, at the container, rather than
-            repeating a notice under every thread. */}
-        {!canComment && (
-          <div className="nim-comments-panel-notice">
-            You have read-only access to this document.
-          </div>
-        )}
-        <div className="nim-comments-panel-list">
-          {threads.length === 0 ? (
-            <div className="nim-comments-empty">
-              {canComment
-                ? 'No comments yet. Select text in the document and add one.'
-                : 'No comments yet.'}
-            </div>
-          ) : (
-            threads.map((thread) => (
-              <div
-                key={thread.id}
-                className={
-                  'nim-comment-thread' +
-                  (thread.id === activeThreadId ? ' active' : '') +
-                  (thread.resolved ? ' resolved' : '')
-                }
-                data-testid="comment-thread"
-                data-resolved={thread.resolved ? 'true' : 'false'}
-                onClick={() => onSelectThread(thread.id)}
-              >
-                <div className="nim-comment-quote" title={thread.quote}>
-                  {thread.resolved && (
-                    <span
-                      className="nim-comment-resolved-badge"
-                      title="Resolved"
-                    >
-                      <span className="material-symbols-outlined">
-                        check_circle
-                      </span>
-                    </span>
-                  )}
-                  {thread.quote || '(no quote)'}
-                </div>
-                {thread.resolved ? (
-                  // Resolved threads collapse to a dimmed summary with an
-                  // Unresolve affordance; comments and the reply composer are
-                  // hidden until the thread is reopened.
-                  <div
-                    className="nim-comment-thread-footer"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <span className="nim-comment-resolved-summary">
-                      {thread.comments.length}{' '}
-                      {thread.comments.length === 1 ? 'comment' : 'comments'}
-                      {' · Resolved'}
-                    </span>
-                    {canComment && (
-                      <>
-                        <button
-                          type="button"
-                          className="nim-comment-btn nim-comment-btn-unresolve"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSetThreadResolved(thread, false);
-                          }}
-                        >
-                          Unresolve
-                        </button>
-                        <button
-                          type="button"
-                          className="nim-comment-btn nim-comment-btn-delete-thread"
-                          title="Delete thread"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteThread(thread);
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    {thread.comments.map((comment) => (
-                      <div key={comment.id} className="nim-comment">
-                        <div className="nim-comment-meta">
-                          <CommentActorLabel comment={comment} />
-                          <span className="nim-comment-time">
-                            {formatTimestamp(comment.timeStamp)}
-                          </span>
-                          {canComment && (
-                            <button
-                              type="button"
-                              className="nim-comment-delete"
-                              title="Delete comment"
-                              aria-label="Delete comment"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onDeleteComment(comment, thread);
-                              }}
-                            >
-                              <span className="material-symbols-outlined">
-                                delete
-                              </span>
-                            </button>
-                          )}
-                        </div>
-                        {comment.replyToCommentId && (
-                          <div className="nim-comment-reply-target">
-                            Replying to {getReplyTargetName(thread, comment)}
-                          </div>
-                        )}
-                        <div className="nim-comment-content">
-                          {comment.content}
-                        </div>
-                      </div>
-                    ))}
-                    {canComment && (
-                      <div
-                        className="nim-comment-thread-footer"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <CommentComposer
-                          getMembers={getMembers}
-                          submitLabel={
-                            thread.comments.length === 0 ? 'Comment' : 'Reply'
-                          }
-                          placeholder={
-                            thread.comments.length === 0
-                              ? 'Add a comment... use @ to mention'
-                              : 'Reply...'
-                          }
-                          autoFocus={
-                            thread.comments.length === 0 &&
-                            thread.id === activeThreadId
-                          }
-                          onSubmit={(text, mentioned) =>
-                            onReply(thread, text, mentioned)
-                          }
-                          onCancel={() => {
-                            if (thread.comments.length === 0) {
-                              onDeleteThread(thread);
-                            }
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className="nim-comment-btn nim-comment-btn-resolve"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSetThreadResolved(thread, true);
-                          }}
-                        >
-                          Resolve
-                        </button>
-                        <button
-                          type="button"
-                          className="nim-comment-btn nim-comment-btn-delete-thread"
-                          title="Delete thread"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteThread(thread);
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            ))
-          )}
-        </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main plugin
-// ---------------------------------------------------------------------------
 
 export default function CommentsPlugin({
   config,
@@ -603,6 +130,12 @@ export default function CommentsPlugin({
     `comments-${Math.random().toString(36).slice(2, 12)}`,
   );
   const [markVersion, setMarkVersion] = useState(0);
+  // Threads whose quoted text is gone for good: no MarkNode, and the healing
+  // pass below could not find the quote either. Derived from a completed pass
+  // rather than from "no mark right now", because a document rebuild drops
+  // every mark for a beat and every thread would flash as detached.
+  const [orphanedThreadIds, setOrphanedThreadIds] =
+    useState<ReadonlySet<string>>(NO_ORPHANS);
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -726,14 +259,31 @@ export default function CommentsPlugin({
   // MarkNodes carrying the same id, which still renders and still unwraps
   // through the mutation-tracked key map.
   useEffect(() => {
-    if (threads.length === 0) return;
-    if (!canAuthorComments(config)) return;
+    if (threads.length === 0) {
+      setOrphanedThreadIds((previous) =>
+        previous.size === 0 ? previous : NO_ORPHANS,
+      );
+      return;
+    }
     // A partially-synced document would resolve quotes against incomplete text
     // and anchor them in the wrong place -- permanently, for everyone.
     if (!(config.isHydrated?.() ?? config.getYDoc() !== null)) return;
 
     const timer = setTimeout(() => {
-      reanchorOrphanedThreads(editor, threads);
+      // Read-only viewers skip the write but still get an honest answer about
+      // which threads no longer point at anything.
+      if (canAuthorComments(config)) {
+        reanchorOrphanedThreads(editor, threads);
+      }
+      const attached = collectMarkIds(editor);
+      const stillOrphaned = new Set(
+        threads
+          .filter((thread) => !attached.has(thread.id))
+          .map((thread) => thread.id),
+      );
+      setOrphanedThreadIds((previous) =>
+        sameIds(previous, stillOrphaned) ? previous : stillOrphaned,
+      );
     }, REANCHOR_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [editor, threads, config, markVersion]);
@@ -856,7 +406,7 @@ export default function CommentsPlugin({
     // revoked between the frame that drew the toolbar and this dispatch, and
     // `getCommentToolbarActions` is memoized on the config object's identity,
     // which does not change when the capability behind it flips.
-    if (!canAuthorComments(config)) return;
+    if (!allowsMountedCommentMutation(config)) return;
     let quote = '';
     let isBackward = false;
     editor.getEditorState().read(() => {
@@ -867,8 +417,16 @@ export default function CommentsPlugin({
       }
     });
     if (!quote.trim()) return;
+    try {
+      validateTextQuoteSelector({ exact: quote });
+    } catch {
+      return;
+    }
 
-    const thread = createThread(quote, []);
+    const thread = createThread(quote, [], undefined, undefined, {
+      kind: 'text-quote',
+      exact: quote,
+    });
     commentStore.addComment(thread);
     editor.dispatchCommand(INSERT_INLINE_COMMENT_COMMAND, {
       id: thread.id,
@@ -894,7 +452,18 @@ export default function CommentsPlugin({
 
   const handleReply = useCallback(
     (thread: Thread, text: string, mentionedUserIds: string[]) => {
-      if (!canAuthorComments(config)) return;
+      if (!allowsMountedCommentMutation(config)) return;
+      let body: string;
+      let mentions: string[];
+      try {
+        body = validateCommentBody(text);
+        mentions = validateCommentMentions(
+          mentionedUserIds,
+          config.getMembers(),
+        );
+      } catch {
+        return;
+      }
       const actor: CommentActor = {
         kind: 'user',
         userId: config.currentUser.id,
@@ -902,24 +471,26 @@ export default function CommentsPlugin({
       };
       const replyTarget = thread.comments.at(-1);
       const clientMutationId = createClientMutationId();
-      const comment = createComment(text, config.currentUser.name, {
+      const comment = createComment(body, config.currentUser.name, {
         actor,
         clientMutationId,
         replyToCommentId: replyTarget?.id,
       });
       commentStore.addComment(comment, thread);
-      fanoutMention(mentionedUserIds, text, thread.id, comment.id, actor);
+      fanoutMention(mentions, body, thread.id, comment.id, actor);
       const replyRecipient =
-        replyTarget?.actor?.kind === 'user' ? replyTarget.actor.userId : undefined;
+        replyTarget?.actor?.kind === 'user'
+          ? replyTarget.actor.userId
+          : undefined;
       if (
         replyRecipient &&
         replyRecipient !== config.currentUser.id &&
-        !mentionedUserIds.includes(replyRecipient)
+        !mentions.includes(replyRecipient)
       ) {
         config.onReply?.([replyRecipient], {
           actorName: config.currentUser.name,
           sourceTitle: config.documentTitle,
-          snippet: text.slice(0, 200),
+          snippet: body.slice(0, 200),
           threadId: thread.id,
           markId: thread.id,
           url: config.documentUri,
@@ -935,6 +506,7 @@ export default function CommentsPlugin({
 
   const handleSetThreadResolved = useCallback(
     (thread: Thread, resolved: boolean) => {
+      if (!allowsMountedCommentMutation(config)) return;
       // Resolving is a non-destructive state change: the thread, its comments,
       // and the document MarkNode are all kept (the mark just renders dimmed).
       commentStore.setThreadResolved(thread, resolved);
@@ -942,11 +514,12 @@ export default function CommentsPlugin({
         setActiveThreadId(null);
       }
     },
-    [commentStore, activeThreadId],
+    [commentStore, activeThreadId, config],
   );
 
   const handleDeleteThread = useCallback(
     (thread: Thread) => {
+      if (!allowsMountedCommentMutation(config)) return;
       // Destructive: removes the thread entirely and unwraps its mark.
       commentStore.deleteCommentOrThread(thread);
       removeMark(thread.id);
@@ -954,11 +527,12 @@ export default function CommentsPlugin({
         setActiveThreadId(null);
       }
     },
-    [commentStore, removeMark, activeThreadId],
+    [commentStore, removeMark, activeThreadId, config],
   );
 
   const handleDeleteComment = useCallback(
     (comment: Comment, thread: Thread) => {
+      if (!allowsMountedCommentMutation(config)) return;
       commentStore.deleteCommentOrThread(comment, thread);
       // If that was the last comment, also resolve (remove) the thread + mark.
       if (thread.comments.length <= 1) {
@@ -966,7 +540,7 @@ export default function CommentsPlugin({
         removeMark(thread.id);
       }
     },
-    [commentStore, removeMark],
+    [commentStore, removeMark, config],
   );
 
   const handleSelectThread = useCallback(
@@ -977,12 +551,30 @@ export default function CommentsPlugin({
     [scrollToThread],
   );
 
+  const openAgentSession = useCallback((sessionId: string) => {
+    window.dispatchEvent(
+      new CustomEvent('open-ai-session', { detail: { sessionId } }),
+    );
+  }, []);
+
   const getMembers = useCallback(() => config.getMembers(), [config]);
+
+  // A MarkNode is Markdown's anchor, so "the mark is gone and the quote could
+  // not be found again" is what orphaned means here. The thread and its
+  // history stay in the panel either way.
+  const threadViews = useMemo<CommentThreadView[]>(
+    () =>
+      threads.map((thread) => ({
+        thread,
+        anchorState: orphanedThreadIds.has(thread.id) ? 'orphaned' : 'attached',
+      })),
+    [threads, orphanedThreadIds],
+  );
 
   // Read on every render and deliberately not memoized on `config`: hosts keep
   // the same config object across an access change, so a memo keyed on its
   // identity would leave the gate showing stale affordances after revocation.
-  const canComment = canAuthorComments(config);
+  const capabilities = resolveCommentCapabilities(config);
 
   // Reserve room on the right of the editor pane while the panel is docked
   // open, so document text isn't hidden underneath it.
@@ -1007,26 +599,32 @@ export default function CommentsPlugin({
             aria-label="Toggle comments"
             onClick={() => setPanelOpen(true)}
           >
-            <span className="material-symbols-outlined">chat_bubble</span>
-            {threads.length > 0 && (
-              <span className="nim-comments-toggle-count">{threads.length}</span>
-            )}
+            <span aria-hidden="true" className="material-symbols-outlined">
+              chat_bubble
+            </span>
+            <CommentCountBadge
+              count={threads.length}
+              className="nim-comments-toggle-count"
+            />
           </button>,
           paneElem,
         )}
 
       {panelOpen &&
         createPortal(
-          <CommentsPanel
-            threads={threads}
+          <CollaborativeCommentsPanel
+            className="nim-comments-panel--docked"
+            threads={threadViews}
             activeThreadId={activeThreadId}
-            canComment={canComment}
+            autoFocusThreadId={activeThreadId}
+            capabilities={capabilities}
             getMembers={getMembers}
             onSelectThread={handleSelectThread}
             onSetThreadResolved={handleSetThreadResolved}
             onDeleteThread={handleDeleteThread}
             onDeleteComment={handleDeleteComment}
             onReply={handleReply}
+            onOpenAgentSession={openAgentSession}
             onClose={() => setPanelOpen(false)}
           />,
           paneElem,

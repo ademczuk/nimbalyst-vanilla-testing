@@ -15,6 +15,10 @@
     "**/*.css"
   ],
   "exports": {
+    "./commenting-ui": {
+      "types": "./types/commenting-ui.d.ts",
+      "import": "./dist/commenting-ui.js"
+    },
     "./editor": {
       "types": "./types/editor.d.ts",
       "import": "./dist/editor.js"

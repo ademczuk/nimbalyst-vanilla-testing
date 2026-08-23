@@ -109,6 +109,11 @@ describe('flushCollaborativeContent', () => {
     expect(flushWithAck).toHaveBeenCalledTimes(1);
   });
 
+  it('omits comments when the host supplies no live comments capability', () => {
+    const context = makeContext(async () => true);
+    expect(context).not.toHaveProperty('comments');
+  });
+
   it('drains the rest and acks after one binding fails, but reports the failure', async () => {
     const calls: string[] = [];
     const context = makeContext(async () => {

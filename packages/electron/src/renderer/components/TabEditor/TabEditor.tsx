@@ -64,6 +64,7 @@ import { createCollectionItem } from '../TrackerMode/createCollectionItem';
 import { loadTrackerTeamMembers } from '../TrackerMode/useTrackerTeamMembers';
 import { assertFileSaveSucceeded, getSaveFailureMessage, resolveSaveFailureType, type FileSaveResult } from '../../utils/fileSaveResult';
 import { resolveSaveAttempt } from './resolveSaveAttempt';
+import { reloadFromDisk, type ReloadOutcome } from './reloadFromDisk';
 
 /** Normalize a file path for comparison: backslashes to forward slashes, strip trailing slashes. */
 function normalizePathForCompare(p: string): string {
@@ -355,6 +356,12 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   const hasInitialContentSyncRef = useRef<boolean>(false);
   const pendingAIEditTagRef = useRef<{tagId: string, sessionId: string, filePath: string} | null>(null);
   const isApplyingDiffRef = useRef<boolean>(false); // Track programmatic diff application
+  // #3684: set when a reload could not be verified, i.e. the buffer is not a
+  // trustworthy picture of anything. Writes are blocked while it is set --
+  // a tab that does not know what is on disk must not write to it -- and
+  // self-heal retries from a fresh disk read until it clears. See reloadFromDisk.ts.
+  const unverifiedReloadRef = useRef<{ incoming: string; attempts: number } | null>(null);
+  const selfHealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isApplyingExternalContentRef = useRef<boolean>(false); // Guard: programmatic content update from sibling save
   const isClearingDiffTagRef = useRef<boolean>(false); // Guard against pending-cleared reload race
   const editorHostFileChangeCallbackRef = useRef<((newContent: string) => void) | null>(null); // For EditorHost file change subscription
@@ -1078,6 +1085,188 @@ export const TabEditor: React.FC<TabEditorProps> = ({
     }
   }, [filePath, fileName, onSaveComplete]);
 
+  /**
+   * Push external content into the editor and verify it landed (#3684).
+   *
+   * The apply strategy is chosen from what the mounted editor actually
+   * supports, not from the file extension. Picking it off `isMarkdown` meant
+   * that in markdown source mode -- where `editorRef` holds the Monaco wrapper
+   * -- the reload called a Lexical-only `update()` that went nowhere, silently.
+   * That was one of the ways a buffer ended up stale while the baseline moved.
+   *
+   * `readBuffer` deliberately uses `getContentFnRef`, the exact function the
+   * autosave path serializes with. Verifying against anything else would check
+   * a value that never reaches disk.
+   */
+  const applyVerifiedReload = useCallback((incoming: string): ReloadOutcome => {
+    const editor = editorRef.current;
+    const canUseLexical =
+      !!editor && typeof editor.update === 'function' && typeof editor.getEditorState === 'function';
+    const canUseSetContent = !!editor && typeof editor.setContent === 'function';
+
+    let applyToEditor: ((content: string) => void) | null = null;
+    if (canUseLexical && isMarkdown) {
+      applyToEditor = (content) => {
+        const transformers = getEditorTransformers();
+        editor!.update(() => {
+          // Clearing a selected node without moving selection first makes
+          // Lexical throw "selection has been lost ..." (NIM-2005).
+          $setSelection(null);
+          const root = $getRoot();
+          root.clear();
+          $convertFromEnhancedMarkdownString(content, transformers);
+        }, { tag: externalContentUpdateTags(editor) });
+        setReloadVersion((v) => v + 1);
+      };
+    } else if (canUseSetContent) {
+      applyToEditor = (content) => {
+        editor!.setContent(content);
+        setReloadVersion((v) => v + 1);
+      };
+    }
+
+    return reloadFromDisk(
+      incoming,
+      {
+        baseline: lastSavedContentRef.current,
+        buffer: contentRef.current,
+        dirty: isDirtyRef.current,
+      },
+      {
+        applyToEditor,
+        readBuffer: () => {
+          const getContent = getContentFnRef.current;
+          if (!getContent) return null;
+          try {
+            return getContent();
+          } catch {
+            return null;
+          }
+        },
+        onApplyError: (error) => {
+          logger.ui.error(`[TabEditor] Failed to apply external file change to ${fileName}:`, error);
+        },
+      },
+    );
+  }, [isMarkdown, fileName]);
+
+  /**
+   * Adopt a reload outcome. A verified apply moves the baseline, the buffer and
+   * the dirty flag together. An unverified one moves none of them, blocks
+   * writes, and hands off to self-heal -- the tab is wrong, not the disk.
+   */
+  const commitReloadOutcome = useCallback((outcome: ReloadOutcome, incoming: string) => {
+    contentRef.current = outcome.next.buffer;
+    initialContentRef.current = outcome.next.buffer;
+
+    if (outcome.verified) {
+      lastSavedContentRef.current = outcome.next.baseline;
+      isDirtyRef.current = outcome.next.dirty;
+      onDirtyChange?.(outcome.next.dirty);
+      unverifiedReloadRef.current = null;
+      setAutosaveConflictDiskContent(null);
+      if (outcome.normalized) {
+        logger.ui.info(
+          `[TabEditor] Reload verified via normalized render (formatting differs from disk): ${fileName}`,
+        );
+      }
+      return;
+    }
+
+    // Baseline deliberately untouched: it still describes content this buffer
+    // can honestly be compared against, so Layer D keeps working.
+    const attempts = (unverifiedReloadRef.current?.attempts ?? 0) + 1;
+    unverifiedReloadRef.current = { incoming, attempts };
+    logger.ui.warn(
+      `[TabEditor] Reload could not be verified (${outcome.failure}), attempt ${attempts}; ` +
+        `writes blocked for ${fileName} until it heals`,
+    );
+    scheduleSelfHealRef.current?.(attempts);
+  }, [fileName, onDirtyChange]);
+
+  // Self-heal is defined below (it re-reads disk and calls back into the two
+  // functions above); this ref breaks the cycle without a dynamic import.
+  const scheduleSelfHealRef = useRef<((attempts: number) => void) | null>(null);
+
+  /**
+   * Retry an unverified reload from a *fresh* disk read, on a bounded backoff.
+   *
+   * Re-reading matters: the content we failed to apply may itself be what the
+   * editor choked on, and disk may have moved on again since. The goal is that
+   * a blocked tab is a transient nobody sees -- see the plan's "avoid stale
+   * tabs at all cost" decision. Only on exhaustion does the user get the
+   * existing conflict banner, with writes still blocked so the tab is inert
+   * rather than dangerous.
+   */
+  const SELF_HEAL_MAX_ATTEMPTS = 4;
+  const scheduleSelfHeal = useCallback((attempts: number) => {
+    if (selfHealTimerRef.current) clearTimeout(selfHealTimerRef.current);
+
+    if (attempts >= SELF_HEAL_MAX_ATTEMPTS) {
+      const pending = unverifiedReloadRef.current;
+      logger.ui.error(
+        `[TabEditor] Reload self-heal exhausted after ${attempts} attempts for ${fileName}; ` +
+          `surfacing conflict banner, writes stay blocked`,
+      );
+      if (pending) setAutosaveConflictDiskContent(pending.incoming);
+      return;
+    }
+
+    const delay = 150 * 2 ** (attempts - 1);
+    selfHealTimerRef.current = setTimeout(async () => {
+      selfHealTimerRef.current = null;
+      if (!unverifiedReloadRef.current) return;
+      try {
+        const result = await window.electronAPI.readFileContent(filePath);
+        if (!result?.success || typeof result.content !== 'string') return;
+        if (!unverifiedReloadRef.current) return;
+        isApplyingExternalContentRef.current = true;
+        const outcome = applyVerifiedReload(result.content);
+        commitReloadOutcome(outcome, result.content);
+        setTimeout(() => {
+          isApplyingExternalContentRef.current = false;
+        }, 0);
+      } catch (error) {
+        logger.ui.error(`[TabEditor] Reload self-heal read failed for ${filePath}:`, error);
+      }
+    }, delay);
+  }, [filePath, fileName, applyVerifiedReload, commitReloadOutcome]);
+
+  useEffect(() => {
+    scheduleSelfHealRef.current = scheduleSelfHeal;
+  }, [scheduleSelfHeal]);
+
+  useEffect(() => () => {
+    if (selfHealTimerRef.current) clearTimeout(selfHealTimerRef.current);
+  }, []);
+
+  /**
+   * Write the outcome of a diff resolution (accept, reject, partial) to disk.
+   *
+   * All six of these call sites used to pass `undefined` for `lastKnownContent`,
+   * which switches the conflict check off entirely (#3684). The honest baseline
+   * here is not the pre-diff content but the agent's write, which is what disk
+   * holds while a diff is pending -- so a *second* agent write landing after the
+   * diff was computed is now caught instead of being discarded silently by a
+   * reject. On conflict this surfaces the existing banner and aborts rather
+   * than throwing, matching the source-mode flush path.
+   *
+   * Returns true when the bytes reached disk.
+   */
+  const saveDiffResolutionToDisk = useCallback(async (content: string): Promise<boolean> => {
+    const expected = documentModel?.getDiffState()?.newContent ?? lastSavedContentRef.current;
+    const result = await window.electronAPI.saveFile(content, filePath, expected, 'manual');
+    if (result?.conflict) {
+      logger.ui.warn(
+        `[TabEditor] Diff resolution refused for ${fileName}: disk changed since the diff was computed`,
+      );
+      setAutosaveConflictDiskContent(typeof result.diskContent === 'string' ? result.diskContent : '');
+      return false;
+    }
+    assertManualSaveSucceeded(result);
+    return true;
+  }, [filePath, fileName, documentModel]);
+
   // Latest saveWithHistory accessible from the stable EditorHost adapter (which
   // is memoized on filePath/fileName and would otherwise capture a stale closure).
   // The host adapter routes built-in editor saves through this ref so they
@@ -1200,6 +1389,13 @@ export const TabEditor: React.FC<TabEditorProps> = ({
         if (!getContentFnRef.current) return;
         // Skip if applying a diff
         if (isApplyingDiffRef.current) return;
+        // #3684: the buffer is not a verified picture of this file. Writing it
+        // would silently revert whoever last wrote to disk. Self-heal is
+        // already retrying; stay inert until it clears.
+        if (unverifiedReloadRef.current) {
+          logger.ui.warn(`[TabEditor] Autosave blocked: reload unverified for ${fileName}`);
+          return;
+        }
 
         // If in diff mode, check if all diffs have been manually resolved.
         // (User may have deleted all diff content via select-all + backspace.)
@@ -1282,32 +1478,10 @@ export const TabEditor: React.FC<TabEditorProps> = ({
         // from the programmatic content update below.
         isApplyingExternalContentRef.current = true;
 
-        if (editorRef.current) {
-          try {
-            if (isMarkdown) {
-              const transformers = getEditorTransformers();
-              editorRef.current.update(() => {
-                // Clearing a selected node without moving selection first makes
-                // Lexical throw "selection has been lost ..." (NIM-2005).
-                $setSelection(null);
-                const root = $getRoot();
-                root.clear();
-                $convertFromEnhancedMarkdownString(content, transformers);
-              }, { tag: externalContentUpdateTags(editorRef.current) });
-            } else if (editorRef.current.setContent) {
-              editorRef.current.setContent(content);
-            }
-            setReloadVersion((v) => v + 1);
-          } catch (error) {
-            logger.ui.error(`[TabEditor] Failed to apply DocumentModel file change:`, error);
-          }
-        }
-
-        contentRef.current = content;
-        lastSavedContentRef.current = content;
-        initialContentRef.current = content;
-        isDirtyRef.current = false;
-        onDirtyChange?.(false);
+        // The baseline, the buffer and the dirty flag move together or not at
+        // all -- see reloadFromDisk.ts for why an unverified baseline is a
+        // silent data-loss path (#3684).
+        commitReloadOutcome(applyVerifiedReload(content), content);
 
         setTimeout(() => {
           isApplyingExternalContentRef.current = false;
@@ -1410,6 +1584,28 @@ export const TabEditor: React.FC<TabEditorProps> = ({
 
               await new Promise((resolve) => setTimeout(resolve, 100));
               diffTrace('TabEditor.applyDiffState post-dispatch settle done', { filePath, t: performance.now() });
+
+              // #3684 (hole 2): we have just reset the buffer to `oldContent`
+              // while disk holds `newContent`. That is only safe if the diff
+              // actually rendered -- the autosave guard skips saving while diff
+              // nodes exist. If the replace command produced none, nothing is
+              // holding autosave back and it would write `oldContent` over the
+              // agent's write, byte-identically. Block instead; self-heal will
+              // re-read disk and put the tab back on real content.
+              const diffRendered = editorRef.current.getEditorState().read(() =>
+                $hasDiffNodes(editorRef.current!),
+              );
+              if (!diffRendered && newContent !== oldContent) {
+                logger.ui.error(
+                  `[TabEditor] Diff produced no nodes for ${fileName}; buffer holds pre-edit content ` +
+                    `while disk holds the new content. Blocking writes and self-healing.`,
+                );
+                unverifiedReloadRef.current = {
+                  incoming: newContent,
+                  attempts: (unverifiedReloadRef.current?.attempts ?? 0) + 1,
+                };
+                scheduleSelfHealRef.current?.(unverifiedReloadRef.current.attempts);
+              }
             } else if (editorRef.current.showDiff) {
               editorRef.current.showDiff(oldContent, newContent);
               setShowMonacoDiffBar(true);
@@ -1717,13 +1913,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
           });
 
           // Save the approved content to disk
-          const saveResult = await window.electronAPI.saveFile(
-            approvedContent,
-            filePath,
-            undefined,
-            'manual',
-          );
-          assertManualSaveSucceeded(saveResult);
+          if (!(await saveDiffResolutionToDisk(approvedContent))) return;
 
           // Create incremental-approval tag with the REJECTED version
           // This is the baseline: it shows what we've decided so far (approved + rejected)
@@ -1797,13 +1987,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             });
 
             // Save to disk
-            const saveResult = await window.electronAPI.saveFile(
-              currentContent,
-              filePath,
-              undefined,
-              'manual',
-            );
-            assertManualSaveSucceeded(saveResult);
+            if (!(await saveDiffResolutionToDisk(currentContent))) return;
 
             // Update DocumentModel's echo-suppression baseline
             documentModel?.setLastPersistedContent(currentContent);
@@ -1969,13 +2153,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
       // console.log('[TabEditor] ABOUT TO WRITE TO DISK');
       // Write to disk - use saveFile with (content, filePath) parameter order
       try {
-        const saveResult = await window.electronAPI.saveFile(
-          newContent,
-          filePath,
-          undefined,
-          'manual',
-        );
-        assertManualSaveSucceeded(saveResult);
+        if (!(await saveDiffResolutionToDisk(newContent))) return;
         // console.log('[TabEditor] WROTE TO DISK SUCCESSFULLY');
       } catch (writeError) {
         console.error('[TabEditor] ERROR WRITING TO DISK:', writeError);
@@ -2065,13 +2243,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
       const oldContent = editorRef.current.rejectDiff();
 
       // Write to disk - use saveFile with (content, filePath) parameter order
-      const saveResult = await window.electronAPI.saveFile(
-        oldContent,
-        filePath,
-        undefined,
-        'manual',
-      );
-      assertManualSaveSucceeded(saveResult);
+      if (!(await saveDiffResolutionToDisk(oldContent))) return;
 
       // Mark tag as reviewed (must pass filePath, tagId, status, workspacePath)
       if (window.electronAPI.history) {
@@ -2201,13 +2373,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
       }
 
       // Write original content back to disk
-      const saveResult = await window.electronAPI.saveFile(
-        baseline.content,
-        filePath,
-        undefined,
-        'manual',
-      );
-      assertManualSaveSucceeded(saveResult);
+      if (!(await saveDiffResolutionToDisk(baseline.content))) return;
 
       // Mark tag as reviewed
       if (window.electronAPI.history) {
@@ -2473,13 +2639,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             if (!pendingAIEditTagRef.current) return;
 
             // Save the resulting content
-            const saveResult = await window.electronAPI.saveFile(
-              result.content,
-              filePath,
-              undefined,
-              'manual',
-            );
-            assertManualSaveSucceeded(saveResult);
+            if (!(await saveDiffResolutionToDisk(result.content))) return;
 
             // Update tag status
             if (window.electronAPI.history) {

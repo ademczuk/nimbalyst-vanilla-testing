@@ -74,7 +74,7 @@ export async function activate(context: {
         sessionId = result.sessionId;
       } catch (err) {
         response = `*Automation "${status.title}" failed at ${new Date().toLocaleString()}.*\n\nError: ${err}`;
-        const outputFile = await outputWriter.write(status.output, response, status.title);
+        const outputFile = await outputWriter.write(status, response);
         return {
           success: false,
           response,
@@ -84,7 +84,7 @@ export async function activate(context: {
       }
     } else {
       response = `*Automation "${status.title}" fired at ${new Date().toLocaleString()}.*\n\nThe AI service is not available. Check that the extension has AI permissions enabled.`;
-      const outputFile = await outputWriter.write(status.output, response, status.title);
+      const outputFile = await outputWriter.write(status, response);
       return {
         success: false,
         response,
@@ -93,7 +93,7 @@ export async function activate(context: {
       };
     }
 
-    const outputFile = await outputWriter.write(status.output, response, status.title);
+    const outputFile = await outputWriter.write(status, response);
     return { success: true, response, sessionId, outputFile };
   });
 
@@ -191,6 +191,9 @@ const createAutomationTool: ExtensionAITool = {
       days: { type: 'string', description: 'Comma-separated days for weekly schedule (e.g., "mon,tue,wed,thu,fri")' },
       interval_minutes: { type: 'number', description: 'Interval in minutes for interval schedule' },
       output_mode: { type: 'string', description: 'Output mode: "new-file", "append", or "replace"', enum: ['new-file', 'append', 'replace'] },
+      output_location: { type: 'string', description: 'Directory for output files, relative to the workspace root (default: "nimbalyst-local/automations/<id>/")' },
+      output_file_name: { type: 'string', description: 'Name of the output file. Supports {{date}}, {{time}}, and {{id}}. Defaults to "{{date}}-output.md" for new-file mode and "output.md" for append/replace.' },
+      enabled: { type: 'boolean', description: 'Start the automation enabled and running on its schedule (default: false)' },
     },
     required: ['id', 'title', 'prompt'],
   },
@@ -201,6 +204,15 @@ const createAutomationTool: ExtensionAITool = {
     const scheduleType = (args.schedule_type as string) ?? 'daily';
     const time = (args.time as string) ?? '09:00';
     const outputMode = (args.output_mode as string) ?? 'new-file';
+    const enabled = args.enabled === true;
+
+    const rawLocation = (args.output_location as string) ?? `nimbalyst-local/automations/${id}/`;
+    const location = rawLocation.endsWith('/') ? rawLocation : rawLocation + '/';
+    const fileName = args.output_file_name as string | undefined;
+    // Only write a template the caller actually asked for — emitting the
+    // new-file default into an append/replace automation would name its log
+    // after the date and split it per run.
+    const fileNameLine = fileName ? `\n    fileNameTemplate: ${JSON.stringify(fileName)}` : '';
 
     let scheduleYaml: string;
     switch (scheduleType) {
@@ -219,17 +231,19 @@ const createAutomationTool: ExtensionAITool = {
         scheduleYaml = `    type: daily\n    time: "${time}"`;
     }
 
+    // `title` is free prose — a colon or quote in it would otherwise produce
+    // YAML the parser rejects, leaving a file that reports as created but never
+    // loads as an automation.
     const content = `---
 automationStatus:
   id: ${id}
-  title: ${title}
-  enabled: false
+  title: ${JSON.stringify(title)}
+  enabled: ${enabled}
   schedule:
 ${scheduleYaml}
   output:
     mode: ${outputMode}
-    location: nimbalyst-local/automations/${id}/
-    fileNameTemplate: "{{date}}-output.md"
+    location: ${location}${fileNameLine}
   runCount: 0
 ---
 
@@ -243,11 +257,14 @@ ${prompt}
     try {
       const fs = context.extensionContext.services.filesystem;
       await fs.writeFile(filePath, content);
-      // Trigger rescan to pick up the new file
-      scheduler?.rescan();
+      // Await the rescan so an enabled automation is actually scheduled by the
+      // time this reports success.
+      await scheduler?.rescan();
       return {
         success: true,
-        message: `Created automation "${title}" at ${filePath}. Open the file to configure the schedule using the document header controls, then enable it when ready.`,
+        message: enabled
+          ? `Created automation "${title}" at ${filePath}, enabled and scheduled. It will run on its schedule until you disable it.`
+          : `Created automation "${title}" at ${filePath}. It is DISABLED and will not run — enable it from the document header, or pass enabled: true when creating it.`,
       };
     } catch (err) {
       return {
