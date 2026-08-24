@@ -273,7 +273,7 @@ export function KeyboardShortcutsDialog({ isOpen, onClose }: KeyboardShortcutsDi
   if (developerMode) {
     const viewGroup = generalShortcuts.find((group) => group.title === 'View');
     viewGroup?.shortcuts.splice(8, 0, {
-      label: 'Pull Requests',
+      label: 'GitHub',
       shortcut: KeyboardShortcuts.view.prReviewMode,
     });
   }

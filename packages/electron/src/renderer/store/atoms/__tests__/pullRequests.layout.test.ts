@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { store } from '@nimbalyst/runtime/store';
 import {
@@ -32,7 +34,9 @@ describe('PR mode layout persistence', () => {
     await initPrModeLayout('/workspace');
 
     expect(store.get(prModeLayoutAtom)).toMatchObject({
+      activeGithubList: 'prs',
       activeFilters: ['closed'],
+      selectedIssueItemId: null,
       sidebarWidth: 280,
       chatWidth: 350,
       chatCollapsed: false,

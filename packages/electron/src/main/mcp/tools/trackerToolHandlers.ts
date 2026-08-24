@@ -59,6 +59,7 @@ import {
   resolveTrackerRowByReference,
 } from './trackerToolItemAccess';
 import { handleTrackerPublicationUpdate } from './trackerPublicationTool';
+import { handleGithubIssueOverlayCreate } from './githubIssueOverlayTool';
 import {
   bodyWriteFailure,
   DESTRUCTIVE_CONFIRM_PARAM_DESCRIPTION,
@@ -1753,6 +1754,19 @@ export async function handleTrackerCreate(
 
     const humanOnly = rejectHumanOnlyStatus(args, args.type);
     if (humanOnly) return humanOnly;
+
+    const issueOverlayResult = await handleGithubIssueOverlayCreate(
+      args,
+      workspacePath,
+      Boolean(sessionId && args.linkSession === true),
+      {
+        linkSession: (itemId) =>
+          handleTrackerLinkSession({ trackerId: itemId }, sessionId, workspacePath),
+        notifyAdded: (itemId) => notifyTrackerItemAdded(workspacePath, itemId),
+        notifyUpdated: (itemId) => notifyTrackerItemUpdated(workspacePath, itemId),
+      },
+    );
+    if (issueOverlayResult) return issueOverlayResult;
 
     const { getDatabase } = await import("../../database/initialize");
     const db = getDatabase();

@@ -80,7 +80,11 @@ export type PrFilesViewMode = 'full' | 'patch';
 /** Diff orientation within the collapsed-diff (patch) stream. */
 export type PrPatchDiffLayout = 'unified' | 'split';
 
+export type GithubListKind = 'prs' | 'issues';
+
 export interface PrModeLayout {
+  /** Which GitHub resource list is visible in the shared panel shell. */
+  activeGithubList: GithubListKind;
   /** Active filter chips. `open`/`closed` are mutually exclusive. */
   activeFilters: PrFilterChip[];
   /**
@@ -91,8 +95,10 @@ export interface PrModeLayout {
   trackerStatusFilters: string[];
   /** Sort order for the list. */
   sortKey: PrSortKey;
-  /** Currently selected PR id (opens the detail panel when non-null). */
+  /** Currently selected PR id; retained independently when switching to Issues. */
   selectedItemId: string | null;
+  /** Currently selected issue id; retained independently when switching to PRs. */
+  selectedIssueItemId: string | null;
   /** Active tab in the detail panel. */
   activeDetailTab: PrDetailTab;
   /** Sidebar width in pixels. */
@@ -109,21 +115,25 @@ export interface PrModeLayout {
   patchDiffLayout: PrPatchDiffLayout;
 }
 
-const DEFAULT_PR_MODE_LAYOUT: PrModeLayout = {
-  activeFilters: ['open'],
-  trackerStatusFilters: [],
-  sortKey: 'updated',
-  selectedItemId: null,
-  activeDetailTab: 'conversation',
-  sidebarWidth: 220,
-  detailPanelWidth: 460,
-  chatWidth: 350,
-  chatCollapsed: false,
-  filesViewMode: 'full',
-  patchDiffLayout: 'unified',
-};
+export function createDefaultPrModeLayout(): PrModeLayout {
+  return {
+    activeGithubList: 'prs',
+    activeFilters: ['open'],
+    trackerStatusFilters: [],
+    sortKey: 'updated',
+    selectedItemId: null,
+    selectedIssueItemId: null,
+    activeDetailTab: 'conversation',
+    sidebarWidth: 220,
+    detailPanelWidth: 460,
+    chatWidth: 350,
+    chatCollapsed: false,
+    filesViewMode: 'full',
+    patchDiffLayout: 'unified',
+  };
+}
 
-export const prModeLayoutAtom = atom<PrModeLayout>(DEFAULT_PR_MODE_LAYOUT);
+export const prModeLayoutAtom = atom<PrModeLayout>(createDefaultPrModeLayout());
 
 // Track workspace path for persistence (mirrors trackers.ts).
 let currentWorkspacePath: string | null = null;
@@ -155,22 +165,25 @@ export async function initPrModeLayout(workspacePath: string): Promise<void> {
       workspaceState?.prModeLayout && typeof workspaceState.prModeLayout === 'object'
         ? workspaceState.prModeLayout
         : {};
+    const defaults = createDefaultPrModeLayout();
     store.set(prModeLayoutAtom, {
+      activeGithubList: saved.activeGithubList ?? defaults.activeGithubList,
       activeFilters: Array.isArray(saved.activeFilters)
         ? saved.activeFilters
-        : DEFAULT_PR_MODE_LAYOUT.activeFilters,
+        : defaults.activeFilters,
       trackerStatusFilters: Array.isArray(saved.trackerStatusFilters)
         ? saved.trackerStatusFilters
-        : DEFAULT_PR_MODE_LAYOUT.trackerStatusFilters,
-      sortKey: saved.sortKey ?? DEFAULT_PR_MODE_LAYOUT.sortKey,
-      selectedItemId: saved.selectedItemId ?? DEFAULT_PR_MODE_LAYOUT.selectedItemId,
-      activeDetailTab: saved.activeDetailTab ?? DEFAULT_PR_MODE_LAYOUT.activeDetailTab,
-      sidebarWidth: saved.sidebarWidth ?? DEFAULT_PR_MODE_LAYOUT.sidebarWidth,
-      detailPanelWidth: saved.detailPanelWidth ?? DEFAULT_PR_MODE_LAYOUT.detailPanelWidth,
-      chatWidth: saved.chatWidth ?? DEFAULT_PR_MODE_LAYOUT.chatWidth,
-      chatCollapsed: saved.chatCollapsed ?? DEFAULT_PR_MODE_LAYOUT.chatCollapsed,
-      filesViewMode: saved.filesViewMode ?? DEFAULT_PR_MODE_LAYOUT.filesViewMode,
-      patchDiffLayout: saved.patchDiffLayout ?? DEFAULT_PR_MODE_LAYOUT.patchDiffLayout,
+        : defaults.trackerStatusFilters,
+      sortKey: saved.sortKey ?? defaults.sortKey,
+      selectedItemId: saved.selectedItemId ?? defaults.selectedItemId,
+      selectedIssueItemId: saved.selectedIssueItemId ?? defaults.selectedIssueItemId,
+      activeDetailTab: saved.activeDetailTab ?? defaults.activeDetailTab,
+      sidebarWidth: saved.sidebarWidth ?? defaults.sidebarWidth,
+      detailPanelWidth: saved.detailPanelWidth ?? defaults.detailPanelWidth,
+      chatWidth: saved.chatWidth ?? defaults.chatWidth,
+      chatCollapsed: saved.chatCollapsed ?? defaults.chatCollapsed,
+      filesViewMode: saved.filesViewMode ?? defaults.filesViewMode,
+      patchDiffLayout: saved.patchDiffLayout ?? defaults.patchDiffLayout,
     });
   } catch (err) {
     console.error('[pullRequests] Failed to load mode layout:', err);

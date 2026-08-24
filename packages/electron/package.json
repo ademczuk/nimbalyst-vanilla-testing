@@ -1,6 +1,6 @@
 {
   "name": "@nimbalyst/electron",
-  "version": "0.75.1",
+  "version": "0.75.2",
   "private": true,
   "license": "MIT",
   "author": "Nimbalyst Team",
@@ -477,7 +477,8 @@
     },
     "linux": {
       "target": "AppImage",
-      "artifactName": "${productName}-Linux.${ext}"
+      "artifactName": "${productName}-Linux.${ext}",
+      "executableName": "nimbalyst"
     },
     "buildVersion": "0.36.5"
   }

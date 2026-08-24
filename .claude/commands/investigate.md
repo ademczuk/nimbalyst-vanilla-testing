@@ -17,6 +17,18 @@ Do NOT jump straight to implementing. The whole point of this command is to inve
 
 $ARGUMENTS
 
+## GitHub issue overlay
+
+Before Step 1, check whether `$ARGUMENTS` resolves to a GitHub issue URL. Accept a full `github.com/<owner>/<repo>/issues/<number>` URL, or resolve bare `#123` / `owner/repo#123` against the workspace's GitHub remote. If the argument is not a GitHub issue, skip this entire section silently.
+
+For a GitHub issue, fetch enough metadata to obtain its canonical URL and title, then upsert the local overlay by `issueUrl`:
+
+1. Call `tracker_list({ type: "github-issue", full: true, where: [{ field: "issueUrl", op: "=", value: issueUrl }] })` and reuse an exact match. Do not create a duplicate.
+2. If found, call `tracker_update({ id, status: "investigating" })` — unless its status is already `adopted`, which is a one-way escalation: leave the status alone and only link the session. Otherwise call `tracker_create({ type: "github-issue", title, status: "investigating", fields: { issueUrl, issueNumber, author, repo } })` and retain the returned item `id`. The title is copied only at creation for generic tracker readability.
+3. Call `tracker_link_session({ trackerId: id })` to link the current session.
+
+Do these writes on entry, before investigating. If the session is abandoned, the `investigating` item is the intended durable trace. `tracker_get` and `tracker_update` take `id`, not `itemId`.
+
 ## Investigation Process
 
 ### Step 1: Understand the problem
@@ -69,6 +81,8 @@ Based on the evidence, figure out:
 - Touches anything the user would want to think about in writing before implementation
 
 When in doubt, treat it as complex. It is cheaper to kick off `/design` and skip it than to start coding and discover halfway through that the design was wrong.
+
+If a GitHub issue overlay was created or found on entry, write the conclusion before Step 4 with `tracker_update({ id, status, fields: { notes: findingsSummary } })`. Map a simple, understood fix to `ready`; complex work that needs `/design` to `needs-design`; a conclusion blocked on missing external information to `waiting-on-reporter`; and an invalid, unactionable, or intentionally rejected report to `declined`. If the overlay is `adopted`, write only `notes` and leave the status. Keep `notes` to the compact findings summary presented below.
 
 ### Step 4: Present findings and ask how to proceed
 

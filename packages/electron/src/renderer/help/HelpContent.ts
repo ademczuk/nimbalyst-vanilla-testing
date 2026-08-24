@@ -382,8 +382,8 @@ export const HelpContent: Record<string, HelpEntry> = {
     shortcut: KeyboardShortcuts.view.orgMode,
   },
   'pr-review-mode-button': {
-    title: 'Pull Requests',
-    body: 'Review GitHub pull requests without leaving the app: browse the list, read diffs and conversation, and approve or merge.',
+    title: 'GitHub',
+    body: 'Work this project\'s GitHub without leaving the app: browse pull requests and issues, read diffs and conversation, and hand either to an agent.',
     shortcut: KeyboardShortcuts.view.prReviewMode,
   },
 

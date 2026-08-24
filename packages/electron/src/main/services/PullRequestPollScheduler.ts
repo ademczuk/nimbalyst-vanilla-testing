@@ -27,6 +27,8 @@ const logger = log.scope('PullRequestPollScheduler');
 
 const FOREGROUND_INTERVAL_MS = 60_000;
 const BACKGROUND_INTERVAL_MS = 5 * 60_000;
+const ISSUE_FOREGROUND_INTERVAL_MS = 5 * 60_000;
+const ISSUE_BACKGROUND_INTERVAL_MS = 15 * 60_000;
 
 interface WorkspaceEntry {
   workspaceId: string;
@@ -34,6 +36,9 @@ interface WorkspaceEntry {
   timer: NodeJS.Timeout;
   intervalMs: number;
   inFlight: boolean;
+  lastIssuePollAt: number | null;
+  lastSuccessfulIssuePollAt: number | null;
+  issueCursorLoaded: boolean;
 }
 
 export class PullRequestPollScheduler {
@@ -61,6 +66,9 @@ export class PullRequestPollScheduler {
       // Remote changed — re-arm with the new remote.
       existing.remote = remote;
       existing.workspaceId = workspaceId;
+      existing.lastIssuePollAt = null;
+      existing.lastSuccessfulIssuePollAt = null;
+      existing.issueCursorLoaded = false;
       return;
     }
 
@@ -75,6 +83,9 @@ export class PullRequestPollScheduler {
       timer,
       intervalMs,
       inFlight: false,
+      lastIssuePollAt: null,
+      lastSuccessfulIssuePollAt: null,
+      issueCursorLoaded: false,
     });
 
     logger.info('Started polling', { workspacePath, remote, intervalMs });
@@ -131,7 +142,7 @@ export class PullRequestPollScheduler {
   async pollNow(workspacePath: string): Promise<void> {
     const entry = this.entries.get(workspacePath);
     if (!entry) return;
-    await this.runOnce(workspacePath, entry);
+    await this.runOnce(workspacePath, entry, true);
   }
 
   private intervalFor(workspacePath: string): number {
@@ -146,7 +157,11 @@ export class PullRequestPollScheduler {
     await this.runOnce(workspacePath, entry);
   }
 
-  private async runOnce(workspacePath: string, entry: WorkspaceEntry): Promise<void> {
+  private async runOnce(
+    workspacePath: string,
+    entry: WorkspaceEntry,
+    forceIssues = false,
+  ): Promise<void> {
     if (entry.inFlight) {
       // A previous tick is still running — skip rather than queue.
       return;
@@ -158,21 +173,64 @@ export class PullRequestPollScheduler {
 
     entry.inFlight = true;
     try {
-      await this.service.listPullRequests(entry.workspaceId, entry.remote, { state: 'open' });
-      this.broadcastListUpdated(workspacePath, entry.remote);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'unknown';
-      logger.warn('Poll tick failed', { workspacePath, remote: entry.remote, message });
+      try {
+        await this.service.listPullRequests(entry.workspaceId, entry.remote, { state: 'open' });
+        this.broadcastListUpdated('pr:list-updated', workspacePath, entry.remote);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'unknown';
+        logger.warn('Poll tick failed', { workspacePath, remote: entry.remote, message });
+      }
+
+      const now = Date.now();
+      const issueInterval = this.foregroundWorkspaces.has(workspacePath)
+        ? ISSUE_FOREGROUND_INTERVAL_MS
+        : ISSUE_BACKGROUND_INTERVAL_MS;
+      const issuePollDue =
+        forceIssues ||
+        entry.lastIssuePollAt == null ||
+        now - entry.lastIssuePollAt >= issueInterval;
+      if (issuePollDue) {
+        entry.lastIssuePollAt = now;
+        try {
+          if (!entry.issueCursorLoaded) {
+            entry.lastSuccessfulIssuePollAt = await this.service.getIssuePollCursor(
+              entry.workspaceId,
+              entry.remote,
+            );
+            entry.issueCursorLoaded = true;
+          }
+          await this.service.listIssues(entry.workspaceId, entry.remote, {
+            state: 'all',
+            ...(entry.lastSuccessfulIssuePollAt == null
+              ? {}
+              : { since: new Date(entry.lastSuccessfulIssuePollAt).toISOString() }),
+          });
+          await this.service.setIssuePollCursor(entry.workspaceId, entry.remote, now);
+          entry.lastSuccessfulIssuePollAt = now;
+          this.broadcastListUpdated('issue:list-updated', workspacePath, entry.remote);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : 'unknown';
+          logger.warn('Issue poll tick failed', {
+            workspacePath,
+            remote: entry.remote,
+            message,
+          });
+        }
+      }
     } finally {
       entry.inFlight = false;
     }
   }
 
-  private broadcastListUpdated(workspacePath: string, remote: string): void {
+  private broadcastListUpdated(
+    channel: 'pr:list-updated' | 'issue:list-updated',
+    workspacePath: string,
+    remote: string,
+  ): void {
     const windows = BrowserWindow.getAllWindows();
     for (const win of windows) {
       if (!win.isDestroyed()) {
-        win.webContents.send('pr:list-updated', { workspacePath, remote });
+        win.webContents.send(channel, { workspacePath, remote });
       }
     }
   }

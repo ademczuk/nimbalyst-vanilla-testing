@@ -23,6 +23,33 @@ import type {
   PullRequestsStore,
   Reviewer,
 } from './PullRequestsStore';
+import type {
+  GithubIssueCommentRow,
+  GithubIssueEventRow,
+  GithubIssueRow,
+  GithubIssuesStore,
+} from './GithubIssuesStore';
+import {
+  createGhIssueApi,
+  type GhIssueApi,
+  type GithubIssueListOptions,
+} from './GhApiService.issues';
+import {
+  GhApiError,
+  buildApiArgs,
+  getGhApiEndpoint,
+  getGhApiMethod,
+  parsePagedJson,
+} from './ghApiHelpers';
+
+export {
+  GH_WORKFLOW_SCOPE_REFRESH_COMMAND,
+  GhApiError,
+  buildApiArgs,
+  getGhApiEndpoint,
+  getWorkflowScopeRecoveryMessage,
+  parsePagedJson,
+} from './ghApiHelpers';
 
 const logger = log.scope('GhApiService');
 
@@ -195,46 +222,6 @@ export interface ReviewThreadsResult {
   truncated: boolean;
 }
 
-export class GhApiError extends Error {
-  constructor(
-    message: string,
-    public readonly stderr: string,
-    public readonly exitCode: number | null,
-  ) {
-    super(message);
-    this.name = 'GhApiError';
-  }
-}
-
-/** Find the endpoint in a `gh api` argv list, including mutations with leading flags. */
-export function getGhApiEndpoint(args: string[]): string {
-  const valueOptions = new Set([
-    '-X', '--method', '-H', '--header', '-f', '--raw-field', '-F', '--field', '--cache',
-  ]);
-  for (let index = args[0] === 'api' ? 1 : 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (valueOptions.has(arg)) {
-      index += 1;
-      continue;
-    }
-    if (!arg.startsWith('-')) return arg;
-  }
-  return '';
-}
-
-export const GH_WORKFLOW_SCOPE_REFRESH_COMMAND = 'gh auth refresh -h github.com -s workflow';
-
-/** Return actionable guidance for GitHub's workflow-file OAuth restriction. */
-export function getWorkflowScopeRecoveryMessage(stderr: string): string | null {
-  const missingScope =
-    /refusing to allow an OAuth App to create or update workflow .* without [`'"]?workflow[`'"]? scope/i;
-  if (!missingScope.test(stderr)) return null;
-  return (
-    'GitHub blocked this merge because the PR changes a workflow file and the active GitHub CLI token lacks the `workflow` scope. ' +
-    `Run: ${GH_WORKFLOW_SCOPE_REFRESH_COMMAND}`
-  );
-}
-
 interface SpawnResult {
   stdout: string;
   stderr: string;
@@ -314,100 +301,6 @@ async function spawnGhApi(args: string[], token?: string): Promise<SpawnResult> 
       resolve({ stdout: stdout + outDecoder.end(), stderr: error.message, exitCode: null });
     });
   });
-}
-
-/**
- * Exported for tests. `--cache` is deliberately dropped whenever `--paginate`
- * is set: gh merges pages by splicing the page bodies together, and that
- * splice races against its own shared on-disk cache when several gh processes
- * run at once, emitting JSON that closes the merged array after page one
- * (`[…page1…],{…},{…}]`). Reproduced against gh 2.92.0.
- */
-export function buildApiArgs(
-  endpoint: string,
-  options: { cacheSeconds?: number; paginate?: boolean } = {},
-): string[] {
-  const args = [
-    'api',
-    endpoint,
-    '-H',
-    'Accept: application/vnd.github+json',
-    '-H',
-    'X-GitHub-Api-Version: 2022-11-28',
-  ];
-  if (options.paginate) {
-    args.push('--paginate');
-  }
-  if (!options.paginate && options.cacheSeconds && options.cacheSeconds > 0) {
-    args.push('--cache', `${options.cacheSeconds}s`);
-  }
-  return args;
-}
-
-/**
- * `gh api --paginate` returns multiple JSON arrays concatenated on stdout
- * (one per page). Parse defensively: try single parse first, then fall back
- * to walking the top-level values.
- *
- * Exported for tests. The fallback must survive gh emitting a *malformed*
- * merge — `[…page1…],{…},{…}]` — which it does when its page splicing races
- * the shared on-disk cache. Anything between top-level values (the
- * separating commas, whitespace, and that stray trailing `]`) is skipped, so
- * later pages are recovered one object at a time instead of being dropped.
- */
-export function parsePagedJson<T>(stdout: string): T[] {
-  const trimmed = stdout.trim();
-  if (!trimmed) return [];
-
-  // Single JSON value (most common).
-  try {
-    const parsed = JSON.parse(trimmed);
-    return Array.isArray(parsed) ? (parsed as T[]) : [parsed as T];
-  } catch {
-    // Fall through to the top-level walk.
-  }
-
-  const out: T[] = [];
-  let depth = 0;
-  let sliceStart = -1;
-  let inStr = false;
-  let esc = false;
-  for (let i = 0; i < trimmed.length; i++) {
-    const c = trimmed[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === '\\') esc = true;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (depth === 0 && c !== '[' && c !== '{') {
-      // Separator, whitespace, or a stray closer left over from a bad merge.
-      continue;
-    }
-    if (c === '"') { inStr = true; continue; }
-    if (c === '[' || c === '{') {
-      if (depth === 0) sliceStart = i;
-      depth++;
-    } else if (c === ']' || c === '}') {
-      depth--;
-      if (depth === 0) {
-        const slice = trimmed.slice(sliceStart, i + 1);
-        try {
-          const parsed = JSON.parse(slice) as T[] | T;
-          if (Array.isArray(parsed)) out.push(...parsed);
-          else out.push(parsed);
-        } catch (error) {
-          logger.warn('Failed to parse gh api chunk', {
-            chunkLength: slice.length,
-            preview: slice.slice(0, 200),
-            error,
-          });
-        }
-        sliceStart = -1;
-      }
-    }
-  }
-  return out;
 }
 
 interface GhPullPayload {
@@ -677,10 +570,27 @@ async function resolveGhToken(login: string): Promise<string | null> {
 export type GhAccountResolver = (workspaceId: string) => string | undefined;
 
 export class GhApiService {
+  private readonly issueApi: GhIssueApi | null;
+
   constructor(
     private readonly store: PullRequestsStore,
     private readonly accountResolver?: GhAccountResolver,
-  ) {}
+    issuesStore?: GithubIssuesStore,
+  ) {
+    this.issueApi = issuesStore
+      ? createGhIssueApi({
+          store: issuesStore,
+          request: (args, workspacePath) => this.ghApi(args, workspacePath),
+        })
+      : null;
+  }
+
+  private requireIssueApi(): GhIssueApi {
+    if (!this.issueApi) {
+      throw new Error('GithubIssuesStore not configured');
+    }
+    return this.issueApi;
+  }
 
   /** Resolve the per-workspace account's token (cached), or undefined to let gh pick the active account. */
   private async tokenFor(workspaceId?: string): Promise<string | undefined> {
@@ -700,9 +610,10 @@ export class GhApiService {
     const token = await this.tokenFor(workspaceId);
     const result = await spawnGhApi(args, token);
     const dur = Date.now() - t0;
+    const endpoint = getGhApiEndpoint(args);
+    const method = getGhApiMethod(args);
     if (result.exitCode !== 0) {
-      logger.warn('gh api failed', { args, exitCode: result.exitCode, stderr: result.stderr });
-      const endpoint = getGhApiEndpoint(args);
+      logger.warn('gh api failed', { method, endpoint, exitCode: result.exitCode });
       throw new GhApiError(
         `gh api ${endpoint} failed`,
         result.stderr,
@@ -710,9 +621,71 @@ export class GhApiService {
       );
     }
     if (dur > 2000) {
-      logger.info('gh api slow', { args: args.slice(0, 2), durationMs: dur });
+      logger.info('gh api slow', { method, endpoint, durationMs: dur });
     }
     return result.stdout;
+  }
+
+  async listIssues(
+    workspacePath: string,
+    remote: Remote,
+    options: GithubIssueListOptions = {},
+  ): Promise<GithubIssueRow[]> {
+    return this.requireIssueApi().listIssues(workspacePath, remote, options);
+  }
+
+  async getIssue(
+    workspacePath: string,
+    remote: Remote,
+    number: number,
+  ): Promise<GithubIssueRow> {
+    return this.requireIssueApi().getIssue(workspacePath, remote, number);
+  }
+
+  async getIssueComments(
+    workspacePath: string,
+    remote: Remote,
+    number: number,
+  ): Promise<GithubIssueCommentRow[]> {
+    return this.requireIssueApi().getIssueComments(workspacePath, remote, number);
+  }
+
+  async getIssueTimeline(
+    workspacePath: string,
+    remote: Remote,
+    number: number,
+  ): Promise<GithubIssueEventRow[]> {
+    return this.requireIssueApi().getIssueTimeline(workspacePath, remote, number);
+  }
+
+  async commentOnIssue(
+    workspacePath: string,
+    remote: Remote,
+    number: number,
+    body: string,
+  ): Promise<GithubIssueCommentRow> {
+    return this.requireIssueApi().commentOnIssue(workspacePath, remote, number, body);
+  }
+
+  async setIssueState(
+    workspacePath: string,
+    remote: Remote,
+    number: number,
+    state: 'open' | 'closed',
+  ): Promise<GithubIssueRow> {
+    return this.requireIssueApi().setIssueState(workspacePath, remote, number, state);
+  }
+
+  async getIssuePollCursor(workspacePath: string, remote: Remote): Promise<number | null> {
+    return this.requireIssueApi().getPollCursor(workspacePath, remote);
+  }
+
+  async setIssuePollCursor(
+    workspacePath: string,
+    remote: Remote,
+    cursor: number,
+  ): Promise<void> {
+    await this.requireIssueApi().setPollCursor(workspacePath, remote, cursor);
   }
 
   private async getPullRequestActivityTimes(

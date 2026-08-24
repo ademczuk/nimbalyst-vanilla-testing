@@ -372,10 +372,10 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
       }),
     },
     ...(hasPrRemote ? [{
-      id: 'pr-review', section: 'modes' as GutterSection, icon: 'merge', label: 'Pull Requests', hideable: true,
+      id: 'pr-review', section: 'modes' as GutterSection, icon: 'merge', label: 'GitHub', hideable: true,
       render: () => renderModeButton({
         icon: 'merge',
-        label: `Pull Requests (${getShortcutDisplay(KeyboardShortcuts.view.prReviewMode)})`,
+        label: `GitHub (${getShortcutDisplay(KeyboardShortcuts.view.prReviewMode)})`,
         contentMode: 'pr-review', testId: 'pr-review-mode-button',
       }),
     }] : []),

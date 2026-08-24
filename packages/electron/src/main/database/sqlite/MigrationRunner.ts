@@ -211,6 +211,11 @@ export function getMigrations(schemaDir: string): Migration[] {
       name: 'feedback_request_index',
       sqlFile: path.join(schemaDir, '0034_feedback_request_index.sql'),
     },
+    {
+      version: 35,
+      name: 'github_issues',
+      sqlFile: path.join(schemaDir, '0035_github_issues.sql'),
+    },
   ];
 }
 

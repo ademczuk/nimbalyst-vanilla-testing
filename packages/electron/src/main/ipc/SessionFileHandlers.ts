@@ -37,6 +37,33 @@ export function isSessionWorkspaceAllowed(
     .some((candidate) => path.resolve(candidate) === requestedWorkspace);
 }
 
+/**
+ * Normalize a `session:file-diff` request path to the absolute form
+ * `document_history.file_path` is keyed by.
+ *
+ * The sidebars send absolute paths, but the commit proposal widget sends the
+ * workspace-relative paths `git:get-commit-context` produced. Matching a
+ * relative path against the absolute key found nothing, so every proposal fell
+ * back to "no session baseline" and lost its hunk pre-selection.
+ *
+ * Absolute paths pass through untouched -- a session may legitimately have
+ * edited a file outside the workspace, and that has always been diffable here.
+ * Returns null when a relative path cannot be safely rooted.
+ */
+export function resolveSessionDiffPath(
+  workspacePath: string | undefined,
+  filePath: string,
+): string | null {
+  if (!filePath) return null;
+  if (path.isAbsolute(filePath)) return filePath;
+  if (!workspacePath) return null;
+
+  const root = path.resolve(workspacePath);
+  const resolved = path.resolve(root, filePath);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) return null;
+  return resolved;
+}
+
 function invalidateSessionCache(sessionId: string): void {
   sessionFilesCache.invalidate(sessionId);
 }
@@ -247,7 +274,7 @@ export function setupSessionFileHandlers(): void {
     'session:file-diff',
     async (
       _event,
-      _workspacePath: string,
+      workspacePath: string,
       sessionId: string,
       filePath: string,
     ): Promise<{
@@ -258,9 +285,15 @@ export function setupSessionFileHandlers(): void {
       if (!sessionId || !filePath) {
         return { unifiedDiff: '', isBinary: false, source: 'none' };
       }
+      // Snapshots are keyed by absolute path; the commit widget asks with
+      // workspace-relative ones.
+      const absoluteFilePath = resolveSessionDiffPath(workspacePath, filePath);
+      if (!absoluteFilePath) {
+        return { unifiedDiff: '', isBinary: false, source: 'none' };
+      }
       try {
         const beforeContent = await historyManager.getLatestSnapshotContent(
-          filePath,
+          absoluteFilePath,
           sessionId,
           'pre-edit',
         );
@@ -269,7 +302,7 @@ export function setupSessionFileHandlers(): void {
           return { unifiedDiff: '', isBinary: false, source: 'none' };
         }
         let afterContent = await historyManager.getLatestSnapshotContent(
-          filePath,
+          absoluteFilePath,
           sessionId,
           'ai-edit',
         );
@@ -280,7 +313,7 @@ export function setupSessionFileHandlers(): void {
           // content as a best-effort "after" — this matches what the chat
           // transcript inline card has always done.
           try {
-            afterContent = await fs.readFile(filePath, 'utf-8');
+            afterContent = await fs.readFile(absoluteFilePath, 'utf-8');
             source = 'session-history-disk-fallback';
           } catch {
             // File deleted post-edit — show pre-edit content removed against

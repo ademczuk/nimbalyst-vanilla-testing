@@ -19,15 +19,11 @@ import log from 'electron-log/main';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import { ghCliDetector, type GhCliStatus } from '../services/GhCliDetector';
 import {
-  GhApiService,
-  GhApiError,
-  getWorkflowScopeRecoveryMessage,
   type ListFilters,
   type TimelineEntry,
   type MergeMethod,
   type ReviewThreadsResult,
 } from '../services/GhApiService';
-import { createPullRequestsStore, type PullRequestsStore } from '../services/PullRequestsStore';
 import { computePrPermissions, type PrPermissions } from '../services/prPermissions';
 import { GitStatusService } from '../services/GitStatusService';
 import { GitWorktreeService } from '../services/GitWorktreeService';
@@ -43,9 +39,11 @@ import {
   savePrReviewGhAccountOverride,
 } from '../utils/store';
 import {
-  initPullRequestPollScheduler,
-  type PullRequestPollScheduler,
-} from '../services/PullRequestPollScheduler';
+  getGithubApiService as getService,
+  getGithubPollScheduler as getScheduler,
+  getGithubPullRequestsStore as getStore,
+  stopGithubPollScheduler,
+} from '../services/GithubServices';
 import { applyPrMergeToTrackers } from '../services/PrTrackerLifecycle';
 import type {
   PullRequestRow,
@@ -53,49 +51,10 @@ import type {
   PullRequestCommitRow,
   PullRequestCheckRow,
 } from '../services/PullRequestsStore';
+import { errorResponse, ghErrorResponse, type IPCResponse } from './githubIpcErrors';
 
 const logger = log.scope('PullRequestHandlers');
 
-interface IPCResponse<T> {
-  success: boolean;
-  error?: string;
-  data?: T;
-}
-
-function errorResponse(error: unknown): IPCResponse<never> {
-  const message = error instanceof Error ? error.message : 'Unknown error';
-  return { success: false, error: message };
-}
-
-function ghErrorResponse(error: unknown): IPCResponse<never> {
-  if (error instanceof GhApiError) {
-    const stderr = error.stderr.trim();
-    const workflowScopeRecovery = getWorkflowScopeRecoveryMessage(stderr);
-    if (workflowScopeRecovery) {
-      return { success: false, error: workflowScopeRecovery };
-    }
-    // A 404 on a repo endpoint almost always means the *active* gh account
-    // can't see the repo (private repo + wrong account, e.g. an EMU), not
-    // that the repo is missing. Point the user at the likely fix.
-    if (/Not Found|HTTP 404/i.test(stderr)) {
-      return {
-        success: false,
-        error:
-          'Repository not found, or the active GitHub CLI account cannot access it. ' +
-          'Check `gh auth status` and switch accounts with `gh auth switch` if needed.',
-      };
-    }
-    return {
-      success: false,
-      error: `${error.message}: ${stderr || `exit ${error.exitCode}`}`,
-    };
-  }
-  return errorResponse(error);
-}
-
-let cachedStore: PullRequestsStore | null = null;
-let cachedService: GhApiService | null = null;
-let cachedScheduler: PullRequestPollScheduler | null = null;
 const gitStatusService = new GitStatusService();
 const gitWorktreeService = new GitWorktreeService();
 
@@ -123,33 +82,6 @@ function resolvePrUrl(cached: PullRequestRow | null, remote: string, number: num
   const raw = cached?.raw as { html_url?: unknown } | undefined;
   if (raw && typeof raw.html_url === 'string') return raw.html_url;
   return `https://github.com/${remote}/pull/${number}`;
-}
-
-function getStore(): PullRequestsStore {
-  if (cachedStore) return cachedStore;
-  const db = getDatabase();
-  if (!db) {
-    throw new Error('Database not initialized');
-  }
-  cachedStore = createPullRequestsStore(db);
-  return cachedStore;
-}
-
-function getService(): GhApiService {
-  if (cachedService) return cachedService;
-  // The resolver maps a workspace to its effective gh account (per-project
-  // override ?? global default). GhApiService turns that login into a token
-  // from gh's keyring per request; Nimbalyst stores only the login.
-  cachedService = new GhApiService(getStore(), (workspaceId) =>
-    getEffectiveGhAccount(workspaceId),
-  );
-  return cachedService;
-}
-
-function getScheduler(): PullRequestPollScheduler {
-  if (cachedScheduler) return cachedScheduler;
-  cachedScheduler = initPullRequestPollScheduler(getService());
-  return cachedScheduler;
 }
 
 export function registerPullRequestHandlers(): void {
@@ -751,8 +683,5 @@ export function registerPullRequestHandlers(): void {
  * to clear all timers before the process exits.
  */
 export function stopPullRequestPollScheduler(): void {
-  if (cachedScheduler) {
-    cachedScheduler.stopAll();
-    cachedScheduler = null;
-  }
+  stopGithubPollScheduler();
 }

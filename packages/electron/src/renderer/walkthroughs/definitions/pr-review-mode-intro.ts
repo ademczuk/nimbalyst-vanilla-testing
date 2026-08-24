@@ -13,7 +13,7 @@ const prReviewHelp = getHelpContent('pr-review-mode-button')!;
 
 export const prReviewModeIntro: WalkthroughDefinition = {
   id: 'pr-review-mode-intro',
-  name: 'Pull Requests Mode',
+  name: 'GitHub Mode',
   version: 1,
   trigger: {
     screen: '*',

@@ -1064,6 +1064,12 @@ export {
 export type { TrackerRecordGroup } from './components/trackerRowData';
 export type { TrackerFieldEditorProps } from './components/TrackerFieldEditor';
 
+// Export GitHub tracker reference resolution
+export { buildPrUrl, getRecordPrReferences, parsePrUrl, prTrackerReferencesAtom } from './prReferences';
+export type { PrReference } from './prReferences';
+export { buildIssueUrl, getRecordIssueReferences, issueTrackerReferencesAtom, parseIssueUrl } from './issueReferences';
+export type { IssueReference } from './issueReferences';
+
 // Export tracker data atoms (cross-platform reactive state)
 export {
   trackerItemsMapAtom,

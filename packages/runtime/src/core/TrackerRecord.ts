@@ -43,6 +43,19 @@ export interface LinkedPullRequest {
   url?: string;
 }
 
+/**
+ * Explicit link from a tracker item to a GitHub issue, written by the issue
+ * view's "Link tracker item" action (or agent tooling). Complements the
+ * zero-config path where any url-type field matching an issue URL counts as a
+ * reference (see plugins/TrackerPlugin/issueReferences.ts).
+ */
+export interface LinkedIssue {
+  /** GitHub remote as "owner/repo" (lowercase). */
+  remote: string;
+  number: number;
+  url?: string;
+}
+
 export interface TrackerRecordSystem {
   workspace: string;
   documentPath?: string;
@@ -59,6 +72,7 @@ export interface TrackerRecordSystem {
   /** Read-only signals derived from fields and linked evidence; never persisted. */
   derivedSignals?: TrackerDerivedSignal[];
   linkedPullRequests?: LinkedPullRequest[];
+  linkedIssues?: LinkedIssue[];
   documentId?: string;
   activity?: TrackerActivity[];
   comments?: TrackerComment[];
@@ -123,6 +137,7 @@ const SYSTEM_KEYS = new Set([
   'linkedCommitSha',
   'linkedCommits',
   'linkedPullRequests',
+  'linkedIssues',
   'documentId',
   'activity',
   'comments',
@@ -284,7 +299,7 @@ export function trackerRecordToItem(record: TrackerRecord): TrackerItem {
       customFields[key] = value;
     }
   }
-  for (const key of ['linkedPullRequests', 'activity', 'comments', 'triagedAt', 'triagedBy'] as const) {
+  for (const key of ['linkedPullRequests', 'linkedIssues', 'activity', 'comments', 'triagedAt', 'triagedBy'] as const) {
     const value = record.system[key];
     if (value !== undefined) customFields[key] = value;
   }
@@ -432,6 +447,7 @@ export function dbRowToRecord(row: any): TrackerRecord {
       linkedCommitSha: systemValue('linkedCommitSha') as string | undefined,
       linkedCommits: systemValue('linkedCommits') as LinkedCommit[] | undefined,
       linkedPullRequests: systemValue('linkedPullRequests') as LinkedPullRequest[] | undefined,
+      linkedIssues: systemValue('linkedIssues') as LinkedIssue[] | undefined,
       documentId: systemValue('documentId') as string | undefined,
       activity: systemValue('activity') as TrackerActivity[] | undefined,
       comments: systemValue('comments') as TrackerComment[] | undefined,
@@ -476,6 +492,7 @@ export function recordToDbParams(record: TrackerRecord): {
   if (record.system.linkedCommitSha) data.linkedCommitSha = record.system.linkedCommitSha;
   if (record.system.linkedCommits?.length) data.linkedCommits = record.system.linkedCommits;
   if (record.system.linkedPullRequests?.length) data.linkedPullRequests = record.system.linkedPullRequests;
+  if (record.system.linkedIssues?.length) data.linkedIssues = record.system.linkedIssues;
   if (record.system.documentId) data.documentId = record.system.documentId;
   if (record.system.activity?.length) data.activity = record.system.activity;
   if (record.system.comments?.length) data.comments = record.system.comments;

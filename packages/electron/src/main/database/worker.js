@@ -3217,6 +3217,70 @@ class PGLiteWorker {
       console.error('[PGLite Worker] Failed to create feedback_request_index tables:', error);
       throw error;
     }
+
+    // Migration: pure GitHub issues cache (schema version 35).
+    // Mirror of SQLite 0035_github_issues.sql, using native JSONB.
+    try {
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS github_issues (
+          id           TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          remote       TEXT NOT NULL,
+          number       INTEGER NOT NULL,
+          state        TEXT NOT NULL,
+          data         JSONB NOT NULL,
+          created_at   TIMESTAMPTZ NOT NULL,
+          updated_at   TIMESTAMPTZ NOT NULL,
+          fetched_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (workspace_id, remote, number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_github_issues_workspace_remote_state
+          ON github_issues (workspace_id, remote, state);
+        CREATE INDEX IF NOT EXISTS idx_github_issues_updated
+          ON github_issues (updated_at);
+
+        CREATE TABLE IF NOT EXISTS github_issue_comments (
+          issue_id   TEXT NOT NULL REFERENCES github_issues(id) ON DELETE CASCADE,
+          id         TEXT NOT NULL,
+          data       JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL,
+          fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (issue_id, id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_github_issue_comments_issue_created
+          ON github_issue_comments (issue_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS github_issue_events (
+          issue_id   TEXT NOT NULL REFERENCES github_issues(id) ON DELETE CASCADE,
+          id         TEXT NOT NULL,
+          event      TEXT NOT NULL,
+          data       JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL,
+          fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (issue_id, id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_github_issue_events_issue_created
+          ON github_issue_events (issue_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS github_issue_poll_state (
+          workspace_id           TEXT NOT NULL,
+          remote                 TEXT NOT NULL,
+          last_successful_poll_at TIMESTAMPTZ NOT NULL,
+          PRIMARY KEY (workspace_id, remote)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tracker_github_issue_overlay_url
+          ON tracker_items (workspace, LOWER(data->>'issueUrl'))
+          WHERE type = 'github-issue'
+            AND deleted_at IS NULL
+            AND data->>'issueUrl' IS NOT NULL;
+      `);
+      console.log('[PGLite Worker] github issues cache created successfully');
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to create github issues cache:', error);
+      throw error;
+    }
   }
 
   async query(message) {
