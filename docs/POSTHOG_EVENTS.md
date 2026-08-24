@@ -150,7 +150,7 @@ All events include `$session_id` property automatically. Dev users are marked wi
 | `ask_user_question_answered` | `SessionTranscript.tsx:1081` | User answers an AskUserQuestion prompt from Claude | `numQuestions` (number of questions answered) | (pending release) |  |
 | `mobile_push_requested` | `mobilePushRequest.ts` | Desktop asks the sync server to notify the user's phone, and the server acknowledges | `reason` (session_complete/cli_turn_complete/agent_error/awaiting_human/notify_urgent/unspecified)<br/>`forced` (boolean)<br/>`accepted` (boolean)<br/>`attemptedCount`<br/>`deliveredCount`<br/>`rejection` (no_registered_tokens/rate_limited/suppressed_active_device/unknown_session/provider_error/no_ack/null) | (pending release) |  |
 | `ask_user_question_cancelled` | `SessionTranscript.tsx:1087` | User cancels an AskUserQuestion prompt | None | (pending release) |  |
-| `git_commit_proposal_response` | `GitCommitConfirmationWidget.tsx:600, 672` | User responds to AI-generated git commit proposal | `action` (committed/cancelled/error)<br/>`file_count` (1-5/6-10/11-20/20+)<br/>`success` (boolean, for committed only) | (pending release) |  |
+| `git_commit_proposal_response` | `GitCommitConfirmationWidget.tsx:600, 672` | User responds to AI-generated git commit proposal | `action` (committed/cancelled/error)<br/>`file_count` (1-5/6-10/11-20/20+)<br/>`success` (boolean, for committed only)<br/>`partial_files` (count of files staged as a hunk subset)<br/>`hunks_deselected` (count of hunks left out across those files) | (pending release) | (pending release): Added partial_files and hunks_deselected for hunk-level staging |
 
 ### Claude Code (MCP)
 

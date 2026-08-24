@@ -1743,7 +1743,11 @@ export class AIService {
         if (chunk.type === 'text') {
           contextResponse += chunk.content || '';
         } else if (chunk.type === 'complete') {
-          const parsedUsage = parseContextUsageMessage(contextResponse);
+          // Prefer the SDK's structured twin of the report when the binary
+          // attaches one (agent-SDK 0.3.241+): it carries exact token counts
+          // where the markdown is rendered to three significant figures, and it
+          // does not depend on the CLI's table layout staying byte-stable.
+          const parsedUsage = chunk.contextReport ?? parseContextUsageMessage(contextResponse);
 
           if (parsedUsage) {
             // Get current session to preserve cumulative tokens

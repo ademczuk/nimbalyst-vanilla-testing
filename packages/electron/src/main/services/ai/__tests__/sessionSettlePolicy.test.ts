@@ -47,6 +47,30 @@ describe('shouldSettleUnterminatedTurn', () => {
       queuedChainActive: true,
     })).toBe(false);
   });
+
+  it('settles a crashed subprocess as errored even though it emitted complete', () => {
+    // #1361: ClaudeCodeProvider yields `complete` after a fatal error purely to
+    // clear the renderer's spinner. Treating that as success made a crashed
+    // spawned session report finished work to its parent meta-agent.
+    expect(shouldSettleUnterminatedTurn({
+      ...base,
+      providerError: 'The Claude Code process crashed with a memory access violation (exit code 3221225477).',
+      sawComplete: true,
+      providerCrashed: true,
+    })).toBe(true);
+  });
+
+  it('still defers a crashed turn to the queued-prompt chain that owns the session', () => {
+    // The chain settles its own children; a second terminal transition here
+    // would contradict the notification it already sent the parent.
+    expect(shouldSettleUnterminatedTurn({
+      ...base,
+      providerError: 'crashed',
+      sawComplete: true,
+      providerCrashed: true,
+      queuedChainActive: true,
+    })).toBe(false);
+  });
 });
 
 describe('shouldForceIdleOnCancel', () => {

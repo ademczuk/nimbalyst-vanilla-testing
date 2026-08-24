@@ -192,6 +192,9 @@ export const SharedDocsListView: React.FC<SharedDocsListViewProps> = ({ folderId
   ]);
 
   // --- Team member directory (createdBy / last-edited resolution) ---
+  // Fetched AND subscribed: the directory arrives with the team room's sync
+  // reply, which always lands after this mounts, so a one-shot fetch resolved
+  // every author to 'Unknown' for the life of the view (#3716).
   const [members, setMembers] = useState<Map<string, MemberInfo>>(new Map());
   useEffect(() => {
     if (!orgId) {
@@ -199,7 +202,7 @@ export const SharedDocsListView: React.FC<SharedDocsListViewProps> = ({ folderId
       return;
     }
     let cancelled = false;
-    (async () => {
+    const load = async () => {
       try {
         const result = await host.getMembers(orgId);
         if (cancelled) return;
@@ -208,11 +211,19 @@ export const SharedDocsListView: React.FC<SharedDocsListViewProps> = ({ folderId
           next.set(member.memberId, { name: member.name ?? undefined, email: member.email ?? undefined });
         }
         setMembers(next);
-      } catch {
+      } catch (error) {
+        // Swallowing this is what made the empty directory look like a
+        // rendering bug rather than a failed fetch.
+        console.warn('[SharedDocsListView] Failed to load the team member directory:', error);
         if (!cancelled) setMembers(new Map());
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    void load();
+    const unsubscribe = host.onMembersChanged?.(() => { void load(); });
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, [host, orgId]);
 
   // --- Current user's email, used to join to the team member id(s) that

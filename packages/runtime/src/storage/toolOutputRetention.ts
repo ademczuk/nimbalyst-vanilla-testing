@@ -19,6 +19,7 @@
  * same transcript event shape.
  */
 import { formatBytes, utf8ByteLen, isImageBlock } from '../utils/contentBytes';
+import { providerPayloadSlots, type PayloadSlot, type PayloadSlotKind } from './providerPayloadSlots';
 
 /** Recognizable in the UI and greppable in a bug report. */
 export function tombstoneMarker(bytes: number, isoDate: string): string {
@@ -36,120 +37,108 @@ export function isTombstoned(text: unknown): boolean {
   return typeof text === 'string' && text.startsWith(TOMBSTONE_PREFIX);
 }
 
+/** Below this, the marker would cost about as much as the payload it replaces. */
+const TOMBSTONE_MIN_BYTES = 512;
+
 /**
- * Replace one tool_result `content` value with a tombstone. Images are kept --
- * they are the one payload whose entire purpose is being looked at, and a
- * screenshot is bounded in size where a log is not.
+ * Whether the retention pass may rewrite a given slot.
+ *
+ * Two kinds are deliberately declined:
+ *
+ * `nimbalystToolResult` -- Nimbalyst's own tool-result envelope. For an
+ * AskUserQuestion call, its `result` is the USER'S ANSWERS: their own words,
+ * around 1 KB (comfortably over the threshold), with no server copy anywhere.
+ * The row records `tool_use_id` but NOT the tool name -- that lives on the
+ * separate `nimbalyst_tool_use` row -- so a per-row pure rewrite cannot tell an
+ * answer from a database dump. Discriminating by size or by sniffing the body
+ * would be destroying user data on a heuristic, which
+ * `.claude/rules/destructive-data-paths.md` forbids. We decline the whole shape
+ * until a driver can join the call row and supply the name. That leaves real
+ * bytes unreclaimed; losing a user's answers is not a trade worth making.
+ *
+ * `claudeThinkingSignature` -- not tool output, and it wants deletion rather
+ * than a marker. `slimClaudeCodeChunkForStorage` already strips it at write
+ * time; reclaiming it from history belongs with that pass, not this one.
  */
-function tombstoneResultContent(content: unknown, isoDate: string): unknown | null {
-  if (typeof content === 'string') {
-    if (isTombstoned(content)) return null;
-    const bytes = utf8ByteLen(content);
-    // Not worth a write: the marker would be as large as the payload.
-    if (bytes < 512) return null;
-    return tombstoneMarker(bytes, isoDate);
-  }
-
-  if (!Array.isArray(content)) return null;
-
-  let changed = false;
-  const out = content.map((item) => {
-    if (isImageBlock(item)) return item;
-    if (
-      item != null
-      && typeof item === 'object'
-      && (item as { type?: unknown }).type === 'text'
-      && typeof (item as { text?: unknown }).text === 'string'
-    ) {
-      const text = (item as { text: string }).text;
-      if (isTombstoned(text)) return item;
-      const bytes = utf8ByteLen(text);
-      if (bytes < 512) return item;
-      changed = true;
-      return { ...(item as object), text: tombstoneMarker(bytes, isoDate) };
-    }
-    return item;
-  });
-
-  return changed ? out : null;
+function isRetentionEligible(kind: PayloadSlotKind): boolean {
+  return kind !== 'nimbalystToolResult' && kind !== 'claudeThinkingSignature';
 }
 
 /**
- * Rewrite a claude-code raw chunk's tool_result blocks into tombstones.
- * Returns null when there was nothing eligible, so the driver can skip the
- * UPDATE entirely.
+ * Tombstone one slot. Returns whether it changed.
+ *
+ * Idempotency is per SLOT, not per row -- the 2026-08-19 run on the measured
+ * install tombstoned `message.content` and left `tool_use_result` intact on
+ * roughly one row in four, so "this row has a marker somewhere" is not the same
+ * as "this row is done".
+ */
+function tombstoneSlot(slot: PayloadSlot, isoDate: string): boolean {
+  const value = slot.value;
+
+  if (typeof value === 'string') {
+    if (isTombstoned(value)) return false;
+    const bytes = utf8ByteLen(value);
+    if (bytes < TOMBSTONE_MIN_BYTES) return false;
+    slot.set(tombstoneMarker(bytes, isoDate));
+    return true;
+  }
+
+  // Structured payloads -- `structuredPatch` arrays, MCP result objects. The
+  // sync truncator already collapses these to a marker string on the same
+  // reasoning: no transcript consumer reads them, and leaving tens of KB of
+  // duplicated file state on disk forever is the whole problem.
+  if (value != null && typeof value === 'object') {
+    if (isImageBlock(value)) return false;
+    const bytes = utf8ByteLen(JSON.stringify(value));
+    if (bytes < TOMBSTONE_MIN_BYTES) return false;
+    slot.set(tombstoneMarker(bytes, isoDate));
+    return true;
+  }
+
+  // Numbers, booleans, null: the scalars that keep the tool card renderable.
+  return false;
+}
+
+/** Rewrite every eligible slot in place. Returns whether anything changed. */
+function tombstoneInPlace(chunk: unknown, source: string, isoDate: string): boolean {
+  let changed = false;
+  for (const slot of providerPayloadSlots(chunk, source)) {
+    if (!isRetentionEligible(slot.kind)) continue;
+    if (tombstoneSlot(slot, isoDate)) changed = true;
+  }
+  return changed;
+}
+
+/**
+ * Non-mutating wrapper for the exported per-provider helpers. The live dispatch
+ * loop hands us chunks it still holds references to, so these must not write
+ * through; `tombstoneRawContent` skips the clone because it owns a freshly
+ * parsed object.
+ */
+function tombstoneClone(chunk: unknown, source: string, isoDate: string): unknown | null {
+  if (!chunk || typeof chunk !== 'object') return null;
+  const clone = JSON.parse(JSON.stringify(chunk));
+  return tombstoneInPlace(clone, source, isoDate) ? clone : null;
+}
+
+/**
+ * Rewrite a claude-code raw chunk's heavy payloads into tombstones: the
+ * `tool_result` blocks inside `message.content`, and the top-level
+ * `tool_use_result` sidecar that holds the pre-edit file. Returns null when
+ * there was nothing eligible, so the driver can skip the UPDATE entirely.
  */
 export function tombstoneClaudeCodeChunk(chunk: unknown, isoDate: string): unknown | null {
-  if (!chunk || typeof chunk !== 'object') return null;
-  const c = chunk as Record<string, unknown>;
-  const message = c.message as { content?: unknown } | undefined;
-  if (!message || typeof message !== 'object' || !Array.isArray(message.content)) return null;
-
-  let changed = false;
-  const blocks = (message.content as unknown[]).map((block) => {
-    if (
-      block == null
-      || typeof block !== 'object'
-      || (block as { type?: unknown }).type !== 'tool_result'
-    ) {
-      return block;
-    }
-    const replaced = tombstoneResultContent((block as { content?: unknown }).content, isoDate);
-    if (replaced === null) return block;
-    changed = true;
-    return { ...(block as object), content: replaced };
-  });
-
-  if (!changed) return null;
-  return { ...c, message: { ...(message as object), content: blocks } };
+  return tombstoneClone(chunk, 'claude-code', isoDate);
 }
 
 /**
- * Codex app-server analog: `params.item.aggregatedOutput` (shell stdout) and
- * `params.item.result` (MCP payload). Scalars the tool card renders -- id,
- * type, status, command, exitCode -- are untouched.
+ * Codex analog, covering every transport shape observed on disk: SDK events
+ * (`item.aggregated_output`), app-server (`params.item.aggregatedOutput`), MCP
+ * results (`item.result`), and ACP (`update.rawOutput.stdout`). Scalars the
+ * tool card renders -- id, type, status, command, exitCode -- are untouched.
  */
 export function tombstoneAppServerEnvelope(envelope: unknown, isoDate: string): unknown | null {
-  if (!envelope || typeof envelope !== 'object') return null;
-  const env = envelope as Record<string, unknown>;
-  const params = env.params;
-  if (!params || typeof params !== 'object') return null;
-  const p = params as Record<string, unknown>;
-  const item = p.item;
-  if (!item || typeof item !== 'object') return null;
-
-  const itemRecord = item as Record<string, unknown>;
-  const nextItem: Record<string, unknown> = { ...itemRecord };
-  let changed = false;
-
-  for (const key of ['aggregatedOutput', 'aggregated_output'] as const) {
-    const value = itemRecord[key];
-    if (typeof value === 'string' && !isTombstoned(value) && utf8ByteLen(value) >= 512) {
-      nextItem[key] = tombstoneMarker(utf8ByteLen(value), isoDate);
-      changed = true;
-    }
-  }
-
-  if (typeof itemRecord.result === 'string') {
-    if (!isTombstoned(itemRecord.result) && utf8ByteLen(itemRecord.result) >= 512) {
-      nextItem.result = tombstoneMarker(utf8ByteLen(itemRecord.result), isoDate);
-      changed = true;
-    }
-  } else if (
-    itemRecord.result
-    && typeof itemRecord.result === 'object'
-    && Array.isArray((itemRecord.result as { content?: unknown }).content)
-  ) {
-    const resultRecord = itemRecord.result as Record<string, unknown>;
-    const replaced = tombstoneResultContent(resultRecord.content, isoDate);
-    if (replaced !== null) {
-      nextItem.result = { ...resultRecord, content: replaced };
-      changed = true;
-    }
-  }
-
-  if (!changed) return null;
-  return { ...env, params: { ...p, item: nextItem } };
+  return tombstoneClone(envelope, 'openai-codex', isoDate);
 }
 
 /**
@@ -172,15 +161,13 @@ export function tombstoneRawContent(
     return null;
   }
 
-  let rewritten: unknown | null = null;
-  if (source.startsWith('openai-codex') || source.startsWith('copilot-cli')) {
-    rewritten = tombstoneAppServerEnvelope(parsed, isoDate);
-  } else if (source.startsWith('claude-code')) {
-    rewritten = tombstoneClaudeCodeChunk(parsed, isoDate);
-  }
+  // `parsed` is ours alone -- freshly built from the row's string -- so the
+  // slots may write through it without a defensive clone. Shape dispatch lives
+  // in `providerPayloadSlots`; an unrecognized source yields no slots and the
+  // row is left alone rather than guessed at.
+  if (!tombstoneInPlace(parsed, source, isoDate)) return null;
 
-  if (rewritten === null) return null;
-  const out = JSON.stringify(rewritten);
+  const out = JSON.stringify(parsed);
   // Never grow a row. A pathological shape (many tiny blocks, each swapped for
   // a longer marker) would otherwise cost more than it reclaims.
   if (out.length >= content.length) return null;

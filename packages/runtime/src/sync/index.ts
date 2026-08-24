@@ -227,8 +227,8 @@ export type {
   TeamProjectId,
   TrackerRoomId,
   SyncId,
-  EncryptedTrackerItemEnvelope,
-  EncryptedTrackerNavigationEnvelope,
+  TrackerItemEnvelope,
+  TrackerNavigationEnvelope,
   TrackerItemPayload,
   TrackerCommentEntry,
   TrackerIdentity,
@@ -268,7 +268,7 @@ export {
 
 export {
   decodeTrackerSavedViewEnvelopePlaintext,
-} from './TrackerEnvelopeCrypto';
+} from './trackerEnvelopeCodec';
 
 export {
   InMemoryTrackerPersistence,

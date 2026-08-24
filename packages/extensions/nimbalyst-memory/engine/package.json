@@ -19,7 +19,7 @@
     "better-sqlite3": "13.0.1",
     "chokidar": "4.0.3",
     "fast-glob": "3.3.3",
-    "js-yaml": "4.2.0",
+    "js-yaml": "4.3.1",
     "picomatch": "4.0.4"
   },
   "optionalDependencies": {

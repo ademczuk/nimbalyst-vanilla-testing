@@ -565,6 +565,7 @@ export interface StreamChunk {
   isBedrockToolError?: boolean; // True when error is a Bedrock tool search error
   isServerError?: boolean; // True when error is a 500/internal server error (Claude may be down)
   isCodexAuthRequired?: boolean; // True when a Codex app-server session was blocked because the user is not signed in to OpenAI
+  isProcessCrash?: boolean; // True when the agent subprocess died from a native fault (#1361), so the turn must settle as errored despite the follow-up 'complete'
   isComplete?: boolean;
   config?: unknown; // For stream_edit_start
   usage?: {
@@ -573,6 +574,14 @@ export interface StreamChunk {
     total_tokens: number;
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
+  };
+  // Structured `/context` report from the agent SDK (0.3.241+), when the binary
+  // attaches one. Set only on the `complete` chunk of a /context turn; the
+  // rendered markdown remains the fallback for older binaries.
+  contextReport?: {
+    totalTokens: number;
+    contextWindow: number;
+    categories?: TokenUsageCategory[];
   };
   // Per-model usage breakdown from SDK (available on 'complete' chunks from claude-code)
   modelUsage?: Record<string, {

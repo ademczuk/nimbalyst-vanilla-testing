@@ -1,10 +1,21 @@
+import { execFile } from 'child_process';
 import log from 'electron-log/main';
 import { existsSync, readdirSync, rmSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve, sep } from 'path';
 import simpleGit, { SimpleGit } from 'simple-git';
+import {
+  filterPatchToHunks,
+  matchHunkRefs,
+  parseUnifiedDiffToHunks,
+  supportsHunkSelection,
+  type HunkRef,
+  type HunkSelection,
+} from '@nimbalyst/runtime/ui/git/unifiedDiffModel';
 import { gitOperationLock } from './GitOperationLock';
 import { GIT_INHERITED_ENV_UNSAFE } from './gitInheritedEnvUnsafe';
 import { sanitizeGitRepositoryEnv } from './gitRepositoryEnv';
+
+export type { HunkRef, HunkSelection };
 
 export interface GitCommitExecutionResult {
   success: boolean;
@@ -225,6 +236,66 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Global options pinned so a user's diff config cannot produce a patch that
+ * `git apply` then rejects: `diff.noprefix` strips the `a/`/`b/` prefixes that
+ * `-p1` expects, and a textconv filter yields a rendering of the file rather
+ * than its bytes. `@@` numbering is unaffected by any of these, so hunk refs
+ * captured from the widget's (unpinned) diff still match.
+ */
+function hunkDiffArgs(relPath: string): string[] {
+  return [
+    '--literal-pathspecs',
+    '-c',
+    'diff.noprefix=false',
+    '-c',
+    'diff.mnemonicPrefix=false',
+    'diff',
+    '--no-ext-diff',
+    '--no-textconv',
+    '--no-color',
+    'HEAD',
+    '--',
+    relPath,
+  ];
+}
+
+/**
+ * Apply a filtered patch to the private index via stdin.
+ *
+ * simple-git has no stdin channel for raw commands, and writing the patch to
+ * disk would leave an artifact to sweep after a crash. The callback form of
+ * `execFile` is used deliberately rather than `promisify` -- `promisify.custom`
+ * bypasses a mocked `execFile`, which silently turns a spied subprocess
+ * boundary into a no-op.
+ *
+ * `--whitespace=nowarn` because the patch is git's own description of content
+ * the user already has on disk; a strict `core.whitespace` must not veto
+ * committing it.
+ */
+function applyPatchToIndex(
+  patch: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv
+): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    const child = execFile(
+      'git',
+      ['--literal-pathspecs', 'apply', '--cached', '--whitespace=nowarn', '-'],
+      { cwd, env },
+      (error, _stdout, stderr) => {
+        if (error) {
+          const detail = (typeof stderr === 'string' ? stderr : '').trim();
+          reject(new Error(detail || error.message));
+          return;
+        }
+        resolvePromise();
+      }
+    );
+    child.stdin?.end(patch);
+  });
+}
+
 const DEFAULT_LOCK_MAX_RETRIES = 5;
 const DEFAULT_LOCK_BASE_DELAY_MS = 100;
 /**
@@ -252,6 +323,12 @@ export async function executeGitCommit(
     env?: Record<string, string>;
     /** Stream git and hook output while the commit workflow is running. */
     onOutput?: (stream: 'stdout' | 'stderr', chunk: string) => void;
+    /**
+     * Stage only the listed hunks for these files instead of the whole file.
+     * Every path must also appear in `filesToStage`. Files not named here keep
+     * the whole-file path unchanged.
+     */
+    hunkSelections?: HunkSelection[];
   }
 ): Promise<GitCommitExecutionResult> {
   const logContext = options?.logContext || '[git:commit]';
@@ -312,6 +389,65 @@ export async function executeGitCommit(
         // proposal cannot disturb the caller's existing staging state.
         const filesToStageRelative = filesToStage.map(toGitPath);
 
+        // Resolve hunk selections against a freshly generated diff *before* any
+        // index work. A ref that no longer matches means the file changed since
+        // the proposal was built (typically a sibling session writing it), and
+        // the selection no longer describes what the user approved.
+        const partialPatches = new Map<string, string>();
+        if (options?.hunkSelections?.length) {
+          const stageable = new Set(filesToStageRelative);
+
+          for (const selection of options.hunkSelections) {
+            if (!selection?.hunks?.length) continue;
+            const relPath = toGitPath(selection.path);
+
+            if (!stageable.has(relPath)) {
+              return {
+                success: false,
+                error: `Hunk selection references ${relPath}, which is not in the commit's file list.`,
+              };
+            }
+            if (!repoHasCommits) {
+              return {
+                success: false,
+                error: `Cannot stage individual hunks for ${relPath}: the repository has no commits to diff against.`,
+              };
+            }
+
+            const rawDiff = await git.raw(hunkDiffArgs(relPath));
+            const parsed = parseUnifiedDiffToHunks(rawDiff);
+
+            if (!supportsHunkSelection(parsed)) {
+              return {
+                success: false,
+                error: `Cannot stage individual hunks for ${relPath}: only modifications to existing text files support hunk selection.`,
+              };
+            }
+
+            const { indices, unmatched } = matchHunkRefs(parsed, selection.hunks);
+            if (unmatched.length > 0) {
+              log.warn(
+                `${logContext} Stale hunk selection for ${relPath}: ${unmatched.length} of ${selection.hunks.length} refs no longer match`
+              );
+              return {
+                success: false,
+                error: `The selected hunks for ${relPath} are out of date because the file changed after the proposal was created. Refresh the diff and choose again.`,
+              };
+            }
+
+            const patch = filterPatchToHunks(parsed, indices);
+            if (!patch) {
+              return {
+                success: false,
+                error: `No hunks resolved for ${relPath}. Commit aborted.`,
+              };
+            }
+            partialPatches.set(relPath, patch);
+          }
+        }
+
+        const wholeFileRelative = filesToStageRelative.filter((f) => !partialPatches.has(f));
+
         const gitDir = await resolveGitDir(git);
         sweepStaleTempIndexes(gitDir, logContext);
         tempIndexPath = createTempIndexPath(gitDir);
@@ -334,7 +470,28 @@ export async function executeGitCommit(
         // `--literal-pathspecs` stops Git from interpreting globs or pathspec
         // magic in a proposal. Keep it before the command: it is a global Git
         // option, not an `add` option.
-        await stagingGit.raw(['--literal-pathspecs', 'add', '--all', '--', ...filesToStageRelative]);
+        if (wholeFileRelative.length > 0) {
+          await stagingGit.raw(['--literal-pathspecs', 'add', '--all', '--', ...wholeFileRelative]);
+        }
+
+        // Partially-staged files go in as patches against the private index,
+        // which was just seeded from HEAD. The working tree is never touched,
+        // so the hunks the user left behind stay exactly as they are on disk.
+        for (const [relPath, patch] of partialPatches) {
+          try {
+            await applyPatchToIndex(patch, workspacePath, {
+              ...gitEnv,
+              GIT_INDEX_FILE: tempIndexPath,
+            });
+          } catch (applyError) {
+            const detail = applyError instanceof Error ? applyError.message : String(applyError);
+            log.error(`${logContext} Failed to apply hunk selection for ${relPath}: ${detail}`);
+            return {
+              success: false,
+              error: `Failed to stage the selected hunks for ${relPath}: ${detail}`,
+            };
+          }
+        }
 
         // No longer a time-of-check/time-of-use gap: the index checked here is
         // private to this operation, so nothing can restage between now and the
@@ -343,7 +500,7 @@ export async function executeGitCommit(
         // log.info(`${logContext} After staging - staged files: [${[...stagedFiles].join(', ')}]`);
 
         if (stagedFiles.size === 0) {
-          log.warn(`${logContext} No files were staged despite add() succeeding. Requested: [${filesToStage.join(', ')}], git-relative: [${filesToStageRelative.join(', ')}]`);
+          log.warn(`${logContext} No files were staged despite staging succeeding. Requested: [${filesToStage.join(', ')}], git-relative: [${filesToStageRelative.join(', ')}]`);
           return { success: false, error: 'No files were staged. The files may not exist or have no changes.' };
         }
 

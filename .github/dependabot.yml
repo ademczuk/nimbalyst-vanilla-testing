@@ -1,0 +1,35 @@
+version: 2
+
+# Security updates only. `open-pull-requests-limit: 0` is GitHub's documented
+# mechanism for disabling routine *version* updates for an ecosystem while
+# leaving Dependabot *security* updates active. Without an entry here, security
+# PRs are opened ungrouped -- one per advisory per manifest -- which in a
+# 13-workspace monorepo is the PR volume that gets a bot ignored.
+updates:
+  # Root npm workspaces tree. One lockfile covers every package listed in the
+  # root `workspaces` array, so a single entry covers all of them.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns:
+          - '*'
+
+  # @nimbalyst/memory-engine sits one level below the `packages/extensions/*`
+  # workspace glob, so it is NOT an npm workspace and the root lockfile does not
+  # cover it. Without its own entry its advisories go unreported -- this is the
+  # manifest that carried a high-severity js-yaml alert nobody was seeing.
+  - package-ecosystem: npm
+    directory: /packages/extensions/nimbalyst-memory/engine
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    groups:
+      memory-engine-security:
+        applies-to: security-updates
+        patterns:
+          - '*'

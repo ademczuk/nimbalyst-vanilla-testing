@@ -62,6 +62,11 @@ export async function activate(context: {
     let response: string;
     let sessionId: string | undefined;
 
+    // Snapshot the output file before the agent runs, so the write below can
+    // tell "the agent wrote its report here" from "this is last run's output"
+    // and never overwrite the former.
+    const target = await outputWriter.reserve(status);
+
     if (ai?.sendPrompt) {
       try {
         const result = await ai.sendPrompt({
@@ -74,27 +79,40 @@ export async function activate(context: {
         sessionId = result.sessionId;
       } catch (err) {
         response = `*Automation "${status.title}" failed at ${new Date().toLocaleString()}.*\n\nError: ${err}`;
-        const outputFile = await outputWriter.write(status, response);
+        const written = await outputWriter.write(status, response, target);
         return {
           success: false,
           response,
           error: err instanceof Error ? err.message : String(err),
-          outputFile,
+          outputFile: written.path,
         };
       }
     } else {
       response = `*Automation "${status.title}" fired at ${new Date().toLocaleString()}.*\n\nThe AI service is not available. Check that the extension has AI permissions enabled.`;
-      const outputFile = await outputWriter.write(status, response);
+      const written = await outputWriter.write(status, response, target);
       return {
         success: false,
         response,
         error: 'The AI service is not available. Check that the extension has AI permissions enabled.',
-        outputFile,
+        outputFile: written.path,
       };
     }
 
-    const outputFile = await outputWriter.write(status, response);
-    return { success: true, response, sessionId, outputFile };
+    const written = await outputWriter.write(status, response, target);
+    if (written.writtenByAgent) {
+      // Say it out loud. The old behaviour was silent, which is why this ran
+      // for months with every run still reporting success.
+      ui.showWarning(
+        `Automation "${status.title}" wrote ${written.path} itself, so its final message was not saved over it. Drop the "write a file" instruction from the prompt to silence this.`,
+      );
+    }
+    return {
+      success: true,
+      response,
+      sessionId,
+      outputFile: written.path,
+      outputWrittenByAgent: written.writtenByAgent,
+    };
   });
 
   // Wire up "Run Now" from the document header

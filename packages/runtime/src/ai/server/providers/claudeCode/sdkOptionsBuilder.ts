@@ -7,6 +7,12 @@
  */
 
 import type { ContentBlockParam, TextBlockParam, MessageParam } from '@anthropic-ai/sdk/resources';
+// Type-only, so it is erased at build time and the SDK stays dynamically
+// loaded. #1361 shipped a 20-version SDK jump whose compatibility could only be
+// verified by diffing the .d.ts by hand, because this object was `any`. Bound to
+// the SDK's own type, a removed or renamed option fails typecheck at the next
+// bump instead of silently becoming a no-op at runtime.
+import type { Options as ClaudeAgentSdkOptions, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import path from 'path';
 import { app } from 'electron';
 import { ClaudeCodeDeps } from './dependencyInjection';
@@ -89,7 +95,7 @@ export interface PromptStreamController {
 }
 
 export interface BuildSdkOptionsResult {
-  options: any;
+  options: ClaudeAgentSdkOptions;
   promptInput: AsyncIterable<SDKUserMessage>;
   promptController: PromptStreamController;
   helperMethod: 'native' | 'custom';
@@ -196,7 +202,7 @@ export async function buildSdkOptions(
   let helperMethod: 'native' | 'custom' = 'native';
 
   // Determine which settings sources to use based on user preferences
-  let settingSources: string[] = ['local'];
+  let settingSources: SettingSource[] = ['local'];
   if (ClaudeCodeDeps.claudeCodeSettingsLoader) {
     try {
       const ccSettings = await ClaudeCodeDeps.claudeCodeSettingsLoader();
@@ -238,7 +244,7 @@ export async function buildSdkOptions(
   // console.log(`[CLAUDE-CODE] Binary path: custom=${customPath || '(none)'} resolved=${resolvedBinaryPath ?? '(none)'} effective=${effectivePath ?? '(none)'}`);
   const resolvedModel = resolveModelVariant();
 
-  const options: any = {
+  const options: ClaudeAgentSdkOptions = {
     pathToClaudeCodeExecutable: effectivePath,
     // NOTE: this `append` string is re-sent on EVERY resumed turn and sits at
     // the front of the prompt-cache prefix. It MUST be byte-identical across a

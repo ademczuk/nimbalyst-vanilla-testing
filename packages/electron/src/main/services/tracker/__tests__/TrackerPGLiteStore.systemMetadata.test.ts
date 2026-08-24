@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import type { EncryptedTrackerItemEnvelope, TrackerItemPayload } from '@nimbalyst/runtime/sync';
+import type { TrackerItemEnvelope, TrackerItemPayload } from '@nimbalyst/runtime/sync';
 import { SQLiteDatabase } from '../../../database/sqlite/SQLiteDatabase';
 import { TrackerPGLiteStore } from '../TrackerPGLiteStore';
 
@@ -55,7 +55,7 @@ function payload(): TrackerItemPayload {
   };
 }
 
-function envelope(syncId = 1): EncryptedTrackerItemEnvelope {
+function envelope(syncId = 1): TrackerItemEnvelope {
   return {
     itemId: 'bug-1',
     syncId,

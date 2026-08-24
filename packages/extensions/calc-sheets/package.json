@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "js-yaml": "^4.1.0",
-    "mathjs": "^14.8.1"
+    "mathjs": "^15.2.0"
   },
   "devDependencies": {
     "@nimbalyst/extension-sdk": "*",

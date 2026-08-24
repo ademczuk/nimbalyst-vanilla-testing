@@ -344,6 +344,21 @@ export class ElectronCollabHost implements CollabHost<ElectronDocsCapability> {
     return (await this.ensureDataSource()).getMembers();
   }
 
+  onMembersChanged(cb: () => void): () => void {
+    let unsubscribe: (() => void) | null = null;
+    let cancelled = false;
+    void this.ensureDataSource().then((source) => {
+      if (cancelled) return;
+      unsubscribe = source.onMembersChanged(cb);
+    }).catch((error) => {
+      console.error('[ElectronCollabHost] Failed to observe member directory:', error);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }
+
   openArtifact(ref: CollabArtifactRef, source: CollabOpenSource): void {
     if (!this.openArtifactImpl) {
       throw new Error('This Electron host was created without a navigation adapter');

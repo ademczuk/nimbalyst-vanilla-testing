@@ -1247,6 +1247,7 @@ export class MessageStreamingHandler {
       let hasStreamingContent = false;  // Track if we used streamContent tool
       let hadError = false;  // Track if an error occurred during the stream
       let providerError: string | undefined;
+      let providerCrashed = false;  // The agent subprocess died from a native fault (#1361)
       let sawCompleteChunk = false;  // A terminal 'complete' chunk arrived
       let settledOnErrorChunk = false;  // The error branch already ended the session
       let firstChunkTime: number | undefined;
@@ -2230,6 +2231,7 @@ export class MessageStreamingHandler {
             // Detect Bedrock tool search error even if runtime didn't flag it
             const errorMsg = chunk.error || 'Unknown error occurred';
             providerError = errorMsg;
+            if (chunk.isProcessCrash) providerCrashed = true;
             const isBedrockToolError = chunk.isBedrockToolError || isBedrockToolSearchError(errorMsg);
             const isServerError = chunk.isServerError || false;
 
@@ -2811,11 +2813,22 @@ export class MessageStreamingHandler {
                 }
               }
 
-              // AUTO-FETCH CONTEXT USAGE: Previously used /context command to get token usage.
-              // Now context window data comes from modelUsage in the result chunk (set above),
-              // so /context is no longer needed. The SDK's /context command no longer returns
-              // parseable output as of agent-sdk 0.2.x.
-              // Kept as commented code for reference in case /context is restored in a future SDK version.
+              // AUTO-FETCH CONTEXT USAGE: disabled. Context window data comes
+              // from modelUsage in the result chunk (set above) instead.
+              //
+              // The original reason for disabling this -- "/context no longer
+              // returns parseable output as of agent-sdk 0.2.x" -- no longer
+              // holds. On 0.3.241 /context returns both a parseable markdown
+              // table and a structured `context_usage` field, and
+              // runAutoContextCommand already prefers the structured one. It is
+              // also a local command: measured at ~640ms, 0ms API time, 0 turns,
+              // no token cost.
+              //
+              // So re-enabling is a live option, not a blocked one. What it buys
+              // over modelUsage: exact token counts (the markdown path rounded to
+              // three significant figures) and a per-category breakdown. What it
+              // costs: that ~640ms on the end of every turn. Left off pending
+              // that call.
               // if (session.provider === 'claude-code' && !hadError) {
               //   autoContextPromise = this.svc.runAutoContextCommand(session, effectiveWorkspacePath, event);
               // }
@@ -2857,9 +2870,12 @@ export class MessageStreamingHandler {
         providerError,
         alreadySettled: settledOnErrorChunk,
         queuedChainActive: this.svc.sessionsProcessingQueue.has(session.id),
+        providerCrashed,
       })) {
         logger.main.warn(
-          `[AIService] Provider stream for ${session.id} ended on an error chunk without completing -- settling session`
+          providerCrashed
+            ? `[AIService] Provider subprocess for ${session.id} crashed -- settling session as errored`
+            : `[AIService] Provider stream for ${session.id} ended on an error chunk without completing -- settling session`
         );
         try {
           await stateManager.updateActivity({ sessionId: session.id, status: 'error' });

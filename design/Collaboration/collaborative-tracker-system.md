@@ -20,6 +20,12 @@ planStatus:
 ---
 # Collaborative Realtime Tracker System
 
+> **Superseded on the encryption model — read this first.** This document describes the original **client-managed E2E** design: per-resource AES-256 keys wrapped via ECDH, opaque blobs on the wire, `key_envelopes` tables, and client-side decrypt-merge-re-encrypt. **That lane was retired.** Team lanes (tracker items, schemas, saved views, navigation, and documents) now travel as **plaintext over TLS** under **server-managed custody**; the server holds the team DEK, encrypts at rest, and *can* read these payloads. Every mention below of encrypting item blobs, decrypting both versions to merge, ECDH key distribution, or "no plaintext on the wire" is **historical, not current**.
+>
+> Still genuinely encrypted with client-held keys: the **personal** sync lanes (`CollabV3Sync`, `ProjectSyncProvider`) and the **local document replica on disk**.
+>
+> The rest of the design — room topology, syncId cursors, server-allocated issue numbering, the two-layer metadata/Y.Doc split — is accurate. For the current model see [IDENTITY_AUTH_AND_ROOMS.md](../../docs/IDENTITY_AUTH_AND_ROOMS.md) section 6.
+
 A design for making Nimbalyst's tracker system fully realtime collaborative, enabling teams to share bug statuses, manage work items with list and kanban views, and tie tracker items to AI sessions and git commits. Essentially: a Linear-like experience built on top of the existing tracker + collabv3 infrastructure.
 
 ## Current State
@@ -223,6 +229,8 @@ ENCRYPTED (AES-256-GCM, per-resource key distributed via ECDH):
 **Client-side querying is sufficient.** A team of 50 people generates low thousands of tracker items. PGLite on the client handles filtering, sorting, and aggregation for that dataset trivially. We don't need server-side queries.
 
 **Conflict resolution: client-side field-level LWW.** When a client syncs and detects a version conflict (two clients updated the same item), it decrypts both versions, does the per-field LWW merge using the `updatedAt` timestamps inside the encrypted payload, re-encrypts the merged result, and pushes it back. The server just stores blobs and version numbers.
+
+> **Not current, and not replaced.** This merge shipped as `mergeTrackerItems()` in the v1 `TrackerSync.ts`, driven by a per-field `updatedAt` map. Both were removed when ordering moved to the server-assigned `syncId`, and **nothing took over** — writes are whole-item blind LWW today, with no conflict detection on either side. Restoring per-field merge (server-side, since the server can now read the payload) is planned separately.
 
 **Key management: per-resource keys, same pattern everywhere.** Each shared resource (tracker project, document) gets its own random AES-256 key, wrapped for each participant via ECDH. TrackerRoom needs a `key_envelopes` table (same schema as DocumentRoom). For personal orgs (single-user multi-device), the personal QR seed derivation is still valid. For team orgs, per-resource ECDH keys are required. See [SECURITY_REVIEW.md](./SECURITY_REVIEW.md) Finding 0 and the Key Granularity Decision.
 

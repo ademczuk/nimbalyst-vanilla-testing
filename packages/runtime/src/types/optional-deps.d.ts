@@ -1,38 +1,13 @@
 // Type declarations for optional dependencies that are dynamically loaded
 
-declare module '@anthropic-ai/claude-agent-sdk' {
-  export interface Query extends AsyncGenerator<any, void> {
-    interrupt(): Promise<void>;
-    setPermissionMode(mode: any): Promise<void>;
-    setModel(model?: string): Promise<void>;
-    setMaxThinkingTokens(maxThinkingTokens: number | null): Promise<void>;
-    initializationResult(): Promise<any>;
-    supportedCommands(): Promise<any[]>;
-    supportedModels(): Promise<any[]>;
-    mcpServerStatus(): Promise<any[]>;
-    accountInfo(): Promise<any>;
-    rewindFiles(userMessageId: string, options?: { dryRun?: boolean }): Promise<any>;
-    reconnectMcpServer(serverName: string): Promise<void>;
-    toggleMcpServer(serverName: string, enabled: boolean): Promise<void>;
-    setMcpServers(servers: Record<string, any>): Promise<any>;
-    streamInput(stream: AsyncIterable<any>): Promise<void>;
-    close(): void;
-  }
-  export function query(params: { prompt: string | AsyncIterable<any>; options?: any }): Query;
-  export function tool(name: string, description: string, inputSchema: any, handler: any): any;
-  export function createSdkMcpServer(options: any): any;
-  export class AbortError extends Error {}
-  export type Options = any;
-  export type SDKMessage = any;
-  export type SDKUserMessage = any;
-  export type SDKAssistantMessage = any;
-  export type McpServerConfig = any;
-  export type McpSdkServerConfigWithInstance = any;
-  export type SlashCommand = any;
-  export type ModelInfo = any;
-  export type AccountInfo = any;
-  export type AgentDefinition = any;
-}
+// NOTE: `@anthropic-ai/claude-agent-sdk` deliberately has NO block here. It used
+// to declare `Options`, `Query`, `SDKMessage` etc. as `any`, and because an
+// ambient `declare module` replaces a package's real types wholesale, every
+// option we handed the SDK went unchecked -- `settingSources` was typed
+// `string[]` against the SDK's own union and nothing could catch it. #1361
+// bumped the SDK 20 versions and compatibility could only be established by
+// diffing the .d.ts by hand. The package is a hard dependency, so its shipped
+// types resolve; do not reintroduce an ambient shim for it.
 
 declare module '@modelcontextprotocol/sdk/server/index.js' {
   export class Server {

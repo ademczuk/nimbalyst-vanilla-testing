@@ -198,6 +198,43 @@ describe('ClaudeCodeTranscriptAdapter', () => {
     });
   });
 
+  describe('processChunk: /context structured report', () => {
+    // Shape captured from a real `/context` run on agent-SDK 0.3.241. The field
+    // is a wrapper-level sibling of `message`, NOT inside message.content.
+    const contextChunk = (extra: Record<string, unknown> = {}) => ({
+      type: 'assistant',
+      session_id: 'lead-session-abc',
+      message: { content: [{ type: 'text', text: '## Context Usage' }], usage: { input_tokens: 8 } },
+      context_usage: { model: 'claude-opus-5', total_tokens: 38334, raw_max_tokens: 200000 },
+      ...extra,
+    });
+
+    it('surfaces the structured report so the caller need not scrape the markdown', () => {
+      const items = adapter.processChunk(contextChunk());
+
+      expect(items.find(i => i.kind === 'context_report')).toEqual({
+        kind: 'context_report',
+        usage: { model: 'claude-opus-5', total_tokens: 38334, raw_max_tokens: 200000 },
+      });
+    });
+
+    it('ignores a sub-agent report, which describes its own smaller conversation', () => {
+      const items = adapter.processChunk(contextChunk({ parent_tool_use_id: 'toolu_1' }));
+
+      expect(items.find(i => i.kind === 'context_report')).toBeUndefined();
+    });
+
+    it('emits nothing on an ordinary turn, where the SDK omits the field', () => {
+      const items = adapter.processChunk({
+        type: 'assistant',
+        session_id: 'lead-session-abc',
+        message: { content: [{ type: 'text', text: 'hi' }], usage: { input_tokens: 8 } },
+      });
+
+      expect(items.find(i => i.kind === 'context_report')).toBeUndefined();
+    });
+  });
+
   describe('processChunk: session_id capture', () => {
     it('returns session_id from system init chunk (authoritative source)', () => {
       const items = adapter.processChunk({

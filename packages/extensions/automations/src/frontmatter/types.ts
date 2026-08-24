@@ -93,6 +93,11 @@ export interface ExecutionRecord {
   error?: string;
   sessionId?: string;
   outputFile?: string;
+  /**
+   * The agent wrote outputFile itself, so the automation kept that content and
+   * did not save its final message over it.
+   */
+  outputWrittenByAgent?: boolean;
 }
 
 /**

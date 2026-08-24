@@ -42,6 +42,8 @@ export type AutomationFireResult =
       response: string;
       sessionId?: string;
       outputFile?: string;
+      /** The agent wrote outputFile itself; the final message was not saved over it. */
+      outputWrittenByAgent?: boolean;
     }
   | {
       success: false;
@@ -444,6 +446,7 @@ export class AutomationScheduler {
         status: 'success',
         sessionId: result.sessionId,
         outputFile: result.outputFile,
+        outputWrittenByAgent: result.outputWrittenByAgent,
       });
 
       // Update in-memory status

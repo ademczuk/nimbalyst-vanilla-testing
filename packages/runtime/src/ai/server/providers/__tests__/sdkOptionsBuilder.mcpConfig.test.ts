@@ -95,6 +95,6 @@ describe('buildSdkOptions MCP config (NIM-2372)', () => {
 
     const { options } = await buildSdkOptions(deps, makeParams());
 
-    expect(Object.keys(options.mcpServers)).toEqual(['nimbalyst']);
+    expect(Object.keys(options.mcpServers!)).toEqual(['nimbalyst']);
   });
 });

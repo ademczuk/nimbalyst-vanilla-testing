@@ -256,6 +256,17 @@ export interface CollabHost<
   onScopeChanged(cb: (scope: CollabScope | null) => void): Unsubscribe;
   getTeamJwt(orgId: string): Promise<TeamJwt>;
   getMembers(orgId: string): Promise<TeamMemberSummary[]>;
+  /**
+   * Fires whenever the member directory changes, so a UI that resolves author
+   * ids to names can re-read it.
+   *
+   * A one-shot `getMembers()` at mount is not enough: the directory arrives
+   * with the team room's sync reply, which lands well after the first render,
+   * and members are then added/removed/re-roled over the session's life.
+   * Optional — a host with a directory that is ready before it hands out a
+   * scope may omit it, and callers fall back to fetching once (#3716).
+   */
+  onMembersChanged?(cb: () => void): Unsubscribe;
   openArtifact(ref: CollabArtifactRef, source: CollabOpenSource): void;
   /** Host-native durable URL/deep link for copy-link affordances. */
   artifactUrl?(ref: CollabArtifactRef): string | null;

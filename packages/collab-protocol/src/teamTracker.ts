@@ -2,7 +2,17 @@
  * TeamTrackerRoom wire protocol.
  *
  * Phase 2 of tracker-sync-redesign. Server-assigned monotonic syncIds,
- * E2E encrypted item payloads, and server-allocated issue numbering.
+ * plaintext item payloads, and server-allocated issue numbering.
+ *
+ * The `encryptedPayload` field name is VESTIGIAL. Payloads travel as
+ * plaintext JSON over TLS; the server holds the team DEK, encrypts at rest,
+ * and CAN read them. The field keeps its name because renaming it breaks
+ * every deployed client -- there is no protocol version handshake in this
+ * lane. `iv` and `orgKeyFingerprint` are live with changed meanings; the
+ * `Encrypted*` type names were dropped.
+ *
+ * Do not draw a security conclusion from these field names. Read the lane
+ * table in docs/IDENTITY_AUTH_AND_ROOMS.md section 6 first.
  */
 
 /**
@@ -19,10 +29,15 @@ export const SYNC_ID_INITIAL: SyncId = 0;
  * (modulo snake_case columns). Tombstones: `encryptedPayload: null`,
  * `iv` omitted, `deletedAt` populated.
  */
-export interface EncryptedTrackerItemEnvelope {
+export interface TrackerItemEnvelope {
   itemId: string;
   syncId: SyncId;
+  /** Plaintext JSON despite the name. See the file header. */
   encryptedPayload: string | null;
+  /**
+   * Empty/absent = server-managed row. Non-empty = pre-cutover ciphertext no
+   * supported client can read. Load-bearing: do not drop it as vestigial.
+   */
   iv?: string;
   updatedAt: number;
   deletedAt: number | null;
@@ -49,14 +64,15 @@ export interface TrackerRoomConfig {
 
 /**
  * One tracker SCHEMA row on the wire (Epic B Phase 3). Mirrors
- * {@link EncryptedTrackerItemEnvelope} but keyed by the schema TYPE name
- * instead of an itemId, and with no issue-number allocation. The encrypted
- * payload is the JSON-serialized TrackerDataModel; the server never reads it.
+ * {@link TrackerItemEnvelope} but keyed by the schema TYPE name
+ * instead of an itemId, and with no issue-number allocation. The payload is
+ * the plaintext JSON-serialized TrackerDataModel; the server stores it
+ * without reading it, which is a choice rather than a guarantee.
  * Tombstones (type deleted / reset to built-in): `encryptedPayload: null`,
  * `iv` omitted, `deletedAt` populated. Schemas carry their OWN monotonic
  * syncId cursor, independent of the item cursor.
  */
-export interface EncryptedTrackerSchemaEnvelope {
+export interface TrackerSchemaEnvelope {
   schemaType: string;
   syncId: SyncId;
   encryptedPayload: string | null;
@@ -68,14 +84,15 @@ export interface EncryptedTrackerSchemaEnvelope {
 }
 
 /**
- * One team-shared saved view. Mirrors {@link EncryptedTrackerSchemaEnvelope}
- * but keyed by a client-generated `viewId`. The encrypted payload is the
- * JSON-serialized SavedView (name + definition); the server never reads it.
+ * One team-shared saved view. Mirrors {@link TrackerSchemaEnvelope}
+ * but keyed by a client-generated `viewId`. The payload is the plaintext
+ * JSON-serialized SavedView (name + definition); the server stores it without
+ * reading it, which is a choice rather than a guarantee.
  * Tombstones (view unshared or deleted): `encryptedPayload: null`, `iv`
  * omitted, `deletedAt` populated. Saved views carry their OWN monotonic syncId
  * cursor, independent of the item, schema, and navigation cursors.
  */
-export interface EncryptedTrackerSavedViewEnvelope {
+export interface TrackerSavedViewEnvelope {
   viewId: string;
   syncId: SyncId;
   encryptedPayload: string | null;
@@ -87,7 +104,7 @@ export interface EncryptedTrackerSavedViewEnvelope {
 }
 
 /** One shared tracker-sidebar navigation entry (folder or type placement). */
-export interface EncryptedTrackerNavigationEnvelope {
+export interface TrackerNavigationEnvelope {
   entryId: string;
   syncId: SyncId;
   encryptedPayload: string | null;
@@ -213,14 +230,14 @@ export type TrackerServerMessage =
 
 export interface TrackerSavedViewSyncResponseMessage {
   type: 'trackerSavedViewSyncResponse';
-  views: EncryptedTrackerSavedViewEnvelope[];
+  views: TrackerSavedViewEnvelope[];
   cursorSyncId: SyncId;
   hasMore: boolean;
 }
 
 export interface TrackerSavedViewDeltaMessage {
   type: 'trackerSavedViewDelta';
-  view: EncryptedTrackerSavedViewEnvelope;
+  view: TrackerSavedViewEnvelope;
 }
 
 export interface TrackerSavedViewMutationAckMessage {
@@ -228,7 +245,7 @@ export interface TrackerSavedViewMutationAckMessage {
   clientMutationId: string;
   accepted: boolean;
   syncId?: SyncId;
-  view?: EncryptedTrackerSavedViewEnvelope;
+  view?: TrackerSavedViewEnvelope;
   error?: {
     code: TrackerMutationRejectCode;
     message: string;
@@ -237,14 +254,14 @@ export interface TrackerSavedViewMutationAckMessage {
 
 export interface TrackerNavigationSyncResponseMessage {
   type: 'trackerNavigationSyncResponse';
-  entries: EncryptedTrackerNavigationEnvelope[];
+  entries: TrackerNavigationEnvelope[];
   cursorSyncId: SyncId;
   hasMore: boolean;
 }
 
 export interface TrackerNavigationDeltaMessage {
   type: 'trackerNavigationDelta';
-  entry: EncryptedTrackerNavigationEnvelope;
+  entry: TrackerNavigationEnvelope;
 }
 
 export interface TrackerNavigationMutationAckMessage {
@@ -252,7 +269,7 @@ export interface TrackerNavigationMutationAckMessage {
   clientMutationId: string;
   accepted: boolean;
   syncId?: SyncId;
-  entry?: EncryptedTrackerNavigationEnvelope;
+  entry?: TrackerNavigationEnvelope;
   error?: {
     code: TrackerMutationRejectCode;
     message: string;
@@ -261,14 +278,14 @@ export interface TrackerNavigationMutationAckMessage {
 
 export interface TrackerSchemaSyncResponseMessage {
   type: 'trackerSchemaSyncResponse';
-  schemas: EncryptedTrackerSchemaEnvelope[];
+  schemas: TrackerSchemaEnvelope[];
   cursorSyncId: SyncId;
   hasMore: boolean;
 }
 
 export interface TrackerSchemaDeltaMessage {
   type: 'trackerSchemaDelta';
-  schema: EncryptedTrackerSchemaEnvelope;
+  schema: TrackerSchemaEnvelope;
 }
 
 export interface TrackerSchemaMutationAckMessage {
@@ -276,7 +293,7 @@ export interface TrackerSchemaMutationAckMessage {
   clientMutationId: string;
   accepted: boolean;
   syncId?: SyncId;
-  schema?: EncryptedTrackerSchemaEnvelope;
+  schema?: TrackerSchemaEnvelope;
   error?: {
     code: TrackerMutationRejectCode;
     message: string;
@@ -285,7 +302,7 @@ export interface TrackerSchemaMutationAckMessage {
 
 export interface TrackerSyncResponseMessage {
   type: 'trackerSyncResponse';
-  items: EncryptedTrackerItemEnvelope[];
+  items: TrackerItemEnvelope[];
   cursorSyncId: SyncId;
   hasMore: boolean;
   /** Sent on the first batch only. */
@@ -294,7 +311,7 @@ export interface TrackerSyncResponseMessage {
 
 export interface TrackerDeltaMessage {
   type: 'trackerDelta';
-  item: EncryptedTrackerItemEnvelope;
+  item: TrackerItemEnvelope;
 }
 
 export type TrackerMutationRejectCode =
@@ -327,7 +344,7 @@ export interface TrackerMutationAckMessage {
   syncId?: SyncId;
   issueNumber?: number;
   issueKey?: string;
-  item?: EncryptedTrackerItemEnvelope;
+  item?: TrackerItemEnvelope;
   error?: {
     code: TrackerMutationRejectCode;
     message: string;

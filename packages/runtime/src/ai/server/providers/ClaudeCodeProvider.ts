@@ -143,6 +143,8 @@ import {
   armAgentSdkDebugLogging,
   readLatestSdkDebugLogTail,
 } from './claudeCode/spawnCrashDiagnostics';
+import { classifyAbnormalChildExit } from './claudeCode/abnormalExit';
+import { normalizeStructuredContextUsage, type ParsedContextUsage } from '../utils/contextUsage';
 import { applyTaskListMutation, sortTaskList, type TaskListItem } from './claudeCode/taskListReconstruct';
 
 
@@ -270,6 +272,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   private streamClosedContinuationPrepared = false;
   private streamClosedContinuationMessagePending: string | null = null;
   private static readonly MAX_STREAM_CLOSED_RETRIES = 2;
+  // #1361: native subprocess crashes (access violation / segfault) are retried
+  // once, and only before anything has been streamed. Reset on a completed turn
+  // and on abort -- deliberately NOT at turn start, or a crash-retry chain
+  // would clear its own budget on every attempt and never terminate.
+  private abnormalExitRetryCount = 0;
+  private static readonly MAX_ABNORMAL_EXIT_RETRIES = 1;
   // Resolve function to break the for-await loop immediately when interrupt is called.
   // Racing this against .next() lets us unblock without waiting for the SDK transport.
   private interruptResolve: (() => void) | null = null;
@@ -666,6 +674,11 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     this.markMessagesAsHidden = false;
     this.resetStreamClosedTurnState();
 
+    // #1361: the crash-retry path re-enters sendMessage with the caller's
+    // original arguments. `message` is rewritten in place further down (document
+    // context, attachment instructions), so capture it before that happens.
+    const originalMessage = message;
+
     // Track session mode for MCP server configuration and tool filtering
     this.currentMode = (documentContext as any)?.mode || 'agent';
     this.requestedMode = this.currentMode;
@@ -755,6 +768,11 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     // Hoisted so the catch block can avoid double-yielding `complete` if the
     // result chunk's early-yield already fired before an error was thrown.
     let completeEmitted = false;
+
+    // Hoisted for the same reason: the crash-retry decision (#1361) must know
+    // whether any of this turn already reached the transcript, because
+    // replaying a partially-streamed turn would duplicate it.
+    let sawAssistantOutputThisTurn = false;
 
     try {
       // Append document context to message using pre-built prompts from DocumentContextService
@@ -1083,6 +1101,9 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // Track the last assistant message's usage separately (per-step, not cumulative).
       // Used for context window fill calculation: input + cacheRead + cacheCreation = actual context size.
       let lastAssistantUsage: typeof usageData | undefined;
+      // Set only on a /context turn, from the SDK's structured twin of the
+      // markdown report. Undefined on every ordinary turn.
+      let structuredContextUsage: ParsedContextUsage | undefined;
       // Track per-model usage from SDK result (contains inputTokens, outputTokens, costUSD, etc.)
       let modelUsageData: Record<string, {
         inputTokens?: number;
@@ -1102,7 +1123,6 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // then an empty success result (num_turns=0) BEFORE processing the user's
       // prompt. Ending the turn on that result swallows the prompt. NIM-1470.
       let sawTaskNotificationThisTurn = false;
-      let sawAssistantOutputThisTurn = false;
 
 
       // Stream the response
@@ -1373,6 +1393,13 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                   }
                 }
                 if (item.modelUsage) modelUsageData = item.modelUsage;
+                break;
+
+              case 'context_report':
+                // Only ever set on a /context turn. Carried to the `complete`
+                // chunk so AIService can use the exact figures instead of
+                // re-deriving them from the rendered markdown.
+                structuredContextUsage = normalizeStructuredContextUsage(item.usage);
                 break;
 
               case 'tool_use': {
@@ -1698,9 +1725,13 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
               } : {}),
               ...(modelUsageData ? { modelUsage: modelUsageData } : {}),
               ...(lastMessageContextTokens !== undefined ? { contextFillTokens: lastMessageContextTokens } : {}),
+              ...(structuredContextUsage ? { contextReport: structuredContextUsage } : {}),
               ...(receivedCompactBoundary ? { contextCompacted: true } : {})
             };
             completeEmitted = true;
+            // The binary got a turn all the way through; give the next one a
+            // fresh crash-retry budget (#1361).
+            this.abnormalExitRetryCount = 0;
 
             // Break out of the chunk loop. The for-await would otherwise stay
             // alive indefinitely on sessions where the binary's task-list
@@ -1944,6 +1975,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           ...(modelUsageData ? { modelUsage: modelUsageData } : {}),
           // Context fill from last assistant message (for context window display)
           ...(lastMessageContextTokens !== undefined ? { contextFillTokens: lastMessageContextTokens } : {}),
+              ...(structuredContextUsage ? { contextReport: structuredContextUsage } : {}),
           // Signal that compaction happened so AIService clears stale currentContext
           ...(receivedCompactBoundary ? { contextCompacted: true } : {})
         };
@@ -1953,6 +1985,16 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     } catch (error: any) {
       const errorTime = Date.now() - startTime;
       const isAbort = error.name === 'AbortError' || error.message?.includes('aborted');
+
+      // #1361: a native subprocess fault reaches here as a bare
+      // `exited with code <wait status>`. Classify it before anything else
+      // consumes error.message, so both the transcript and the retry decision
+      // work from the fault rather than the integer.
+      const abnormalExit = isAbort ? null : classifyAbnormalChildExit({
+        errorMessage: error.message,
+        stderrLines,
+        producedOutput: sawAssistantOutputThisTurn || completeEmitted,
+      });
 
       // Only log details for non-abort errors
       if (!isAbort) {
@@ -1995,6 +2037,19 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             }
           }
         }
+
+        // #1361: log the same inherited-process attributes for a native fault,
+        // then swap the raw wait status for the readable cause. The transcript,
+        // the DB error record and the renderer all read error.message.
+        if (abnormalExit) {
+          const diag = collectSpawnCrashDiagnostics(spawnDiagContext ?? {});
+          console.error(
+            `[CLAUDE-CODE] Abnormal subprocess exit: kind=${abnormalExit.kind} `
+            + `code=${abnormalExit.exitCode} retryable=${abnormalExit.retryable} `
+            + `diagnostics=${JSON.stringify(diag)}`
+          );
+          error.message = abnormalExit.message;
+        }
       }
 
       if (isAbort) {
@@ -2007,6 +2062,36 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             isComplete: true
           };
         }
+      } else if (
+        abnormalExit?.retryable
+        && this.abnormalExitRetryCount < ClaudeCodeProvider.MAX_ABNORMAL_EXIT_RETRIES
+      ) {
+        // #1361: the crash killed the subprocess before it produced anything,
+        // so nothing has reached the transcript and re-running the turn cannot
+        // duplicate output. In the reported case the fault was intermittent at
+        // ~80%, which one retry very nearly covers.
+        //
+        // Re-entry, not a loop: `yield*` delegates the whole retried turn, and
+        // the inner call re-runs setup from the caller's original arguments.
+        // The budget is per-provider and is only cleared by a completed turn or
+        // an abort, so a binary that crashes every time settles after one extra
+        // attempt instead of spinning.
+        this.abnormalExitRetryCount++;
+        console.warn(
+          `[CLAUDE-CODE] Retrying turn after ${abnormalExit.kind} `
+          + `(attempt ${this.abnormalExitRetryCount}/${ClaudeCodeProvider.MAX_ABNORMAL_EXIT_RETRIES})`
+        );
+        // sendMessage consumes this flag at entry, so restore it for the retry.
+        this.markMessagesAsHidden = hideMessages;
+        yield* this.sendMessage(
+          originalMessage,
+          documentContext,
+          sessionId,
+          messages,
+          workspacePath,
+          attachments,
+        );
+        return;
       } else {
         console.error(`[CLAUDE-CODE] Error occurred`);
 
@@ -2036,7 +2121,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
         yield {
           type: 'error',
-          error: error.message
+          error: error.message,
+          // #1361: the `complete` chunk below is emitted purely to clear the
+          // renderer's spinner. Without this flag the consumer cannot tell a
+          // crashed turn from a finished one and settles the session as a
+          // success with an empty response.
+          ...(abnormalExit ? { isProcessCrash: true } : {}),
         };
 
         // CRITICAL: Always send completion after error to clean up UI state.
@@ -2105,6 +2195,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   abort(): void {
     console.log('[CLAUDE-CODE] Abort called, abortController:', this.abortController ? 'exists' : 'NULL');
     this.streamClosedRetryCount = 0;
+    this.abnormalExitRetryCount = 0;
     this.resetStreamClosedTurnState();
 
     // Resolve the interrupt promise so the Promise.race in the streaming loop

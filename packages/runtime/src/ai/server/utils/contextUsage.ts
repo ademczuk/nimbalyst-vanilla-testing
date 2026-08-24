@@ -9,6 +9,63 @@ export interface ParsedContextUsage {
 const TOKEN_LINE_REGEX = /\*\*Tokens:\*\*\s+([\d.,]+)([kKmM]?)\s*\/\s*([\d.,]+)([kKmM]?)\s*\((\d+)%\)/i;
 
 /**
+ * Read the same report out of the SDK's structured `context_usage` field
+ * instead of the rendered markdown.
+ *
+ * Agent-SDK 0.3.241 attaches `context_usage` to the synthetic assistant message
+ * that carries the `/context` table -- the SDK's own words: "structured twin of
+ * the /context report ... the markdown in message.content remains the canonical
+ * fallback". It is exact where the markdown is rendered to three significant
+ * figures (38334 vs "38.3k"), and it does not depend on the CLI's table layout
+ * staying byte-stable for `parseContextUsageMessage`'s regexes.
+ *
+ * Returns undefined -- matching `parseContextUsageMessage` -- whenever the
+ * payload is absent or unusable, so callers fall back to the markdown parse on
+ * binaries that do not attach it.
+ */
+export function normalizeStructuredContextUsage(raw: unknown): ParsedContextUsage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const source = raw as Record<string, unknown>;
+
+  const contextWindow = source.raw_max_tokens;
+  if (typeof contextWindow !== 'number' || !Number.isFinite(contextWindow) || contextWindow <= 0) {
+    return undefined;
+  }
+
+  const totalTokens = source.total_tokens;
+  if (typeof totalTokens !== 'number' || !Number.isFinite(totalTokens) || totalTokens < 0) {
+    return undefined;
+  }
+
+  const usage: ParsedContextUsage = {
+    totalTokens: Math.round(totalTokens),
+    contextWindow: Math.round(contextWindow),
+  };
+
+  // The structured rows carry tokens and a `kind`, but no percentage -- the
+  // markdown's percentage column is just tokens over the window, so derive it
+  // the same way and keep TokenUsageCategory unchanged.
+  const rawCategories = source.categories;
+  if (Array.isArray(rawCategories)) {
+    const categories: TokenUsageCategory[] = [];
+    for (const entry of rawCategories) {
+      if (!entry || typeof entry !== 'object') continue;
+      const { name, tokens } = entry as Record<string, unknown>;
+      if (typeof name !== 'string' || !name) continue;
+      if (typeof tokens !== 'number' || !Number.isFinite(tokens)) continue;
+      categories.push({
+        name,
+        tokens: Math.round(tokens),
+        percentage: Math.round((tokens / usage.contextWindow) * 1000) / 10,
+      });
+    }
+    if (categories.length > 0) usage.categories = categories;
+  }
+
+  return usage;
+}
+
+/**
  * Extract the actual markdown content from the stored message.
  * The database stores raw SDK chunks as JSON like:
  * {"type":"user","message":{"content":"<local-command-stdout>## Context Usage..."}}

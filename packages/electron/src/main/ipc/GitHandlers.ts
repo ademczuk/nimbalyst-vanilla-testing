@@ -10,7 +10,7 @@ import log from 'electron-log/main';
 import { existsSync } from 'fs';
 import { dirname, join, relative, isAbsolute, resolve } from 'path';
 import { gitOperationLock } from '../services/GitOperationLock';
-import { executeGitCommit, toRepositoryRelativePath } from '../services/GitCommitService';
+import { executeGitCommit, toRepositoryRelativePath, type HunkSelection } from '../services/GitCommitService';
 import { getGitSubprocessEnv, simpleGitWithHookEnv } from '../services/gitEnv';
 import { SessionCommitService } from '../services/SessionCommitService';
 import { safeHandle } from '../utils/ipcRegistry';
@@ -1097,7 +1097,10 @@ export function registerGitHandlers(): void {
       // Optional: when the commit originates from an AI session, recording the
       // link here means the Git Log panel can attribute it even if the widget
       // response round-trip never lands.
-      sessionId?: string
+      sessionId?: string,
+      // Optional: files to stage down to individual hunks rather than whole.
+      // Absent means every file in `filesToStage` goes in whole, unchanged.
+      hunkSelections?: HunkSelection[]
     ): Promise<{ success: boolean; commitHash?: string; commitDate?: string; error?: string }> => {
       const result = await withGitOperationLog(
         operationLog,
@@ -1107,6 +1110,7 @@ export function registerGitHandlers(): void {
           logContext: '[git:commit]',
           env: getGitSubprocessEnv(),
           onOutput: (stream, chunk) => operationLog.appendOutput(workspacePath, entry.id, stream, chunk),
+          hunkSelections,
         }),
         result => result.commitHash ? `[${result.commitHash}] commit created` : undefined,
       );

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { recordToDbParams } from '@nimbalyst/runtime/core/TrackerRecord';
 import { payloadToRecord } from '../TrackerPGLiteStore';
-import type { TrackerItemPayload, EncryptedTrackerItemEnvelope } from '@nimbalyst/runtime/sync';
+import type { TrackerItemPayload, TrackerItemEnvelope } from '@nimbalyst/runtime/sync';
 
 /**
  * Regression: an imported item's `data.origin` was dropped the first time the
@@ -26,7 +26,7 @@ const ORIGIN = {
   },
 };
 
-function makeEnvelope(itemId: string): EncryptedTrackerItemEnvelope {
+function makeEnvelope(itemId: string): TrackerItemEnvelope {
   return {
     itemId,
     syncId: 1,

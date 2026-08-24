@@ -23,7 +23,7 @@
 
 import type { AppDatabase } from '../../database/PGLiteDatabaseWorker';
 import type {
-  EncryptedTrackerItemEnvelope,
+  TrackerItemEnvelope,
   SyncId,
   TrackerItemPayload,
   TrackerTransactionRow,
@@ -251,7 +251,7 @@ export class TrackerPGLiteStore implements TrackerPersistence {
   // --------------------------------------------------------------------------
 
   async applyRemoteItem(
-    envelope: EncryptedTrackerItemEnvelope,
+    envelope: TrackerItemEnvelope,
     payload: TrackerItemPayload | null,
   ): Promise<void> {
     if (payload === null) {
@@ -451,7 +451,7 @@ export class TrackerPGLiteStore implements TrackerPersistence {
     // Optimistic upsert: reuse the same row-shape build as applyRemoteItem
     // but mark sync_status='pending' and leave sync_id at the existing value.
     const existingSyncId = snapshot.syncId ?? 0;
-    const placeholderEnvelope: EncryptedTrackerItemEnvelope = {
+    const placeholderEnvelope: TrackerItemEnvelope = {
       itemId,
       syncId: existingSyncId,
       encryptedPayload: 'optimistic',
@@ -575,7 +575,7 @@ export class TrackerPGLiteStore implements TrackerPersistence {
     // sync_id (the server-confirmed state we want to roll back TO).
     if (snapshot.payload !== null) {
       const restoredUpdatedAt = toEpochMs(snapshot.payload.system?.updatedAt) ?? Date.now();
-      const envelope: EncryptedTrackerItemEnvelope = {
+      const envelope: TrackerItemEnvelope = {
         itemId,
         syncId: snapshot.syncId ?? 0,
         encryptedPayload: 'restored',
@@ -780,7 +780,7 @@ export class TrackerPGLiteStore implements TrackerPersistence {
  * field-to-column projection.
  */
 export function payloadToRecord(
-  envelope: EncryptedTrackerItemEnvelope,
+  envelope: TrackerItemEnvelope,
   payload: TrackerItemPayload,
   workspacePath: string,
 ): TrackerRecord {

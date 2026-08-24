@@ -1,6 +1,6 @@
 {
   "name": "@nimbalyst/electron",
-  "version": "0.75.0",
+  "version": "0.75.1",
   "private": true,
   "license": "MIT",
   "author": "Nimbalyst Team",
@@ -51,7 +51,7 @@
     "marketing:screenshots:grep": "playwright test --config=marketing/playwright.marketing.config.ts --grep"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.221",
+    "@anthropic-ai/claude-agent-sdk": "0.3.241",
     "@anthropic-ai/sdk": "^0.115.0",
     "@electric-sql/pglite": "0.3.14",
     "@electron-toolkit/utils": "^4.0.0",
@@ -67,7 +67,7 @@
     "@nimbalyst/extension-datamodellm": "*",
     "@nimbalyst/mockuplm": "*",
     "@nimbalyst/runtime": "*",
-    "@openai/codex-sdk": "^0.148.0",
+    "@openai/codex-sdk": "^0.149.1",
     "@revolist/react-datagrid": "^4.20.2",
     "@types/glob": "^8.1.0",
     "@types/js-yaml": "^4.0.9",
@@ -77,7 +77,7 @@
     "@types/ws": "^8.18.1",
     "@vscode/ripgrep": "^1.17.1",
     "abort-controller": "^3.0.0",
-    "adm-zip": "^0.5.18",
+    "adm-zip": "^0.6.0",
     "agentkeepalive": "^4.6.0",
     "better-sqlite3": "13.0.1",
     "chardet": "^2.1.1",

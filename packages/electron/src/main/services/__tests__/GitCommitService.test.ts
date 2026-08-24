@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { promisify } from 'util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { parseUnifiedDiffToHunks, type HunkRef } from '@nimbalyst/runtime/ui/git/unifiedDiffModel';
 import {
   createGitCommitProposalResponse,
   executeGitCommit,
@@ -541,6 +542,124 @@ describe('GitCommitService', () => {
       expect(result.success).toBe(true);
       expect(await gitOutput(['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], tmpRoot))
         .toBe('generated.txt\nproposed.txt\n');
+    });
+  });
+
+  describe('hunk-level staging', () => {
+    /**
+     * The scenario this feature exists for: two sessions working in the repo
+     * root have both edited one file, far enough apart to be separate hunks.
+     */
+    async function seedTwoSessionEdits(): Promise<{ file: string; refs: HunkRef[] }> {
+      await initScratchRepo(tmpRoot);
+      const file = path.join(tmpRoot, 'shared.txt');
+      const base = `${Array.from({ length: 30 }, (_, i) => `line${i + 1}`).join('\n')}\n`;
+      await fs.writeFile(file, base, 'utf8');
+      await git(['add', 'shared.txt'], tmpRoot);
+      await git(['commit', '-q', '-m', 'base'], tmpRoot);
+
+      const edited = base.split('\n');
+      edited[4] = 'SESSION-A-EDIT';
+      edited[24] = 'SESSION-B-EDIT';
+      await fs.writeFile(file, edited.join('\n'), 'utf8');
+
+      const parsed = parseUnifiedDiffToHunks(
+        await gitOutput(['diff', 'HEAD', '--', 'shared.txt'], tmpRoot)
+      );
+      expect(parsed.hunks).toHaveLength(2);
+      return {
+        file,
+        refs: parsed.hunks.map((h) => ({
+          oldStart: h.oldStart,
+          oldLines: h.oldLines,
+          newStart: h.newStart,
+          newLines: h.newLines,
+        })),
+      };
+    }
+
+    it('commits one session\'s hunk and leaves the other session\'s edit in the working tree', async () => {
+      const { file, refs } = await seedTwoSessionEdits();
+
+      const result = await executeGitCommit(tmpRoot, 'commit only session A', [file], {
+        hunkSelections: [{ path: file, hunks: [refs[0]] }],
+      });
+
+      expect(result.success).toBe(true);
+
+      // The commit carries session A's line and not session B's.
+      const committed = await gitOutput(['show', 'HEAD:shared.txt'], tmpRoot);
+      expect(committed).toContain('SESSION-A-EDIT');
+      expect(committed).not.toContain('SESSION-B-EDIT');
+      expect(committed).toContain('line25');
+
+      // The working tree is untouched: both edits are still on disk.
+      const onDisk = await fs.readFile(file, 'utf8');
+      expect(onDisk).toContain('SESSION-A-EDIT');
+      expect(onDisk).toContain('SESSION-B-EDIT');
+
+      // And the leftover hunk is still pending, not silently swallowed.
+      expect(await gitOutput(['status', '--porcelain', '--', 'shared.txt'], tmpRoot)).toBe(
+        ' M shared.txt\n'
+      );
+    });
+
+    it('aborts without committing when a hunk ref no longer matches the file', async () => {
+      const { file, refs } = await seedTwoSessionEdits();
+      const headBefore = (await gitOutput(['rev-parse', 'HEAD'], tmpRoot)).trim();
+
+      const stale: HunkRef = { ...refs[0], oldStart: refs[0].oldStart + 7 };
+      const result = await executeGitCommit(tmpRoot, 'should not land', [file], {
+        hunkSelections: [{ path: file, hunks: [stale] }],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/out of date/i);
+      expect((await gitOutput(['rev-parse', 'HEAD'], tmpRoot)).trim()).toBe(headBefore);
+      // The real index must be untouched by a rejected proposal.
+      expect(await gitOutput(['diff', '--cached', '--name-only'], tmpRoot)).toBe('');
+    });
+
+    it('stages a partial file and a whole file in the same commit', async () => {
+      const { file, refs } = await seedTwoSessionEdits();
+      const wholeFile = path.join(tmpRoot, 'whole.txt');
+      await fs.writeFile(wholeFile, 'entirely new\n', 'utf8');
+
+      const result = await executeGitCommit(tmpRoot, 'mixed staging', [file, wholeFile], {
+        hunkSelections: [{ path: file, hunks: [refs[1]] }],
+      });
+
+      expect(result.success).toBe(true);
+      expect(await gitOutput(['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], tmpRoot))
+        .toBe('shared.txt\nwhole.txt\n');
+
+      const committed = await gitOutput(['show', 'HEAD:shared.txt'], tmpRoot);
+      expect(committed).toContain('SESSION-B-EDIT');
+      expect(committed).not.toContain('SESSION-A-EDIT');
+    });
+
+    it('refuses a hunk selection for a file outside the commit', async () => {
+      const { file, refs } = await seedTwoSessionEdits();
+      const other = path.join(tmpRoot, 'other.txt');
+      await fs.writeFile(other, 'x\n', 'utf8');
+
+      const result = await executeGitCommit(tmpRoot, 'mismatched selection', [other], {
+        hunkSelections: [{ path: file, hunks: [refs[0]] }],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/not in the commit's file list/);
+    });
+
+    it('leaves whole-file staging untouched when no hunk selection is passed', async () => {
+      const { file } = await seedTwoSessionEdits();
+
+      const result = await executeGitCommit(tmpRoot, 'whole file', [file]);
+
+      expect(result.success).toBe(true);
+      const committed = await gitOutput(['show', 'HEAD:shared.txt'], tmpRoot);
+      expect(committed).toContain('SESSION-A-EDIT');
+      expect(committed).toContain('SESSION-B-EDIT');
     });
   });
 

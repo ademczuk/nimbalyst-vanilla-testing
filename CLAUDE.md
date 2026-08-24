@@ -213,6 +213,7 @@ Two-tier architecture — `ai_agent_messages` (raw append-only log, sole source 
 | [TRACKER_WORKFLOWS.md](./docs/TRACKER_WORKFLOWS.md) | Creating decision or bug tracker items as part of a fix or design decision. |
 | [ARCHITECTURE_DIAGRAMS.md](./docs/ARCHITECTURE_DIAGRAMS.md) | Considering whether a change is complex enough to warrant an Excalidraw diagram. |
 | [DEBUGGING_LOGS.md](./docs/DEBUGGING_LOGS.md) | Investigating bugs — use the log access tools, don't ask the user to paste logs. |
+| [IDENTITY_AUTH_AND_ROOMS.md](./docs/IDENTITY_AUTH_AND_ROOMS.md) | Anything touching encryption, key custody, room taxonomy, or the two JWTs. The `Encrypted*` names in the team lanes are vestigial — check the lane table before concluding anything from a name. |
 | [RENDER_PERFORMANCE.md](./docs/RENDER_PERFORMANCE.md) | Chasing excessive React re-renders, or adding a render-budget test to a hot surface. |
 | [MAIN_PROCESS_INIT.md](./packages/electron/MAIN_PROCESS_INIT.md) | Working on Electron main-process bootstrap, singleton init, or IPC handler registration. |
 | [DATABASE.md](./packages/electron/DATABASE.md) | Working with PGLite tables, shutdown, or timestamp handling. |

@@ -31,7 +31,7 @@
  */
 
 import type {
-  EncryptedTrackerItemEnvelope,
+  TrackerItemEnvelope,
   SyncId,
   TrackerItemPayload,
   TrackerTransactionRow,
@@ -86,7 +86,7 @@ export interface TrackerPersistence {
    * twice (e.g. on reconnect mid-stream) results in the same projected row.
    */
   applyRemoteItem(
-    envelope: EncryptedTrackerItemEnvelope,
+    envelope: TrackerItemEnvelope,
     payload: TrackerItemPayload | null,
   ): Promise<void>;
 
@@ -191,7 +191,7 @@ export interface TrackerPersistence {
  */
 export class InMemoryTrackerPersistence implements TrackerPersistence {
   readonly items = new Map<string, {
-    envelope: EncryptedTrackerItemEnvelope;
+    envelope: TrackerItemEnvelope;
     payload: TrackerItemPayload | null;
   }>();
 
@@ -206,7 +206,7 @@ export class InMemoryTrackerPersistence implements TrackerPersistence {
   }
 
   async applyRemoteItem(
-    envelope: EncryptedTrackerItemEnvelope,
+    envelope: TrackerItemEnvelope,
     payload: TrackerItemPayload | null,
   ): Promise<void> {
     const existing = this.items.get(envelope.itemId);
@@ -243,7 +243,7 @@ export class InMemoryTrackerPersistence implements TrackerPersistence {
 
     // Mint a placeholder envelope; sync_id stays at the existing value (the
     // server-confirmed projection only advances when the ack lands).
-    const placeholder: EncryptedTrackerItemEnvelope = {
+    const placeholder: TrackerItemEnvelope = {
       itemId,
       syncId: existing?.envelope.syncId ?? 0,
       encryptedPayload: payload === null ? null : 'optimistic',
@@ -261,7 +261,7 @@ export class InMemoryTrackerPersistence implements TrackerPersistence {
       this.items.delete(itemId);
       return;
     }
-    const envelope: EncryptedTrackerItemEnvelope = {
+    const envelope: TrackerItemEnvelope = {
       itemId,
       syncId: snapshot.syncId ?? 0,
       encryptedPayload: snapshot.isTombstone ? null : 'restored',

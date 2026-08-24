@@ -24,7 +24,7 @@ import { AgentTranscriptPanel } from '@nimbalyst/runtime/ui/AgentTranscript/comp
 import type { TranscriptFileLocation } from '@nimbalyst/runtime/ui/AgentTranscript/components/MarkdownRenderer';
 import { ClaudeCliTerminalStrip } from './ClaudeCliTerminalStrip';
 import { ClaudeCliNotInstalledNotice } from './ClaudeCliNotInstalledNotice';
-import type { InteractiveWidgetHost, PermissionScope } from '@nimbalyst/runtime/ui/AgentTranscript/components/CustomToolWidgets/InteractiveWidgetHost';
+import type { HunkSelection, InteractiveWidgetHost, PermissionScope } from '@nimbalyst/runtime/ui/AgentTranscript/components/CustomToolWidgets/InteractiveWidgetHost';
 import type { TodoItem } from '@nimbalyst/runtime/ui/AgentTranscript/types';
 import { isToolLikeMessage } from '@nimbalyst/runtime/ui/AgentTranscript/utils/messageTypeHelpers';
 import { AIInput, AIInputRef } from './AIInput';
@@ -1920,7 +1920,12 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       },
 
       // Git commit operations
-      gitCommit: async (proposalId: string, files: string[], message: string) => {
+      gitCommit: async (
+        proposalId: string,
+        files: string[],
+        message: string,
+        hunkSelections?: HunkSelection[]
+      ) => {
         try {
           // Execute the git commit via IPC
           // Use worktree path for git operations when in a worktree session
@@ -1930,7 +1935,8 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
             gitWorkspacePath,
             message,
             files,
-            sessionId
+            sessionId,
+            hunkSelections
           ) as { success: boolean; commitHash?: string; commitDate?: string; error?: string };
 
           // Send response via unified IPC channel for the durable prompt.
@@ -2001,6 +2007,24 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
         } catch (err) {
           console.error('[SessionTranscript] gitFileDiff failed:', err);
           throw err;
+        }
+      },
+
+      sessionFileDiff: async (filePath: string) => {
+        try {
+          const gitWorkspacePath = sessionWorktreePath || workspacePath;
+          const result = await window.electronAPI.invoke(
+            'session:file-diff',
+            gitWorkspacePath,
+            sessionId,
+            filePath
+          ) as { unifiedDiff: string; source: string };
+          // `source: 'none'` means no pre-edit baseline for this session, so
+          // there is nothing to attribute and every hunk stays checked.
+          return result?.unifiedDiff ? { unifiedDiff: result.unifiedDiff } : null;
+        } catch (err) {
+          console.error('[SessionTranscript] sessionFileDiff failed:', err);
+          return null;
         }
       },
 

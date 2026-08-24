@@ -29,6 +29,9 @@ export type ParsedItem =
   | { kind: 'tool_use'; toolId: string; toolName: string; args: Record<string, unknown>; isMcp: boolean; isSubagent: boolean }
   | { kind: 'tool_result'; toolUseId: string; content: unknown; isError: boolean }
   | { kind: 'usage'; usage: any; modelUsage?: any; isPerStep: boolean }
+  // Structured twin of the `/context` markdown table, attached by the SDK to
+  // the same synthetic assistant message. Only ever present on /context turns.
+  | { kind: 'context_report'; usage: unknown }
   | { kind: 'error'; message: string; chunk: any }
   | { kind: 'session_id'; id: string }
   // Lifecycle items (provider handles side effects, not transcript-relevant)
@@ -212,6 +215,13 @@ export class ClaudeCodeTranscriptAdapter {
     // indicator updates per step (NIM-868). Same guard the session_id capture uses.
     if (chunk.message.usage && !chunk.parent_tool_use_id) {
       items.push({ kind: 'usage', usage: chunk.message.usage, isPerStep: true });
+    }
+
+    // A wrapper-level sibling of `message`, so it is never replayed to the
+    // model. Same sub-agent guard as above: a sub-agent's /context describes
+    // its own much smaller conversation, not the lead's.
+    if (chunk.context_usage && !chunk.parent_tool_use_id) {
+      items.push({ kind: 'context_report', usage: chunk.context_usage });
     }
 
     const content = chunk.message.content;

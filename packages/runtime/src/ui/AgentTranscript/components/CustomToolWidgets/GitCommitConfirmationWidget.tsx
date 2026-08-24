@@ -22,6 +22,15 @@ import type { CustomToolWidgetProps } from './index';
 import { buildCodexToolLookupId } from '../../../../ai/server/toolLookupIds';
 import { interactiveWidgetHostAtom } from '../../../../store/atoms/interactiveWidgetHost';
 import { useDiffPeek } from '../../../git/useDiffPeek';
+import { matchHunkRefs, parseUnifiedDiffToHunks } from '../../../git/unifiedDiffModel';
+import { FileTree } from './gitCommit/FileTree';
+import {
+  buildHunkSelections,
+  directoryCheckboxState,
+  effectiveStagedFiles,
+  fileCheckboxState,
+} from './gitCommit/selectionModel';
+import { useHunkSelection } from './gitCommit/useHunkSelection';
 import {
   buildFileDirectoryTree,
   getFileDirectoryPaths,
@@ -33,7 +42,8 @@ import {
 // File Status Types
 // ============================================================
 
-type FileStatus = 'added' | 'modified' | 'deleted';
+import { getStatusColorClass, type FileStatus } from './gitCommit/fileStatus';
+export type { FileStatus };
 
 interface FileWithStatus {
   path: string;
@@ -476,6 +486,21 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
   const [isCommitting, setIsCommitting] = useState(false);
   const [hasResponded, setHasResponded] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [staleHunkNotice, setStaleHunkNotice] = useState<string | null>(null);
+  // Best-effort name of the session that most likely owns the hunks this
+  // session did not write. Null when it cannot be attributed.
+  const [siblingSessionLabel, setSiblingSessionLabel] = useState<string | null>(null);
+
+  const {
+    hunkStates,
+    expandedFiles,
+    loadingHunks,
+    loadHunkState,
+    toggleFileExpanded,
+    toggleHunk,
+    selectAllHunks,
+    selectAllHunksFor,
+  } = useHunkSelection(host, initialFilesToStage, isPending);
   const [localResult, setLocalResult] = useState<{
     success: boolean;
     commitHash?: string;
@@ -506,6 +531,7 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
     setExpandedFolders(new Set(allPaths));
   }, [directoryTree]);
 
+
   // Latch wasAutoCommitted once the auto-commit success branch fires. Without
   // this, toggling auto-commit off after a successful auto-commit would re-render
   // the widget into the pending interactive UI even though the commit happened.
@@ -525,16 +551,19 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
   } : localResult;
 
   const toggleFile = useCallback((filePath: string) => {
-    setFilesToStage((prev) => {
-      const next = new Set(prev);
-      if (next.has(filePath)) {
+    // A partially-selected file deselects entirely on click, matching the
+    // folder checkbox: the tri-state is a readout, not a third click target.
+    if (fileCheckboxState(filePath, filesToStage, hunkStates) === 'none') {
+      setFilesToStage((prev) => new Set(prev).add(filePath));
+      selectAllHunksFor([filePath]);
+    } else {
+      setFilesToStage((prev) => {
+        const next = new Set(prev);
         next.delete(filePath);
-      } else {
-        next.add(filePath);
-      }
-      return next;
-    });
-  }, []);
+        return next;
+      });
+    }
+  }, [filesToStage, hunkStates, selectAllHunksFor]);
 
   const toggleFolder = useCallback((folderPath: string) => {
     setExpandedFolders((prev) => {
@@ -560,201 +589,72 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
   // Toggle all files in a directory
   const toggleDirectoryFiles = useCallback((node: DirectoryNode) => {
     const filesInDir = getFilesInNode(node);
-    const allSelected = filesInDir.every(f => filesToStage.has(f));
+    const deselect = directoryCheckboxState(filesInDir, filesToStage, hunkStates) !== 'none';
 
     setFilesToStage((prev) => {
       const next = new Set(prev);
-      if (allSelected) {
-        // Deselect all
+      if (deselect) {
         filesInDir.forEach(f => next.delete(f));
       } else {
-        // Select all
         filesInDir.forEach(f => next.add(f));
       }
       return next;
     });
-  }, [filesToStage, getFilesInNode]);
-
-  // Get status label for tooltip
-  const getStatusLabel = (status: FileStatus): string => {
-    switch (status) {
-      case 'added': return 'New file';
-      case 'modified': return 'Modified';
-      case 'deleted': return 'Deleted';
-      default: return 'Modified';
+    if (!deselect) {
+      // Re-selecting a directory restores each file to its whole self rather
+      // than reviving a stale partial selection the user had backed out of.
+      selectAllHunksFor(filesInDir);
     }
-  };
+  }, [filesToStage, hunkStates, getFilesInNode, selectAllHunksFor]);
 
-  // Get status color class
-  const getStatusColorClass = (status: FileStatus): string => {
-    switch (status) {
-      case 'added': return 'text-nim-success';
-      case 'modified': return 'text-nim-info';
-      case 'deleted': return 'text-nim-error';
-      default: return 'text-nim';
-    }
-  };
 
-  // Render a single file item
-  const renderFile = (filePath: string, isInDirectory = false) => {
-    const isSelected = filesToStage.has(filePath);
-    const fileName = getFilePathBasename(filePath);
-    const status = fileStatusMap.get(filePath) || 'modified';
-    const isPinned = isActive(filePath);
-    return (
-      <div
-        key={filePath}
-        ref={(el) => registerRowEl(filePath, el)}
-        className={`git-commit-widget__file group w-full flex items-center gap-1 text-left px-2 py-0.5 rounded border transition-all ${
-          isPinned
-            ? 'bg-[var(--nim-bg-hover)] border-[var(--nim-primary)]'
-            : 'border-transparent bg-transparent hover:bg-[var(--nim-bg-hover)] hover:border-[var(--nim-border)]'
-        }`}
-      >
-        <button
-          type="button"
-          className="git-commit-widget__file-main flex-1 min-w-0 flex items-center gap-1 text-left bg-transparent border-0 p-0 cursor-pointer"
-          onClick={() => toggleFile(filePath)}
-          title={getStatusLabel(status)}
-        >
-          {/* Placeholder for expand caret (to align with folder rows) - only in directory tree */}
-          {isInDirectory && (
-            <div className="git-commit-widget__caret-placeholder w-4 h-4 shrink-0" />
-          )}
-          {/* Checkbox for file selection */}
-          <div
-            className={`git-commit-widget__checkbox w-4 h-4 shrink-0 rounded-[3px] border-[1.5px] cursor-pointer flex items-center justify-center transition-all ${
-              isSelected
-                ? 'bg-[var(--nim-file-edited)] border-[var(--nim-file-edited)]'
-                : 'border-[var(--nim-text-faint)] bg-transparent hover:border-[var(--nim-text-muted)]'
-            }`}
-          >
-            {isSelected && (
-              <svg width="8" height="6" viewBox="0 0 8 6" fill="none" className="text-white">
-                <path d="M1 3L3 5L7 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            )}
-          </div>
-          <div className="git-commit-widget__file-info flex-1 min-w-0">
-            <span className={`git-commit-widget__file-name text-[0.8125rem] font-medium overflow-hidden text-ellipsis whitespace-nowrap ${getStatusColorClass(status)}`}>
-              {fileName}
-            </span>
-          </div>
-        </button>
-        {peekSupported && (
-          <button
-            type="button"
-            data-testid="git-commit-file-peek"
-            className={`git-commit-widget__peek-btn shrink-0 w-5 h-5 flex items-center justify-center rounded text-[var(--nim-text-faint)] hover:text-[var(--nim-primary)] hover:bg-[var(--nim-bg-tertiary)] transition-opacity bg-transparent border-0 cursor-pointer ${
-              isPinned ? 'opacity-100 text-[var(--nim-primary)]' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
-            }`}
-            title={isPinned ? 'Hide diff' : 'Show diff'}
-            onClick={(e) => {
-              e.stopPropagation();
-              togglePeek(filePath);
-            }}
-          >
-            <MaterialSymbol icon="difference" size={14} />
-          </button>
-        )}
-      </div>
-    );
-  };
-
-  // Render a directory node recursively
-  const renderDirectoryNode = (node: DirectoryNode): React.ReactNode => {
-    const isExpanded = expandedFolders.has(node.path);
-    const hasContent = node.files.length > 0 || node.subdirectories.size > 0;
-    const filesInDir = getFilesInNode(node);
-    const selectedCount = filesInDir.filter(f => filesToStage.has(f)).length;
-    const allSelected = selectedCount === filesInDir.length;
-    const someSelected = selectedCount > 0 && !allSelected;
-
-    // Sort subdirectories by displayPath and files by basename so the
-    // tree renders deterministically rather than in the order the model
-    // emitted paths in filesToStage. Folders-before-files convention is
-    // preserved by rendering subdirectories before files at each site.
-    const sortedSubdirectories = Array.from(node.subdirectories.values())
-      .sort(compareSubdirectoriesByDisplayPath);
-    const sortedFiles = [...node.files].sort(compareFilesByBasename);
-
-    // Root node - just render children
-    if (!node.displayPath) {
-      return (
-        <>
-          {sortedSubdirectories.map(subdir => renderDirectoryNode(subdir))}
-          {sortedFiles.map(file => renderFile(file))}
-        </>
-      );
-    }
-
-    return (
-      <div key={node.path} className="git-commit-widget__directory-node mb-0.5">
-        <button
-          onClick={() => toggleFolder(node.path)}
-          className="git-commit-widget__directory-header w-full flex items-center gap-1 px-2 py-0.5 text-[0.8125rem] font-medium text-[var(--nim-text-muted)] bg-transparent border border-transparent rounded transition-all cursor-pointer text-left hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)]"
-        >
-          <MaterialSymbol
-            icon={isExpanded ? 'expand_more' : 'chevron_right'}
-            size={16}
-            className="git-commit-widget__directory-chevron shrink-0 transition-transform text-[var(--nim-text-faint)]"
-          />
-          {/* Directory checkbox */}
-          <div
-            className={`git-commit-widget__checkbox w-4 h-4 shrink-0 rounded-[3px] border-[1.5px] cursor-pointer flex items-center justify-center transition-all ${
-              allSelected
-                ? 'bg-[var(--nim-file-edited)] border-[var(--nim-file-edited)]'
-                : someSelected
-                  ? 'bg-[var(--nim-file-edited)] border-[var(--nim-file-edited)] opacity-60'
-                  : 'border-[var(--nim-text-faint)] bg-transparent hover:border-[var(--nim-text-muted)]'
-            }`}
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleDirectoryFiles(node);
-            }}
-          >
-            {allSelected && (
-              <svg width="8" height="6" viewBox="0 0 8 6" fill="none" className="text-white">
-                <path d="M1 3L3 5L7 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            )}
-            {someSelected && (
-              <div className="w-2 h-0.5 bg-white rounded-full" />
-            )}
-          </div>
-          <MaterialSymbol
-            icon={isExpanded ? 'folder_open' : 'folder'}
-            size={16}
-            className="git-commit-widget__directory-icon shrink-0 text-[var(--nim-text-muted)]"
-          />
-          <span className="git-commit-widget__directory-path flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{node.displayPath}</span>
-          <span className="git-commit-widget__directory-count shrink-0 px-1 py-0.5 bg-[var(--nim-bg-tertiary)] rounded text-[9px] text-[var(--nim-text-faint)]">
-            {selectedCount}/{node.fileCount}
-          </span>
-        </button>
-
-        {isExpanded && hasContent && (
-          <div className="git-commit-widget__directory-children mt-0.5 pl-4">
-            {sortedSubdirectories.map(subdir => renderDirectoryNode(subdir))}
-            {sortedFiles.map(file => renderFile(file, true))}
-          </div>
-        )}
-      </div>
-    );
-  };
+  const stagedFiles = useMemo(
+    () => effectiveStagedFiles(filesToStage, hunkStates),
+    [filesToStage, hunkStates]
+  );
 
   const handleConfirm = useCallback(async () => {
-    if (filesToStage.size === 0 || !commitMessage.trim() || !isPending || !host) {
+    if (stagedFiles.length === 0 || !commitMessage.trim() || !isPending || !host) {
       return;
     }
 
     setIsCommitting(true);
     try {
-      // Execute the git commit via host (works on both desktop and mobile)
+      // `hunkSelections` stays undefined unless some file is a strict subset,
+      // so an unrefined proposal takes exactly the pre-existing path.
+      const hunkSelections = buildHunkSelections(filesToStage, hunkStates);
+
+      // Re-check the refs against a fresh diff before committing. The service
+      // verifies this too and is the real guarantee, but its failure closes the
+      // proposal; catching it here keeps the widget interactive so the user can
+      // just re-pick after a sibling session touched the file.
+      if (hunkSelections.length > 0 && host.gitFileDiff) {
+        const stalePaths: string[] = [];
+        for (const selection of hunkSelections) {
+          const fresh = await host.gitFileDiff(selection.path);
+          if (!fresh) continue;
+          const parsed = parseUnifiedDiffToHunks(fresh.unifiedDiff);
+          if (matchHunkRefs(parsed, selection.hunks).unmatched.length > 0) {
+            stalePaths.push(selection.path);
+          }
+        }
+        if (stalePaths.length > 0) {
+          setIsCommitting(false);
+          setStaleHunkNotice(
+            `${stalePaths.map(getFilePathBasename).join(', ')} changed since this proposal was created. The hunks below have been refreshed — check your selection and commit again.`
+          );
+          await Promise.all(stalePaths.map((p) => loadHunkState(p)));
+          return;
+        }
+      }
+
+      setStaleHunkNotice(null);
+      // Execute the git commit via host (works on both desktop and mobile).
       const result = await host.gitCommit(
         proposalId,
-        Array.from(filesToStage),
-        commitMessage
+        stagedFiles,
+        commitMessage,
+        hunkSelections.length > 0 ? hunkSelections : undefined
       );
 
       // If pending (mobile sent to desktop), stay in "Committing..." state.
@@ -775,6 +675,11 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
         file_count: fileCountBucket,
         success: result.success,
         auto_commit: host.autoCommitEnabled ?? false,
+        partial_files: hunkSelections.length,
+        hunks_deselected: hunkSelections.reduce((total, selection) => {
+          const state = hunkStates.get(selection.path);
+          return total + (state ? state.hunks.length - selection.hunks.length : 0);
+        }, 0),
       });
     } catch (error) {
       setIsCommitting(false);
@@ -784,7 +689,7 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
       };
       setLocalResult(errorResult);
     }
-  }, [filesToStage, commitMessage, isPending, proposalId, host]);
+  }, [stagedFiles, filesToStage, hunkStates, commitMessage, isPending, proposalId, host, loadHunkState]);
 
   const handleCancel = useCallback(() => {
     if (hasResponded || !isPending || !host) return; // Prevent double-response
@@ -1014,10 +919,45 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
         {/* Files to Stage */}
         <div className="git-commit-widget__files flex flex-col gap-1.5">
           <div className="text-[0.6875rem] font-semibold uppercase tracking-wide text-[var(--nim-text-muted)]">
-            Files to Stage ({filesToStage.size}/{initialFilesToStage.length})
+            Files to Stage ({stagedFiles.length}/{initialFilesToStage.length})
           </div>
+          {staleHunkNotice && (
+            <div
+              data-testid="git-commit-stale-hunks"
+              className="flex items-start gap-1.5 px-2 py-1 rounded border-l-2 border-[var(--nim-error)] bg-[color-mix(in_srgb,var(--nim-error)_9%,transparent)] text-[0.6875rem] leading-snug text-[var(--nim-error)]"
+            >
+              <MaterialSymbol icon="error" size={12} className="shrink-0 mt-px" />
+              <span className="flex-1 min-w-0">{staleHunkNotice}</span>
+            </div>
+          )}
           <div className="git-commit-widget__files-list flex flex-col max-h-[200px] overflow-y-auto p-1">
-            {renderDirectoryNode(directoryTree)}
+            <FileTree
+              tree={directoryTree}
+              ctx={{
+                filesToStage,
+                hunkStates,
+                expandedFiles,
+                expandedFolders,
+                loadingHunks,
+                fileStatusMap,
+                siblingSessionLabel,
+                isCommitting,
+                peekSupported,
+                registerRowEl,
+                isActive,
+                togglePeek,
+                toggleFile,
+                toggleFileExpanded,
+                toggleHunk,
+                selectAllHunks,
+                toggleFolder,
+                toggleDirectoryFiles,
+                getFilesInNode,
+                getFilePathBasename,
+                compareFilesByBasename,
+                compareSubdirectoriesByDisplayPath,
+              }}
+            />
           </div>
         </div>
 
@@ -1068,7 +1008,7 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
             data-testid="git-commit-confirm"
             className="git-commit-widget__confirm-btn flex items-center gap-1.5 py-1.5 px-3 text-[0.8125rem] font-medium border-none rounded bg-[var(--nim-primary)] text-white cursor-pointer transition-all hover:bg-[var(--nim-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleConfirm}
-            disabled={isCommitting || filesToStage.size === 0 || !commitMessage.trim()}
+            disabled={isCommitting || stagedFiles.length === 0 || !commitMessage.trim()}
           >
             <MaterialSymbol icon="check" size={14} />
             {isCommitting ? 'Committing...' : 'Confirm & Commit'}

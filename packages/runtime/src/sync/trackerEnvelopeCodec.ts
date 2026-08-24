@@ -20,10 +20,10 @@
  */
 
 import type {
-  EncryptedTrackerItemEnvelope,
-  EncryptedTrackerSchemaEnvelope,
-  EncryptedTrackerNavigationEnvelope,
-  EncryptedTrackerSavedViewEnvelope,
+  TrackerItemEnvelope,
+  TrackerSchemaEnvelope,
+  TrackerNavigationEnvelope,
+  TrackerSavedViewEnvelope,
   TrackerItemPayload,
 } from './trackerProtocol';
 import { stripLocalOnlyFields } from './trackerProtocol';
@@ -43,7 +43,7 @@ export function encodeTrackerPayloadPlaintext(payload: TrackerItemPayload): stri
  * (caught per-item by the engine) on malformed JSON or a missing payload.
  */
 export function decodeTrackerEnvelopePlaintext(
-  envelope: EncryptedTrackerItemEnvelope,
+  envelope: TrackerItemEnvelope,
 ): TrackerItemPayload {
   if (envelope.encryptedPayload === null) {
     throw new Error('decodeTrackerEnvelopePlaintext called on a tombstone (encryptedPayload=null)');
@@ -56,7 +56,7 @@ export function decodeTrackerEnvelopePlaintext(
  * string. The model is already JSON, so this is a presence/typing guard.
  */
 export function decodeTrackerSchemaEnvelopePlaintext(
-  envelope: EncryptedTrackerSchemaEnvelope,
+  envelope: TrackerSchemaEnvelope,
 ): string {
   if (envelope.encryptedPayload === null) {
     throw new Error('decodeTrackerSchemaEnvelopePlaintext called on a tombstone (encryptedPayload=null)');
@@ -65,7 +65,7 @@ export function decodeTrackerSchemaEnvelopePlaintext(
 }
 
 export function decodeTrackerSavedViewEnvelopePlaintext(
-  envelope: EncryptedTrackerSavedViewEnvelope,
+  envelope: TrackerSavedViewEnvelope,
 ): string {
   if (envelope.encryptedPayload === null) {
     throw new Error('decodeTrackerSavedViewEnvelopePlaintext called on a tombstone');
@@ -74,7 +74,7 @@ export function decodeTrackerSavedViewEnvelopePlaintext(
 }
 
 export function decodeTrackerNavigationEnvelopePlaintext(
-  envelope: EncryptedTrackerNavigationEnvelope,
+  envelope: TrackerNavigationEnvelope,
 ): string {
   if (envelope.encryptedPayload === null) {
     throw new Error('decodeTrackerNavigationEnvelopePlaintext called on a tombstone');

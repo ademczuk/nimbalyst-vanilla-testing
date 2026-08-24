@@ -21,7 +21,7 @@ import * as path from 'path';
 import { SQLiteDatabase } from '../../../database/sqlite/SQLiteDatabase';
 import { TrackerPGLiteStore } from '../TrackerPGLiteStore';
 import type {
-  EncryptedTrackerItemEnvelope,
+  TrackerItemEnvelope,
   TrackerItemPayload,
 } from '@nimbalyst/runtime/sync';
 
@@ -42,8 +42,8 @@ function makePayload(overrides: Partial<TrackerItemPayload> = {}): TrackerItemPa
 }
 
 function makeEnvelope(
-  overrides: Partial<EncryptedTrackerItemEnvelope> = {},
-): EncryptedTrackerItemEnvelope {
+  overrides: Partial<TrackerItemEnvelope> = {},
+): TrackerItemEnvelope {
   return {
     itemId: 'bug-1',
     syncId: 1,

@@ -20,12 +20,22 @@ export function shouldSettleUnterminatedTurn(args: {
   alreadySettled: boolean;
   /** A queued-prompt chain owns the session and settles it via onChainSettled. */
   queuedChainActive: boolean;
+  /**
+   * The provider reported a native subprocess crash for this turn (#1361).
+   * ClaudeCodeProvider deliberately yields `complete` after a fatal `error` so
+   * the renderer clears its spinner, which means `sawComplete` on its own
+   * cannot distinguish a finished turn from a crashed one.
+   */
+  providerCrashed?: boolean;
 }): boolean {
-  const { sawComplete, providerError, alreadySettled, queuedChainActive } = args;
-  if (sawComplete) return false;
+  const { sawComplete, providerError, alreadySettled, queuedChainActive, providerCrashed } = args;
   if (!providerError) return false;
   if (alreadySettled) return false;
   if (queuedChainActive) return false;
+  // A crashed turn still needs the error transition: without it the session
+  // reports success with an empty response, and a spawned child tells its
+  // parent meta-agent it finished the work.
+  if (sawComplete && !providerCrashed) return false;
   return true;
 }
 

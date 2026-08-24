@@ -12,7 +12,7 @@ import { DocumentSyncProvider } from '../DocumentSync';
  * no supported client holds that key.
  *
  * Two invariants:
- *   1. `decryptFromWire` REFUSES a non-empty iv rather than handing Yjs bytes
+ *   1. `decodeFromWire` REFUSES a non-empty iv rather than handing Yjs bytes
  *      that decode to garbage.
  *   2. The per-payload catch in `handleSyncResponse` skips only that row --
  *      a readable row in the same batch still applies, and sync survives.
@@ -66,7 +66,7 @@ describe('DocumentSync pre-cutover rows', () => {
     const provider = createProvider();
 
     await expect(
-      (provider as any).decryptFromWire(plaintextUpdate('anything'), 'aXYtYnl0ZXM='),
+      (provider as any).decodeFromWire(plaintextUpdate('anything'), 'aXYtYnl0ZXM='),
     ).rejects.toThrow(/pre-cutover/i);
 
     provider.destroy();
@@ -75,7 +75,7 @@ describe('DocumentSync pre-cutover rows', () => {
   it('accepts the empty-iv sentinel as plaintext', async () => {
     const provider = createProvider();
 
-    const bytes = await (provider as any).decryptFromWire(plaintextUpdate('hello'), '');
+    const bytes = await (provider as any).decodeFromWire(plaintextUpdate('hello'), '');
     const doc = new Y.Doc();
     Y.applyUpdate(doc, bytes);
     expect(doc.getText('content').toString()).toBe('hello');

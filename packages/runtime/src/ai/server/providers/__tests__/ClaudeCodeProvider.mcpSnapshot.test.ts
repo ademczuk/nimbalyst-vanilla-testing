@@ -95,7 +95,7 @@ describe('ClaudeCodeProvider MCP snapshot (NIM-1988)', () => {
     const turn1Bytes = JSON.stringify(turn1.options.mcpServers);
     const turn2Bytes = JSON.stringify(turn2.options.mcpServers);
 
-    expect(Object.keys(turn1.options.mcpServers)).toEqual(['nimbalyst']);
+    expect(Object.keys(turn1.options.mcpServers!)).toEqual(['nimbalyst']);
     expect(loadLiveMcpServers).toHaveBeenCalledTimes(1);
     // This exact byte equality is the real cache invariant. Re-loading the live
     // map here would add nimbalyst-example and force a tools_changed full-prefix

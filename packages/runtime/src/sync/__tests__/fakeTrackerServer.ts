@@ -25,7 +25,7 @@
  */
 
 import type {
-  EncryptedTrackerItemEnvelope,
+  TrackerItemEnvelope,
   SyncId,
   TrackerClientMessage,
   TrackerServerMessage,
@@ -34,15 +34,15 @@ import type {
   TrackerRoomConfig,
   TrackerDeltaMessage,
   TrackerSyncResponseMessage,
-  EncryptedTrackerSchemaEnvelope,
+  TrackerSchemaEnvelope,
   TrackerSchemaSyncResponseMessage,
   TrackerSchemaDeltaMessage,
   TrackerSchemaMutationAckMessage,
-  EncryptedTrackerNavigationEnvelope,
+  TrackerNavigationEnvelope,
   TrackerNavigationSyncResponseMessage,
   TrackerNavigationDeltaMessage,
   TrackerNavigationMutationAckMessage,
-  EncryptedTrackerSavedViewEnvelope,
+  TrackerSavedViewEnvelope,
   TrackerSavedViewSyncResponseMessage,
   TrackerSavedViewDeltaMessage,
   TrackerSavedViewMutationAckMessage,
@@ -267,7 +267,7 @@ export class FakeTrackerRoom {
    * no broadcast). Lets tests construct decrypt-failure scenarios where
    * the room contains a row encrypted under a key the client doesn't have.
    */
-  injectStoredEnvelope(envelope: EncryptedTrackerItemEnvelope): void {
+  injectStoredEnvelope(envelope: TrackerItemEnvelope): void {
     const now = Date.now();
     this.syncId = Math.max(this.syncId, envelope.syncId);
     this.items.set(envelope.itemId, {
@@ -343,7 +343,7 @@ export class FakeTrackerRoom {
   }
 
   private handleSync(ws: FakeWebSocket, sinceSyncId: SyncId): void {
-    const items: EncryptedTrackerItemEnvelope[] = [...this.items.values()]
+    const items: TrackerItemEnvelope[] = [...this.items.values()]
       .filter(row => row.syncId > sinceSyncId)
       .sort((a, b) => a.syncId - b.syncId)
       .map(toEnvelope);
@@ -419,7 +419,7 @@ export class FakeTrackerRoom {
   }
 
   private handleSchemaSync(ws: FakeWebSocket, sinceSyncId: SyncId): void {
-    const schemas: EncryptedTrackerSchemaEnvelope[] = [...this.schemas.values()]
+    const schemas: TrackerSchemaEnvelope[] = [...this.schemas.values()]
       .filter(row => row.syncId > sinceSyncId)
       .sort((a, b) => a.syncId - b.syncId)
       .map(toSchemaEnvelope);
@@ -655,25 +655,25 @@ export class FakeTrackerRoom {
   }
 
   /** Read the stored items (for assertions). */
-  getStoredItems(): EncryptedTrackerItemEnvelope[] {
+  getStoredItems(): TrackerItemEnvelope[] {
     return [...this.items.values()].map(toEnvelope);
   }
 
-  getStoredSchemas(): EncryptedTrackerSchemaEnvelope[] {
+  getStoredSchemas(): TrackerSchemaEnvelope[] {
     return [...this.schemas.values()].map(toSchemaEnvelope);
   }
 
-  getStoredSavedViews(): EncryptedTrackerSavedViewEnvelope[] {
+  getStoredSavedViews(): TrackerSavedViewEnvelope[] {
     return [...this.savedViews.values()].map(toSavedViewEnvelope);
   }
 
-  getStoredNavigation(): EncryptedTrackerNavigationEnvelope[] {
+  getStoredNavigation(): TrackerNavigationEnvelope[] {
     return [...this.navigation.values()].map(toNavigationEnvelope);
   }
 }
 
-function toEnvelope(stored: StoredItem): EncryptedTrackerItemEnvelope {
-  const env: EncryptedTrackerItemEnvelope = {
+function toEnvelope(stored: StoredItem): TrackerItemEnvelope {
+  const env: TrackerItemEnvelope = {
     itemId: stored.itemId,
     syncId: stored.syncId,
     encryptedPayload: stored.encryptedPayload,
@@ -687,8 +687,8 @@ function toEnvelope(stored: StoredItem): EncryptedTrackerItemEnvelope {
   return env;
 }
 
-function toSchemaEnvelope(stored: StoredSchema): EncryptedTrackerSchemaEnvelope {
-  const env: EncryptedTrackerSchemaEnvelope = {
+function toSchemaEnvelope(stored: StoredSchema): TrackerSchemaEnvelope {
+  const env: TrackerSchemaEnvelope = {
     schemaType: stored.schemaType,
     syncId: stored.syncId,
     encryptedPayload: stored.encryptedPayload,
@@ -700,8 +700,8 @@ function toSchemaEnvelope(stored: StoredSchema): EncryptedTrackerSchemaEnvelope 
   return env;
 }
 
-function toSavedViewEnvelope(stored: StoredSavedView): EncryptedTrackerSavedViewEnvelope {
-  const env: EncryptedTrackerSavedViewEnvelope = {
+function toSavedViewEnvelope(stored: StoredSavedView): TrackerSavedViewEnvelope {
+  const env: TrackerSavedViewEnvelope = {
     viewId: stored.viewId,
     syncId: stored.syncId,
     encryptedPayload: stored.encryptedPayload,
@@ -713,8 +713,8 @@ function toSavedViewEnvelope(stored: StoredSavedView): EncryptedTrackerSavedView
   return env;
 }
 
-function toNavigationEnvelope(stored: StoredNavigation): EncryptedTrackerNavigationEnvelope {
-  const env: EncryptedTrackerNavigationEnvelope = {
+function toNavigationEnvelope(stored: StoredNavigation): TrackerNavigationEnvelope {
+  const env: TrackerNavigationEnvelope = {
     entryId: stored.entryId,
     syncId: stored.syncId,
     encryptedPayload: stored.encryptedPayload,

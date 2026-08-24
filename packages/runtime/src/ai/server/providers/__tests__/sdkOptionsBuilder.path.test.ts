@@ -2,7 +2,7 @@
  * PATH-overlay tests for sdkOptionsBuilder.
  *
  * Regression coverage for NIM-376 — removing setupClaudeCodeEnvironment() in
- * commit 0b186492 left options.env.PATH as process.env.PATH. Dock/Finder
+ * commit 0b186492 left options.env!.PATH as process.env.PATH. Dock/Finder
  * launches of Electron have a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin),
  * which caused the Claude Code SDK's stdio MCP spawns to fail with
  * "Executable not found in $PATH: npx" for every npx-based MCP server.
@@ -91,7 +91,7 @@ describe('buildSdkOptions PATH overlay (NIM-376)', () => {
 
     const { options } = await buildSdkOptions(makeDeps(), makeParams());
 
-    expect(options.env.PATH).toBe(
+    expect(options.env!.PATH).toBe(
       '/opt/homebrew/bin:/Users/me/.nvm/versions/node/v20/bin:/usr/bin:/bin'
     );
   });
@@ -102,7 +102,7 @@ describe('buildSdkOptions PATH overlay (NIM-376)', () => {
 
     const { options } = await buildSdkOptions(makeDeps(), makeParams());
 
-    expect(options.env.PATH).toBe('/usr/bin:/bin');
+    expect(options.env!.PATH).toBe('/usr/bin:/bin');
   });
 
   it('falls back to process.env.PATH when enhancedPathLoader returns empty string', async () => {
@@ -111,6 +111,6 @@ describe('buildSdkOptions PATH overlay (NIM-376)', () => {
 
     const { options } = await buildSdkOptions(makeDeps(), makeParams());
 
-    expect(options.env.PATH).toBe('/usr/bin:/bin');
+    expect(options.env!.PATH).toBe('/usr/bin:/bin');
   });
 });

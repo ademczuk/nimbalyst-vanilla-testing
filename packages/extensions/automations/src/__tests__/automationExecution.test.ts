@@ -83,6 +83,85 @@ Poll.
     expect(harness.files.has('nimbalyst-local/automations/poller/output.md')).toBe(false);
   });
 
+  it('keeps the report the agent wrote instead of overwriting it with the final message', async () => {
+    // new-file mode wrote `# Title - date` + the agent's final assistant
+    // text over the output path unconditionally. When the prompt told the agent
+    // to Write its report to that same path, every run replaced a real report
+    // with session narration ("Report written to <that same path>").
+    const path = 'nimbalyst-local/automations/research.md';
+    const harness = makeHarness([[path, `---
+automationStatus:
+  id: research
+  title: Research
+  enabled: true
+  schedule:
+    type: daily
+    time: "09:00"
+  output:
+    mode: new-file
+    location: nimbalyst-local/automations/research/
+    fileNameTemplate: "{{date}}-research.md"
+  runCount: 0
+---
+
+Write your report to the output directory.
+`]]);
+    const today = new Date().toISOString().split('T')[0];
+    const outputPath = `nimbalyst-local/automations/research/${today}-research.md`;
+    const report = '# Product Research\n\n## TL;DR\n- Grok 4.6 released\n';
+    const sendPrompt = vi.fn().mockImplementation(async () => {
+      harness.files.set(outputPath, report);
+      return { sessionId: 's1', response: `I'll start by reading the previous output...Report written to ${outputPath}.` };
+    });
+
+    await activate({ services: { filesystem: harness.filesystem, ui: harness.ui, ai: { sendPrompt } }, subscriptions: disposables });
+    await aiTools.find((t) => t.name === 'automations.run')!.handler({ id: 'research' }, {} as never);
+
+    expect(harness.files.get(outputPath)).toBe(report);
+    expect(harness.ui.showWarning).toHaveBeenCalledWith(expect.stringContaining(outputPath));
+
+    // The run is still recorded, and says the agent's file was kept.
+    const history = JSON.parse(harness.files.get('nimbalyst-local/automations/research/history.json')!);
+    expect(history).toEqual([
+      expect.objectContaining({ status: 'success', outputFile: outputPath, outputWrittenByAgent: true }),
+    ]);
+  });
+
+  it('still overwrites its own previous output in replace mode when the agent wrote nothing', async () => {
+    // The guard above must not freeze replace mode, whose whole contract is to
+    // overwrite the same file every run.
+    const path = 'nimbalyst-local/automations/status.md';
+    const outputPath = 'nimbalyst-local/automations/status/latest.md';
+    const harness = makeHarness([
+      [path, `---
+automationStatus:
+  id: status
+  title: Status
+  enabled: true
+  schedule:
+    type: daily
+    time: "09:00"
+  output:
+    mode: replace
+    location: nimbalyst-local/automations/status/
+    fileNameTemplate: latest.md
+  runCount: 0
+---
+
+Report status.
+`],
+      [outputPath, '# Status\n\n*Last updated: yesterday*\n\nstale reading\n'],
+    ]);
+    const sendPrompt = vi.fn().mockResolvedValue({ sessionId: 's1', response: 'fresh reading' });
+
+    await activate({ services: { filesystem: harness.filesystem, ui: harness.ui, ai: { sendPrompt } }, subscriptions: disposables });
+    await aiTools.find((t) => t.name === 'automations.run')!.handler({ id: 'status' }, {} as never);
+
+    expect(harness.files.get(outputPath)).toContain('fresh reading');
+    expect(harness.files.get(outputPath)).not.toContain('stale reading');
+    expect(harness.ui.showWarning).not.toHaveBeenCalled();
+  });
+
   it('creates a disabled automation by default and says so, without inventing a file name template', async () => {
     const harness = makeHarness();
     await activate({ services: { filesystem: harness.filesystem, ui: harness.ui }, subscriptions: disposables });

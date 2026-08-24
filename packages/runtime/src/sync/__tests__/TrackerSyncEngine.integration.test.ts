@@ -26,9 +26,9 @@ import {
   type TrackerSyncEngineConfig,
 } from '../TrackerSyncEngine';
 import { InMemoryTrackerPersistence } from '../trackerPersistence';
-import { encodeTrackerPayloadPlaintext } from '../TrackerEnvelopeCrypto';
+import { encodeTrackerPayloadPlaintext } from '../trackerEnvelopeCodec';
 import { createFakeServer, type FakeTrackerRoom } from './fakeTrackerServer';
-import type { EncryptedTrackerItemEnvelope, TrackerItemPayload } from '../trackerProtocol';
+import type { TrackerItemEnvelope, TrackerItemPayload } from '../trackerProtocol';
 
 // ============================================================================
 // Helpers

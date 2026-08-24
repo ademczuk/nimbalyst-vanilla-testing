@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-27T21:02:05.862Z",
+  "generatedAt": "2026-08-24T13:57:34.547Z",
   "scope": {
     "workspaceRoots": [
       "packages/electron",
@@ -33,7 +33,7 @@
     "description": "Production dependencies reachable from Electron, runtime, and built-in extension workspaces."
   },
   "summary": {
-    "packageCount": 905,
+    "packageCount": 904,
     "reviewRequiredCount": 0,
     "approvedExceptionCount": 3,
     "licenseCounts": {
@@ -46,7 +46,7 @@
       "EPL-2.0": 1,
       "ISC": 59,
       "LGPL-3.0": 1,
-      "MIT": 782,
+      "MIT": 781,
       "Python-2.0": 1,
       "SEE LICENSE IN README.md": 1,
       "Unlicense": 2
@@ -55,7 +55,7 @@
     "approvedExceptions": [
       {
         "name": "@anthropic-ai/claude-agent-sdk",
-        "version": "0.3.220",
+        "version": "0.3.241",
         "license": "Anthropic Commercial",
         "reason": "Anthropic commercial license (https://code.claude.com/docs/en/legal-and-compliance). Permits use by developers writing code locally, which is exactly how Nimbalyst integrates the SDK. Used unmodified."
       },
@@ -125,9 +125,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@anthropic-ai/claude-agent-sdk@0.3.220",
+      "id": "@anthropic-ai/claude-agent-sdk@0.3.241",
       "name": "@anthropic-ai/claude-agent-sdk",
-      "version": "0.3.220",
+      "version": "0.3.241",
       "rawLicense": "SEE LICENSE IN README.md",
       "selectedLicense": null,
       "reviewRequired": false,
@@ -139,7 +139,7 @@
       "installPaths": [
         "node_modules/@anthropic-ai/claude-agent-sdk"
       ],
-      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.220.tgz",
+      "resolved": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.241.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE.md",
@@ -201,6 +201,31 @@
           "fileName": "LICENSE",
           "relativePath": "node_modules/@babel/runtime/LICENSE",
           "text": "MIT License\n\nCopyright (c) 2014-present Sebastian McKenzie and other contributors\n\nPermission is hereby granted, free of charge, to any person obtaining\na copy of this software and associated documentation files (the\n\"Software\"), to deal in the Software without restriction, including\nwithout limitation the rights to use, copy, modify, merge, publish,\ndistribute, sublicense, and/or sell copies of the Software, and to\npermit persons to whom the Software is furnished to do so, subject to\nthe following conditions:\n\nThe above copyright notice and this permission notice shall be\nincluded in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\nNONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE\nLIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION\nWITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n"
+        }
+      ],
+      "noticeFiles": []
+    },
+    {
+      "id": "@borewit/text-codec@0.2.2",
+      "name": "@borewit/text-codec",
+      "version": "0.2.2",
+      "rawLicense": "MIT",
+      "selectedLicense": "MIT",
+      "reviewRequired": false,
+      "reviewReasons": [],
+      "approved": false,
+      "approvalReason": null,
+      "approvalLicense": null,
+      "issues": [],
+      "installPaths": [
+        "node_modules/@borewit/text-codec"
+      ],
+      "resolved": "https://registry.npmjs.org/@borewit/text-codec/-/text-codec-0.2.2.tgz",
+      "licenseFiles": [
+        {
+          "fileName": "LICENSE.txt",
+          "relativePath": "node_modules/@borewit/text-codec/LICENSE.txt",
+          "text": "The MIT License (MIT)\n\nCopyright © 2025 Borewit\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n"
         }
       ],
       "noticeFiles": []
@@ -827,9 +852,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@hono/node-server@1.19.14",
+      "id": "@hono/node-server@1.19.17",
       "name": "@hono/node-server",
-      "version": "1.19.14",
+      "version": "1.19.17",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -841,7 +866,7 @@
       "installPaths": [
         "node_modules/@hono/node-server"
       ],
-      "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.14.tgz",
+      "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.17.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -927,9 +952,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/core@1.6.0",
+      "id": "@jimp/core@1.6.1",
       "name": "@jimp/core",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -941,7 +966,7 @@
       "installPaths": [
         "node_modules/@jimp/core"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/core/-/core-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/core/-/core-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -952,9 +977,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/diff@1.6.0",
+      "id": "@jimp/diff@1.6.1",
       "name": "@jimp/diff",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -966,7 +991,7 @@
       "installPaths": [
         "node_modules/@jimp/diff"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/diff/-/diff-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/diff/-/diff-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -977,9 +1002,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/file-ops@1.6.0",
+      "id": "@jimp/file-ops@1.6.1",
       "name": "@jimp/file-ops",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -991,7 +1016,7 @@
       "installPaths": [
         "node_modules/@jimp/file-ops"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/file-ops/-/file-ops-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/file-ops/-/file-ops-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1002,9 +1027,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/js-bmp@1.6.0",
+      "id": "@jimp/js-bmp@1.6.1",
       "name": "@jimp/js-bmp",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1016,7 +1041,7 @@
       "installPaths": [
         "node_modules/@jimp/js-bmp"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/js-bmp/-/js-bmp-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/js-bmp/-/js-bmp-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1027,9 +1052,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/js-gif@1.6.0",
+      "id": "@jimp/js-gif@1.6.1",
       "name": "@jimp/js-gif",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1041,7 +1066,7 @@
       "installPaths": [
         "node_modules/@jimp/js-gif"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/js-gif/-/js-gif-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/js-gif/-/js-gif-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1052,9 +1077,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/js-jpeg@1.6.0",
+      "id": "@jimp/js-jpeg@1.6.1",
       "name": "@jimp/js-jpeg",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1066,7 +1091,7 @@
       "installPaths": [
         "node_modules/@jimp/js-jpeg"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/js-jpeg/-/js-jpeg-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/js-jpeg/-/js-jpeg-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1077,9 +1102,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/js-png@1.6.0",
+      "id": "@jimp/js-png@1.6.1",
       "name": "@jimp/js-png",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1091,7 +1116,7 @@
       "installPaths": [
         "node_modules/@jimp/js-png"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/js-png/-/js-png-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/js-png/-/js-png-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1102,9 +1127,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/js-tiff@1.6.0",
+      "id": "@jimp/js-tiff@1.6.1",
       "name": "@jimp/js-tiff",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1116,7 +1141,7 @@
       "installPaths": [
         "node_modules/@jimp/js-tiff"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/js-tiff/-/js-tiff-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/js-tiff/-/js-tiff-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1127,9 +1152,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-blit@1.6.0",
+      "id": "@jimp/plugin-blit@1.6.1",
       "name": "@jimp/plugin-blit",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1141,7 +1166,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-blit"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-blit/-/plugin-blit-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-blit/-/plugin-blit-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1152,9 +1177,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-blur@1.6.0",
+      "id": "@jimp/plugin-blur@1.6.1",
       "name": "@jimp/plugin-blur",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1166,7 +1191,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-blur"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-blur/-/plugin-blur-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-blur/-/plugin-blur-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1177,9 +1202,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-circle@1.6.0",
+      "id": "@jimp/plugin-circle@1.6.1",
       "name": "@jimp/plugin-circle",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1191,7 +1216,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-circle"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-circle/-/plugin-circle-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-circle/-/plugin-circle-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1202,9 +1227,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-color@1.6.0",
+      "id": "@jimp/plugin-color@1.6.1",
       "name": "@jimp/plugin-color",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1216,7 +1241,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-color"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-color/-/plugin-color-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-color/-/plugin-color-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1227,9 +1252,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-contain@1.6.0",
+      "id": "@jimp/plugin-contain@1.6.1",
       "name": "@jimp/plugin-contain",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1241,7 +1266,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-contain"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-contain/-/plugin-contain-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-contain/-/plugin-contain-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1252,9 +1277,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-cover@1.6.0",
+      "id": "@jimp/plugin-cover@1.6.1",
       "name": "@jimp/plugin-cover",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1266,7 +1291,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-cover"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-cover/-/plugin-cover-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-cover/-/plugin-cover-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1277,9 +1302,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-crop@1.6.0",
+      "id": "@jimp/plugin-crop@1.6.1",
       "name": "@jimp/plugin-crop",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1291,7 +1316,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-crop"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-crop/-/plugin-crop-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-crop/-/plugin-crop-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1302,9 +1327,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-displace@1.6.0",
+      "id": "@jimp/plugin-displace@1.6.1",
       "name": "@jimp/plugin-displace",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1316,7 +1341,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-displace"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-displace/-/plugin-displace-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-displace/-/plugin-displace-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1327,9 +1352,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-dither@1.6.0",
+      "id": "@jimp/plugin-dither@1.6.1",
       "name": "@jimp/plugin-dither",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1341,7 +1366,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-dither"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-dither/-/plugin-dither-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-dither/-/plugin-dither-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1352,9 +1377,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-fisheye@1.6.0",
+      "id": "@jimp/plugin-fisheye@1.6.1",
       "name": "@jimp/plugin-fisheye",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1366,7 +1391,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-fisheye"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-fisheye/-/plugin-fisheye-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-fisheye/-/plugin-fisheye-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1377,9 +1402,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-flip@1.6.0",
+      "id": "@jimp/plugin-flip@1.6.1",
       "name": "@jimp/plugin-flip",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1391,7 +1416,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-flip"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-flip/-/plugin-flip-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-flip/-/plugin-flip-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1402,9 +1427,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-hash@1.6.0",
+      "id": "@jimp/plugin-hash@1.6.1",
       "name": "@jimp/plugin-hash",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1416,7 +1441,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-hash"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-hash/-/plugin-hash-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-hash/-/plugin-hash-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1427,9 +1452,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-mask@1.6.0",
+      "id": "@jimp/plugin-mask@1.6.1",
       "name": "@jimp/plugin-mask",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1441,7 +1466,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-mask"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-mask/-/plugin-mask-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-mask/-/plugin-mask-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1452,9 +1477,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-print@1.6.0",
+      "id": "@jimp/plugin-print@1.6.1",
       "name": "@jimp/plugin-print",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1466,7 +1491,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-print"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-print/-/plugin-print-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-print/-/plugin-print-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1477,9 +1502,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-quantize@1.6.0",
+      "id": "@jimp/plugin-quantize@1.6.1",
       "name": "@jimp/plugin-quantize",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1491,7 +1516,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-quantize"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-quantize/-/plugin-quantize-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-quantize/-/plugin-quantize-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1502,9 +1527,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-resize@1.6.0",
+      "id": "@jimp/plugin-resize@1.6.1",
       "name": "@jimp/plugin-resize",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1516,7 +1541,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-resize"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-resize/-/plugin-resize-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-resize/-/plugin-resize-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1527,9 +1552,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-rotate@1.6.0",
+      "id": "@jimp/plugin-rotate@1.6.1",
       "name": "@jimp/plugin-rotate",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1541,7 +1566,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-rotate"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-rotate/-/plugin-rotate-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-rotate/-/plugin-rotate-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1552,9 +1577,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/plugin-threshold@1.6.0",
+      "id": "@jimp/plugin-threshold@1.6.1",
       "name": "@jimp/plugin-threshold",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1566,7 +1591,7 @@
       "installPaths": [
         "node_modules/@jimp/plugin-threshold"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/plugin-threshold/-/plugin-threshold-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/plugin-threshold/-/plugin-threshold-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1577,9 +1602,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/types@1.6.0",
+      "id": "@jimp/types@1.6.1",
       "name": "@jimp/types",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1591,7 +1616,7 @@
       "installPaths": [
         "node_modules/@jimp/types"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/types/-/types-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/types/-/types-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -1602,9 +1627,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@jimp/utils@1.6.0",
+      "id": "@jimp/utils@1.6.1",
       "name": "@jimp/utils",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -1616,7 +1641,7 @@
       "installPaths": [
         "node_modules/@jimp/utils"
       ],
-      "resolved": "https://registry.npmjs.org/@jimp/utils/-/utils-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/@jimp/utils/-/utils-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -2327,9 +2352,9 @@
       "noticeFiles": []
     },
     {
-      "id": "@mermaid-js/parser@1.1.1",
+      "id": "@mermaid-js/parser@1.2.1",
       "name": "@mermaid-js/parser",
-      "version": "1.1.1",
+      "version": "1.2.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -2341,7 +2366,7 @@
       "installPaths": [
         "node_modules/mermaid/node_modules/@mermaid-js/parser"
       ],
-      "resolved": "https://registry.npmjs.org/@mermaid-js/parser/-/parser-1.1.1.tgz",
+      "resolved": "https://registry.npmjs.org/@mermaid-js/parser/-/parser-1.2.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -3720,6 +3745,31 @@
           "fileName": "LICENSE",
           "relativePath": "node_modules/@standard-schema/utils/LICENSE",
           "text": "MIT License\n\nCopyright (c) 2024 Fabian Hiller\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
+        }
+      ],
+      "noticeFiles": []
+    },
+    {
+      "id": "@tokenizer/inflate@0.4.1",
+      "name": "@tokenizer/inflate",
+      "version": "0.4.1",
+      "rawLicense": "MIT",
+      "selectedLicense": "MIT",
+      "reviewRequired": false,
+      "reviewReasons": [],
+      "approved": false,
+      "approvalReason": null,
+      "approvalLicense": null,
+      "issues": [],
+      "installPaths": [
+        "node_modules/@tokenizer/inflate"
+      ],
+      "resolved": "https://registry.npmjs.org/@tokenizer/inflate/-/inflate-0.4.1.tgz",
+      "licenseFiles": [
+        {
+          "fileName": "LICENSE",
+          "relativePath": "node_modules/@tokenizer/inflate/LICENSE",
+          "text": "Copyright (c) 2024, Borewit\nAll rights reserved.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit\npersons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the\nSoftware.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE\nWARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR\nCOPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR\nOTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
         }
       ],
       "noticeFiles": []
@@ -5423,9 +5473,9 @@
       "noticeFiles": []
     },
     {
-      "id": "adm-zip@0.5.18",
+      "id": "adm-zip@0.6.0",
       "name": "adm-zip",
-      "version": "0.5.18",
+      "version": "0.6.0",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -5437,7 +5487,7 @@
       "installPaths": [
         "node_modules/adm-zip"
       ],
-      "resolved": "https://registry.npmjs.org/adm-zip/-/adm-zip-0.5.18.tgz",
+      "resolved": "https://registry.npmjs.org/adm-zip/-/adm-zip-0.6.0.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -5948,31 +5998,6 @@
       "noticeFiles": []
     },
     {
-      "id": "base64-js@1.5.1",
-      "name": "base64-js",
-      "version": "1.5.1",
-      "rawLicense": "MIT",
-      "selectedLicense": "MIT",
-      "reviewRequired": false,
-      "reviewReasons": [],
-      "approved": false,
-      "approvalReason": null,
-      "approvalLicense": null,
-      "issues": [],
-      "installPaths": [
-        "node_modules/base64-js"
-      ],
-      "resolved": "https://registry.npmjs.org/base64-js/-/base64-js-1.5.1.tgz",
-      "licenseFiles": [
-        {
-          "fileName": "LICENSE",
-          "relativePath": "node_modules/base64-js/LICENSE",
-          "text": "The MIT License (MIT)\n\nCopyright (c) 2014 Jameson Little\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n"
-        }
-      ],
-      "noticeFiles": []
-    },
-    {
       "id": "bessel@1.0.2",
       "name": "bessel",
       "version": "1.0.2",
@@ -6073,9 +6098,9 @@
       "noticeFiles": []
     },
     {
-      "id": "body-parser@1.20.5",
+      "id": "body-parser@1.20.6",
       "name": "body-parser",
-      "version": "1.20.5",
+      "version": "1.20.6",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -6087,7 +6112,7 @@
       "installPaths": [
         "node_modules/mcp-remote/node_modules/body-parser"
       ],
-      "resolved": "https://registry.npmjs.org/body-parser/-/body-parser-1.20.5.tgz",
+      "resolved": "https://registry.npmjs.org/body-parser/-/body-parser-1.20.6.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -6123,9 +6148,9 @@
       "noticeFiles": []
     },
     {
-      "id": "brace-expansion@5.0.7",
+      "id": "brace-expansion@5.0.9",
       "name": "brace-expansion",
-      "version": "5.0.7",
+      "version": "5.0.9",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -6137,7 +6162,7 @@
       "installPaths": [
         "node_modules/minimatch/node_modules/brace-expansion"
       ],
-      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
+      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -6198,31 +6223,6 @@
       "noticeFiles": []
     },
     {
-      "id": "buffer@6.0.3",
-      "name": "buffer",
-      "version": "6.0.3",
-      "rawLicense": "MIT",
-      "selectedLicense": "MIT",
-      "reviewRequired": false,
-      "reviewReasons": [],
-      "approved": false,
-      "approvalReason": null,
-      "approvalLicense": null,
-      "issues": [],
-      "installPaths": [
-        "node_modules/readable-web-to-node-stream/node_modules/buffer"
-      ],
-      "resolved": "https://registry.npmjs.org/buffer/-/buffer-6.0.3.tgz",
-      "licenseFiles": [
-        {
-          "fileName": "LICENSE",
-          "relativePath": "node_modules/readable-web-to-node-stream/node_modules/buffer/LICENSE",
-          "text": "The MIT License (MIT)\n\nCopyright (c) Feross Aboukhadijeh, and other contributors.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n"
-        }
-      ],
-      "noticeFiles": []
-    },
-    {
       "id": "buffer-crc32@0.2.13",
       "name": "buffer-crc32",
       "version": "0.2.13",
@@ -6248,9 +6248,9 @@
       "noticeFiles": []
     },
     {
-      "id": "builder-util-runtime@9.5.1",
+      "id": "builder-util-runtime@9.7.0",
       "name": "builder-util-runtime",
-      "version": "9.5.1",
+      "version": "9.7.0",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -6262,7 +6262,7 @@
       "installPaths": [
         "node_modules/builder-util-runtime"
       ],
-      "resolved": "https://registry.npmjs.org/builder-util-runtime/-/builder-util-runtime-9.5.1.tgz",
+      "resolved": "https://registry.npmjs.org/builder-util-runtime/-/builder-util-runtime-9.7.0.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -7550,9 +7550,9 @@
       "noticeFiles": []
     },
     {
-      "id": "cytoscape@3.33.1",
+      "id": "cytoscape@3.34.1",
       "name": "cytoscape",
-      "version": "3.33.1",
+      "version": "3.34.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -7564,12 +7564,12 @@
       "installPaths": [
         "node_modules/cytoscape"
       ],
-      "resolved": "https://registry.npmjs.org/cytoscape/-/cytoscape-3.33.1.tgz",
+      "resolved": "https://registry.npmjs.org/cytoscape/-/cytoscape-3.34.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
           "relativePath": "node_modules/cytoscape/LICENSE",
-          "text": "Copyright (c) 2016-2025, The Cytoscape Consortium.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the “Software”), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies\nof the Software, and to permit persons to whom the Software is furnished to do\nso, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
+          "text": "Copyright (c) 2016-2026, The Cytoscape Consortium.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the “Software”), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies\nof the Software, and to permit persons to whom the Software is furnished to do\nso, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
         },
         {
           "fileName": "license-update.mjs",
@@ -8551,9 +8551,9 @@
       "noticeFiles": []
     },
     {
-      "id": "dayjs@1.11.19",
+      "id": "dayjs@1.11.23",
       "name": "dayjs",
-      "version": "1.11.19",
+      "version": "1.11.23",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -8565,7 +8565,7 @@
       "installPaths": [
         "node_modules/dayjs"
       ],
-      "resolved": "https://registry.npmjs.org/dayjs/-/dayjs-1.11.19.tgz",
+      "resolved": "https://registry.npmjs.org/dayjs/-/dayjs-1.11.23.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -9132,9 +9132,9 @@
       "noticeFiles": []
     },
     {
-      "id": "dompurify@3.4.11",
+      "id": "dompurify@3.4.14",
       "name": "dompurify",
-      "version": "3.4.11",
+      "version": "3.4.14",
       "rawLicense": "(MPL-2.0 OR Apache-2.0)",
       "selectedLicense": "Apache-2.0",
       "reviewRequired": false,
@@ -9146,7 +9146,7 @@
       "installPaths": [
         "node_modules/dompurify"
       ],
-      "resolved": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.11.tgz",
+      "resolved": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.14.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -9287,9 +9287,9 @@
       "noticeFiles": []
     },
     {
-      "id": "electron-updater@6.7.3",
+      "id": "electron-updater@6.8.9",
       "name": "electron-updater",
-      "version": "6.7.3",
+      "version": "6.8.9",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -9301,7 +9301,7 @@
       "installPaths": [
         "node_modules/electron-updater"
       ],
-      "resolved": "https://registry.npmjs.org/electron-updater/-/electron-updater-6.7.3.tgz",
+      "resolved": "https://registry.npmjs.org/electron-updater/-/electron-updater-6.8.9.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -10114,9 +10114,9 @@
       "noticeFiles": []
     },
     {
-      "id": "fast-uri@3.1.2",
+      "id": "fast-uri@3.1.6",
       "name": "fast-uri",
-      "version": "3.1.2",
+      "version": "3.1.6",
       "rawLicense": "BSD-3-Clause",
       "selectedLicense": "BSD-3-Clause",
       "reviewRequired": false,
@@ -10128,7 +10128,7 @@
       "installPaths": [
         "node_modules/fast-uri"
       ],
-      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.2.tgz",
+      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.6.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -10136,6 +10136,27 @@
           "text": "Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae\nCopyright (c) 2021-present The Fastify team <https://github.com/fastify/fastify#team>\nAll rights reserved.\n\nRedistribution and use in source and binary forms, with or without\nmodification, are permitted provided that the following conditions are met:\n    * Redistributions of source code must retain the above copyright\n      notice, this list of conditions and the following disclaimer.\n    * Redistributions in binary form must reproduce the above copyright\n      notice, this list of conditions and the following disclaimer in the\n      documentation and/or other materials provided with the distribution.\n    * The names of any contributors may not be used to endorse or promote\n      products derived from this software without specific prior written\n      permission.\n\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND\nANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED\nWARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE\nDISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS AND CONTRIBUTORS BE LIABLE FOR ANY\nDIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES\n(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;\nLOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND\nON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS\nSOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n\n                                  *   *   *\n\nThe complete list of contributors can be found at:\n- https://github.com/garycourt/uri-js/graphs/contributors"
         }
       ],
+      "noticeFiles": []
+    },
+    {
+      "id": "fastdom@1.0.12",
+      "name": "fastdom",
+      "version": "1.0.12",
+      "rawLicense": "MIT",
+      "selectedLicense": "MIT",
+      "reviewRequired": false,
+      "reviewReasons": [],
+      "approved": false,
+      "approvalReason": null,
+      "approvalLicense": null,
+      "issues": [
+        "No license file found in package directory"
+      ],
+      "installPaths": [
+        "node_modules/fastdom"
+      ],
+      "resolved": "https://registry.npmjs.org/fastdom/-/fastdom-1.0.12.tgz",
+      "licenseFiles": [],
       "noticeFiles": []
     },
     {
@@ -10270,9 +10291,9 @@
       "noticeFiles": []
     },
     {
-      "id": "file-type@16.5.4",
+      "id": "file-type@21.3.4",
       "name": "file-type",
-      "version": "16.5.4",
+      "version": "21.3.4",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -10284,7 +10305,7 @@
       "installPaths": [
         "node_modules/file-type"
       ],
-      "resolved": "https://registry.npmjs.org/file-type/-/file-type-16.5.4.tgz",
+      "resolved": "https://registry.npmjs.org/file-type/-/file-type-21.3.4.tgz",
       "licenseFiles": [
         {
           "fileName": "license",
@@ -11801,9 +11822,9 @@
       "noticeFiles": []
     },
     {
-      "id": "hono@4.12.25",
+      "id": "hono@4.13.3",
       "name": "hono",
-      "version": "4.12.25",
+      "version": "4.13.3",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -11815,7 +11836,7 @@
       "installPaths": [
         "node_modules/hono"
       ],
-      "resolved": "https://registry.npmjs.org/hono/-/hono-4.12.25.tgz",
+      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.3.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -12332,9 +12353,9 @@
       "noticeFiles": []
     },
     {
-      "id": "ip-address@10.2.0",
+      "id": "ip-address@10.5.0",
       "name": "ip-address",
-      "version": "10.2.0",
+      "version": "10.5.0",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -12346,7 +12367,7 @@
       "installPaths": [
         "node_modules/ip-address"
       ],
-      "resolved": "https://registry.npmjs.org/ip-address/-/ip-address-10.2.0.tgz",
+      "resolved": "https://registry.npmjs.org/ip-address/-/ip-address-10.5.0.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -12974,9 +12995,9 @@
       "noticeFiles": []
     },
     {
-      "id": "jimp@1.6.0",
+      "id": "jimp@1.6.1",
       "name": "jimp",
-      "version": "1.6.0",
+      "version": "1.6.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -12988,7 +13009,7 @@
       "installPaths": [
         "node_modules/jimp"
       ],
-      "resolved": "https://registry.npmjs.org/jimp/-/jimp-1.6.0.tgz",
+      "resolved": "https://registry.npmjs.org/jimp/-/jimp-1.6.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -13069,6 +13090,31 @@
           "fileName": "LICENSE",
           "relativePath": "node_modules/jotai/LICENSE",
           "text": "MIT License\n\nCopyright (c) 2020 Poimandres\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ],
+      "noticeFiles": []
+    },
+    {
+      "id": "jotai-family@1.1.0",
+      "name": "jotai-family",
+      "version": "1.1.0",
+      "rawLicense": "MIT",
+      "selectedLicense": "MIT",
+      "reviewRequired": false,
+      "reviewReasons": [],
+      "approved": false,
+      "approvalReason": null,
+      "approvalLicense": null,
+      "issues": [],
+      "installPaths": [
+        "node_modules/jotai-family"
+      ],
+      "resolved": "https://registry.npmjs.org/jotai-family/-/jotai-family-1.1.0.tgz",
+      "licenseFiles": [
+        {
+          "fileName": "LICENSE",
+          "relativePath": "node_modules/jotai-family/LICENSE",
+          "text": "MIT License\n\nCopyright (c) 2025 Poimandres\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
         }
       ],
       "noticeFiles": []
@@ -13174,9 +13220,9 @@
       "noticeFiles": []
     },
     {
-      "id": "js-yaml@3.14.2",
+      "id": "js-yaml@3.15.1",
       "name": "js-yaml",
-      "version": "3.14.2",
+      "version": "3.15.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -13188,7 +13234,7 @@
       "installPaths": [
         "node_modules/front-matter/node_modules/js-yaml"
       ],
-      "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-3.14.2.tgz",
+      "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-3.15.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -13199,9 +13245,9 @@
       "noticeFiles": []
     },
     {
-      "id": "js-yaml@4.2.0",
+      "id": "js-yaml@4.3.1",
       "name": "js-yaml",
-      "version": "4.2.0",
+      "version": "4.3.1",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -13213,7 +13259,7 @@
       "installPaths": [
         "node_modules/js-yaml"
       ],
-      "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.2.0.tgz",
+      "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -14072,9 +14118,9 @@
       "noticeFiles": []
     },
     {
-      "id": "mathjs@14.9.1",
+      "id": "mathjs@15.2.0",
       "name": "mathjs",
-      "version": "14.9.1",
+      "version": "15.2.0",
       "rawLicense": "Apache-2.0",
       "selectedLicense": "Apache-2.0",
       "reviewRequired": false,
@@ -14086,7 +14132,7 @@
       "installPaths": [
         "node_modules/mathjs"
       ],
-      "resolved": "https://registry.npmjs.org/mathjs/-/mathjs-14.9.1.tgz",
+      "resolved": "https://registry.npmjs.org/mathjs/-/mathjs-15.2.0.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -14098,7 +14144,7 @@
         {
           "fileName": "NOTICE",
           "relativePath": "node_modules/mathjs/NOTICE",
-          "text": "math.js\nhttps://github.com/josdejong/mathjs\n\nCopyright (C) 2013-2025 Jos de Jong <wjosdejong@gmail.com>\n\nLicensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy of the License at\n\n   https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the License is distributed on an \"AS IS\" BASIS,\nWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\nSee the License for the specific language governing permissions and\nlimitations under the License.\n"
+          "text": "math.js\nhttps://github.com/josdejong/mathjs\n\nCopyright (C) 2013-2026 Jos de Jong <wjosdejong@gmail.com>\n\nLicensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\nYou may obtain a copy of the License at\n\n   https://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the License is distributed on an \"AS IS\" BASIS,\nWITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\nSee the License for the specific language governing permissions and\nlimitations under the License.\n"
         }
       ]
     },
@@ -14628,9 +14674,9 @@
       "noticeFiles": []
     },
     {
-      "id": "mermaid@11.15.0",
+      "id": "mermaid@11.17.0",
       "name": "mermaid",
-      "version": "11.15.0",
+      "version": "11.17.0",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -14642,7 +14688,7 @@
       "installPaths": [
         "node_modules/mermaid"
       ],
-      "resolved": "https://registry.npmjs.org/mermaid/-/mermaid-11.15.0.tgz",
+      "resolved": "https://registry.npmjs.org/mermaid/-/mermaid-11.17.0.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -15790,9 +15836,9 @@
       "noticeFiles": []
     },
     {
-      "id": "nanoid@3.3.12",
+      "id": "nanoid@3.3.18",
       "name": "nanoid",
-      "version": "3.3.12",
+      "version": "3.3.18",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -15804,7 +15850,7 @@
       "installPaths": [
         "node_modules/postcss/node_modules/nanoid"
       ],
-      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.12.tgz",
+      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -17013,31 +17059,6 @@
       "noticeFiles": []
     },
     {
-      "id": "peek-readable@4.1.0",
-      "name": "peek-readable",
-      "version": "4.1.0",
-      "rawLicense": "MIT",
-      "selectedLicense": "MIT",
-      "reviewRequired": false,
-      "reviewReasons": [],
-      "approved": false,
-      "approvalReason": null,
-      "approvalLicense": null,
-      "issues": [],
-      "installPaths": [
-        "node_modules/peek-readable"
-      ],
-      "resolved": "https://registry.npmjs.org/peek-readable/-/peek-readable-4.1.0.tgz",
-      "licenseFiles": [
-        {
-          "fileName": "LICENSE",
-          "relativePath": "node_modules/peek-readable/LICENSE",
-          "text": "The MIT License\n\nCopyright (c) 2010-2017 Borewit\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n"
-        }
-      ],
-      "noticeFiles": []
-    },
-    {
       "id": "pend@1.2.0",
       "name": "pend",
       "version": "1.2.0",
@@ -17525,9 +17546,9 @@
       "noticeFiles": []
     },
     {
-      "id": "postcss@8.5.15",
+      "id": "postcss@8.5.26",
       "name": "postcss",
-      "version": "8.5.15",
+      "version": "8.5.26",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -17539,7 +17560,7 @@
       "installPaths": [
         "node_modules/postcss"
       ],
-      "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.15.tgz",
+      "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.26.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -17676,31 +17697,6 @@
           "fileName": "LICENSE",
           "relativePath": "node_modules/prismjs/LICENSE",
           "text": "MIT LICENSE\n\nCopyright (c) 2012 Lea Verou\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n"
-        }
-      ],
-      "noticeFiles": []
-    },
-    {
-      "id": "process@0.11.10",
-      "name": "process",
-      "version": "0.11.10",
-      "rawLicense": "MIT",
-      "selectedLicense": "MIT",
-      "reviewRequired": false,
-      "reviewReasons": [],
-      "approved": false,
-      "approvalReason": null,
-      "approvalLicense": null,
-      "issues": [],
-      "installPaths": [
-        "node_modules/process"
-      ],
-      "resolved": "https://registry.npmjs.org/process/-/process-0.11.10.tgz",
-      "licenseFiles": [
-        {
-          "fileName": "LICENSE",
-          "relativePath": "node_modules/process/LICENSE",
-          "text": "(The MIT License)\n\nCopyright (c) 2013 Roman Shtylman <shtylman@gmail.com>\n\nPermission is hereby granted, free of charge, to any person obtaining\na copy of this software and associated documentation files (the\n'Software'), to deal in the Software without restriction, including\nwithout limitation the rights to use, copy, modify, merge, publish,\ndistribute, sublicense, and/or sell copies of the Software, and to\npermit persons to whom the Software is furnished to do so, subject to\nthe following conditions:\n\nThe above copyright notice and this permission notice shall be\nincluded in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.\nIN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,\nTORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE\nSOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n"
         }
       ],
       "noticeFiles": []
@@ -18349,52 +18345,6 @@
           "text": "Node.js is licensed for use as follows:\n\n\"\"\"\nCopyright Node.js contributors. All rights reserved.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to\ndeal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or\nsell copies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS\nIN THE SOFTWARE.\n\"\"\"\n\nThis license applies to parts of Node.js originating from the\nhttps://github.com/joyent/node repository:\n\n\"\"\"\nCopyright Joyent, Inc. and other Node contributors. All rights reserved.\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to\ndeal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or\nsell copies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS\nIN THE SOFTWARE.\n\"\"\"\n"
         }
       ],
-      "noticeFiles": []
-    },
-    {
-      "id": "readable-stream@4.7.0",
-      "name": "readable-stream",
-      "version": "4.7.0",
-      "rawLicense": "MIT",
-      "selectedLicense": "MIT",
-      "reviewRequired": false,
-      "reviewReasons": [],
-      "approved": false,
-      "approvalReason": null,
-      "approvalLicense": null,
-      "issues": [],
-      "installPaths": [
-        "node_modules/readable-web-to-node-stream/node_modules/readable-stream"
-      ],
-      "resolved": "https://registry.npmjs.org/readable-stream/-/readable-stream-4.7.0.tgz",
-      "licenseFiles": [
-        {
-          "fileName": "LICENSE",
-          "relativePath": "node_modules/readable-web-to-node-stream/node_modules/readable-stream/LICENSE",
-          "text": "Node.js is licensed for use as follows:\n\n\"\"\"\nCopyright Node.js contributors. All rights reserved.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to\ndeal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or\nsell copies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS\nIN THE SOFTWARE.\n\"\"\"\n\nThis license applies to parts of Node.js originating from the\nhttps://github.com/joyent/node repository:\n\n\"\"\"\nCopyright Joyent, Inc. and other Node contributors. All rights reserved.\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to\ndeal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or\nsell copies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS\nIN THE SOFTWARE.\n\"\"\"\n"
-        }
-      ],
-      "noticeFiles": []
-    },
-    {
-      "id": "readable-web-to-node-stream@3.0.4",
-      "name": "readable-web-to-node-stream",
-      "version": "3.0.4",
-      "rawLicense": "MIT",
-      "selectedLicense": "MIT",
-      "reviewRequired": false,
-      "reviewReasons": [],
-      "approved": false,
-      "approvalReason": null,
-      "approvalLicense": null,
-      "issues": [
-        "No license file found in package directory"
-      ],
-      "installPaths": [
-        "node_modules/readable-web-to-node-stream"
-      ],
-      "resolved": "https://registry.npmjs.org/readable-web-to-node-stream/-/readable-web-to-node-stream-3.0.4.tgz",
-      "licenseFiles": [],
       "noticeFiles": []
     },
     {
@@ -19536,9 +19486,9 @@
       "noticeFiles": []
     },
     {
-      "id": "shell-quote@1.8.4",
+      "id": "shell-quote@1.10.0",
       "name": "shell-quote",
-      "version": "1.8.4",
+      "version": "1.10.0",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -19550,7 +19500,7 @@
       "installPaths": [
         "node_modules/shell-quote"
       ],
-      "resolved": "https://registry.npmjs.org/shell-quote/-/shell-quote-1.8.4.tgz",
+      "resolved": "https://registry.npmjs.org/shell-quote/-/shell-quote-1.10.0.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -19757,9 +19707,9 @@
       "noticeFiles": []
     },
     {
-      "id": "simple-xml-to-json@1.2.3",
+      "id": "simple-xml-to-json@1.2.7",
       "name": "simple-xml-to-json",
-      "version": "1.2.3",
+      "version": "1.2.7",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -19771,7 +19721,7 @@
       "installPaths": [
         "node_modules/simple-xml-to-json"
       ],
-      "resolved": "https://registry.npmjs.org/simple-xml-to-json/-/simple-xml-to-json-1.2.3.tgz",
+      "resolved": "https://registry.npmjs.org/simple-xml-to-json/-/simple-xml-to-json-1.2.7.tgz",
       "licenseFiles": [
         {
           "fileName": "license",
@@ -20024,6 +19974,27 @@
       "noticeFiles": []
     },
     {
+      "id": "strictdom@1.0.1",
+      "name": "strictdom",
+      "version": "1.0.1",
+      "rawLicense": "MIT",
+      "selectedLicense": "MIT",
+      "reviewRequired": false,
+      "reviewReasons": [],
+      "approved": false,
+      "approvalReason": null,
+      "approvalLicense": null,
+      "issues": [
+        "No license file found in package directory"
+      ],
+      "installPaths": [
+        "node_modules/strictdom"
+      ],
+      "resolved": "https://registry.npmjs.org/strictdom/-/strictdom-1.0.1.tgz",
+      "licenseFiles": [],
+      "noticeFiles": []
+    },
+    {
       "id": "string_decoder@1.1.1",
       "name": "string_decoder",
       "version": "1.1.1",
@@ -20043,31 +20014,6 @@
         {
           "fileName": "LICENSE",
           "relativePath": "node_modules/jszip/node_modules/string_decoder/LICENSE",
-          "text": "Node.js is licensed for use as follows:\n\n\"\"\"\nCopyright Node.js contributors. All rights reserved.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to\ndeal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or\nsell copies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS\nIN THE SOFTWARE.\n\"\"\"\n\nThis license applies to parts of Node.js originating from the\nhttps://github.com/joyent/node repository:\n\n\"\"\"\nCopyright Joyent, Inc. and other Node contributors. All rights reserved.\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to\ndeal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or\nsell copies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS\nIN THE SOFTWARE.\n\"\"\"\n\n"
-        }
-      ],
-      "noticeFiles": []
-    },
-    {
-      "id": "string_decoder@1.3.0",
-      "name": "string_decoder",
-      "version": "1.3.0",
-      "rawLicense": "MIT",
-      "selectedLicense": "MIT",
-      "reviewRequired": false,
-      "reviewReasons": [],
-      "approved": false,
-      "approvalReason": null,
-      "approvalLicense": null,
-      "issues": [],
-      "installPaths": [
-        "node_modules/string_decoder"
-      ],
-      "resolved": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.3.0.tgz",
-      "licenseFiles": [
-        {
-          "fileName": "LICENSE",
-          "relativePath": "node_modules/string_decoder/LICENSE",
           "text": "Node.js is licensed for use as follows:\n\n\"\"\"\nCopyright Node.js contributors. All rights reserved.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to\ndeal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or\nsell copies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS\nIN THE SOFTWARE.\n\"\"\"\n\nThis license applies to parts of Node.js originating from the\nhttps://github.com/joyent/node repository:\n\n\"\"\"\nCopyright Joyent, Inc. and other Node contributors. All rights reserved.\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to\ndeal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or\nsell copies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS\nIN THE SOFTWARE.\n\"\"\"\n\n"
         }
       ],
@@ -20149,9 +20095,9 @@
       "noticeFiles": []
     },
     {
-      "id": "strtok3@6.3.0",
+      "id": "strtok3@10.3.5",
       "name": "strtok3",
-      "version": "6.3.0",
+      "version": "10.3.5",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -20163,12 +20109,12 @@
       "installPaths": [
         "node_modules/strtok3"
       ],
-      "resolved": "https://registry.npmjs.org/strtok3/-/strtok3-6.3.0.tgz",
+      "resolved": "https://registry.npmjs.org/strtok3/-/strtok3-10.3.5.tgz",
       "licenseFiles": [
         {
-          "fileName": "LICENSE",
-          "relativePath": "node_modules/strtok3/LICENSE",
-          "text": "Copyright (c) 2017, Borewit\nAll rights reserved.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit\npersons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the\nSoftware.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE\nWARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR\nCOPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR\nOTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+          "fileName": "LICENSE.txt",
+          "relativePath": "node_modules/strtok3/LICENSE.txt",
+          "text": "MIT License\n\nCopyright © 2026 Borewit\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
         }
       ],
       "noticeFiles": []
@@ -20499,9 +20445,9 @@
       "noticeFiles": []
     },
     {
-      "id": "token-types@4.2.1",
+      "id": "token-types@6.1.2",
       "name": "token-types",
-      "version": "4.2.1",
+      "version": "6.1.2",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -20513,12 +20459,12 @@
       "installPaths": [
         "node_modules/token-types"
       ],
-      "resolved": "https://registry.npmjs.org/token-types/-/token-types-4.2.1.tgz",
+      "resolved": "https://registry.npmjs.org/token-types/-/token-types-6.1.2.tgz",
       "licenseFiles": [
         {
-          "fileName": "LICENSE",
-          "relativePath": "node_modules/token-types/LICENSE",
-          "text": "Copyright 2017 Borewit\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+          "fileName": "LICENSE.txt",
+          "relativePath": "node_modules/token-types/LICENSE.txt",
+          "text": "The MIT License (MIT)\n\nCopyright © 2026 Borewit\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n"
         }
       ],
       "noticeFiles": []
@@ -20816,6 +20762,31 @@
       "noticeFiles": []
     },
     {
+      "id": "uint8array-extras@1.5.0",
+      "name": "uint8array-extras",
+      "version": "1.5.0",
+      "rawLicense": "MIT",
+      "selectedLicense": "MIT",
+      "reviewRequired": false,
+      "reviewReasons": [],
+      "approved": false,
+      "approvalReason": null,
+      "approvalLicense": null,
+      "issues": [],
+      "installPaths": [
+        "node_modules/uint8array-extras"
+      ],
+      "resolved": "https://registry.npmjs.org/uint8array-extras/-/uint8array-extras-1.5.0.tgz",
+      "licenseFiles": [
+        {
+          "fileName": "license",
+          "relativePath": "node_modules/uint8array-extras/license",
+          "text": "MIT License\n\nCopyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n"
+        }
+      ],
+      "noticeFiles": []
+    },
+    {
       "id": "ulid@3.0.2",
       "name": "ulid",
       "version": "3.0.2",
@@ -20841,9 +20812,9 @@
       "noticeFiles": []
     },
     {
-      "id": "undici@7.24.8",
+      "id": "undici@7.29.0",
       "name": "undici",
-      "version": "7.24.8",
+      "version": "7.29.0",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -20855,7 +20826,7 @@
       "installPaths": [
         "node_modules/undici"
       ],
-      "resolved": "https://registry.npmjs.org/undici/-/undici-7.24.8.tgz",
+      "resolved": "https://registry.npmjs.org/undici/-/undici-7.29.0.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -22058,9 +22029,9 @@
       "noticeFiles": []
     },
     {
-      "id": "ws@8.21.0",
+      "id": "ws@8.21.3",
       "name": "ws",
-      "version": "8.21.0",
+      "version": "8.21.3",
       "rawLicense": "MIT",
       "selectedLicense": "MIT",
       "reviewRequired": false,
@@ -22072,7 +22043,7 @@
       "installPaths": [
         "node_modules/ws"
       ],
-      "resolved": "https://registry.npmjs.org/ws/-/ws-8.21.0.tgz",
+      "resolved": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
@@ -22145,13 +22116,13 @@
       "approvalLicense": null,
       "issues": [],
       "installPaths": [
-        "node_modules/parse-bmfont-xml/node_modules/xml2js"
+        "node_modules/xml2js"
       ],
       "resolved": "https://registry.npmjs.org/xml2js/-/xml2js-0.5.0.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
-          "relativePath": "node_modules/parse-bmfont-xml/node_modules/xml2js/LICENSE",
+          "relativePath": "node_modules/xml2js/LICENSE",
           "text": "Copyright 2010, 2011, 2012, 2013. All rights reserved.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to\ndeal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or\nsell copies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS\nIN THE SOFTWARE.\n"
         }
       ],
@@ -22170,13 +22141,13 @@
       "approvalLicense": null,
       "issues": [],
       "installPaths": [
-        "node_modules/parse-bmfont-xml/node_modules/xmlbuilder"
+        "node_modules/xml2js/node_modules/xmlbuilder"
       ],
       "resolved": "https://registry.npmjs.org/xmlbuilder/-/xmlbuilder-11.0.1.tgz",
       "licenseFiles": [
         {
           "fileName": "LICENSE",
-          "relativePath": "node_modules/parse-bmfont-xml/node_modules/xmlbuilder/LICENSE",
+          "relativePath": "node_modules/xml2js/node_modules/xmlbuilder/LICENSE",
           "text": "The MIT License (MIT)\n\nCopyright (c) 2013 Ozgur Ozcitak\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n"
         }
       ],

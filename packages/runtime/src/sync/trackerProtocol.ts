@@ -2,7 +2,7 @@
  * Tracker sync wire protocol (metadata layer) + client-side projections.
  *
  * Wire-protocol message shapes (`TrackerClientMessage`, `TrackerServerMessage`,
- * `EncryptedTrackerItemEnvelope`, `SyncId`, `TrackerRoomConfig`,
+ * `TrackerItemEnvelope`, `SyncId`, `TrackerRoomConfig`,
  * `TrackerMutationRejectCode`) come from `@nimbalyst/collab-protocol` and are
  * shared with the sync server. This file adds the decrypted payload shape
  * (`TrackerItemPayload`), the PGLite cache schema, and the four-state
@@ -20,14 +20,14 @@ import type {
 
 export type {
   SyncId,
-  EncryptedTrackerItemEnvelope,
+  TrackerItemEnvelope,
   TrackerRoomConfig,
   TrackerMutationRejectCode,
   TrackerClientMessage,
   TrackerServerMessage,
-  EncryptedTrackerSchemaEnvelope,
-  EncryptedTrackerNavigationEnvelope,
-  EncryptedTrackerSavedViewEnvelope,
+  TrackerSchemaEnvelope,
+  TrackerNavigationEnvelope,
+  TrackerSavedViewEnvelope,
   TrackerSyncRequestMessage,
   TrackerMutationRequestMessage,
   TrackerSetConfigMessage,
@@ -88,7 +88,8 @@ export function buildTrackerRoomId(orgId: string, teamProjectId: TeamProjectId):
 // ============================================================================
 
 /**
- * Decrypted payload. JSON-serialized inside `encryptedPayload`.
+ * The payload itself. JSON-serialized inside `encryptedPayload`, which
+ * carries plaintext despite its name (see `teamTracker.ts`).
  *
  * The shape is intentionally typeless at the field level: `fields` is the
  * user-defined business data bag (title, status, priority, etc.) keyed by

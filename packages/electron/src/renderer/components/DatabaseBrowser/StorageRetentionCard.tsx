@@ -19,6 +19,13 @@ interface RetentionEstimate {
   candidateRows: number;
   estimatedBytesSaved: number;
   sampledRows: number;
+  /** `sampledRows / candidateRows`. Always small; shown rather than hidden. */
+  sampleCoverage: number;
+  /** Independent points in the id range the sample was drawn from. */
+  probesTaken: number;
+  lowConfidence: boolean;
+  /** Caveat to speak out loud when the number needs one. */
+  note?: string;
 }
 
 interface RetentionRunResult {
@@ -136,13 +143,15 @@ export function StorageRetentionCard() {
       <div className="text-sm font-semibold mb-1">Storage retention</div>
       <div className="text-xs text-[var(--nim-text-muted)] mb-3">
         Tool output (command results, file reads, search output) is the bulk of the database.
-        Discarding aged tool output never touches your prompts, the agent&apos;s replies, or what
-        the agent did — tool names, arguments, and file edits are all preserved.
+        New messages are already trimmed as they are written, so this is a one-time cleanup of
+        older history rather than an ongoing policy. Discarding aged tool output never touches
+        your prompts, the agent&apos;s replies, or what the agent did — tool names, arguments,
+        and file edits are all preserved.
       </div>
 
       <div className="flex flex-col gap-3">
         <label className="flex items-center justify-between gap-3">
-          <span className="text-xs">Keep full tool output for</span>
+          <span className="text-xs">Clean up tool output older than</span>
           <select
             className={selectClass}
             value={pendingDays}
@@ -173,11 +182,38 @@ export function StorageRetentionCard() {
           </button>
         </div>
 
+        {/* A bare "0 B" reads as "your database is already clean" when what it
+            often means is "the sample missed it". Always show what the estimate
+            actually looked at, and surface its own caveat when it has one. */}
         {estimate && (
-          <div className="text-xs text-[var(--nim-text-muted)]">
-            About {formatBytes(estimate.estimatedBytesSaved)} across{' '}
-            {estimate.candidateRows.toLocaleString()} messages, estimated from a{' '}
-            {estimate.sampledRows.toLocaleString()}-row sample.
+          <div className="text-xs text-[var(--nim-text-muted)] retention-estimate">
+            {estimate.estimatedBytesSaved > 0 ? (
+              <>
+                About {formatBytes(estimate.estimatedBytesSaved)} across{' '}
+                {estimate.candidateRows.toLocaleString()} messages.
+              </>
+            ) : (
+              <>No reclaimable tool output found in the sample.</>
+            )}{' '}
+            <span className="opacity-75">
+              Sampled {estimate.sampledRows.toLocaleString()} of{' '}
+              {estimate.candidateRows.toLocaleString()} candidate messages
+              {estimate.probesTaken > 0
+                ? ` from ${estimate.probesTaken.toLocaleString()} points in the table`
+                : ''}
+              .
+            </span>
+            {estimate.note && (
+              <div
+                className={
+                  estimate.lowConfidence
+                    ? 'mt-1 text-[var(--nim-warning)] retention-estimate-note'
+                    : 'mt-1 retention-estimate-note'
+                }
+              >
+                {estimate.note}
+              </div>
+            )}
           </div>
         )}
 

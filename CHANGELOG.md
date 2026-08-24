@@ -20,6 +20,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 <!-- Removed features go here -->
 
+## [0.75.1] - 2026-08-24
+
+
+### Added
+<!-- New features go here -->
+- Commit with AI can stage individual hunks of a file, so parallel sessions editing the same file each commit only their own lines.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Codex sessions now run on the 0.149.1 Codex release.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Updated bundled dependencies to pick up published security fixes, including ones affecting the auto-updater and extension installation.
+- Claude sessions on Windows no longer crash at start; if the agent process does die, Nimbalyst now says why and retries once instead of ending the turn on a bare exit code.
+- Shared Home now shows who created and last edited each document instead of labelling your teammates "Unknown".
+- Discarding old tool output now reclaims the gigabytes it previously reported as nothing, and says how much of the database its estimate actually sampled.
+- An automation no longer overwrites a report the agent wrote itself, which had been silently replacing finished output with the session's closing message.
+
+### Removed
+<!-- Removed features go here -->
+
 ## [0.75.0] - 2026-08-23
 
 

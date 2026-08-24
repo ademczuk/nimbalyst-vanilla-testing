@@ -79,6 +79,14 @@ function insert(
   return Number(info.lastInsertRowid);
 }
 
+/** Insert at an explicit id, to lay out a deliberate id distribution. */
+function insertAt(db: SqliteDatabase, id: number, content: string): void {
+  db.prepare(
+    `INSERT INTO ai_agent_messages (id, session_id, created_at, source, direction, content, message_kind)
+     VALUES (?, 'idle-session', ?, 'claude-code', 'output', ?, 'tool')`,
+  ).run(id, OLD, content);
+}
+
 /** Drive the chunk loop to completion, as runBackground would. */
 function runPass(db: SqliteDatabase, retentionDays = 30) {
   let result: any = null;
@@ -219,6 +227,49 @@ describe('tool output retention pass', () => {
     expect(est.estimatedBytesSaved).toBeGreaterThan(est.sampleBytesSaved);
   });
 
+  it('spreads its sample across the id range instead of one contiguous run', () => {
+    // The defect behind NIM-3661. The sampler took the first N candidates after
+    // each window cursor -- on the real install that was ~125 CONSECUTIVE ids
+    // out of a 200,000-id window, eight times over, each run belonging to a
+    // single session. Every probe landed in the same barren stretch and the
+    // estimate reported 0 reclaimable against 1,020,087 candidate rows.
+    //
+    // Here the first 400 ids hold nothing worth reclaiming and the entire
+    // reclaimable mass sits further up the id range, which is exactly the
+    // layout the old sampler could not see past.
+    const db = makeDb();
+    for (let id = 1; id <= 400; id++) insertAt(db, id, toolResult('ok'));
+    for (let id = 30_000; id < 30_400; id++) insertAt(db, id, toolResult(BIG));
+
+    const est = estimateReclaimableBytes(db, 30, NOW);
+
+    expect(est.candidateRows).toBe(800);
+    expect(est.probesTaken).toBeGreaterThan(1);
+    expect(est.sampleBytesSaved).toBeGreaterThan(0);
+    expect(est.estimatedBytesSaved).toBeGreaterThan(0);
+  });
+
+  it('bounds each sampling probe above as well as below', () => {
+    // A probe with only `id > ?` keeps scanning past its region hunting for
+    // LIMIT matches, which is how a "bounded" estimate becomes a long scan on
+    // a sparse table. Every sampling statement must carry an upper bound.
+    const db = makeDb();
+    for (let i = 0; i < 40; i++) insert(db, {});
+
+    const prepare = vi.spyOn(db, 'prepare');
+    estimateReclaimableBytes(db, 30, NOW);
+
+    const samplers = prepare.mock.calls
+      .map((c) => String(c[0]))
+      .filter((sql) => sql.includes('m.content'));
+    expect(samplers.length).toBeGreaterThan(0);
+    for (const sql of samplers) {
+      expect(sql).toContain('m.id > ?');
+      expect(sql).toContain('m.id <= ?');
+      expect(sql).toContain('LIMIT');
+    }
+  });
+
   it('never counts rows it would refuse to rewrite', () => {
     const db = makeDb();
     for (let i = 0; i < 10; i++) insert(db, {});
@@ -228,5 +279,44 @@ describe('tool output retention pass', () => {
     insert(db, { createdAt: RECENT });
 
     expect(estimateReclaimableBytes(db, 30, NOW).candidateRows).toBe(10);
+  });
+});
+
+describe('estimate confidence', () => {
+  // A bare `estimatedBytesSaved: 0` means two completely different things --
+  // "there is nothing to reclaim" and "I barely looked" -- and the second one
+  // cost a full investigation before anyone questioned the number. The result
+  // has to say which it is.
+  it('says the sample found nothing rather than implying the table is clean', () => {
+    const db = makeDb();
+    for (let i = 0; i < 20; i++) insert(db, { content: toolResult('ok') });
+
+    const est = estimateReclaimableBytes(db, 30, NOW);
+
+    expect(est.candidateRows).toBe(20);
+    expect(est.estimatedBytesSaved).toBe(0);
+    expect(est.lowConfidence).toBe(true);
+    expect(est.note).toMatch(/floor, not a guarantee/);
+  });
+
+  it('distinguishes an empty candidate set from an uninformative sample', () => {
+    const db = makeDb();
+
+    const est = estimateReclaimableBytes(db, 30, NOW);
+
+    expect(est.candidateRows).toBe(0);
+    expect(est.lowConfidence).toBe(false);
+    expect(est.note).toMatch(/No rows are old enough/);
+  });
+
+  it('reports coverage so a thin sample cannot pass as a survey', () => {
+    const db = makeDb();
+    for (let i = 0; i < 300; i++) insert(db, {});
+
+    const est = estimateReclaimableBytes(db, 30, NOW);
+
+    expect(est.sampleCoverage).toBeGreaterThan(0);
+    expect(est.sampleCoverage).toBeLessThanOrEqual(1);
+    expect(est.probesTaken).toBeGreaterThan(0);
   });
 });

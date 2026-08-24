@@ -88,7 +88,13 @@ const baseExclude = ['node_modules', 'dist', 'build', '.idea', '.git', '.cache',
 
 // Paths that must run under the node environment (vitest 4 removed
 // `environmentMatchGlobs`; expressed with `test.projects` instead).
-const nodeOnly = ['packages/electron/src/main/**', 'packages/runtime/src/ai/**'];
+// `packages/runtime/src/ui/git` also holds React components, so only the pure
+// diff-model test is routed here rather than the whole directory.
+const nodeOnly = [
+  'packages/electron/src/main/**',
+  'packages/runtime/src/ai/**',
+  'packages/runtime/src/ui/git/__tests__/unifiedDiffModel.test.ts',
+];
 
 export default defineConfig({
   test: {
@@ -150,6 +156,7 @@ export default defineConfig({
           include: [
             'packages/electron/src/main/**/__tests__/**/*.{test,spec}.{ts,tsx}',
             'packages/runtime/src/ai/**/__tests__/**/*.{test,spec}.{ts,tsx}',
+            'packages/runtime/src/ui/git/__tests__/unifiedDiffModel.test.ts',
           ],
           exclude: baseExclude,
           server: { deps: { inline: [/y-monaco/] } },

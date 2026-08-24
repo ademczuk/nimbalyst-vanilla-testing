@@ -112,18 +112,71 @@ const CANDIDATE_SQL = `
 `;
 
 /**
+ * Sampling variant of `CANDIDATE_SQL`, bounded ABOVE as well as below.
+ *
+ * `CANDIDATE_SQL` is correct for the rewrite, which legitimately walks forward
+ * until it finds its chunk. For a probe that is wrong: with `id > ?` alone,
+ * SQLite keeps scanning past the probe's region hunting for `LIMIT` matches, so
+ * a sparse stretch turns a "bounded" probe into a long scan. Bounding the id
+ * range makes each probe's worst case proportional to the range, which is what
+ * this file's header promises.
+ */
+const SAMPLE_SQL = `
+  SELECT m.id, m.source, m.content
+  FROM ai_agent_messages m
+  JOIN ai_sessions s ON s.id = m.session_id
+  WHERE m.id > ?
+    AND m.id <= ?
+    AND m.created_at < ?
+    AND m.direction = 'output'
+    AND m.message_kind IN ('tool', 'meta')
+    AND (${SOURCE_PREDICATE})
+    AND s.status NOT IN ('running', 'waiting_for_input')
+  ORDER BY m.id ASC
+  LIMIT ?
+`;
+
+/**
  * Estimate reclaimable bytes from a bounded sample, for a confirmation prompt.
  * Extrapolates from the sample's hit rate rather than scanning the table.
+ *
+ * The confidence fields exist because a bare `estimatedBytesSaved: 0` is
+ * ambiguous, and the ambiguity cost a full investigation (NIM-3661): it means
+ * both "there is nothing to reclaim" and "my sample happened to find nothing".
+ * A caller must be able to tell those apart.
  */
 export interface ReclaimEstimate {
   sampledRows: number;
   sampleBytesSaved: number;
   candidateRows: number;
   estimatedBytesSaved: number;
+  /** `sampledRows / candidateRows`. Small by construction; report, don't hide. */
+  sampleCoverage: number;
+  /** Independent id probes that returned at least one row. */
+  probesTaken: number;
+  /** True when the sample is too thin for the extrapolation to mean much. */
+  lowConfidence: boolean;
+  /** Set whenever the number needs a caveat spoken out loud. */
+  note?: string;
 }
 
 /** Id span counted per estimate chunk, so the worker yields while counting. */
 const ESTIMATE_COUNT_WINDOW = 200_000;
+
+/**
+ * Independent probes per id window.
+ *
+ * The original sampler took the first `budget` candidate rows after the window
+ * cursor. On the measured install that was ~125 CONSECUTIVE ids out of a
+ * 200,000-id window -- 0.06% coverage, drawn from a single session's contiguous
+ * run, eight times over. Whole shapes were invisible to it. Spreading the same
+ * row budget across probes at fixed offsets costs the same number of rows and
+ * actually crosses session boundaries.
+ */
+const PROBES_PER_WINDOW = 8;
+
+/** Below this many sampled rows the extrapolation is not worth trusting. */
+const MIN_TRUSTWORTHY_SAMPLE = 250;
 
 /**
  * Chunked estimate for the background lane.
@@ -136,6 +189,54 @@ const ESTIMATE_COUNT_WINDOW = 200_000;
  * spot that hid the 35 s timeouts during the original investigation.) Counting
  * an id window per chunk lets the coordinator yield between windows.
  */
+/**
+ * Attach confidence to a raw estimate.
+ *
+ * The rule this enforces: a caller must never be handed a number that reads as
+ * "there is nothing here" when what actually happened is "I barely looked".
+ * The zero that started NIM-3661 was technically true and completely
+ * misleading, and it survived review because nothing in the shape of the result
+ * invited the question.
+ */
+export function finalizeEstimate(raw: ReclaimEstimate): ReclaimEstimate {
+  const { sampledRows, sampleBytesSaved, candidateRows } = raw;
+
+  if (candidateRows === 0) {
+    return { ...raw, lowConfidence: false, note: 'No rows are old enough to reclaim.' };
+  }
+
+  if (sampledRows === 0) {
+    return {
+      ...raw,
+      lowConfidence: true,
+      note: `Sampled no rows out of ${candidateRows.toLocaleString()} candidates, so nothing `
+        + 'can be concluded about how much is reclaimable.',
+    };
+  }
+
+  const thin = sampledRows < MIN_TRUSTWORTHY_SAMPLE;
+  const coveragePct = (raw.sampleCoverage * 100).toFixed(3);
+
+  if (sampleBytesSaved === 0) {
+    return {
+      ...raw,
+      lowConfidence: true,
+      note: `The ${sampledRows.toLocaleString()} sampled rows (${coveragePct}% of `
+        + `${candidateRows.toLocaleString()} candidates, ${raw.probesTaken} probes) contained `
+        + 'nothing reclaimable. That is a floor, not a guarantee the rest is empty.',
+    };
+  }
+
+  return {
+    ...raw,
+    lowConfidence: thin,
+    note: thin
+      ? `Based on only ${sampledRows.toLocaleString()} sampled rows (${coveragePct}% of `
+        + `${candidateRows.toLocaleString()} candidates); treat as a rough order of magnitude.`
+      : undefined,
+  };
+}
+
 export function createToolOutputEstimateWork(
   retentionDays: number,
   onDone: (estimate: ReclaimEstimate) => void,
@@ -150,6 +251,8 @@ export function createToolOutputEstimateWork(
   let sampleBytesSaved = 0;
   let sampledRows = 0;
   let sampleTaken = 0;
+  let probesTaken = 0;
+  let perProbe = 1;
 
   return {
     name: 'tool-output-retention-estimate',
@@ -164,16 +267,29 @@ export function createToolOutputEstimateWork(
         // Windows are half-open (`id > cursor`), so start one below the lowest
         // id or the very first candidate row is never counted.
         cursor = bounds.lo - 1;
+
+        // Spend the whole row budget across however many probes the id range
+        // actually yields. Deriving this from a fixed guess at the window count
+        // is what left the old sampler taking 800 rows when it was budgeted
+        // 2,000 -- and taking them from eight places instead of sixty-four.
+        const totalWindows = Math.max(
+          1,
+          Math.ceil((bounds.hi - bounds.lo + 1) / ESTIMATE_COUNT_WINDOW),
+        );
+        perProbe = Math.max(1, Math.ceil(ESTIMATE_SAMPLE_ROWS / (totalWindows * PROBES_PER_WINDOW)));
       }
 
       if (cursor > bounds.hi) {
         const perRow = sampledRows > 0 ? sampleBytesSaved / sampledRows : 0;
-        onDone({
+        onDone(finalizeEstimate({
           sampledRows,
           sampleBytesSaved,
           candidateRows,
           estimatedBytesSaved: Math.round(perRow * candidateRows),
-        });
+          sampleCoverage: candidateRows > 0 ? sampledRows / candidateRows : 0,
+          probesTaken,
+          lowConfidence: false,
+        }));
         return { done: true };
       }
 
@@ -193,15 +309,24 @@ export function createToolOutputEstimateWork(
         .get(cursor, windowEnd, cutoff, ...ELIGIBLE_SOURCE_PREFIXES) as { n: number } | undefined;
       candidateRows += Number(row?.n ?? 0);
 
-      // Sample from every window, so the estimate reflects the whole id range
-      // rather than the oldest (and smallest) rows.
-      const budget = Math.ceil(ESTIMATE_SAMPLE_ROWS / 20);
-      if (sampleTaken < ESTIMATE_SAMPLE_ROWS) {
+      // Sample from every window, and from several points WITHIN each window,
+      // so the estimate reflects the whole id range rather than eight
+      // contiguous runs of one session apiece.
+      const probeStride = Math.max(1, Math.floor(ESTIMATE_COUNT_WINDOW / PROBES_PER_WINDOW));
+
+      for (let probe = 0; probe < PROBES_PER_WINDOW; probe++) {
+        if (sampleTaken >= ESTIMATE_SAMPLE_ROWS) break;
+
+        const probeStart = cursor + probe * probeStride;
+        if (probeStart > bounds.hi) break;
+        const probeEnd = Math.min(probeStart + probeStride, windowEnd);
+
         const rows = db
-          .prepare(CANDIDATE_SQL)
-          .all(cursor, cutoff, ...ELIGIBLE_SOURCE_PREFIXES, budget) as CandidateRow[];
+          .prepare(SAMPLE_SQL)
+          .all(probeStart, probeEnd, cutoff, ...ELIGIBLE_SOURCE_PREFIXES, perProbe) as CandidateRow[];
+        if (rows.length > 0) probesTaken++;
+
         for (const r of rows) {
-          if (r.id > windowEnd) break;
           sampleTaken++;
           sampledRows++;
           const rewritten = tombstoneRawContent(r.content, r.source, iso);
@@ -228,7 +353,15 @@ export function estimateReclaimableBytes(
   let out: ReclaimEstimate | null = null;
   const work = createToolOutputEstimateWork(retentionDays, (e) => { out = e; }, now);
   while (!work.chunk(db).done) { /* drive to completion */ }
-  return out ?? { sampledRows: 0, sampleBytesSaved: 0, candidateRows: 0, estimatedBytesSaved: 0 };
+  return out ?? finalizeEstimate({
+    sampledRows: 0,
+    sampleBytesSaved: 0,
+    candidateRows: 0,
+    estimatedBytesSaved: 0,
+    sampleCoverage: 0,
+    probesTaken: 0,
+    lowConfidence: false,
+  });
 }
 
 /**

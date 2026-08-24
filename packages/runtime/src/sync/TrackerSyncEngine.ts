@@ -10,7 +10,7 @@
  * `design/Collaboration/tracker-sync-redesign.md`. The wire protocol lives
  * in `./trackerProtocol.ts`; the storage seam lives in
  * `./trackerPersistence.ts`; the AES-256-GCM helpers live in
- * `./TrackerEnvelopeCrypto.ts`.
+ * `./trackerEnvelopeCodec.ts`.
  *
  * Platform notes
  * --------------
@@ -35,7 +35,7 @@
  */
 
 import type {
-  EncryptedTrackerItemEnvelope,
+  TrackerItemEnvelope,
   SyncId,
   TrackerClientMessage,
   TrackerServerMessage,
@@ -46,15 +46,15 @@ import type {
   TrackerDeltaMessage,
   TrackerConfigBroadcastMessage,
   TrackerTransactionRow,
-  EncryptedTrackerSchemaEnvelope,
+  TrackerSchemaEnvelope,
   TrackerSchemaSyncResponseMessage,
   TrackerSchemaDeltaMessage,
   TrackerSchemaMutationAckMessage,
-  EncryptedTrackerNavigationEnvelope,
+  TrackerNavigationEnvelope,
   TrackerNavigationSyncResponseMessage,
   TrackerNavigationDeltaMessage,
   TrackerNavigationMutationAckMessage,
-  EncryptedTrackerSavedViewEnvelope,
+  TrackerSavedViewEnvelope,
   TrackerSavedViewSyncResponseMessage,
   TrackerSavedViewDeltaMessage,
   TrackerSavedViewMutationAckMessage,
@@ -70,7 +70,7 @@ import {
   decodeTrackerSchemaEnvelopePlaintext,
   decodeTrackerNavigationEnvelopePlaintext,
   decodeTrackerSavedViewEnvelopePlaintext,
-} from './TrackerEnvelopeCrypto';
+} from './trackerEnvelopeCodec';
 import { isConfirmedOutboxRevocationCode } from './OutboxDrainer';
 import type { TrackerPersistence, TrackerRowSnapshot } from './trackerPersistence';
 import type { TeamJwt, TeamMemberId } from '../auth/jwtScopes';
@@ -1122,7 +1122,7 @@ export class TrackerSyncEngine {
    * `false` when decryption failed and the row was skipped. Callers use
    * this signal to detect a stale-key bootstrap and trigger `refreshKey()`.
    */
-  private async applyEnvelope(envelope: EncryptedTrackerItemEnvelope): Promise<boolean> {
+  private async applyEnvelope(envelope: TrackerItemEnvelope): Promise<boolean> {
     const isTombstone = envelope.encryptedPayload === null;
     let payload: TrackerItemPayload | null = null;
     if (!isTombstone) {
@@ -1146,7 +1146,7 @@ export class TrackerSyncEngine {
     return true;
   }
 
-  private async applySchemaEnvelope(envelope: EncryptedTrackerSchemaEnvelope): Promise<boolean> {
+  private async applySchemaEnvelope(envelope: TrackerSchemaEnvelope): Promise<boolean> {
     const hooks = this.config.schemaSync;
     if (!hooks) return true;
 
@@ -1175,7 +1175,7 @@ export class TrackerSyncEngine {
     return true;
   }
 
-  private async applySavedViewEnvelope(envelope: EncryptedTrackerSavedViewEnvelope): Promise<boolean> {
+  private async applySavedViewEnvelope(envelope: TrackerSavedViewEnvelope): Promise<boolean> {
     const hooks = this.config.savedViewSync;
     if (!hooks) return true;
     const isTombstone = envelope.encryptedPayload === null;
@@ -1192,7 +1192,7 @@ export class TrackerSyncEngine {
     return true;
   }
 
-  private async applyNavigationEnvelope(envelope: EncryptedTrackerNavigationEnvelope): Promise<boolean> {
+  private async applyNavigationEnvelope(envelope: TrackerNavigationEnvelope): Promise<boolean> {
     const hooks = this.config.navigationSync;
     if (!hooks) return true;
     const isTombstone = envelope.encryptedPayload === null;

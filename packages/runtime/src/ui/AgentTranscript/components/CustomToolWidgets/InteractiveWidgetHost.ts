@@ -8,6 +8,10 @@
  * This interface lives in runtime so widgets can use it without Electron-specific dependencies.
  */
 
+import type { HunkSelection } from '../../../git/unifiedDiffModel';
+
+export type { HunkSelection };
+
 // ============================================================
 // AskUserQuestion Types
 // ============================================================
@@ -189,7 +193,13 @@ export interface InteractiveWidgetHost {
   gitCommit(
     proposalId: string,
     files: string[],
-    message: string
+    message: string,
+    /**
+     * Desktop-only. Files listed here are staged down to the named hunks
+     * instead of whole. Mobile has no local working tree, so it never sends
+     * this and every file goes in whole.
+     */
+    hunkSelections?: HunkSelection[]
   ): Promise<{ success: boolean; commitHash?: string; commitDate?: string; error?: string; pending?: boolean }>;
 
   /**
@@ -204,6 +214,14 @@ export interface InteractiveWidgetHost {
    * (e.g. mobile, where the working tree is not local).
    */
   gitFileDiff?(filePath: string): Promise<{ unifiedDiff: string; isBinary: boolean } | null>;
+
+  /**
+   * Unified diff of what *this session* changed in a file, from its own
+   * pre-edit snapshot to its post-edit content. Distinct from `gitFileDiff`,
+   * which is HEAD vs the working tree and therefore includes sibling sessions'
+   * edits. Returns null when the session has no snapshot baseline for the file.
+   */
+  sessionFileDiff?(filePath: string): Promise<{ unifiedDiff: string } | null>;
 
   /**
    * Persisted size of the diff peek popover, or null to use the default.

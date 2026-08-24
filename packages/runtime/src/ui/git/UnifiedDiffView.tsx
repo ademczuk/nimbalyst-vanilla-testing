@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { parseUnifiedDiffToHunks, toDisplayLines } from './unifiedDiffModel';
 
 interface UnifiedDiffViewProps {
   diff: string;
@@ -7,63 +8,10 @@ interface UnifiedDiffViewProps {
   error?: string | null;
 }
 
-type LineKind = 'add' | 'del' | 'ctx' | 'hunk' | 'meta';
-
-interface DiffLine {
-  kind: LineKind;
-  text: string;
-  oldLine?: number;
-  newLine?: number;
-}
-
-const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
-
-function parseUnifiedDiff(diff: string): DiffLine[] {
-  const out: DiffLine[] = [];
-  let oldLine = 0;
-  let newLine = 0;
-  let inHunk = false;
-
-  for (const raw of diff.split('\n')) {
-    if (raw.startsWith('@@')) {
-      const match = raw.match(HUNK_RE);
-      if (match) {
-        oldLine = parseInt(match[1], 10);
-        newLine = parseInt(match[3], 10);
-        inHunk = true;
-      }
-      out.push({ kind: 'hunk', text: raw });
-      continue;
-    }
-
-    if (!inHunk) {
-      if (raw === '') continue;
-      out.push({ kind: 'meta', text: raw });
-      continue;
-    }
-
-    if (raw.startsWith('+') && !raw.startsWith('+++')) {
-      out.push({ kind: 'add', text: raw.slice(1), newLine });
-      newLine++;
-    } else if (raw.startsWith('-') && !raw.startsWith('---')) {
-      out.push({ kind: 'del', text: raw.slice(1), oldLine });
-      oldLine++;
-    } else if (raw.startsWith(' ')) {
-      out.push({ kind: 'ctx', text: raw.slice(1), oldLine, newLine });
-      oldLine++;
-      newLine++;
-    } else if (raw.startsWith('\\')) {
-      out.push({ kind: 'meta', text: raw });
-    }
-  }
-
-  return out;
-}
-
 const PLACEHOLDER_BASE = 'p-4 text-center text-xs italic text-[var(--nim-text-faint)]';
 
 export function UnifiedDiffView({ diff, isBinary, loading, error }: UnifiedDiffViewProps) {
-  const lines = useMemo(() => (diff ? parseUnifiedDiff(diff) : []), [diff]);
+  const lines = useMemo(() => (diff ? toDisplayLines(parseUnifiedDiffToHunks(diff)) : []), [diff]);
 
   if (loading) {
     return <div className={PLACEHOLDER_BASE}>Loading diff...</div>;

@@ -23,7 +23,7 @@ import { createStore, Provider as JotaiProvider } from 'jotai';
 import type { TranscriptViewMessage } from '../../../../ai/server/transcript/TranscriptProjector';
 import type { CustomToolWidgetProps } from '../CustomToolWidgets/index';
 
-const { render, screen, fireEvent } = rtl;
+const { render, screen, fireEvent, waitFor } = rtl;
 
 // Mock clipboard
 vi.mock('../../../../utils/clipboard', () => ({
@@ -1289,6 +1289,143 @@ describe('GitCommitConfirmationWidget', () => {
       </Wrapper>
     );
     expect(container.innerHTML).toBe('');
+  });
+
+  // The scenario the feature exists for: two sessions edited one file, and the
+  // user commits only their own hunk. Covers the full widget contract --
+  // pre-selection, banner, tri-state, and the payload handed to the host.
+  describe('hunk-level staging', () => {
+    const TWO_SESSION_DIFF = [
+      'diff --git a/shared.txt b/shared.txt',
+      'index 1111111..2222222 100644',
+      '--- a/shared.txt',
+      '+++ b/shared.txt',
+      '@@ -2,5 +2,5 @@',
+      ' line2',
+      ' line3',
+      ' line4',
+      '-line5',
+      '+SESSION-A-EDIT',
+      ' line6',
+      '@@ -22,5 +22,5 @@',
+      ' line22',
+      ' line23',
+      ' line24',
+      '-line25',
+      '+SESSION-B-EDIT',
+      ' line26',
+    ].join('\n') + '\n';
+
+    /** What this session alone changed: only the first hunk. */
+    const SESSION_OWN_DIFF = [
+      'Index: shared.txt',
+      '--- shared.txt',
+      '+++ shared.txt',
+      '@@ -2,5 +2,5 @@',
+      ' line2',
+      ' line3',
+      ' line4',
+      '-line5',
+      '+SESSION-A-EDIT',
+      ' line6',
+    ].join('\n') + '\n';
+
+    async function renderWithDiffs(overrides: Record<string, unknown> = {}) {
+      const { interactiveWidgetHostAtom } = await import('../../../../store/atoms/interactiveWidgetHost');
+      const message = makeToolMessage('git_commit_proposal', {
+        commitMessage: 'perf: only my hunk',
+        filesToStage: [{ path: 'shared.txt', status: 'modified' }],
+      });
+      const gitCommit = vi.fn().mockResolvedValue({ success: true, commitHash: 'abc1234' });
+      const testStore = createStore();
+      testStore.set(interactiveWidgetHostAtom('hunk-session'), {
+        sessionId: 'hunk-session',
+        workspacePath: '/',
+        worktreeId: null,
+        askUserQuestionSubmit: vi.fn(),
+        askUserQuestionCancel: vi.fn(),
+        requestUserInputSubmit: vi.fn(),
+        requestUserInputCancel: vi.fn(),
+        exitPlanModeApprove: vi.fn(),
+        exitPlanModeStartNewSession: vi.fn(),
+        exitPlanModeDeny: vi.fn(),
+        exitPlanModeCancel: vi.fn(),
+        toolPermissionSubmit: vi.fn(),
+        toolPermissionCancel: vi.fn(),
+        autoCommitEnabled: false,
+        setAutoCommitEnabled: vi.fn(),
+        gitCommit,
+        gitCommitCancel: vi.fn(),
+        gitFileDiff: vi.fn().mockResolvedValue({ unifiedDiff: TWO_SESSION_DIFF, isBinary: false }),
+        sessionFileDiff: vi.fn().mockResolvedValue({ unifiedDiff: SESSION_OWN_DIFF }),
+        superLoopBlockedFeedback: vi.fn(),
+        openFile: vi.fn(),
+        trackEvent: vi.fn(),
+        ...overrides,
+      });
+
+      render(
+        <JotaiProvider store={testStore}>
+          <GitCommitConfirmationWidget
+            message={message}
+            isExpanded={false}
+            onToggle={() => {}}
+            sessionId="hunk-session"
+          />
+        </JotaiProvider>
+      );
+      return { gitCommit };
+    }
+
+    it('pre-selects the session\'s own hunk and says how many it excluded', async () => {
+      await renderWithDiffs();
+
+      const banner = await screen.findByTestId('git-commit-hunk-exclusion-banner');
+      expect(banner.textContent).toContain('1 hunk excluded');
+
+      // The file reads as partially staged, not fully.
+      expect(screen.getByTestId('git-commit-file-checkbox').dataset.checkState).toBe('partial');
+    });
+
+    it('sends only the selected hunk\'s ref to the host', async () => {
+      const { gitCommit } = await renderWithDiffs();
+      await screen.findByTestId('git-commit-hunk-exclusion-banner');
+
+      fireEvent.click(screen.getByTestId('git-commit-confirm'));
+
+      await waitFor(() => expect(gitCommit).toHaveBeenCalled());
+      const [, files, , hunkSelections] = gitCommit.mock.calls[0];
+      expect(files).toEqual(['shared.txt']);
+      expect(hunkSelections).toEqual([
+        { path: 'shared.txt', hunks: [{ oldStart: 2, oldLines: 5, newStart: 2, newLines: 5 }] },
+      ]);
+    });
+
+    it('restores the whole file via Select all hunks, dropping the refs', async () => {
+      const { gitCommit } = await renderWithDiffs();
+      await screen.findByTestId('git-commit-hunk-exclusion-banner');
+
+      fireEvent.click(screen.getByTestId('git-commit-select-all-hunks'));
+      await waitFor(() =>
+        expect(screen.getByTestId('git-commit-file-checkbox').dataset.checkState).toBe('all')
+      );
+
+      fireEvent.click(screen.getByTestId('git-commit-confirm'));
+      await waitFor(() => expect(gitCommit).toHaveBeenCalled());
+      // Whole file again, so no hunk refs are sent at all.
+      expect(gitCommit.mock.calls[0][3]).toBeUndefined();
+    });
+
+    it('stages the whole file when the session cannot be attributed', async () => {
+      const { gitCommit } = await renderWithDiffs({
+        sessionFileDiff: vi.fn().mockResolvedValue(null),
+      });
+
+      fireEvent.click(screen.getByTestId('git-commit-confirm'));
+      await waitFor(() => expect(gitCommit).toHaveBeenCalled());
+      expect(gitCommit.mock.calls[0][3]).toBeUndefined();
+      expect(screen.queryByTestId('git-commit-hunk-exclusion-banner')).toBeNull();
+    });
   });
 });
 
