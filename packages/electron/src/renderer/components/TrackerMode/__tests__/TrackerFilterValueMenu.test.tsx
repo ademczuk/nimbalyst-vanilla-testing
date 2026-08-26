@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { TrackerFilterValueMenu } from '../TrackerFilterValueMenu';
-import type { TrackerFilterField } from '../TrackerViewHeaderControls';
+import { TrackerFilterValueMenu } from '../../../../../../collab-client/src/trackers-ui/TrackerFilterValueMenu';
+import type { TrackerFilterField } from '@nimbalyst/collab-client/trackers-ui';
 
 const STATUS: TrackerFilterField = {
   id: 'status',
@@ -23,7 +23,7 @@ function renderMenu(field: TrackerFilterField, onSelect = vi.fn()) {
       anchorRect={null}
       onSelect={onSelect}
       onClose={vi.fn()}
-    />,
+    />
   );
   return onSelect;
 }
@@ -33,7 +33,9 @@ describe('TrackerFilterValueMenu keyboard navigation', () => {
     const onSelect = renderMenu(STATUS);
 
     fireEvent.keyDown(search(), { key: 'ArrowDown' });
-    expect(screen.getByTestId('tracker-filter-option-open').dataset.selected).toBe('true');
+    expect(
+      screen.getByTestId('tracker-filter-option-open').dataset.selected
+    ).toBe('true');
 
     fireEvent.keyDown(search(), { key: 'ArrowDown' });
     fireEvent.keyDown(search(), { key: 'Enter' });
@@ -61,7 +63,12 @@ describe('TrackerFilterValueMenu keyboard navigation', () => {
   });
 
   it('navigates the relative person rows of a user field', () => {
-    const onSelect = renderMenu({ id: 'assignee', label: 'Assignee', type: 'user', options: [] });
+    const onSelect = renderMenu({
+      id: 'assignee',
+      label: 'Assignee',
+      type: 'user',
+      options: [],
+    });
 
     fireEvent.keyDown(search(), { key: 'ArrowDown' });
     fireEvent.keyDown(search(), { key: 'ArrowDown' });
@@ -70,7 +77,12 @@ describe('TrackerFilterValueMenu keyboard navigation', () => {
   });
 
   it('applies accumulated values on Enter for a multi-value field', () => {
-    const onSelect = renderMenu({ ...STATUS, id: 'tags', label: 'Tags', type: 'multiselect' });
+    const onSelect = renderMenu({
+      ...STATUS,
+      id: 'tags',
+      label: 'Tags',
+      type: 'multiselect',
+    });
 
     fireEvent.keyDown(search(), { key: 'ArrowDown' });
     fireEvent.keyDown(search(), { key: 'Enter' });
@@ -79,13 +91,20 @@ describe('TrackerFilterValueMenu keyboard navigation', () => {
     // Apply joins the tour once something is pending: past both value rows.
     fireEvent.keyDown(search(), { key: 'ArrowDown' });
     fireEvent.keyDown(search(), { key: 'ArrowDown' });
-    expect(screen.getByTestId('tracker-filter-apply-multiple').dataset.selected).toBe('true');
+    expect(
+      screen.getByTestId('tracker-filter-apply-multiple').dataset.selected
+    ).toBe('true');
     fireEvent.keyDown(search(), { key: 'Enter' });
     expect(onSelect).toHaveBeenCalledWith(['open'], 'in');
   });
 
   it('applies pending multi-select values with Cmd+Enter', () => {
-    const onSelect = renderMenu({ ...STATUS, id: 'tags', label: 'Tags', type: 'multiselect' });
+    const onSelect = renderMenu({
+      ...STATUS,
+      id: 'tags',
+      label: 'Tags',
+      type: 'multiselect',
+    });
 
     fireEvent.click(screen.getByTestId('tracker-filter-option-done'));
     fireEvent.keyDown(search(), { key: 'Enter', metaKey: true });
@@ -103,8 +122,12 @@ describe('TrackerFilterValueMenu keyboard navigation', () => {
       ],
     });
 
-    expect(screen.getByTestId('tracker-filter-option-true').textContent).toContain('Yes');
-    expect(screen.getByTestId('tracker-filter-option-false').textContent).toContain('No');
+    expect(
+      screen.getByTestId('tracker-filter-option-true').textContent
+    ).toContain('Yes');
+    expect(
+      screen.getByTestId('tracker-filter-option-false').textContent
+    ).toContain('No');
     expect(screen.queryByText('True')).toBeNull();
 
     fireEvent.click(screen.getByTestId('tracker-filter-option-true'));
@@ -114,12 +137,20 @@ describe('TrackerFilterValueMenu keyboard navigation', () => {
   it('still offers True/False for a boolean field with no named values', () => {
     renderMenu({ id: 'archived', label: 'Archived', type: 'boolean' });
 
-    expect(screen.getByTestId('tracker-filter-option-true').textContent).toContain('True');
-    expect(screen.getByTestId('tracker-filter-option-false').textContent).toContain('False');
+    expect(
+      screen.getByTestId('tracker-filter-option-true').textContent
+    ).toContain('True');
+    expect(
+      screen.getByTestId('tracker-filter-option-false').textContent
+    ).toContain('False');
   });
 
   it('filters a field with no option list on exactly what was typed', () => {
-    const onSelect = renderMenu({ id: 'title', label: 'Title', type: 'string' });
+    const onSelect = renderMenu({
+      id: 'title',
+      label: 'Title',
+      type: 'string',
+    });
 
     fireEvent.change(search(), { target: { value: ' needs review ' } });
     fireEvent.keyDown(search(), { key: 'Enter' });

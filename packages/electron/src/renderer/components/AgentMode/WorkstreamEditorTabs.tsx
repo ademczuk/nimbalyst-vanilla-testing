@@ -261,7 +261,7 @@ const WorkstreamEditorTabsInner = forwardRef<WorkstreamEditorTabsRef, Workstream
       };
     }, [tabs, tabsActions]);
 
-    // Expose current document path and workspace path to window for plugins (e.g., MockupPlatformService)
+    // Expose current document path and workspace path to window for plugins (e.g., EmbedFrame)
     // This mirrors what EditorMode does, but for workstream editor tabs
     // basePath can be either workspacePath (main project) or worktreePath (for worktree sessions)
     useEffect(() => {

@@ -46,19 +46,71 @@ export interface EnhancedImportResult {
 }
 
 /**
- * Upgrade the retired screenshot-plus-`{mockup:...}` syntax to the universal
- * paragraph-link contract used by EmbeddedFileNode. Keeping this migration at
+ * File suffixes that once had a dedicated Lexical node writing the linked-image
+ * embed form below.
+ *
+ * This is deliberately an explicit list and NOT "every embeddable suffix". A
+ * bare `[![alt](thumb.png)](target.png)` is ordinary, meaningful CommonMark --
+ * a clickable thumbnail -- and rewriting one to a plain link would destroy real
+ * content. Only a suffix that actually shipped a transformer emitting this shape
+ * is safe to reinterpret. Reading the live embeddable registry would be wrong
+ * for a second reason too: extensions typically register their file types after
+ * a markdown document has already been imported, so the answer here would depend
+ * on load order.
+ */
+const RETIRED_LINKED_IMAGE_EMBED_SUFFIXES = ['.prisma', '.mockup.html'] as const;
+
+const RETIRED_LINKED_IMAGE_EMBED_PATTERN = new RegExp(
+  String.raw`\[!\[([^\]]*)\]\([^)]*\)\]\(([^)]*(?:`
+  + RETIRED_LINKED_IMAGE_EMBED_SUFFIXES
+    .map((suffix) => suffix.replace(/\./g, String.raw`\.`))
+    .join('|')
+  + String.raw`))\)(?:\{(\d+)x(\d+)\})?`,
+  'g',
+);
+
+/**
+ * Upgrade the retired per-extension embed syntaxes to the universal
+ * paragraph-link contract used by EmbeddedFileNode. Keeping these migrations at
  * the markdown import boundary lets old plans repair themselves on their next
  * save without teaching the image transformer about custom editors.
+ *
+ * Two retired forms:
+ *
+ *   - `![alt](shot.png){mockup:path}{WxH}` — MockupLM's original brace syntax.
+ *   - `[![alt](shot.png)](path){WxH}` — the linked image that both MockupLM and
+ *     DataModelLM later wrote from their own Lexical nodes. Those nodes, their
+ *     transformers and their insert commands were removed once the neutral
+ *     embed covered the same job -- and covered it better, since it mounts the
+ *     real editor where the node only ever showed a screenshot.
+ *
+ * The linked-image form does survive without this pass -- it is already a link
+ * whose target is embeddable, so `EmbedExtension` upgrades it -- but the inner
+ * image would be its only label, and the `{WxH}` suffix would be left stranded
+ * as literal text beside the embed. Rewriting it here keeps the sizing.
  */
-export function upgradeLegacyMockupEmbeds(markdown: string): string {
-  return markdown.replace(
-    /!\[([^\]]*)\]\(([^)]*)\)\{mockup:([^}]+)\}(?:\{(\d+)x(\d+)\})?/g,
-    (_match, altText: string, _screenshotPath: string, embeddedPath: string, width?: string, height?: string) => {
-      const title = width && height ? ` "width=${width} height=${height}"` : '';
-      return `[${altText || embeddedPath}](${embeddedPath}${title})`;
-    },
-  );
+export function upgradeLegacyEmbeds(markdown: string): string {
+  const toEmbedLink = (
+    altText: string,
+    embeddedPath: string,
+    width?: string,
+    height?: string,
+  ): string => {
+    const title = width && height ? ` "width=${width} height=${height}"` : '';
+    return `[${altText || embeddedPath}](${embeddedPath}${title})`;
+  };
+
+  return markdown
+    .replace(
+      /!\[([^\]]*)\]\(([^)]*)\)\{mockup:([^}]+)\}(?:\{(\d+)x(\d+)\})?/g,
+      (_match, altText: string, _screenshotPath: string, embeddedPath: string, width?: string, height?: string) =>
+        toEmbedLink(altText, embeddedPath, width, height),
+    )
+    .replace(
+      RETIRED_LINKED_IMAGE_EMBED_PATTERN,
+      (_match, altText: string, embeddedPath: string, width?: string, height?: string) =>
+        toEmbedLink(altText, embeddedPath, width, height),
+    );
 }
 
 /**
@@ -105,7 +157,7 @@ export function $convertFromEnhancedMarkdownString(
     }
   }
 
-  content = upgradeLegacyMockupEmbeds(content);
+  content = upgradeLegacyEmbeds(content);
 
   // Normalize the markdown if requested
   if (normalize) {

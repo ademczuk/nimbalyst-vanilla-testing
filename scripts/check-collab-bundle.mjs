@@ -29,6 +29,16 @@ export const COLLAB_BUNDLE_EAGER_GZIP_BUDGET_BYTES = {
   editor: 320_000,
   'docs-ui': 70_000,
   'feedback-ui': 35_000,
+  // The tracker surfaces plus the headless selectors and the in-page engine
+  // they read through. Measured at 100,654 gzip bytes on first build; the
+  // ceiling carries the same ~26% headroom as the shells above.
+  //
+  // It is the largest non-editor entry and legitimately so: RevoGrid's column
+  // and cell-editor layer, the tracker schema model, and `TrackerSyncEngine`
+  // (with `OutboxDrainer`, which brings js-yaml) are all eager here. The grid
+  // alone is several times `docs-ui`'s remaining headroom, which is why this is
+  // a separate entry rather than a line item added there.
+  'trackers-ui': 128_000,
   // Deliberately tight. This entry is a WebSocket client over the protocol
   // package and nothing else; anything that makes it jump has dragged a UI
   // graph in behind it.
@@ -96,6 +106,14 @@ export const SINGLETON_CATEGORIES = [
       || id === 'lexical'
       || id.startsWith('lexical/')
       || id.startsWith('@lexical/'),
+  },
+  {
+    name: 'RevoGrid',
+    test: (id) => /(^|\/)node_modules\/@revolist\/(?:react-datagrid|revogrid)(?:\/|$)/.test(id)
+      || id === '@revolist/react-datagrid'
+      || id.startsWith('@revolist/react-datagrid/')
+      || id === '@revolist/revogrid'
+      || id.startsWith('@revolist/revogrid/'),
   },
   {
     name: 'Yjs',
@@ -172,6 +190,55 @@ export function findEagerEntryFiles(report, entryName) {
   return Array.from(chunkClosure(entry, chunksByFile, false));
 }
 
+/**
+ * The personal lane, as a bundle-graph fact rather than a rendering condition.
+ *
+ * Favorites, unread dots, and snooze ride `CollabV3Sync` behind a personal JWT
+ * and a PBKDF2-derived seed; the console holds team auth only. Both hosts render
+ * the same tracker components, so "the browser does not show the star" used to
+ * be a `personalState` conditional -- true today, one careless edit from being
+ * inverted, and inert-but-present in the shipped bundle either way.
+ *
+ * The components now take the star and the dot as slots the host fills, so the
+ * browser entry cannot contain them. This is what holds that: if a module from
+ * the personal lane reappears in the `trackers-ui` closure, someone re-wired a
+ * static import and the entry fails to build rather than shipping a live
+ * affordance behind a flag.
+ *
+ * Kept narrow on purpose. `runtime/src/auth/jwtScopes` is deliberately absent --
+ * it is where the *team* JWT brand lives, and `checkPublicJwtTypeBoundary`
+ * requires the bundle to re-export it.
+ */
+export const TRACKERS_UI_FORBIDDEN_PERSONAL_LANE = [
+  {
+    // trackerUnreadAtoms, TrackerUnreadDot, and the receipt model they read.
+    name: 'read-receipt / unread lane',
+    test: (id) => id.includes('/runtime/src/readReceipts/'),
+  },
+  {
+    name: 'favorite star',
+    test: (id) => id.includes('/TrackerFavoriteStar.'),
+  },
+  {
+    // CollabV3Sync is the personal transport and the PBKDF2 seed epoch;
+    // trackerPersonalStateKey derives the favorite/opened LWW keys it carries.
+    name: 'personal sync transport and key derivation',
+    test: (id) => id.includes('/runtime/src/sync/CollabV3Sync.')
+      || id.includes('/runtime/src/sync/trackerPersonalStateKey.'),
+  },
+  {
+    // Redundant with the Electron rule today, and named anyway: a failure here
+    // should say "personal JWT", not "some file under packages/electron".
+    name: 'personal JWT acquisition',
+    test: (id) => id.includes('/StytchAuthService.') || id.includes('/CredentialService.'),
+  },
+];
+
+export function findTrackersUiPersonalLaneViolations(moduleIds) {
+  return findBrowserDependencyViolations(moduleIds, TRACKERS_UI_FORBIDDEN_PERSONAL_LANE)
+    .map(({ name, hits }) => `trackers-ui entry pulls the personal lane (${name}): ${hits.join(', ')}`);
+}
+
 export function findEntrySeparationViolations(report) {
   const chunksByFile = new Map(report.chunks.map((chunk) => [chunk.fileName, chunk]));
   const entryByName = new Map(
@@ -207,13 +274,43 @@ export function findEntrySeparationViolations(report) {
   if (!docsUiModules.some((id) => /\/node_modules\/jotai(?:\/|$)/.test(id))) {
     violations.push('docs-ui entry does not own Jotai');
   }
+
+  // Tracker item bodies mount through `./editor`, the entry the docs surface
+  // already uses. A second Lexical graph here would be a second cold-paint
+  // contract to get wrong (NIM-1764) on top of the bundle cost.
+  const trackersUi = entryByName.get('trackers-ui');
+  if (!trackersUi) {
+    violations.push('trackers-ui entry chunk must exist');
+  } else {
+    const trackersUiModules = moduleIdsFor(trackersUi);
+    if (trackersUiModules.some((id) => id.includes('/runtime/src/editor/')
+      || id.includes('/runtime/src/collab-lexical/')
+      || id.includes('/runtime/src/sync/CollabLexicalProvider.'))) {
+      violations.push('trackers-ui entry pulls the editor/codec graph');
+    }
+    if (trackersUiModules.some((id) => id.includes('/collab-client/src/docs-ui/'))) {
+      violations.push('trackers-ui entry pulls collab-client/docs-ui');
+    }
+    if (!trackersUiModules.some((id) => id.includes('/collab-client/src/trackers-ui/grid/'))) {
+      violations.push('trackers-ui entry does not own the grid surface');
+    }
+    violations.push(...findTrackersUiPersonalLaneViolations(trackersUiModules));
+  }
   return violations;
 }
 
 function resolveSingletonCopies() {
   const hostRequire = createRequire(path.join(repoRoot, 'package.json'));
   const bundleRequire = createRequire(path.join(packageRoot, 'package.json'));
-  const packageNames = ['react', 'react-dom', 'lexical', '@lexical/yjs', 'yjs'];
+  const packageNames = [
+    'react',
+    'react-dom',
+    'lexical',
+    '@lexical/yjs',
+    '@revolist/react-datagrid',
+    '@revolist/revogrid',
+    'yjs',
+  ];
   const resolvePackageRoot = (requireFrom, packageName) => {
     let cursor = path.dirname(requireFrom.resolve(packageName));
     while (cursor !== path.dirname(cursor)) {
@@ -237,7 +334,15 @@ function checkSingletonPeerContract() {
   const manifest = JSON.parse(
     fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'),
   );
-  const requiredPeers = ['react', 'react-dom', 'lexical', '@lexical/yjs', 'yjs'];
+  const requiredPeers = [
+    'react',
+    'react-dom',
+    'lexical',
+    '@lexical/yjs',
+    '@revolist/react-datagrid',
+    '@revolist/revogrid',
+    'yjs',
+  ];
   const missingPeers = requiredPeers.filter((name) => !manifest.peerDependencies?.[name]);
   const runtimeDependencies = requiredPeers.filter((name) => manifest.dependencies?.[name]);
   if (missingPeers.length > 0 || runtimeDependencies.length > 0) {
@@ -370,7 +475,7 @@ export function checkCollabBundle() {
     ]).join('\n');
     throw new Error(
       `host singletons were bundled instead of externalized:\n${details}\n`
-      + 'React, Lexical, and Yjs must be supplied once by the host page.',
+      + 'React, Lexical, RevoGrid, and Yjs must be supplied once by the host page.',
     );
   }
 

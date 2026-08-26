@@ -10,10 +10,17 @@ export class ModelRegistry {
   private static CACHE_DURATION = 60 * 60 * 1000; // 1 hour cache
 
   /**
-   * Get models for a specific provider (with caching)
+   * Get models for a specific provider (with caching).
+   *
+   * `workspacePath` is required but accepts `undefined`: OpenCode resolves its
+   * provider set from project config, so omitting the workspace silently
+   * downgrades that lane to hardcoded presets. Making it a required positional
+   * turns "I forgot" into a compile error and leaves "I genuinely have no
+   * project here" as something a caller has to write down (#1382).
    */
   static async getModelsForProvider(
     provider: AIProviderType,
+    workspacePath: string | undefined,
     apiKey?: string,
     baseUrl?: string
   ): Promise<AIModel[]> {
@@ -74,7 +81,7 @@ export class ModelRegistry {
           break;
         case 'opencode':
           const { OpenCodeProvider } = await import('./providers/OpenCodeProvider');
-          models = await OpenCodeProvider.getModels();
+          models = await OpenCodeProvider.getModels(workspacePath);
           break;
         case 'lmstudio':
           // Try to fetch models from LMStudio
@@ -106,9 +113,16 @@ export class ModelRegistry {
   /**
    * Get all available models across all providers.
    * @param apiKeys - API keys and config (e.g., anthropic, openai, lmstudio_url)
+   * @param workspacePath - The project this listing is for, or `undefined` for a
+   *   host with no project context. Required positionally; see
+   *   getModelsForProvider() for why (#1382).
    * @param enabledProviders - Optional set of enabled provider types. If provided, only these providers are fetched.
    */
-  static async getAllModels(apiKeys: Record<string, string>, enabledProviders?: Set<AIProviderType>): Promise<AIModel[]> {
+  static async getAllModels(
+    apiKeys: Record<string, string>,
+    workspacePath: string | undefined,
+    enabledProviders?: Set<AIProviderType>
+  ): Promise<AIModel[]> {
     const allModels: AIModel[] = [];
 
     const shouldFetch = (provider: AIProviderType) => !enabledProviders || enabledProviders.has(provider);
@@ -116,15 +130,15 @@ export class ModelRegistry {
     // Fetch from each enabled provider in parallel
     const promises: Promise<AIModel[]>[] = [];
 
-    if (shouldFetch('claude')) promises.push(this.getModelsForProvider('claude', apiKeys['anthropic']));
-    if (shouldFetch('claude-code')) promises.push(this.getModelsForProvider('claude-code'));
-    if (shouldFetch('claude-code-cli')) promises.push(this.getModelsForProvider('claude-code-cli'));
-    if (shouldFetch('openai')) promises.push(this.getModelsForProvider('openai', apiKeys['openai']));
-    if (shouldFetch('openai-codex')) promises.push(this.getModelsForProvider('openai-codex', apiKeys['openai']));
-    if (shouldFetch('openai-codex-acp')) promises.push(this.getModelsForProvider('openai-codex-acp', apiKeys['openai']));
-    if (shouldFetch('opencode')) promises.push(this.getModelsForProvider('opencode'));
-    if (shouldFetch('lmstudio')) promises.push(this.getModelsForProvider('lmstudio', undefined, apiKeys['lmstudio_url']));
-    if (shouldFetch('copilot-cli')) promises.push(this.getModelsForProvider('copilot-cli'));
+    if (shouldFetch('claude')) promises.push(this.getModelsForProvider('claude', workspacePath, apiKeys['anthropic']));
+    if (shouldFetch('claude-code')) promises.push(this.getModelsForProvider('claude-code', workspacePath));
+    if (shouldFetch('claude-code-cli')) promises.push(this.getModelsForProvider('claude-code-cli', workspacePath));
+    if (shouldFetch('openai')) promises.push(this.getModelsForProvider('openai', workspacePath, apiKeys['openai']));
+    if (shouldFetch('openai-codex')) promises.push(this.getModelsForProvider('openai-codex', workspacePath, apiKeys['openai']));
+    if (shouldFetch('openai-codex-acp')) promises.push(this.getModelsForProvider('openai-codex-acp', workspacePath, apiKeys['openai']));
+    if (shouldFetch('opencode')) promises.push(this.getModelsForProvider('opencode', workspacePath));
+    if (shouldFetch('lmstudio')) promises.push(this.getModelsForProvider('lmstudio', workspacePath, undefined, apiKeys['lmstudio_url']));
+    if (shouldFetch('copilot-cli')) promises.push(this.getModelsForProvider('copilot-cli', workspacePath));
 
     const results = await Promise.allSettled(promises);
 

@@ -16,6 +16,8 @@ import {
   type SelectionStatusChoice,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { trackerRelationshipLabelAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
+import { TrackerUnreadDot } from '@nimbalyst/runtime/readReceipts/TrackerUnreadDot';
+import { TrackerFavoriteStar } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/TrackerFavoriteStar';
 import { trackerModeStatusScopeAtom } from '../../store/atoms/trackers';
 import {
   buildTrackerBoardColumns,
@@ -27,13 +29,15 @@ import { saveTrackerFields, saveTrackerFieldsBatch } from './trackerFieldSave';
 import { registerKanbanDragCallbacks } from './kanbanDragListeners';
 import { KanbanContextSubmenu } from './KanbanContextSubmenu';
 import { KanbanBoardSelectionBar } from './KanbanBoardSelectionBar';
-import { TrackerBoardCard } from './TrackerBoardCard';
 import {
   NEUTRAL_SWATCH,
   PRIORITY_COLORS,
   STATUS_CATEGORY_COLORS,
   STATUS_COLORS,
-} from './trackerBoardTokens';
+  TrackerBoardCard,
+  TrackerSurfaceMessage,
+} from '@nimbalyst/collab-client/trackers-ui';
+import { TrackerCardMilestoneChip } from './TrackerCardMilestoneChip';
 
 interface KanbanBoardProps {
   filterType: TrackerItemType | 'all';
@@ -422,12 +426,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
 
   if (allItems.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-nim-muted">
-        <div className="text-center">
-          <MaterialSymbol icon="view_kanban" size={48} className="opacity-30" />
-          <p className="mt-2 text-sm">No items to display</p>
-        </div>
-      </div>
+      <TrackerSurfaceMessage icon="view_kanban" message="No items to display" />
     );
   }
 
@@ -492,15 +491,26 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                       selected={selectedIds.has(item.id)}
                       highlighted={Boolean(selectedItemId) && item.id === selectedItemId}
                       dragging={dragItemId === item.id}
-                      isFavorite={favoriteItemIds.has(item.id)}
-                      onToggleFavorite={onToggleFavorite}
                       onDragStart={handleDragStart}
                       onDragEnd={handleDragEnd}
                       onSelect={handleCardSelect}
                       onToggleSelected={handleToggleCardSelected}
                       onContextMenu={handleCardContextMenu}
                       onOpenDocument={onOpenDocument}
-                      onOpenItem={onItemSelect}
+                      milestoneSlot={
+                        <TrackerCardMilestoneChip item={item} onOpenItem={onItemSelect} />
+                      }
+                      // Personal lane: desktop holds a personal JWT, so it is
+                      // desktop that supplies these. The shared card has no
+                      // import of either.
+                      unreadSlot={<TrackerUnreadDot itemId={item.id} className="mt-1" />}
+                      favoriteSlot={(
+                        <TrackerFavoriteStar
+                          itemId={item.id}
+                          isFavorite={favoriteItemIds.has(item.id)}
+                          onToggle={onToggleFavorite}
+                        />
+                      )}
                     />
                     {cardIndex === colItems.length - 1 && (
                       <>

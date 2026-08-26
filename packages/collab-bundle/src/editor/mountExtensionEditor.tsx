@@ -21,6 +21,7 @@ import type {
   EditorContextItem,
   EditorHost,
   EditorMenuItem,
+  EditorViewport,
   RevisionSnapshotAdapter,
 } from '@nimbalyst/extension-sdk/types/editor';
 import type { Doc } from 'yjs';
@@ -116,6 +117,14 @@ export interface ExtensionEditorMountOptions {
   onEditorContextItemsChange?(items: EditorContextItem[] | null): void;
   onRevisionAdapterChange?(adapter: RevisionSnapshotAdapter | null): void;
   openExternal?(url: string): Promise<void>;
+  onViewportRegistered?(viewport: EditorViewport | null): void;
+
+  /**
+   * Render as an embed rather than a full page, so the extension drops chrome
+   * that only makes sense at page scale. An inline preview or a detail popover
+   * sets this; the document page does not.
+   */
+  embedded?: boolean;
 }
 
 export interface ExtensionEditorHandle {
@@ -332,6 +341,8 @@ export function mountExtensionEditor(
     onEditorContextChange: options.onEditorContextChange,
     onEditorContextItemsChange: options.onEditorContextItemsChange,
     openExternal: options.openExternal,
+    onViewportRegistered: options.onViewportRegistered,
+    embedded: options.embedded,
     onCapabilityRefused: options.onCapabilityRefused,
   });
   notifyReadOnlyChanged = (readOnly) => browserHost.notifyReadOnlyChanged(readOnly);

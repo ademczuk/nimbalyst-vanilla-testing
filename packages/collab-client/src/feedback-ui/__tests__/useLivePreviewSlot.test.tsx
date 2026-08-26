@@ -63,8 +63,11 @@ afterEach(() => {
   globalThis.IntersectionObserver = originalObserver;
 });
 
-const Preview: React.FC<{ enabled?: boolean }> = ({ enabled = true }) => {
-  const { ref, mounted } = useLivePreviewSlot<HTMLDivElement>(enabled);
+const Preview: React.FC<{ enabled?: boolean; priority?: boolean }> = ({
+  enabled = true,
+  priority = false,
+}) => {
+  const { ref, mounted } = useLivePreviewSlot<HTMLDivElement>(enabled, { priority });
   return <div ref={ref} data-testid={mounted ? 'mounted' : 'gated'} />;
 };
 
@@ -133,5 +136,69 @@ describe('live preview slots', () => {
 
     expect(livePreviewSlotsInUse()).toBe(0);
     expect(screen.getByTestId('gated')).toBeDefined();
+  });
+});
+
+/**
+ * The popover inverts the cap's premise on purpose, and a leak here degrades
+ * every later preview with nothing on screen to say why: open a popover a few
+ * times and the columns behind it quietly stop mounting forever.
+ */
+describe('priority slots', () => {
+  it('takes a slot from a column when every slot is held', async () => {
+    const columns = Array.from({ length: MAX_CONCURRENT_LIVE_PREVIEWS }, (_, index) => index);
+    const { rerender } = render(<>{columns.map((index) => <Preview key={index} />)}</>);
+    revealAll();
+    expect(screen.getAllByTestId('mounted')).toHaveLength(MAX_CONCURRENT_LIVE_PREVIEWS);
+
+    rerender(
+      <>
+        {columns.map((index) => <Preview key={index} />)}
+        <Preview key="popover" priority />
+      </>,
+    );
+    revealAll();
+
+    await waitFor(() => {
+      // The popover mounted and exactly one column yielded -- the cap held.
+      expect(screen.getAllByTestId('mounted')).toHaveLength(MAX_CONCURRENT_LIVE_PREVIEWS);
+      expect(screen.getAllByTestId('gated')).toHaveLength(1);
+    });
+  });
+
+  it('gives the slot back when the popover closes', async () => {
+    const columns = Array.from({ length: MAX_CONCURRENT_LIVE_PREVIEWS }, (_, index) => index);
+    const tree = (withPopover: boolean) => (
+      <>
+        {columns.map((index) => <Preview key={index} />)}
+        {withPopover && <Preview key="popover" priority />}
+      </>
+    );
+    const { rerender } = render(tree(true));
+    revealAll();
+    await waitFor(() => expect(screen.getAllByTestId('gated')).toHaveLength(1));
+
+    rerender(tree(false));
+
+    // The evicted column recovers on dismiss. Without the release notification
+    // it would stay gated for the life of the surface.
+    await waitFor(() => {
+      expect(screen.getAllByTestId('mounted')).toHaveLength(MAX_CONCURRENT_LIVE_PREVIEWS);
+      expect(screen.queryByTestId('gated')).toBeNull();
+    });
+  });
+
+  it('never lets one priority claim evict another', async () => {
+    // Two popovers cannot be open at once today, but the rule that keeps this
+    // from becoming a mount storm is "non-priority yields", not "newest wins".
+    const popovers = Array.from({ length: MAX_CONCURRENT_LIVE_PREVIEWS + 1 }, (_, index) => index);
+    render(<>{popovers.map((index) => <Preview key={index} priority />)}</>);
+    revealAll();
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('mounted')).toHaveLength(MAX_CONCURRENT_LIVE_PREVIEWS);
+      expect(screen.getAllByTestId('gated')).toHaveLength(1);
+    });
+    expect(livePreviewSlotsInUse()).toBe(MAX_CONCURRENT_LIVE_PREVIEWS);
   });
 });

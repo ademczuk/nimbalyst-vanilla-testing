@@ -14,7 +14,7 @@ import {
 import { database } from '../../database/PGLiteDatabaseWorker';
 import { findLinkedDocumentForLocalPath } from '../CollabLocalOriginService';
 import { applyHeadlessBodyMarkdown, readHeadlessBodyMarkdown } from '../MainBodyDocService';
-import { getEffectiveTrackerSharingPolicy, shouldSyncTrackerItem } from '../TrackerPolicyService';
+import { resolveTrackerSharingPolicy, shouldSyncTrackerItem } from '../TrackerPolicyService';
 import { isTrackerSyncActive, syncTrackerItem, unsyncTrackerItem } from '../TrackerSyncManager';
 
 type TrackerRow = { id: string; [key: string]: any };
@@ -451,9 +451,22 @@ export async function reconcileFrontmatterShare(
   const workspace = item.workspace || dependencies.workspacePath;
   try {
     if (nowShared) {
-      const policy = getEffectiveTrackerSharingPolicy(workspace, item.type);
+      const resolution = resolveTrackerSharingPolicy(workspace, item.type);
+      if (!resolution.known) {
+        // NIM-3702 step 1. The display-only read answered `personal` here for a
+        // schema it had merely failed to load, so a share the user asked for
+        // was silently refused and the row stayed `local`. Refusing is still
+        // the conservative outcome -- nothing is published on a guess -- but it
+        // must be loud, and the file keeps its share flag so a later reconcile
+        // retries once the schema is there.
+        console.error(
+          '[DocumentService] reconcileFrontmatterShare: UNRESOLVED sharing policy for',
+          item.type, 'in', workspace, `(${resolution.reason}) -- refusing to publish on a guess`,
+        );
+        return false;
+      }
       // Respect the type policy: a `local` type never shares even if flagged.
-      if (!shouldSyncTrackerItem(policy, item)) return false;
+      if (!shouldSyncTrackerItem(resolution.policy, item)) return false;
       const bodyMoved = await shareFrontmatterBody(dependencies, item.id, relativePath, workspace);
       if (!bodyMoved) return false;
       if (isTrackerSyncActive(workspace)) {

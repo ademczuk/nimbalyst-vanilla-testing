@@ -136,6 +136,42 @@ roles:
 `;
 }
 
+/**
+ * A type that exists ONLY in workspace B and is explicitly the team's. The
+ * policy read must answer `team` for it on B's behalf; a registry miss answers
+ * `personal`, so the two verdicts are distinguishable (they are not for a
+ * `sharing: personal` type, which is why `gadget` cannot carry this test).
+ */
+function sprocketYaml(): string {
+  return `packageVersion: 1.0.0
+packageId: developer
+
+type: sprocket
+displayName: Sprocket
+displayNamePlural: Sprockets
+icon: campaign
+color: "#0f766e"
+
+modes:
+  inline: true
+  fullDocument: false
+
+sharing: team
+draftByDefault: false
+
+idPrefix: spr
+idFormat: ulid
+
+fields:
+  - name: title
+    type: string
+    required: true
+
+roles:
+  title: title
+`;
+}
+
 async function writeSchema(workspacePath: string, fileName: string, content: string): Promise<void> {
   const dir = path.join(workspacePath, '.nimbalyst', 'trackers');
   await fs.mkdir(dir, { recursive: true });
@@ -164,6 +200,7 @@ describe('TrackerSchemaService cross-workspace isolation (#1035)', () => {
     // custom type that exists only in B.
     await writeSchema(wsB, 'widget.yaml', widgetYaml(true, ['open']));
     await writeSchema(wsB, 'gadget.yaml', gadgetYaml());
+    await writeSchema(wsB, 'sprocket.yaml', sprocketYaml());
 
     service = await import('../TrackerSchemaService');
     scope = await import('../tracker/trackerSchemaScope');
@@ -247,6 +284,72 @@ describe('TrackerSchemaService cross-workspace isolation (#1035)', () => {
 
     expect(service.getTrackerSchema('gadget')?.type).toBe('gadget');
     expect(ownerRequired(service.getTrackerSchema('widget') as any)).toBe(true);
+  });
+
+  /**
+   * NIM-3702 leg 1. The sync lane is UNSCOPED -- it is driven from a WebSocket
+   * `onStatusChange` callback with no relationship to whoever opened the
+   * workspace -- so it cannot rely on `runWithTrackerSchemaWorkspace`. It passes
+   * a workspace path explicitly, and until now that argument was discarded.
+   */
+  describe('policy resolution for a non-active workspace (NIM-3702)', () => {
+    let policy: typeof import('../TrackerPolicyService');
+
+    beforeEach(async () => {
+      policy = await import('../TrackerPolicyService');
+    });
+
+    it('answers with the workspace own schema without an ambient scope', () => {
+      service.initTrackerSchemaService(wsA);
+      service.ensureWorkspaceTrackerSchemasLoaded(wsB);
+
+      // No runWithTrackerSchemaWorkspace here -- this is the sync lane's shape.
+      const resolution = policy.resolveTrackerSharingPolicy(wsB, 'sprocket');
+
+      expect(resolution).toEqual({
+        known: true,
+        policy: { sharing: 'team', draftByDefault: false },
+      });
+    });
+
+    it('does not answer for workspace B using workspace A view', () => {
+      service.initTrackerSchemaService(wsA);
+      service.ensureWorkspaceTrackerSchemasLoaded(wsB);
+
+      // `sprocket` does not exist in A at all. The old unscoped read returned
+      // A's `models`, missed, and collapsed to personal -- which for a
+      // previously-shared row meant `delete`.
+      expect(policy.resolveTrackerSharingPolicy(wsA, 'sprocket').known).toBe(false);
+      expect(policy.resolveTrackerSharingPolicy(wsB, 'sprocket').known).toBe(true);
+    });
+
+    it('keeps resolving a workspace after it stops being the active one', () => {
+      // The realistic shape: B was open and active, then the user focused A.
+      // Nothing else ever asked for B's schemas, so without a demotion hook the
+      // only copy of B's custom types was the live view A just overwrote -- and
+      // B's drain would then resolve nothing and hold its items back forever.
+      service.initTrackerSchemaService(wsB);
+      expect(service.getTrackerSchema('sprocket')?.type).toBe('sprocket');
+
+      service.updateTrackerSchemaWorkspace(wsA);
+
+      expect(policy.resolveTrackerSharingPolicy(wsB, 'sprocket')).toEqual({
+        known: true,
+        policy: { sharing: 'team', draftByDefault: false },
+      });
+    });
+
+    it('resolves built-ins for a workspace that has no layer at all', async () => {
+      const wsC = await fs.mkdtemp(path.join(os.tmpdir(), 'tracker-ws-c-'));
+      service.initTrackerSchemaService(wsA);
+
+      // The unscoped path used to lose the builtin fallback that the scoped path
+      // has, so `bug` -- `sharing: team` in its shipped YAML -- missed entirely.
+      expect(policy.resolveTrackerSharingPolicy(wsC, 'bug')).toEqual({
+        known: true,
+        policy: { sharing: 'team', draftByDefault: false },
+      });
+    });
   });
 
   it('drops a cached layer type whose YAML was deleted', async () => {

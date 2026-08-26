@@ -398,6 +398,26 @@ const WORKER_BUNDLES = [
     ],
   },
   {
+    // Spawned by the SQLite worker to verify a backup file off its thread. It
+    // resolves better-sqlite3 from its own location, same as its parent, so a
+    // missing bundle or missing binding here silently degrades backup
+    // verification back to blocking the query loop.
+    name: 'sqlite-verify-worker',
+    bundle: 'sqlite-verify-worker.bundle.js',
+    externals: ['better-sqlite3'],
+    nativeBinaries: [
+      {
+        candidateRelPaths: [
+          `node_modules/better-sqlite3/prebuilds/${targetPlatform}-${targetArch}.node`,
+          ...(targetPlatform === 'linux'
+            ? [`node_modules/better-sqlite3/prebuilds/linuxmusl-${targetArch}.node`]
+            : []),
+          'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
+        ],
+      },
+    ],
+  },
+  {
     name: 'pglite-worker',
     bundle: 'worker.bundle.js',
     externals: [],

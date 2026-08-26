@@ -27,6 +27,8 @@ import { runWhenFirstUsable } from './startupMaintenanceGate';
 import { database } from '../database/PGLiteDatabaseWorker';
 import { createSQLiteStoreAdapter } from '../database/sqlite/SQLiteStoreAdapter';
 import { logger } from '../utils/logger';
+import { pruneWorkstreamStates } from '../utils/store';
+import { drainAllLegacyPendingUpdates } from './LegacyPendingUpdateDrainService';
 import { initializeSync, shutdownSync, isSyncEnabled, reinitializeSync } from './SyncManager';
 import { shutdownTrackerSync, initializeTrackerSync } from './TrackerSyncManager';
 import { ensureWorkspaceLocalNumbersInBackground } from './tracker/ensureWorkspaceLocalNumbers';
@@ -186,6 +188,30 @@ class RepositoryManager {
         }
       });
 
+      // Per-workstream UI state accumulated one entry per workstream and was
+      // never evicted -- thousands of entries against a few hundred live
+      // sessions. The settings store rewrites the whole file on every set, so
+      // the dead entries were paid for on each persist. Deferred like the tasks
+      // above so the session query never head-of-line-blocks the first window.
+      runWhenFirstUsable('workstream-state-prune', async () => {
+        // `NOT is_archived` reads the same on PGLite (boolean) and SQLite (0/1).
+        const result = await database.query('SELECT id FROM ai_sessions WHERE NOT is_archived');
+        const liveSessionIds = new Set<string>(
+          (result?.rows ?? []).map((r: { id: string }) => r.id)
+        );
+        const { workspacesTouched, entriesRemoved } = pruneWorkstreamStates(liveSessionIds);
+        if (entriesRemoved > 0) {
+          logger.main.info(
+            `[RepositoryManager] Pruned ${entriesRemoved} stale workstream UI state entr(ies) across ${workspacesTouched} workspace(s)`
+          );
+        }
+      });
+
+      // Legacy offline collab edits parked in workspace settings. Attempt here
+      // in case sign-in already completed; the auth hook below retries when it
+      // has not, since the replica identity needs an account id.
+      runWhenFirstUsable('legacy-pending-update-drain', () => drainAllLegacyPendingUpdates());
+
       // Subscribe to auth state changes to reinitialize sync when user authenticates
       // This handles the case where Stytch is lazy-initialized after repositories are ready
       this.authListenerUnsubscribe = onAuthStateChange((authState) => {
@@ -197,6 +223,15 @@ class RepositoryManager {
           logger.main.info('[RepositoryManager] Auth state changed to authenticated, reinitializing sync...');
           this.reinitializeSyncWithNewConfig().catch(err => {
             logger.main.error('[RepositoryManager] Failed to reinitialize sync after auth:', err);
+          });
+        }
+
+        // Startup maintenance releases before sign-in completes, so the drain
+        // above usually has no account id to key replica identities against.
+        // This is the retry that actually clears it on a normal launch.
+        if (isNowAuthenticated && !this.wasAuthenticated) {
+          drainAllLegacyPendingUpdates().catch(err => {
+            logger.main.error('[RepositoryManager] Legacy pending-update drain failed after auth:', err);
           });
         }
 

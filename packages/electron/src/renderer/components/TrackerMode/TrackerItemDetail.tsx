@@ -15,6 +15,14 @@ import { $convertFromEnhancedMarkdownString, getEditorTransformers } from '@nimb
 import { $getRoot, $setSelection } from 'lexical';
 import * as Y from 'yjs';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
+import {
+  copyTextToClipboard,
+  NEUTRAL_SWATCH,
+  PRIORITY_COLORS,
+  STATUS_COLORS,
+  TrackerSwatchBadge,
+  TYPE_COLORS,
+} from '@nimbalyst/collab-client/trackers-ui';
 import { isFileBackedRecord, isNativeItem, resolveTrackerContentMode } from './trackerContentMode';
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import type { FieldDefinition } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
@@ -106,30 +114,6 @@ interface TrackerItemDetailProps {
 /** How this item's body is edited -- see the `contentMode` memo below. */
 export type TrackerContentMode = 'file-backed' | 'local-pglite' | 'collaborative';
 
-const STATUS_COLORS: Record<string, string> = {
-  'to-do': '#6b7280',
-  'in-progress': '#eab308',
-  'in-review': '#8b5cf6',
-  'done': '#22c55e',
-  'blocked': '#ef4444',
-};
-
-const PRIORITY_COLORS: Record<string, string> = {
-  critical: '#dc2626',
-  high: '#f97316',
-  medium: '#eab308',
-  low: '#6b7280',
-};
-
-const TYPE_COLORS: Record<string, string> = {
-  bug: '#dc2626',
-  task: '#2563eb',
-  plan: '#7c3aed',
-  idea: '#ca8a04',
-  decision: '#8b5cf6',
-  feature: '#10b981',
-};
-
 function getTypeIcon(type: string): string {
   const icons: Record<string, string> = {
     bug: 'bug_report',
@@ -195,7 +179,7 @@ const TypeTagsEditor: React.FC<{
         <div className="flex flex-wrap gap-1">
           {secondaryTags.map(tag => {
             const tagModel = globalRegistry.get(tag);
-            const tagColor = TYPE_COLORS[tag] || '#6b7280';
+            const tagColor = TYPE_COLORS[tag] || NEUTRAL_SWATCH;
             return (
               <span
                 key={tag}
@@ -214,7 +198,7 @@ const TypeTagsEditor: React.FC<{
       {isOpen && availableTypes.length > 0 && (
         <div className="flex flex-wrap gap-1 pt-1">
           {availableTypes.map(m => {
-            const tagColor = TYPE_COLORS[m.type] || '#6b7280';
+            const tagColor = TYPE_COLORS[m.type] || NEUTRAL_SWATCH;
             return (
               <button
                 key={m.type}
@@ -300,7 +284,7 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
     if (!item || !teamOrgId) return;
     const url = buildTrackerDeepLink(item.id, teamOrgId);
     try {
-      await navigator.clipboard.writeText(url);
+      await copyTextToClipboard(url);
       errorNotificationService.showInfo(
         'Link copied',
         'Paste it anywhere to open this tracker in Nimbalyst.',
@@ -375,7 +359,7 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
     })();
     return () => { cancelled = true; };
   }, [teamOrgId]);
-  const typeColor = TYPE_COLORS[item?.primaryType ?? ''] || '#6b7280';
+  const typeColor = TYPE_COLORS[item?.primaryType ?? ''] || NEUTRAL_SWATCH;
   const icon = model?.icon || getTypeIcon(item?.primaryType ?? '');
 
   // External-source provenance (source chip). origin lives in record system metadata.
@@ -1323,19 +1307,13 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
               .filter(tag => tag !== item.primaryType)
               .map(tag => {
                 const tagModel = globalRegistry.get(tag);
-                const tagColor = TYPE_COLORS[tag] || '#6b7280';
                 return (
-                  <span
+                  <TrackerSwatchBadge
                     key={tag}
-                    className="text-[10px] font-medium px-1.5 py-0.5 rounded"
-                    style={{
-                      color: tagColor,
-                      backgroundColor: `${tagColor}15`,
-                      border: `1px solid ${tagColor}30`,
-                    }}
-                  >
-                    {tagModel?.displayName || tag}
-                  </span>
+                    label={tagModel?.displayName || tag}
+                    color={TYPE_COLORS[tag] || NEUTRAL_SWATCH}
+                    variant="secondary"
+                  />
                 );
               })}
             {isNativeItem(item) && (
@@ -2034,7 +2012,7 @@ const ReadOnlyField: React.FC<{ field: FieldDefinition; value: any }> = ({ field
   if (field.type === 'select' && field.options && value) {
     const option = field.options.find(o => o.value === value);
     if (option) {
-      const color = option.color || STATUS_COLORS[value] || PRIORITY_COLORS[value] || '#6b7280';
+      const color = option.color || STATUS_COLORS[value] || PRIORITY_COLORS[value] || NEUTRAL_SWATCH;
       return (
         <div className="flex flex-col gap-1">
           <span className="text-[11px] font-medium text-[var(--nim-text-muted)] uppercase tracking-[0.5px]">{label}</span>

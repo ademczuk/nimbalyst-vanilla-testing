@@ -4,6 +4,7 @@
 
 import jsyaml from 'js-yaml';
 import type { AutomationStatus } from './types';
+import { normalizeAutomationStatus, type NormalizedAutomation } from './normalize';
 
 // Tolerate CRLF on Windows where git core.autocrlf delivers files with `\r\n`.
 // Without `\r?\n` the regex fails on a `---\r\n` opener and the file looks
@@ -12,10 +13,23 @@ import type { AutomationStatus } from './types';
 const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---/;
 
 /**
- * Extract the automationStatus from a markdown file's frontmatter.
- * Returns null if no frontmatter or no automationStatus block.
+ * Extract the automationStatus from a markdown file's frontmatter, normalized
+ * so the declared types actually hold. Returns null if there is no frontmatter
+ * or no automationStatus block.
+ *
+ * Callers that need to know whether the file should be repaired on disk, or
+ * whether the schedule can fire at all, want `parseAutomation` instead.
  */
 export function parseAutomationStatus(content: string): AutomationStatus | null {
+  return parseAutomation(content)?.status ?? null;
+}
+
+/**
+ * Like `parseAutomationStatus`, but also reports whether normalization changed
+ * the stored schedule (`changed`) and whether the schedule can never fire
+ * (`problem`).
+ */
+export function parseAutomation(content: string): NormalizedAutomation | null {
   const match = content.match(FRONTMATTER_REGEX);
   if (!match) return null;
 
@@ -23,7 +37,7 @@ export function parseAutomationStatus(content: string): AutomationStatus | null 
     const parsed = jsyaml.load(match[1]) as Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object') return null;
     if (!parsed.automationStatus) return null;
-    return parsed.automationStatus as AutomationStatus;
+    return normalizeAutomationStatus(parsed.automationStatus);
   } catch {
     return null;
   }

@@ -33,7 +33,7 @@ import {
   type MilestoneAssignTarget,
 } from './trackerBulkAssign';
 import { saveTrackerFieldsBatch } from './trackerFieldSave';
-import './TrackerBoardCard.css';
+import '@nimbalyst/collab-client/trackers-ui/board.css';
 
 interface KanbanBoardSelectionBarProps {
   /** The selected records, in board order. */

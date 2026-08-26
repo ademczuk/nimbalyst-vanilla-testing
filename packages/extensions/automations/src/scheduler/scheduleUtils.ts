@@ -32,6 +32,12 @@ export function calculateNextRun(
   schedule: AutomationSchedule,
   now: Date = new Date(),
 ): Date | null {
+  // Frontmatter is hand-editable and this is the exported scheduling primitive,
+  // so an unusable schedule means "never fires" rather than a throw. Callers
+  // that need to tell the user why should parse through `parseAutomation`,
+  // which reports the specific problem. See nimbalyst#1374.
+  if (!schedule || typeof schedule !== 'object') return null;
+
   switch (schedule.type) {
     case 'interval':
       return calculateNextInterval(schedule.intervalMinutes, now);
@@ -63,7 +69,9 @@ function calculateNextDaily(time: string, now: Date): Date {
 }
 
 function calculateNextWeekly(days: DayOfWeek[], time: string, now: Date): Date | null {
-  if (days.length === 0) return null;
+  // Check the type, not just the length: a scalar `days: mon` arrives as a
+  // 3-character string, which has a non-zero length and no `.map`.
+  if (!Array.isArray(days) || days.length === 0) return null;
 
   const { hours, minutes } = parseTime(time);
   const targetDays = new Set(days.map((d) => DAY_MAP[d]));

@@ -3,6 +3,7 @@ import type { CollabDocumentTypeDescriptor } from '@nimbalyst/collab-client/core
 import { useAtomValue } from 'jotai';
 import { store } from '@nimbalyst/runtime/store';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
+import './collabSidebarTree.css';
 import { InputModal } from './primitives/InputModal';
 import { ScopeSummaryHeader } from './primitives/ScopeSummaryHeader';
 import { CollabCreateItemDialog } from './CollabCreateItemDialog';
@@ -26,6 +27,7 @@ import {
   type CollabTreeNode,
 } from '@nimbalyst/collab-client/docs';
 import { useFloatingMenu, FloatingPortal, virtualElement } from './primitives/useFloatingMenu';
+import { CollabSearchInput } from './primitives/CollabSearchInput';
 import { DocUnreadDot } from './DocUnreadDot';
 import { bucketItemCount, trackDocumentAction } from './analytics';
 import { useCollabDocsUI, type CollabTreeFilter } from './CollabDocsUIProvider';
@@ -1166,28 +1168,13 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
       </div>
       )}
 
-      <div className="session-history-search px-3 py-2 border-b border-[var(--nim-border)] shrink-0 relative">
-          <input
-            type="text"
-            className="session-history-search-input nim-input w-full pl-3 pr-9 py-2 text-[13px] text-[var(--nim-text)] bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded outline-none transition-colors duration-150 placeholder:text-[var(--nim-text-faint)] focus:border-[var(--nim-primary)] focus:bg-[var(--nim-bg)]"
-            placeholder="Search shared documents..."
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            aria-label="Search shared documents"
-          />
-          {hasActiveSearch && (
-            <button
-              type="button"
-              className="session-history-search-clear absolute right-5 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 rounded text-[var(--nim-text-muted)] bg-transparent border-none cursor-pointer transition-colors duration-150 hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)]"
-              onClick={() => setSearchQuery('')}
-              aria-label="Clear shared document search"
-              title="Clear search"
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-            </button>
-          )}
+      <div className="session-history-search px-3 py-2 border-b border-[var(--nim-border)] shrink-0">
+        <CollabSearchInput
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search shared documents..."
+          label="Search shared documents"
+        />
       </div>
 
       {/* Document tree */}

@@ -14,6 +14,7 @@ import type {
   EditorHostCapability,
   EditorHostCapabilityGap,
   EditorMenuItem,
+  EditorViewport,
   RevisionSnapshotAdapter,
 } from './internal/extension-sdk/src/types/editor';
 
@@ -402,6 +403,7 @@ export type {
   EditorHostCapabilityGap,
   EditorHostProps,
   EditorMenuItem,
+  EditorViewport,
   RevisionSnapshotAdapter,
 } from './internal/extension-sdk/src/types/editor';
 
@@ -426,6 +428,7 @@ export interface BrowserEditorGrantedCapabilities {
   aiContext?: boolean;
   binaryContent?: boolean;
   externalLinks?: boolean;
+  viewport?: boolean;
 }
 
 export declare function createBrowserEditorCapabilities(
@@ -517,6 +520,8 @@ export interface BrowserExtensionEditorHostOptions {
   onEditorContextItemsChange?(items: EditorContextItem[] | null): void;
   onEditorAPIChange?(api: unknown | null): void;
   openExternal?(url: string): Promise<void>;
+  onViewportRegistered?(viewport: EditorViewport | null): void;
+  embedded?: boolean;
   onCapabilityRefused?(error: BrowserEditorCapabilityError): void;
 }
 
@@ -586,6 +591,8 @@ export interface ExtensionEditorMountOptions {
   onEditorContextItemsChange?(items: EditorContextItem[] | null): void;
   onRevisionAdapterChange?(adapter: RevisionSnapshotAdapter | null): void;
   openExternal?(url: string): Promise<void>;
+  onViewportRegistered?(viewport: EditorViewport | null): void;
+  embedded?: boolean;
 }
 
 export interface ExtensionEditorHandle {

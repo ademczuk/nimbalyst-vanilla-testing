@@ -27,6 +27,7 @@ import type {
   TrackerItemPayload,
 } from './trackerProtocol';
 import { stripLocalOnlyFields } from './trackerProtocol';
+import { parseTrackerItemPayload } from '@nimbalyst/collab-protocol';
 
 
 /**
@@ -35,7 +36,12 @@ import { stripLocalOnlyFields } from './trackerProtocol';
  * path so they never cross the wire.
  */
 export function encodeTrackerPayloadPlaintext(payload: TrackerItemPayload): string {
-  return JSON.stringify(stripLocalOnlyFields(payload));
+  const encoded = JSON.stringify(stripLocalOnlyFields(payload));
+  const parsed = parseTrackerItemPayload(encoded, payload.itemId);
+  if (!parsed.success) {
+    throw new Error(`Invalid tracker item payload: ${parsed.error}`);
+  }
+  return encoded;
 }
 
 /**
@@ -48,7 +54,11 @@ export function decodeTrackerEnvelopePlaintext(
   if (envelope.encryptedPayload === null) {
     throw new Error('decodeTrackerEnvelopePlaintext called on a tombstone (encryptedPayload=null)');
   }
-  return JSON.parse(envelope.encryptedPayload) as TrackerItemPayload;
+  const parsed = parseTrackerItemPayload(envelope.encryptedPayload, envelope.itemId);
+  if (!parsed.success) {
+    throw new Error(`Invalid tracker item payload: ${parsed.error}`);
+  }
+  return parsed.value as unknown as TrackerItemPayload;
 }
 
 /**
@@ -81,4 +91,3 @@ export function decodeTrackerNavigationEnvelopePlaintext(
   }
   return envelope.encryptedPayload;
 }
-

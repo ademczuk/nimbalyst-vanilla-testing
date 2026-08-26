@@ -12,13 +12,15 @@
 import type { ExtensionPlatformService, ExtensionModule } from '@nimbalyst/runtime';
 
 // Import host dependencies that will be shared with extensions
-// ONLY React and Lexical need to be shared (singleton requirements)
+// React, Lexical, and RevoGrid need to be shared (singleton requirements)
 // Extensions should bundle their own utility libraries (zustand, html2canvas, etc.)
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import * as ReactDOMClient from 'react-dom/client';
 import * as jsxRuntime from 'react/jsx-runtime';
 import * as jsxDevRuntime from 'react/jsx-dev-runtime';
+import * as ReactDataGrid from '@revolist/react-datagrid';
+import * as RevoGridCore from '@revolist/revogrid';
 import { createJsxDevRuntimeBridge } from './jsxDevRuntimeBridge';
 import { createReactDomCompat } from './reactDomCompat';
 
@@ -67,8 +69,6 @@ import * as yProtocolsAwareness from 'y-protocols/awareness';
 import { MonacoEditor, MonacoCodeEditor } from '@nimbalyst/runtime/editors';
 import { NimbalystMarkdownEditor } from '../components/editors/NimbalystMarkdownEditor';
 
-// Import DataModel platform service for datamodellm extension
-import { DataModelPlatformServiceImpl } from './DataModelPlatformServiceImpl';
 import { buildExtensionFileWriteInvocation } from './extensionFileWriteInvocation';
 
 // Declare importShim global from es-module-shims
@@ -140,6 +140,14 @@ ${exportNames.map((name) => `export const ${name} = __mod?.${name};`).join('\n')
     imports['react-dom/client'] = createModuleUrl('react-dom/client', deps['react-dom/client']);
     imports['react/jsx-runtime'] = createModuleUrl('react/jsx-runtime', deps['react/jsx-runtime']);
     imports['react/jsx-dev-runtime'] = createModuleUrl('react/jsx-dev-runtime', deps['react/jsx-dev-runtime']);
+    imports['@revolist/react-datagrid'] = createModuleUrl(
+      '@revolist/react-datagrid',
+      deps['@revolist/react-datagrid'],
+    );
+    imports['@revolist/revogrid'] = createModuleUrl(
+      '@revolist/revogrid',
+      deps['@revolist/revogrid'],
+    );
 
     imports['lexical'] = createModuleUrl('lexical', deps.lexical);
     imports['@lexical/react/LexicalComposerContext'] = createModuleUrl(
@@ -181,11 +189,6 @@ ${exportNames.map((name) => `export const ${name} = __mod?.${name};`).join('\n')
       '@nimbalyst/screenshot-service',
       deps['@nimbalyst/screenshot-service']
     );
-    imports['@nimbalyst/datamodel-platform-service'] = createModuleUrl(
-      '@nimbalyst/datamodel-platform-service',
-      deps['@nimbalyst/datamodel-platform-service']
-    );
-
     // @nimbalyst/runtime - umbrella module that re-exports common extension dependencies
     imports['@nimbalyst/runtime'] = createModuleUrl(
       '@nimbalyst/runtime',
@@ -414,7 +417,7 @@ CHECK:
   /**
    * Expose host dependencies on the window object for extensions to use.
    *
-   * IMPORTANT: Only React and Lexical are shared (singleton requirements).
+   * IMPORTANT: React, Lexical, and RevoGrid are shared (singleton requirements).
    * Extensions should bundle their own utility libraries (zustand, html2canvas, etc.)
    */
   private exposeHostDependencies(): void {
@@ -430,7 +433,7 @@ CHECK:
 
     // Use the imported modules from the top of this file
     // IMPORTANT: Use namespace imports (* as) to prevent tree-shaking in production builds
-    w.__nimbalyst_extensions = {
+    const hostDependencies = Object.freeze({
       // React core - multiple instances break hooks
       react: React,
       // Compat shape: pre-React-19 extension bundles resolve createRoot off
@@ -440,6 +443,10 @@ CHECK:
       'react-dom/client': ReactDOMClient,
       'react/jsx-runtime': jsxRuntime,
       'react/jsx-dev-runtime': shimmedJsxDevRuntime,
+      // RevoGrid's Stencil runtime registers <revo-grid> globally. Every
+      // extension and built-in tracker grid must resolve this one host copy.
+      '@revolist/react-datagrid': ReactDataGrid,
+      '@revolist/revogrid': RevoGridCore,
       // Lexical - extensions contribute nodes to host's editor
       lexical: lexical,
       '@lexical/react/LexicalComposerContext': lexicalReact,
@@ -465,11 +472,6 @@ CHECK:
       '@nimbalyst/screenshot-service': {
         screenshotService,
       },
-      // Extension-specific services
-      '@nimbalyst/datamodel-platform-service': {
-        DataModelPlatformServiceImpl,
-        getInstance: () => DataModelPlatformServiceImpl.getInstance(),
-      },
       // @nimbalyst/runtime - umbrella re-export of common extension dependencies
       // Extensions can import { MaterialSymbol, useDocumentPath, useEditorLifecycle, ... } from '@nimbalyst/runtime'
       '@nimbalyst/runtime': {
@@ -493,7 +495,13 @@ CHECK:
         // (see calc-sheets CalcSheetShareViewer).
         MonacoCodeEditor,
       },
-    };
+    });
+    Object.defineProperty(w, '__nimbalyst_extensions', {
+      value: hostDependencies,
+      writable: false,
+      configurable: false,
+      enumerable: false,
+    });
 
     // console.log('[ExtensionPlatformService] Host dependencies exposed');
   }

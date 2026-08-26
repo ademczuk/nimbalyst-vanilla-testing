@@ -311,6 +311,7 @@ export type WorkerRequestType =
   | 'walCheckpoint'
   | 'toolRetentionEstimate'
   | 'toolRetentionRun'
+  | 'rawMessagePruneRun'
   | 'setBackupCopiesKept';
 
 /** Payload for the tool-output retention estimate and pass. */
@@ -318,6 +319,11 @@ export interface ToolRetentionPayload {
   retentionDays: number;
   /** Cap on rows examined in one run; omit for "until done". */
   maxRows?: number;
+  /**
+   * Prune lane only: delete frames that render nothing regardless of age.
+   * Ignored by the retention/tombstone lane, where the cutoff is load-bearing.
+   */
+  ignoreAge?: boolean;
 }
 
 export type WorkerEventType =

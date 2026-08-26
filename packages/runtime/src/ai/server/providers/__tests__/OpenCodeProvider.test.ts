@@ -138,7 +138,7 @@ describe('OpenCodeProvider', () => {
       createClient,
     });
 
-    const models = await OpenCodeProvider.getModels();
+    const models = await OpenCodeProvider.getModels('/workspace-a');
 
     expect(models.length).toBeGreaterThan(0);
     expect(models).toEqual(expect.arrayContaining([
@@ -150,6 +150,41 @@ describe('OpenCodeProvider', () => {
     ]));
     expect(ensureRunning).not.toHaveBeenCalled();
     expect(createClient).not.toHaveBeenCalled();
+  });
+
+  // #1382: getModels() used to take no workspace at all, so the session model
+  // picker read a context-free catalog and every install saw the hardcoded
+  // presets no matter what discovery had already persisted.
+  it('serves the discovered catalog to the session model picker, not presets', async () => {
+    const discovered = {
+      id: 'opencode:local-gateway/acme-17b',
+      name: 'Acme 17B',
+      provider: 'opencode' as const,
+    };
+    configureOpenCodeModelCatalog({
+      getCacheKey: (workspacePath) => `identity:${workspacePath}`,
+      loadCache: (workspacePath) =>
+        workspacePath === '/workspace-a'
+          ? {
+              version: 2,
+              cacheKey: 'identity:/workspace-a',
+              workspacePath: '/workspace-a',
+              models: [discovered],
+              refreshedAt: Date.now(),
+            }
+          : null,
+      getServerManager: () => ({
+        isRunning: false,
+        baseUrl: 'http://127.0.0.1:19999',
+        ensureRunning: vi.fn(),
+        release: vi.fn(),
+      }),
+    });
+
+    expect(await OpenCodeProvider.getModels('/workspace-a')).toContainEqual(discovered);
+    // A caller with genuinely no workspace still gets presets -- but it has to
+    // say so, and it must not borrow workspace A's discovery result.
+    expect(await OpenCodeProvider.getModels(undefined)).not.toContainEqual(discovered);
   });
 
   it('replaces presets with provider.list results once discovery succeeds', async () => {

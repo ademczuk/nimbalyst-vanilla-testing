@@ -1,0 +1,56 @@
+/**
+ * The element defaults every component in this package assumes.
+ *
+ * These components are authored against desktop's Tailwind config, which has
+ * Preflight on. A `<button>` is expected to arrive with no border, no
+ * background, no padding, inheriting its font and its text alignment, and each
+ * component then adds back only what it wants (`bg-nim-active`, `px-2 py-1.5`,
+ * `text-left`).
+ *
+ * Not every host supplies Preflight. The web console deliberately does not --
+ * its own chrome predates Tailwind and names every button explicitly, so a
+ * global reset there would restyle every admin and auth page to fix one
+ * surface. Without these defaults the ~25-row type tree, the saved-view list
+ * and every list row painted as user-agent push buttons: a 2px outset border on
+ * `buttonface`, centered text, 1px 6px of padding. That is the "heavy boxy
+ * cards" look, and it was never a styling choice anyone made.
+ *
+ * The assumption belongs to these components, so it ships with them rather than
+ * with any one host. A host-side reset also cannot reach markup these
+ * components portal out of the tree: `TrackerColumnFilterPopover` renders
+ * through `FloatingPortal` onto `document.body`, so it escaped the console's
+ * subtree-scoped copy of this rule and kept painting native buttons after the
+ * rest of the surface was fixed.
+ *
+ * Scoped to this package's own component roots -- never to a host's markup, so
+ * importing us cannot restyle the app around us, and adding a root is an edit
+ * in the same package as the component that needs it. `:where()` holds the
+ * specificity at zero: on a host that does have Preflight this restates what
+ * Preflight already said, and any real rule outranks it on either host.
+ */
+:where(
+  .tracker-navigation,
+  .tracker-list-view,
+  .tracker-grid-view,
+  .tracker-kanban-board,
+  .tracker-item-detail,
+  .tracker-comments-section,
+  .tracker-column-filter-popover,
+  .tracker-card-popover,
+  .tracker-surface-message,
+  .tracker-dependency-cycle-banner,
+  .tracker-mutation-rejection,
+  .tracker-personal-clause-notice
+) button {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  background-image: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+  text-transform: none;
+  cursor: pointer;
+}

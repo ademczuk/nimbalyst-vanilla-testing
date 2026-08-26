@@ -32,6 +32,8 @@ import { PromptQueueList } from './PromptQueueList';
 import { TranscriptEmbeddedFileCard } from './TranscriptEmbeddedFileCard';
 import { getDiffPeekSizeForInteractiveWidgetHost } from './interactiveWidgetHostProxy';
 import { createFeedbackComposeHost } from '../FeedbackRequest/createFeedbackComposeHost';
+import { renderComposeArtifactPreview } from '../FeedbackRequest/lazyFeedbackOptionPreview';
+import { renderComposeArtifactPopover } from '../FeedbackRequest/composeArtifactPopover';
 import { customEditorRegistry } from '../CustomEditors/registry';
 import { useDialog } from '../../contexts/DialogContext';
 import { FileGutter } from '../AIChat/FileGutter';
@@ -114,6 +116,13 @@ import {
 } from '../../store/atoms/terminals';
 import { scrollToTeammateAtom, scrollToMessageAtom, requestOpenSessionAtom } from '../../store/atoms/agentMode';
 import { usePostHog } from 'posthog-js/react';
+import { trackSendWallEvent } from '../../utils/sendWallAnalytics';
+import {
+  bucketPromptLength,
+  toStableAnalyticsCategory,
+  type ComposerDisabledReason,
+  type SendBlockedReason,
+} from '../../../shared/analytics/sendOutcomes';
 import { setAgentModeSettingsAtom, showPromptAdditionsAtom, hasExternalEditorAtom, externalEditorNameAtom, openInExternalEditorAtom, defaultAgentModelAtom, defaultEffortLevelAtom, defaultThinkingModeAtom, chatShowToolCallsAtom, developerModeAtom } from '../../store/atoms/appSettings';
 import { supportsEffortLevel, supportsThinkingToggle, parseEffortLevel, resolveThinkingMode, type EffortLevel, type ThinkingMode } from '../../utils/modelUtils';
 import { buildPlanImplementationPrompt, resolvePlanFilePath } from '../../utils/pathUtils';
@@ -1138,11 +1147,63 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
     }
   }, [sessionId, getEffectiveDocumentContext, setDraftInput, setDraftAttachments, setLastSubmitAt, isQueueing, queuedPrompts, clearAIInputHistory]);
 
+  // What the composer looked like when this session opened. Once per session,
+  // not per render: we are trying to explain why people do not act on a screen,
+  // and today we do not record what the screen offered them.
+  const composerStateReportedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (composerStateReportedFor.current === sessionId) return;
+    composerStateReportedFor.current = sessionId;
+    const providerSelected = !!provider;
+    const modelSelected = !!currentModel;
+    const disabledReason: ComposerDisabledReason = !providerSelected
+      ? 'no_provider_selected'
+      : !modelSelected
+        ? 'no_models_available'
+        : 'none';
+    trackSendWallEvent('composer_state_reported', {
+      surface: 'transcript',
+      sendEnabled: disabledReason === 'none',
+      disabledReason,
+      providerSelected,
+      modelSelected,
+      provider: toStableAnalyticsCategory(provider),
+    });
+  }, [sessionId, provider, currentModel]);
+
   const handleSend = useCallback(async () => {
     // Read draft state imperatively — we deliberately don't subscribe to
     // these atoms in SessionTranscript (see SessionAIInput).
     const currentDraftInput = store.get(sessionDraftInputAtom(sessionId)) ?? '';
-    if (!currentDraftInput.trim() || !sessionData) return;
+
+    // The send wall: this event is the denominator, so it fires before every
+    // guard below, including the CLI branch that returns without ever reaching
+    // `ai:sendMessage`. Every path out of this function that is not a send must
+    // emit `ai_send_blocked` with a reason, or the funnel silently loses the
+    // attempt — which is the exact ambiguity this instrumentation removes.
+    const blocked = (reason: SendBlockedReason) =>
+      trackSendWallEvent('ai_send_blocked', {
+        surface: 'transcript',
+        reason,
+        provider: toStableAnalyticsCategory(provider),
+      });
+
+    trackSendWallEvent('ai_message_submit_attempted', {
+      surface: 'transcript',
+      provider: toStableAnalyticsCategory(provider),
+      promptLengthBucket: bucketPromptLength(currentDraftInput.trim().length),
+      isFirstMessageInSession: !sessionHasMessages,
+      sessionMode: toStableAnalyticsCategory(aiMode),
+    });
+
+    if (!currentDraftInput.trim()) {
+      blocked('empty_draft');
+      return;
+    }
+    if (!sessionData) {
+      blocked('no_session_data');
+      return;
+    }
 
     // claude-code-cli (subscription, NIM-806): the genuine `claude` CLI runs in
     // the terminal strip and is driven by its PTY, not the Agent SDK loop. The
@@ -1167,6 +1228,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       // that already has a prior turn writes keystrokes directly.
       if (!sessionHasMessages || isLoading) {
         handleQueue(cliMessage);
+        blocked('queued_cli_not_ready');
         return;
       }
       const attachments = store.get(sessionDraftAttachmentsAtom(sessionId)) ?? [];
@@ -1197,12 +1259,14 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
         recordClaudeActivity();
       } catch (error) {
         console.error('[SessionTranscript] Failed to submit claude-cli prompt:', error);
+        blocked('cli_submit_failed');
       }
       return;
     }
 
     if (isLoading) {
       handleQueue(currentDraftInput.trim());
+      blocked('queued_while_loading');
       return;
     }
 
@@ -1235,6 +1299,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
             messages: [...messages, errorMessage],
           },
         });
+        blocked('mode_switch_failed');
         return;
       }
 
@@ -1243,6 +1308,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
         setDraftInput('');
         setDraftAttachments([]);
         clearAIInputHistory(sessionId);
+        blocked('slash_command_only');
         return;
       }
     }
@@ -1279,6 +1345,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
         // (handles worktree sessions, workstreams, and single sessions properly)
         onClearAgentSession?.();
       }
+      blocked('slash_command_clear');
       return; // Don't send the /clear message to the AI
     }
 
@@ -1913,6 +1980,15 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
           sessionId,
         }).cancel(draftId),
 
+      // Lets the author see the mockups they are about to send. A draft's
+      // artifacts are always unpublished `file` refs -- nothing leaves the
+      // machine before approval -- so this is the local-file path, not the
+      // collaborative one.
+      renderFeedbackArtifactPreview: (entry, artifact) =>
+        renderComposeArtifactPreview(entry, artifact, workspacePath || null),
+      renderFeedbackArtifactPopover: (popoverProps) =>
+        renderComposeArtifactPopover(popoverProps, workspacePath || null),
+
       // Auto-commit
       autoCommitEnabled,
       setAutoCommitEnabled: (enabled: boolean) => {
@@ -2174,6 +2250,8 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       toolPermissionCancel: (...args) => liveHostRef.current!.toolPermissionCancel(...args),
       feedbackRequestSend: (...args) => liveHostRef.current!.feedbackRequestSend!(...args),
       feedbackRequestCancel: (...args) => liveHostRef.current!.feedbackRequestCancel!(...args),
+      renderFeedbackArtifactPreview: (...args) => liveHostRef.current!.renderFeedbackArtifactPreview!(...args),
+      renderFeedbackArtifactPopover: (...args) => liveHostRef.current!.renderFeedbackArtifactPopover!(...args),
       setAutoCommitEnabled: (...args) => liveHostRef.current!.setAutoCommitEnabled(...args),
       gitCommit: (...args) => liveHostRef.current!.gitCommit(...args),
       gitCommitCancel: (...args) => liveHostRef.current!.gitCommitCancel(...args),

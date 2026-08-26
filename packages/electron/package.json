@@ -68,7 +68,8 @@
     "@nimbalyst/mockuplm": "*",
     "@nimbalyst/runtime": "*",
     "@openai/codex-sdk": "^0.149.1",
-    "@revolist/react-datagrid": "^4.20.2",
+    "@revolist/react-datagrid": "4.21.4",
+    "@revolist/revogrid": "4.21.4",
     "@types/glob": "^8.1.0",
     "@types/js-yaml": "^4.0.9",
     "@types/marked": "^5.0.2",
@@ -272,6 +273,10 @@
       {
         "from": "out/sqlite-worker.bundle.js",
         "to": "sqlite-worker.bundle.js"
+      },
+      {
+        "from": "out/sqlite-verify-worker.bundle.js",
+        "to": "sqlite-verify-worker.bundle.js"
       },
       {
         "from": "out/history-diff-worker.bundle.js",

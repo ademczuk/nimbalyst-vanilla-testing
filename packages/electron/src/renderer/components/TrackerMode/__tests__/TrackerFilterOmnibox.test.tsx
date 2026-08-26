@@ -3,9 +3,11 @@ import { useState } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { TrackerFilterSet } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
-import { TrackerFilterOmnibox } from '../TrackerFilterOmnibox';
-import { dispatchTrackerFocusSearch } from '../trackerSearchFocus';
-import type { TrackerFilterField } from '../TrackerViewHeaderControls';
+import {
+  dispatchTrackerFocusSearch,
+  TrackerFilterOmnibox,
+  type TrackerFilterField,
+} from '@nimbalyst/collab-client/trackers-ui';
 
 const FIELDS: TrackerFilterField[] = [
   {
@@ -21,7 +23,10 @@ const FIELDS: TrackerFilterField[] = [
   { id: 'assignee', label: 'Assignee', type: 'user' },
 ];
 
-const TAGS = [{ name: 'ui', count: 4 }, { name: 'urgent', count: 2 }];
+const TAGS = [
+  { name: 'ui', count: 4 },
+  { name: 'urgent', count: 2 },
+];
 
 interface HarnessProps {
   onSearchQueryChange?: (value: string) => void;
@@ -48,28 +53,31 @@ function Harness({
   className,
 }: HarnessProps) {
   const [query, setQuery] = useState(initialQuery);
-  const [filters, setFilters] = useState<TrackerFilterSet | null>(initialFilters);
+  const [filters, setFilters] = useState<TrackerFilterSet | null>(
+    initialFilters
+  );
   const [tags, setTags] = useState<string[]>(initialTags);
-  const tagProps = withTags || initialTags.length > 0
-    ? {
-        tagOptions: TAGS.filter(tag => !tags.includes(tag.name)),
-        tagFilter: tags,
-        onTagFilterChange: (next: string[]) => {
-          setTags(next);
-          onTagFilterChange?.(next);
-        },
-      }
-    : {};
+  const tagProps =
+    withTags || initialTags.length > 0
+      ? {
+          tagOptions: TAGS.filter((tag) => !tags.includes(tag.name)),
+          tagFilter: tags,
+          onTagFilterChange: (next: string[]) => {
+            setTags(next);
+            onTagFilterChange?.(next);
+          },
+        }
+      : {};
   return (
     <TrackerFilterOmnibox
       searchQuery={query}
-      onSearchQueryChange={value => {
+      onSearchQueryChange={(value) => {
         setQuery(value);
         onSearchQueryChange?.(value);
       }}
       fields={FIELDS}
       filters={filters}
-      onFiltersChange={next => {
+      onFiltersChange={(next) => {
         setFilters(next);
         onFiltersChange?.(next);
       }}
@@ -80,14 +88,21 @@ function Harness({
   );
 }
 
-const input = () => screen.getByTestId('tracker-filter-omnibox-input') as HTMLInputElement;
-const type = (value: string) => fireEvent.change(input(), { target: { value } });
+const input = () =>
+  screen.getByTestId('tracker-filter-omnibox-input') as HTMLInputElement;
+const type = (value: string) =>
+  fireEvent.change(input(), { target: { value } });
 
 describe('TrackerFilterOmnibox', () => {
   it('drives the shared search query with plain text and leaves filters alone', () => {
     const onSearchQueryChange = vi.fn();
     const onFiltersChange = vi.fn();
-    render(<Harness onSearchQueryChange={onSearchQueryChange} onFiltersChange={onFiltersChange} />);
+    render(
+      <Harness
+        onSearchQueryChange={onSearchQueryChange}
+        onFiltersChange={onFiltersChange}
+      />
+    );
 
     type('needs review');
 
@@ -96,12 +111,12 @@ describe('TrackerFilterOmnibox', () => {
     expect(input().value).toBe('needs review');
   });
 
-  it('offers fields for a bare word without stealing Enter from search', () => {
+  it('offers fields for a bare word without stealing Enter from search', async () => {
     const onFiltersChange = vi.fn();
     render(<Harness onFiltersChange={onFiltersChange} />);
 
     type('stat');
-    screen.getByTestId('tracker-filter-omnibox-option-field:status');
+    await screen.findByTestId('tracker-filter-omnibox-option-field:status');
     // Nothing is highlighted, so Enter is still an ordinary search keystroke.
     expect(document.querySelector('[data-selected="true"]')).toBeNull();
 
@@ -110,7 +125,7 @@ describe('TrackerFilterOmnibox', () => {
     expect(input().value).toBe('stat');
   });
 
-  it('turns a highlighted field suggestion into a token, keeping earlier search text', () => {
+  it('turns a highlighted field suggestion into a token, keeping earlier search text', async () => {
     const onSearchQueryChange = vi.fn();
     render(<Harness onSearchQueryChange={onSearchQueryChange} />);
 
@@ -120,7 +135,7 @@ describe('TrackerFilterOmnibox', () => {
 
     expect(input().value).toBe('auth status:');
     expect(onSearchQueryChange).toHaveBeenLastCalledWith('auth ');
-    screen.getByTestId('tracker-filter-omnibox-option-value:open');
+    await screen.findByTestId('tracker-filter-omnibox-option-value:open');
   });
 
   it('commits a value from the typeahead into the shared filter set', () => {
@@ -136,7 +151,9 @@ describe('TrackerFilterOmnibox', () => {
     });
     // The token leaves the input; it is a pill now.
     expect(input().value).toBe('');
-    expect(screen.getByTestId('tracker-filter-omnibox-pill-0').textContent).toContain('Open');
+    expect(
+      screen.getByTestId('tracker-filter-omnibox-pill-0').textContent
+    ).toContain('Open');
   });
 
   it('walks the menu with the arrow keys', () => {
@@ -158,8 +175,11 @@ describe('TrackerFilterOmnibox', () => {
     render(
       <Harness
         onFiltersChange={onFiltersChange}
-        initialFilters={{ combinator: 'and', clauses: [{ field: 'status', op: '=', value: 'open' }] }}
-      />,
+        initialFilters={{
+          combinator: 'and',
+          clauses: [{ field: 'status', op: '=', value: 'open' }],
+        }}
+      />
     );
 
     type('status:done');
@@ -197,12 +217,14 @@ describe('TrackerFilterOmnibox', () => {
     });
   });
 
-  it('reaches an operator the default spelling does not cover', () => {
+  it('reaches an operator the default spelling does not cover', async () => {
     const onFiltersChange = vi.fn();
     render(<Harness onFiltersChange={onFiltersChange} />);
 
     type('title:');
-    fireEvent.mouseDown(screen.getByTestId('tracker-filter-omnibox-option-op:not-contains'));
+    fireEvent.mouseDown(
+      await screen.findByTestId('tracker-filter-omnibox-option-op:not-contains')
+    );
     expect(input().value).toBe('title:not-contains:');
 
     type('title:not-contains:draft');
@@ -225,7 +247,7 @@ describe('TrackerFilterOmnibox', () => {
             { field: 'title', op: 'contains', value: 'auth' },
           ],
         }}
-      />,
+      />
     );
 
     fireEvent.keyDown(input(), { key: 'Backspace' });
@@ -239,8 +261,11 @@ describe('TrackerFilterOmnibox', () => {
   it('pulls a pill back into the input for editing', () => {
     render(
       <Harness
-        initialFilters={{ combinator: 'and', clauses: [{ field: 'title', op: 'contains', value: 'a b' }] }}
-      />,
+        initialFilters={{
+          combinator: 'and',
+          clauses: [{ field: 'title', op: 'contains', value: 'a b' }],
+        }}
+      />
     );
 
     fireEvent.click(screen.getByTitle('Edit title:"a b"'));
@@ -249,13 +274,19 @@ describe('TrackerFilterOmnibox', () => {
     expect(screen.queryByTestId('tracker-filter-omnibox-pill-0')).toBeNull();
   });
 
-  it('keeps `#` tag completion working, as the box it replaced did', () => {
+  it('keeps `#` tag completion working, as the box it replaced did', async () => {
     const onTagFilterChange = vi.fn();
     const onSearchQueryChange = vi.fn();
-    render(<Harness withTags onTagFilterChange={onTagFilterChange} onSearchQueryChange={onSearchQueryChange} />);
+    render(
+      <Harness
+        withTags
+        onTagFilterChange={onTagFilterChange}
+        onSearchQueryChange={onSearchQueryChange}
+      />
+    );
 
     type('auth #u');
-    screen.getByTestId('tracker-filter-omnibox-option-tag:ui');
+    await screen.findByTestId('tracker-filter-omnibox-option-tag:ui');
     screen.getByTestId('tracker-filter-omnibox-option-tag:urgent');
 
     fireEvent.keyDown(input(), { key: 'ArrowDown' });
@@ -281,19 +312,28 @@ describe('TrackerFilterOmnibox', () => {
 
   it('renders existing tag filters as removable chips', () => {
     const onTagFilterChange = vi.fn();
-    render(<Harness initialTags={['ui', 'urgent']} onTagFilterChange={onTagFilterChange} />);
+    render(
+      <Harness
+        initialTags={['ui', 'urgent']}
+        onTagFilterChange={onTagFilterChange}
+      />
+    );
 
-    expect(screen.getByTestId('tracker-filter-omnibox-tag-chip-ui').textContent).toContain('#ui');
+    expect(
+      screen.getByTestId('tracker-filter-omnibox-tag-chip-ui').textContent
+    ).toContain('#ui');
     fireEvent.click(screen.getByTestId('tracker-filter-omnibox-tag-chip-ui'));
     expect(onTagFilterChange).toHaveBeenCalledWith(['urgent']);
   });
 
-  it('drops an already-applied tag from the completion list', () => {
+  it('drops an already-applied tag from the completion list', async () => {
     render(<Harness initialTags={['ui']} />);
 
     type('#u');
-    expect(screen.queryByTestId('tracker-filter-omnibox-option-tag:ui')).toBeNull();
-    screen.getByTestId('tracker-filter-omnibox-option-tag:urgent');
+    expect(
+      screen.queryByTestId('tracker-filter-omnibox-option-tag:ui')
+    ).toBeNull();
+    await screen.findByTestId('tracker-filter-omnibox-option-tag:urgent');
   });
 
   it('pops the last tag before the last clause on Backspace', () => {
@@ -304,8 +344,11 @@ describe('TrackerFilterOmnibox', () => {
         initialTags={['ui']}
         onTagFilterChange={onTagFilterChange}
         onFiltersChange={onFiltersChange}
-        initialFilters={{ combinator: 'and', clauses: [{ field: 'status', op: '=', value: 'open' }] }}
-      />,
+        initialFilters={{
+          combinator: 'and',
+          clauses: [{ field: 'status', op: '=', value: 'open' }],
+        }}
+      />
     );
 
     fireEvent.keyDown(input(), { key: 'Backspace' });
@@ -313,7 +356,10 @@ describe('TrackerFilterOmnibox', () => {
     expect(onFiltersChange).not.toHaveBeenCalled();
 
     fireEvent.keyDown(input(), { key: 'Backspace' });
-    expect(onFiltersChange).toHaveBeenCalledWith({ combinator: 'and', clauses: [] });
+    expect(onFiltersChange).toHaveBeenCalledWith({
+      combinator: 'and',
+      clauses: [],
+    });
   });
 
   it('suppresses its own pills where the surface already shows them', () => {
@@ -322,14 +368,21 @@ describe('TrackerFilterOmnibox', () => {
         showPills={false}
         initialTags={['ui']}
         className="flex-1 max-w-[420px]"
-        initialFilters={{ combinator: 'and', clauses: [{ field: 'status', op: '=', value: 'open' }] }}
-      />,
+        initialFilters={{
+          combinator: 'and',
+          clauses: [{ field: 'status', op: '=', value: 'open' }],
+        }}
+      />
     );
 
     expect(screen.queryByTestId('tracker-filter-omnibox-pills')).toBeNull();
-    expect(screen.queryByTestId('tracker-filter-omnibox-tag-chip-ui')).toBeNull();
+    expect(
+      screen.queryByTestId('tracker-filter-omnibox-tag-chip-ui')
+    ).toBeNull();
     // Layout is the surface's call, not the component's.
-    expect(screen.getByTestId('tracker-filter-omnibox').className).toContain('max-w-[420px]');
+    expect(screen.getByTestId('tracker-filter-omnibox').className).toContain(
+      'max-w-[420px]'
+    );
   });
 
   it('clears the search text and every filter at once', () => {
@@ -340,19 +393,27 @@ describe('TrackerFilterOmnibox', () => {
         initialQuery="auth"
         onSearchQueryChange={onSearchQueryChange}
         onFiltersChange={onFiltersChange}
-        initialFilters={{ combinator: 'and', clauses: [{ field: 'status', op: '=', value: 'open' }] }}
-      />,
+        initialFilters={{
+          combinator: 'and',
+          clauses: [{ field: 'status', op: '=', value: 'open' }],
+        }}
+      />
     );
 
     fireEvent.click(screen.getByTestId('tracker-filter-omnibox-clear'));
 
     expect(onSearchQueryChange).toHaveBeenLastCalledWith('');
-    expect(onFiltersChange).toHaveBeenLastCalledWith({ combinator: 'and', clauses: [] });
+    expect(onFiltersChange).toHaveBeenLastCalledWith({
+      combinator: 'and',
+      clauses: [],
+    });
   });
 
   it('clears tag filters too', () => {
     const onTagFilterChange = vi.fn();
-    render(<Harness initialTags={['ui']} onTagFilterChange={onTagFilterChange} />);
+    render(
+      <Harness initialTags={['ui']} onTagFilterChange={onTagFilterChange} />
+    );
 
     fireEvent.click(screen.getByTestId('tracker-filter-omnibox-clear'));
     expect(onTagFilterChange).toHaveBeenCalledWith([]);

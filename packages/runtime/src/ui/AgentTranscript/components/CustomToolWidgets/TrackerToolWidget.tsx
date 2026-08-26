@@ -11,6 +11,7 @@
  */
 
 import React from 'react';
+import { DEFAULT_TRACKER_TYPE_COLORS } from '../../../../plugins/TrackerPlugin/models/trackerTypeIdentity';
 import type { CustomToolWidgetProps } from './index';
 
 // ---------- Types ----------
@@ -127,16 +128,13 @@ function navigateToTrackerItem(itemId: string): void {
 
 // ---------- Style constants ----------
 
-const TYPE_COLORS: Record<string, string> = {
-  bug: '#f87171',
-  task: '#60a5fa',
-  plan: '#a78bfa',
-  idea: '#fbbf24',
-  decision: '#4ade80',
-  feature: '#10b981',
-};
-
-const getTypeColor = (type: string) => TYPE_COLORS[type] || 'var(--nim-text-muted)';
+/**
+ * The built-in accents, from the one map that defines them. This was a private
+ * fourth copy that had drifted: `decision` was green here and violet in the
+ * other three, so the same item changed color between the transcript and the
+ * tracker it was written to.
+ */
+const getTypeColor = (type: string) => DEFAULT_TRACKER_TYPE_COLORS[type] || 'var(--nim-text-muted)';
 
 const STATUS_COLORS: Record<string, string> = {
   'done': '#4ade80',
@@ -166,8 +164,12 @@ const TypeBadge: React.FC<{ type: string }> = ({ type }) => (
       borderRadius: '10px',
       fontWeight: 600,
       lineHeight: '18px',
-      background: `${getTypeColor(type)}22`,
-      color: getTypeColor(type),
+      // Derived against the theme rather than by hex concatenation: the accents
+      // above are 600-level and print at ~3:1 on a dark transcript, and the
+      // `var(--nim-text-muted)` fallback made `${color}22` an invalid
+      // declaration, so an unrecognized type silently lost its fill.
+      background: `color-mix(in srgb, ${getTypeColor(type)} 15%, transparent)`,
+      color: `color-mix(in oklab, ${getTypeColor(type)} 55%, var(--nim-text))`,
       textTransform: 'uppercase',
       letterSpacing: '0.5px',
     }}

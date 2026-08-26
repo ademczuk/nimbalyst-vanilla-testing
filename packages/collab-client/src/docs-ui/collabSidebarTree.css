@@ -1,0 +1,83 @@
+/**
+ * Row chrome for the shared-documents tree.
+ *
+ * `CollabSidebar` writes its rows with the app's `file-tree-*` convention, which
+ * the desktop styles in its own renderer stylesheet for its *local* file tree.
+ * The browser console never received that sheet, so every row painted as a
+ * default bordered <button> until the console restated ~50 lines of it under
+ * `.browser-collab-tree`. Restating it host-side is how the two trees drift, so
+ * the rules ship with the component instead.
+ *
+ * Scoped to `.collab-sidebar` on purpose. The class names are generic and the
+ * desktop's real file tree uses the same ones; an unscoped rule here would
+ * reach across and restyle it.
+ *
+ * Element defaults (border, background, font) are declared rather than assumed:
+ * the browser host runs with Tailwind Preflight on and the desktop with its own
+ * reset, and a row must look the same under both.
+ */
+
+.collab-sidebar .file-tree-directory,
+.collab-sidebar .file-tree-file {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 28px;
+  padding: 2px 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 4px;
+  color: var(--nim-text);
+  background: transparent;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.1s;
+}
+
+.collab-sidebar .file-tree-directory:hover,
+.collab-sidebar .file-tree-file:hover {
+  background-color: var(--nim-bg-hover);
+}
+
+.collab-sidebar .file-tree-file.active,
+.collab-sidebar .file-tree-directory.selected {
+  background-color: var(--nim-bg-selected);
+}
+
+.collab-sidebar .file-tree-chevron {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  margin-right: 2px;
+  color: var(--nim-text-muted);
+}
+
+.collab-sidebar .file-tree-spacer {
+  flex-shrink: 0;
+  width: 18px;
+}
+
+.collab-sidebar .file-tree-icon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  color: var(--nim-text-muted);
+}
+
+.collab-sidebar .file-tree-file.active .file-tree-icon,
+.collab-sidebar .file-tree-directory.selected .file-tree-icon,
+.collab-sidebar .file-tree-directory.selected .file-tree-chevron {
+  color: var(--nim-text);
+}
+
+.collab-sidebar .file-tree-name {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+}

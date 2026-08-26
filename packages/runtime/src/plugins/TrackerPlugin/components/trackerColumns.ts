@@ -8,8 +8,7 @@
  */
 
 import type { TrackerRecord } from '../../../core/TrackerRecord';
-import type { TrackerSchemaRole, FieldDefinition } from '../models/TrackerDataModel';
-import { globalRegistry } from '../models';
+import { globalRegistry, type FieldDefinition, type TrackerSchemaRole } from '../models/TrackerDataModel';
 import { defaultTrackerTypeColor, defaultTrackerTypeIcon } from '../models/trackerTypeIdentity';
 import { isDateOnlyValue, parseDate } from '../models/dateUtils';
 import { resolveDisplayIssueKey } from '../models/localIssueKey';

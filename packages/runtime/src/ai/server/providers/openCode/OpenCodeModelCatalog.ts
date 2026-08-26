@@ -50,7 +50,12 @@ export interface OpenCodeModelCatalogSnapshot {
 }
 
 export interface OpenCodeModelCatalogDependencies {
-  loadCache?: () => unknown | Promise<unknown>;
+  /**
+   * Read this workspace's persisted catalog. Hosts key their storage by
+   * workspace: OpenCode resolves providers from project-level config, so one
+   * project's discovery result is not an answer for another (#1382).
+   */
+  loadCache?: (workspacePath: string) => unknown | Promise<unknown>;
   saveCache?: (cache: OpenCodeModelCatalogCache) => void | Promise<void>;
   getCacheKey?: (workspacePath: string) => string | Promise<string>;
   /**
@@ -100,19 +105,23 @@ export function resetOpenCodeModelCatalogForTests(): void {
 }
 
 /**
- * Read the matching workspace cache and opportunistically refresh it only when
- * an OpenCode server is already alive. A context-free read returns only the
- * offline fallback, so it cannot borrow another workspace's discovery result.
- * This function never starts a server.
+ * Read this workspace's cache and opportunistically refresh it only when an
+ * OpenCode server is already alive. This function never starts a server.
+ *
+ * `workspacePath` is required on purpose. It used to be optional and silently
+ * degraded to the preset list, which reads exactly like a real catalog -- so
+ * two of four call sites omitted it and every install's model picker showed
+ * seven hardcoded models forever (#1382). A caller that genuinely has no
+ * workspace must say so by naming getOpenCodeColdModelCatalog().
  */
 export async function getOpenCodeModelCatalog(
-  workspacePath?: string
+  workspacePath: string
 ): Promise<OpenCodeModelCatalogSnapshot> {
   const normalizedWorkspacePath = workspacePath?.trim();
-  const cached = await readCachedCatalog(normalizedWorkspacePath);
   if (!normalizedWorkspacePath) {
-    return cached;
+    throw new Error('OpenCode model catalog read requires workspacePath');
   }
+  const cached = await readCachedCatalog(normalizedWorkspacePath);
   const manager = dependencies.getServerManager();
   if (!manager.isRunning) {
     return cached;
@@ -150,17 +159,23 @@ export async function refreshOpenCodeModelCatalog(
   }
 }
 
+/**
+ * The offline fallback on its own: the preset list plus whatever the user has
+ * already selected, with no discovery behind it. Only for hosts that have no
+ * workspace to read for -- mobile model sync, a picker opened outside any
+ * project. Naming it is the point; see getOpenCodeModelCatalog().
+ */
+export async function getOpenCodeColdModelCatalog(): Promise<OpenCodeModelCatalogSnapshot> {
+  return coldCatalog(await readRetainedModelIds());
+}
+
 async function readCachedCatalog(
-  workspacePath?: string
+  workspacePath: string
 ): Promise<OpenCodeModelCatalogSnapshot> {
   const retained = await readRetainedModelIds();
 
-  if (!workspacePath) {
-    return coldCatalog(retained);
-  }
-
   const [rawCache, cacheKey] = await Promise.all([
-    dependencies.loadCache(),
+    dependencies.loadCache(workspacePath),
     dependencies.getCacheKey(workspacePath),
   ]);
   const cache = normalizeCache(rawCache, workspacePath);

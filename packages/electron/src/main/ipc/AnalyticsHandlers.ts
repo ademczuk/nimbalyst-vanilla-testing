@@ -14,6 +14,13 @@ export function registerAnalyticsHandlers() {
     return analytics.getDistinctId();
   });
 
+  // Release attribution for the renderer's PostHog super-properties, so both
+  // sides stamp the same values from the same source rather than each deriving
+  // its own from env vars.
+  safeHandle("analytics:get-release-attribution", (): { release_channel: string; build_type: string } => {
+    return analytics.releaseAttributionForRenderer();
+  });
+
   safeHandle("analytics:opt-in", async (): Promise<void> => {
     return await analytics.optIn();
   });

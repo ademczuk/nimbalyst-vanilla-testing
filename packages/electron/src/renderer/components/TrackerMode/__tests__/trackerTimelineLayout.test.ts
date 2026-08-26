@@ -21,7 +21,7 @@ import {
   buildTrackerTimeline,
   resolveTimelineDates,
   timelineBucketKey,
-} from '../trackerTimelineLayout';
+} from '@nimbalyst/collab-client/trackers';
 
 function record(
   id: string,

@@ -53,6 +53,34 @@ describe('slimClaudeCodeChunkForStorage', () => {
     expect((chunk.message.content[0] as any).signature).toHaveLength(12000);
   });
 
+  // An array-shaped tool_use_result used to skip the slim pass entirely, so a
+  // screenshot was stored twice in one row -- once here, once in message.content.
+  it('drops image blocks from an array tool_use_result but keeps text blocks', () => {
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'i'.repeat(400_000) } };
+    const chunk = {
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [image] }] },
+      tool_use_result: [{ type: 'text', text: 'Screenshot captured' }, image],
+    };
+
+    const slim = slimClaudeCodeChunkForStorage(chunk) as any;
+
+    expect(slim.tool_use_result).toEqual([{ type: 'text', text: 'Screenshot captured' }]);
+    // The copy the transcript actually renders is untouched.
+    expect(slim.message.content[0].content[0]).toBe(image);
+    // Input not mutated.
+    expect(chunk.tool_use_result).toHaveLength(2);
+  });
+
+  it('leaves an all-text array tool_use_result alone', () => {
+    const chunk = {
+      type: 'user',
+      message: { role: 'user', content: [] },
+      tool_use_result: [{ type: 'text', text: 'Query executed successfully.' }],
+    };
+    expect(slimClaudeCodeChunkForStorage(chunk)).toBe(chunk);
+  });
+
   it('returns the chunk unchanged when there is nothing to trim', () => {
     const chunk = { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] }, uuid: 'u' };
     expect(slimClaudeCodeChunkForStorage(chunk)).toBe(chunk);

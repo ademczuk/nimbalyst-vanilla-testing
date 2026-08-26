@@ -17,9 +17,11 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { computeTreeFingerprint } from './vitest-tree-fingerprint.mjs';
 
 const LOG_DIR = '.vitest';
 const LOG_FILE = 'last-run.log';
+const STATE_FILE = 'last-run.json';
 
 // Vitest colourises expected/received diffs. Escape codes are noise in a file
 // that gets opened in an editor as often as it gets `cat`ed.
@@ -30,6 +32,14 @@ const plain = (value) => String(value).replace(ANSI, '');
 export default class RunLogReporter {
   onTestRunStart() {
     this.startedAt = new Date();
+    // Fingerprint the tree the run is about to test, not the tree it finishes
+    // against. An edit made mid-run genuinely does invalidate these results,
+    // and recording the start state is what lets `test:last` say so.
+    try {
+      this.fingerprint = computeTreeFingerprint();
+    } catch {
+      this.fingerprint = null;
+    }
   }
 
   onTestRunEnd(testModules = [], unhandledErrors = [], reason = 'passed') {
@@ -66,12 +76,18 @@ export default class RunLogReporter {
     const ok = failed === 0 && unhandledErrors.length === 0;
     const rel = (p) => path.relative(process.cwd(), p);
 
-    lines.push('vitest run');
+    // A one-file run overwrites a full-suite run's record. Recording the argv
+    // makes a partial log say so, instead of quietly reading as "everything
+    // passed" and hiding the failures the full run had already found.
+    lines.push(`vitest ${process.argv.slice(2).join(' ') || 'run'}`);
     lines.push(`started:  ${this.startedAt?.toISOString() ?? 'unknown'}`);
     lines.push(`finished: ${new Date().toISOString()}`);
     lines.push(`reason:   ${reason}`);
     lines.push(
       `result:   ${ok ? 'PASS' : 'FAIL'} (${passed} passed, ${failed} failed, ${skipped} skipped)`,
+    );
+    lines.push(
+      `tree:     ${this.fingerprint ? `${this.fingerprint.digest} (run "npm run test:last" to check this still matches)` : 'unknown (no git repository)'}`,
     );
     lines.push('');
 
@@ -110,6 +126,24 @@ export default class RunLogReporter {
     try {
       fs.mkdirSync(LOG_DIR, { recursive: true });
       fs.writeFileSync(path.join(LOG_DIR, LOG_FILE), lines.join('\n'), 'utf-8');
+      // The machine-readable half. `test:last` reads this to decide whether the
+      // human log above is still describing the code on disk.
+      fs.writeFileSync(
+        path.join(LOG_DIR, STATE_FILE),
+        `${JSON.stringify(
+          {
+            finishedAt: new Date().toISOString(),
+            invocation: process.argv.slice(2).join(' '),
+            result: ok ? 'PASS' : 'FAIL',
+            counts: { passed, failed, skipped },
+            failingFiles: failuresByModule.map((f) => rel(f.moduleId)),
+            fingerprint: this.fingerprint ?? null,
+          },
+          null,
+          2,
+        )}\n`,
+        'utf-8',
+      );
       if (!ok) {
         console.error(`\n[run-log] ${failed} failure(s) recorded in ${LOG_DIR}/${LOG_FILE}`);
         console.error('[run-log] review with: npm run test:last');

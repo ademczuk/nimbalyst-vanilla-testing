@@ -9,7 +9,6 @@
  * - Visual canvas with drag-and-drop entities
  * - Crow's foot notation for relationships
  * - AI tools for schema manipulation
- * - Lexical integration for embedding data models in documents
  */
 
 import './styles.css';
@@ -24,15 +23,6 @@ import { createDataModelStore } from './store';
 import { parsePrismaSchema } from './prismaParser';
 import { captureDataModelCanvas } from './utils/screenshotUtils';
 
-// Lexical integration imports
-import {
-  DataModelNode,
-  DATAMODEL_TRANSFORMER,
-  DataModelPickerMenuHost,
-  showDataModelPickerMenu,
-  setDataModelPlatformService,
-} from './lexical';
-
 // Export types for consumers
 export type {
   Entity,
@@ -43,10 +33,6 @@ export type {
   DataModelFile,
 } from './types';
 
-
-// Export lexical integration
-export * from './lexical';
-
 /**
  * Extension activation
  * Called when the extension is loaded
@@ -54,24 +40,6 @@ export * from './lexical';
 export async function activate(context: ExtensionContext) {
   context.services.collab.registerContentAdapter(DataModelCollabContentAdapter);
   console.log('[DatamodelLM] Extension activated');
-
-  // Set up the platform service from the host
-  // The host exposes the DataModelPlatformService implementation via window.__nimbalyst_extensions
-  const hostExtensions = (window as any).__nimbalyst_extensions;
-  if (hostExtensions && hostExtensions['@nimbalyst/datamodel-platform-service']) {
-    const platformServiceModule = hostExtensions['@nimbalyst/datamodel-platform-service'];
-    const service = platformServiceModule.getInstance();
-
-    // Configure the showDataModelPicker method to use our picker menu
-    service.showDataModelPicker = showDataModelPickerMenu;
-
-    // Set the platform service for the Lexical integration
-    setDataModelPlatformService(service);
-
-    console.log('[DatamodelLM] Platform service initialized');
-  } else {
-    console.warn('[DatamodelLM] Host platform service not available - Lexical integration will not work');
-  }
 
   // Register screenshot capability with the global screenshot service
   const screenshotServiceModule = (window as any).__nimbalyst_extensions?.['@nimbalyst/screenshot-service'];
@@ -236,36 +204,12 @@ export const components = {
  */
 export const aiTools = datamodelAITools;
 
-/**
- * Lexical nodes exported by this extension
- * These are registered with the editor for embedding data models in documents.
- */
-export const nodes = {
-  DataModelNode,
-};
-
-/**
- * Markdown transformers exported by this extension
- * These handle import/export of data model references in markdown.
- */
-export const transformers = {
-  DATAMODEL_TRANSFORMER,
-};
-
-/**
- * Host components exported by this extension
- * These are mounted at the app level (e.g., picker menus).
- */
-export const hostComponents = {
-  DataModelPickerMenuHost,
-};
-
-/**
- * Slash command handlers exported by this extension
- * These are invoked when the user triggers the corresponding slash command.
- */
-export const slashCommandHandlers = {
-  handleInsertDataModel: () => {
-    showDataModelPickerMenu();
-  },
-};
+// Embedding a data model inside a markdown document is handled by the host's
+// editor-neutral embed system: `EmbeddedFileNode` upgrades a paragraph-isolated
+// link whose target has a registered custom editor, and `.prisma` qualifies via
+// the `customEditors` contribution below. This extension used to ship its own
+// Lexical node, markdown transformer, picker menu and `/datamodel` slash
+// command to do the same job; they were removed once the neutral path covered
+// it. Keeping them meant every consumer of this bundle -- including the browser
+// hosts, which register no extension Lexical nodes at all -- paid for a whole
+// Lexical dependency graph the ERD canvas never touches.

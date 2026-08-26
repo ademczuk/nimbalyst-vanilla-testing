@@ -22,7 +22,12 @@
  * ```
  */
 
-import type { EditorHost, EditorContext, EditorMenuItem } from './types/editor.js';
+import type {
+  EditorContext,
+  EditorHost,
+  EditorMenuItem,
+  EditorViewport,
+} from './types/editor.js';
 
 export interface ReadOnlyHostOptions {
   /** Current theme name (e.g., 'dark', 'light') */
@@ -39,6 +44,17 @@ export interface ReadOnlyHostOptions {
    * When true, extensions may suppress chrome that doesn't fit inline contexts.
    */
   embedded?: boolean;
+
+  /**
+   * Receives the editor's scroll viewport when it publishes one.
+   *
+   * Supplied only by a surface that shows several documents in sequence and
+   * wants to carry the reader's place between them -- the feedback detail
+   * popover comparing design alternatives. Absent, `registerViewport` is
+   * absent too, so an extension that checks before registering gets a straight
+   * answer rather than a silent no-op.
+   */
+  onViewportRegistered?(viewport: EditorViewport | null): void;
 }
 
 export interface ReadOnlyHost extends EditorHost {
@@ -92,6 +108,9 @@ export function createReadOnlyHost(
     openHistory: () => {},
     registerMenuItems: (_items: EditorMenuItem[]) => {},
     registerEditorAPI: () => {},
+    ...(opts.onViewportRegistered
+      ? { registerViewport: opts.onViewportRegistered }
+      : {}),
     setEditorContext: (_context: EditorContext | null) => {},
     setEditorContextItems: () => {},
 

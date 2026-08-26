@@ -4,7 +4,7 @@ import { Provider as JotaiProvider } from 'jotai';
 import { store } from '@nimbalyst/runtime/store';
 import { setInteractiveWidgetHost } from '@nimbalyst/runtime/store';
 // Deep imports to avoid the barrel @nimbalyst/runtime index which re-exports
-// Lexical plugins, MockupPlugin, TrackerPlugin, etc. and transitively pulls in
+// Lexical plugins, TrackerPlugin, etc. and transitively pulls in
 // Excalidraw (~18MB), Mermaid, and other heavy deps. The barrel's `export *`
 // prevents tree-shaking, producing a ~25MB bundle that crashes WKWebView.
 import { AgentTranscriptPanel } from '@nimbalyst/runtime/ui/AgentTranscript/components/AgentTranscriptPanel';

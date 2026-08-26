@@ -33,6 +33,10 @@
  */
 import type { Database as SqliteDatabase } from 'better-sqlite3';
 import { tombstoneRawContent } from '@nimbalyst/runtime/storage/toolOutputRetention';
+import {
+  classifyPrunableRawMessage,
+  type PruneReason,
+} from '@nimbalyst/runtime/storage/rawMessagePrune';
 
 /** Rows examined per background chunk. Sized to stay well under the
  *  coordinator's 50 ms slow-chunk warning on a cold cache. */
@@ -417,6 +421,303 @@ export function createToolOutputRetentionWork(
       }
 
       options.onProgress?.({ ...progress });
+      return { done: false };
+    },
+  };
+}
+
+/* ==========================================================================
+ * Prune lane -- delete rows that render nothing at all.
+ *
+ * The tombstone lane above rewrites a row's payload and keeps the row, because
+ * the tool card must still render in sequence. A frame the transcript has no
+ * branch for has no card to keep: tombstoning it preserves the row's fixed cost
+ * (~167 bytes of index per row across four full-table indexes, plus b-tree
+ * overhead) and reclaims only its content, which for these shapes is a couple
+ * of hundred bytes. Deleting is what actually recovers them.
+ *
+ * The decision of WHAT renders nothing is not made here. It lives in
+ * `@nimbalyst/runtime/storage/rawMessagePrune`, which derives it from the
+ * parsers themselves -- see that module's header for why a destructive path is
+ * allowed to trust it. This file only does row selection, batching and lane
+ * discipline, exactly as the tombstone lane does.
+ * ========================================================================== */
+
+/**
+ * Rows examined per prune chunk. Higher than the tombstone lane's 250 because
+ * the per-row work is a prefilter and usually not even a JSON.parse, where the
+ * tombstone lane parses, walks slots and re-serializes every candidate.
+ */
+const PRUNE_CHUNK_ROWS = 1000;
+
+export interface PruneProgress {
+  scanned: number;
+  deleted: number;
+  bytesFreed: number;
+  /** Per-reason counts, so a run can say what it removed and on what grounds. */
+  byReason: Record<PruneReason, number>;
+}
+
+export interface PruneResult extends PruneProgress {
+  durationMs: number;
+  cutoffIso: string;
+  stoppedEarly: boolean;
+}
+
+export type PruneOptions = Omit<RetentionOptions, 'onProgress'> & {
+  onProgress?: (p: PruneProgress) => void;
+  /**
+   * Drop the age filter entirely.
+   *
+   * The tombstone lane's cutoff answers "might the user still want to read
+   * this?", which is a real question about tool output and the reason that lane
+   * would never take this flag. It is not a real question here: a
+   * `thinking_tokens` tick or a superseded `agentMessage/delta` produces no
+   * transcript event on the day it is written, and the session-status guard --
+   * which is what actually protects a turn in flight -- applies either way.
+   *
+   * Off by default regardless, so age is dropped only when a caller says so.
+   */
+  ignoreAge?: boolean;
+};
+
+function emptyByReason(): Record<PruneReason, number> {
+  return { claudeCodeTransient: 0, codexAppServerTransient: 0, codexItemStartedNonRendering: 0 };
+}
+
+/**
+ * Prune candidates.
+ *
+ * Deliberately WIDER than `CANDIDATE_SQL`: that one restricts to
+ * `message_kind IN ('tool','meta')` because only those carry tool output, but
+ * the frames this lane removes are classified as `system` (claude-code
+ * `thinking_tokens`) as well as `meta` (codex notifications). Narrowing by
+ * `message_kind` here would silently skip the single largest population.
+ *
+ * Every other guard is the same, and for the same reasons: output only, older
+ * than the cutoff, known source, and never a session the user is mid-turn on.
+ */
+function pruneCandidateSql(ignoreAge: boolean): string {
+  return `
+  SELECT m.id, m.source, m.content
+  FROM ai_agent_messages m
+  JOIN ai_sessions s ON s.id = m.session_id
+  WHERE m.id > ?
+    ${ignoreAge ? '' : 'AND m.created_at < ?'}
+    AND m.direction = 'output'
+    AND (${SOURCE_PREDICATE})
+    AND s.status NOT IN ('running', 'waiting_for_input')
+  ORDER BY m.id ASC
+  LIMIT ?
+`;
+}
+
+interface PruneCandidateRow {
+  id: number;
+  source: string;
+  content: string;
+}
+
+/**
+ * Build the chunked prune work for `SQLiteDatabase.runBackground`.
+ *
+ * The progress callback fires per chunk rather than only at the end. That is
+ * deliberate: `.claude/rules/destructive-data-paths.md` requires a destructive
+ * pass to report before the process can die, and the #1347 recovery event was
+ * invisible for nine months precisely because it was only computed if the same
+ * process reached the end.
+ */
+export function createRawMessagePruneWork(
+  options: PruneOptions,
+  onDone: (result: PruneResult) => void,
+) {
+  const now = options.now ?? Date.now;
+  const log = options.log ?? (() => {});
+  const startedAt = now();
+  const ignoreAge = options.ignoreAge === true;
+  const cutoff = cutoffIso(options.retentionDays, startedAt);
+  const maxRows = options.maxRows ?? Number.POSITIVE_INFINITY;
+  const sql = pruneCandidateSql(ignoreAge);
+  const ageArgs = ignoreAge ? [] : [cutoff];
+
+  const progress: PruneProgress = {
+    scanned: 0, deleted: 0, bytesFreed: 0, byReason: emptyByReason(),
+  };
+  let lastId = 0;
+  let announced = false;
+
+  return {
+    name: 'raw-message-prune',
+    chunk(db: SqliteDatabase): { done: boolean } {
+      if (!announced) {
+        announced = true;
+        log(
+          'info',
+          '[RawPrune] starting: deleting non-rendering frames '
+            + (ignoreAge ? 'at any age' : `older than ${cutoff}`),
+        );
+      }
+
+      if (progress.scanned >= maxRows) {
+        onDone({ ...progress, durationMs: now() - startedAt, cutoffIso: cutoff, stoppedEarly: true });
+        return { done: true };
+      }
+
+      const rows = db
+        .prepare(sql)
+        .all(lastId, ...ageArgs, ...ELIGIBLE_SOURCE_PREFIXES, PRUNE_CHUNK_ROWS) as PruneCandidateRow[];
+
+      if (rows.length === 0) {
+        const breakdown = Object.entries(progress.byReason)
+          .map(([reason, n]) => `${reason}=${n}`).join(' ');
+        log(
+          'info',
+          `[RawPrune] complete: scanned=${progress.scanned} deleted=${progress.deleted} `
+            + `freed=${(progress.bytesFreed / 1024 / 1024).toFixed(1)}MB ${breakdown}`,
+        );
+        onDone({
+          ...progress,
+          durationMs: now() - startedAt,
+          cutoffIso: ignoreAge ? '' : cutoff,
+          stoppedEarly: false,
+        });
+        return { done: true };
+      }
+
+      const doomed: number[] = [];
+      for (const row of rows) {
+        lastId = row.id;
+        progress.scanned++;
+        const reason = classifyPrunableRawMessage(row.content, row.source);
+        if (reason === null) continue;
+        doomed.push(row.id);
+        progress.byReason[reason]++;
+        // Measured in JS from the string we already hold. Asking SQL for
+        // LENGTH(CAST(content AS BLOB)) alongside the column materializes every
+        // candidate row's payload a second time, and the candidate set here is
+        // most of the table.
+        progress.bytesFreed += Buffer.byteLength(row.content, 'utf8');
+      }
+
+      if (doomed.length > 0) {
+        // One statement per chunk rather than per row: the FTS delete trigger
+        // fires either way, and a single bounded IN-list keeps the write inside
+        // the coordinator's slow-chunk budget.
+        const placeholders = doomed.map(() => '?').join(',');
+        db.prepare(`DELETE FROM ai_agent_messages WHERE id IN (${placeholders})`).run(...doomed);
+        progress.deleted += doomed.length;
+      }
+
+      options.onProgress?.({ ...progress, byReason: { ...progress.byReason } });
+      return { done: false };
+    },
+  };
+}
+
+/* ==========================================================================
+ * Init-dedup lane -- collapse repeated system/init frames to one per session.
+ * ========================================================================== */
+
+/**
+ * `system/init` is the claude-code session header: model, cwd, tool list, MCP
+ * servers, slash commands. No transcript consumer renders it -- the raw-message
+ * parsers ignore every system subtype except `permission_denied` -- but it is
+ * kept on purpose for forensics, because it carries the SDK session id and the
+ * tool/MCP context a later investigation needs.
+ *
+ * The SDK re-emits it on every resume, so a session accumulates copies of a
+ * ~10 KB blob: 24,154 rows across 4,523 sessions on the measured install, 223
+ * MB, averaging 5.3 per session. Keeping the newest one per session preserves
+ * the entire forensic value -- it is the most complete and most recent picture
+ * of that session's environment -- and returns 170 MB.
+ *
+ * This is a narrower lane than the prune above and does not share its
+ * classifier, because the decision is not "does this frame render" (it does
+ * not, either way) but "is this copy redundant with a later one". That is a
+ * fact about the ROW SET, not about the row, so it needs the group-by.
+ */
+const INIT_DEDUP_SQL = `
+  SELECT m.id, LENGTH(CAST(m.content AS BLOB)) AS bytes
+  FROM ai_agent_messages m
+  JOIN ai_sessions s ON s.id = m.session_id
+  WHERE m.session_id = ?
+    AND m.direction = 'output'
+    AND m.source LIKE 'claude-code%'
+    AND m.message_kind = 'system'
+    AND m.content LIKE '{"type":"system"%'
+    AND json_extract(m.content, '$.subtype') = 'init'
+    AND s.status NOT IN ('running', 'waiting_for_input')
+  ORDER BY m.id ASC
+`;
+
+/** Sessions examined per chunk. Each one runs a small indexed lookup. */
+const INIT_DEDUP_SESSIONS_PER_CHUNK = 200;
+
+export interface InitDedupResult {
+  sessionsScanned: number;
+  deleted: number;
+  bytesFreed: number;
+  durationMs: number;
+}
+
+/**
+ * Build the chunked init-dedup work for `SQLiteDatabase.runBackground`.
+ *
+ * Sessions are walked in `id` order via a bounded cursor so no chunk can turn
+ * into an unbounded scan, matching every other lane in this file.
+ */
+export function createInitDedupWork(
+  options: { log?: (level: 'info' | 'warn', msg: string) => void; now?: () => number },
+  onDone: (result: InitDedupResult) => void,
+) {
+  const now = options.now ?? Date.now;
+  const log = options.log ?? (() => {});
+  const startedAt = now();
+
+  let sessionsScanned = 0;
+  let deleted = 0;
+  let bytesFreed = 0;
+  let lastSessionId = '';
+
+  return {
+    name: 'claude-code-init-dedup',
+    chunk(db: SqliteDatabase): { done: boolean } {
+      const sessions = db
+        .prepare(
+          `SELECT id FROM ai_sessions
+            WHERE id > ? AND status NOT IN ('running', 'waiting_for_input')
+            ORDER BY id ASC LIMIT ?`,
+        )
+        .all(lastSessionId, INIT_DEDUP_SESSIONS_PER_CHUNK) as Array<{ id: string }>;
+
+      if (sessions.length === 0) {
+        log(
+          'info',
+          `[InitDedup] complete: sessions=${sessionsScanned} deleted=${deleted} `
+            + `freed=${(bytesFreed / 1024 / 1024).toFixed(1)}MB`,
+        );
+        onDone({ sessionsScanned, deleted, bytesFreed, durationMs: now() - startedAt });
+        return { done: true };
+      }
+
+      const select = db.prepare(INIT_DEDUP_SQL);
+      for (const session of sessions) {
+        lastSessionId = session.id;
+        sessionsScanned++;
+
+        const inits = select.all(session.id) as Array<{ id: number; bytes: number }>;
+        if (inits.length < 2) continue;
+
+        // Keep the last one: highest id is the newest, so it reflects the
+        // session's final tool/MCP environment rather than its first.
+        const doomed = inits.slice(0, -1);
+        const placeholders = doomed.map(() => '?').join(',');
+        db.prepare(`DELETE FROM ai_agent_messages WHERE id IN (${placeholders})`)
+          .run(...doomed.map((r) => r.id));
+        deleted += doomed.length;
+        bytesFreed += doomed.reduce((sum, r) => sum + r.bytes, 0);
+      }
+
       return { done: false };
     },
   };

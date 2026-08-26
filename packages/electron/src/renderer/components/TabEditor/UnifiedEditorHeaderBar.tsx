@@ -35,6 +35,10 @@ import { FeedbackBacklinkHeaderButton } from '../FeedbackRequest/FeedbackBacklin
 import type { FeedbackRequestSubjectRef } from '../../../shared/feedbackRequestIndex';
 import { DocumentSessionControl, type DocumentSessionActions } from './DocumentSessionControl';
 import { FilePathBreadcrumb } from '../common/FilePathBreadcrumb';
+// Deep path, not the `docs-ui` barrel: that barrel drags `CollabSidebar` and the
+// whole shared-docs tree into every editor tab's module graph for one 40-line
+// header row.
+import { EditorHeaderBar } from '@nimbalyst/collab-client/docs-ui/EditorHeaderBar';
 import { dialogRef, DIALOG_IDS } from '../../dialogs';
 import type { ShareDialogData } from '../../dialogs';
 import { useLocalFileSharedDocLink } from '../../hooks/useCollabLocalOrigin';
@@ -560,12 +564,10 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
   const showTOCButton = isMarkdown && Boolean(lexicalEditor);
 
   return (
-      <div className="unified-editor-header-bar h-9 min-h-9 flex items-center justify-between px-3 shrink-0 bg-[var(--nim-bg)] border-b border-[var(--nim-border)]">
-      {/* Left: Breadcrumb Path */}
-      {breadcrumbContent ?? <FilePathBreadcrumb filePath={filePath} workspacePath={workspaceId} />}
-
-      {/* Right: Action Buttons */}
-      <div className="unified-header-actions flex items-center gap-1">
+    <EditorHeaderBar
+      breadcrumb={breadcrumbContent ?? <FilePathBreadcrumb filePath={filePath} workspacePath={workspaceId} />}
+      actions={(
+        <>
         {/* AI sessions for this document: chip + caret, or a sparkle icon when there are none */}
         {shouldShowAIButton && (
           <DocumentSessionControl
@@ -1041,7 +1043,8 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
             </FloatingPortal>
           )}
         </div>
-      </div>
-    </div>
+        </>
+      )}
+    />
   );
 };

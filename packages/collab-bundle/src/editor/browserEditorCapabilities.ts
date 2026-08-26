@@ -177,6 +177,8 @@ export interface BrowserEditorGrantedCapabilities {
   binaryContent?: boolean;
   /** `openExternal()` is wired to the page's navigation policy. */
   externalLinks?: boolean;
+  /** `registerViewport()` reaches a surface that carries scroll between docs. */
+  viewport?: boolean;
 }
 
 const CONDITIONAL_GAP_REASONS: Record<
@@ -192,6 +194,10 @@ const CONDITIONAL_GAP_REASONS: Record<
   externalLinks:
     'The embedding page did not supply a URL opener, so the bundle will not '
     + 'navigate on its behalf.',
+  viewport:
+    'This page shows one document at a time, so there is nothing to carry a '
+    + 'scroll position to. Only a surface that steps between documents -- the '
+    + 'feedback detail popover -- listens for one.',
 };
 
 /**

@@ -16,6 +16,14 @@ const lexicalScopeDir = path.join(path.dirname(lexicalDir), '@lexical');
 // this alias is applied to its transitive monaco import.
 const monacoStub = path.resolve(__dirname, './test-utils/monacoStub.ts');
 
+// `electron-log/renderer` exports a Proxy that answers every property with a
+// function, `then` included. Awaiting that namespace -- which vitest does for
+// every module it evaluates -- treats it as a thenable and calls
+// `then(resolve, reject)`, which logs the two callbacks and never resolves. The
+// import hangs during evaluation, where `testTimeout` cannot reach it, so the
+// run waits forever. See the stub's header.
+const electronLogStub = path.resolve(__dirname, './test-utils/electronLogStub.ts');
+
 const alias = [
   {
     find: '@nimbalyst/runtime',
@@ -36,6 +44,10 @@ const alias = [
   {
     find: /^monaco-editor(\/.*)?$/,
     replacement: monacoStub,
+  },
+  {
+    find: /^electron-log\/renderer$/,
+    replacement: electronLogStub,
   },
   {
     find: /^@\//,
@@ -94,6 +106,9 @@ const nodeOnly = [
   'packages/electron/src/main/**',
   'packages/runtime/src/ai/**',
   'packages/runtime/src/ui/git/__tests__/unifiedDiffModel.test.ts',
+  // `feedback-ui` is otherwise React components; only the pure scroll-carry
+  // arithmetic is routed here, for the same reason as the diff model above.
+  'packages/collab-client/src/feedback-ui/__tests__/artifactScrollCarry.test.ts',
 ];
 
 export default defineConfig({
@@ -157,6 +172,7 @@ export default defineConfig({
             'packages/electron/src/main/**/__tests__/**/*.{test,spec}.{ts,tsx}',
             'packages/runtime/src/ai/**/__tests__/**/*.{test,spec}.{ts,tsx}',
             'packages/runtime/src/ui/git/__tests__/unifiedDiffModel.test.ts',
+            'packages/collab-client/src/feedback-ui/__tests__/artifactScrollCarry.test.ts',
           ],
           exclude: baseExclude,
           server: { deps: { inline: [/y-monaco/] } },

@@ -369,24 +369,34 @@ export class HistoryManager {
         WHERE timestamp < $1
       `, [now - maxAge]);
 
-      // Keep only maxSnapshots per file
-      // Use CTE to avoid race conditions with corrupted data
-      await database.query(`
-        WITH ids_to_keep AS (
-          SELECT id
-          FROM (
-            SELECT id, ROW_NUMBER() OVER (PARTITION BY file_path ORDER BY timestamp DESC) as rn
-            FROM document_history
-          ) t
-          WHERE rn <= $1
-        ),
-        ids_to_delete AS (
-          SELECT id FROM document_history WHERE id NOT IN (SELECT id FROM ids_to_keep)
-        )
-        DELETE FROM document_history
-        WHERE id IN (SELECT id FROM ids_to_delete)
-        AND EXISTS (SELECT 1 FROM document_history dh WHERE dh.id = document_history.id)
+      // Keep only maxSnapshots per file.
+      //
+      // Find the handful of files actually over the limit first, then delete
+      // within each. The previous shape ran ROW_NUMBER() over the entire table
+      // to derive the same set; because document_history holds full file
+      // content, that scan pulled every blob off disk -- 5,965ms in one call on
+      // the single-lane worker, at startup, to delete 487 rows across 5 files.
+      // Almost every file is under the limit, so this usually does no work.
+      const overLimit = await database.query(`
+        SELECT file_path
+        FROM document_history
+        GROUP BY file_path
+        HAVING count(*) > $1
       `, [this.maxSnapshots]);
+
+      for (const row of overLimit?.rows ?? []) {
+        const filePath = (row as { file_path: string }).file_path;
+        await database.query(`
+          DELETE FROM document_history
+          WHERE file_path = $1
+            AND id NOT IN (
+              SELECT id FROM document_history
+              WHERE file_path = $1
+              ORDER BY timestamp DESC
+              LIMIT $2
+            )
+        `, [filePath, this.maxSnapshots]);
+      }
     } catch (error: any) {
       logger.main.error('[HistoryManager] Cleanup failed:', error);
     }

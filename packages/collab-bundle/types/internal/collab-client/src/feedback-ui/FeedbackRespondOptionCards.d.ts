@@ -42,8 +42,12 @@ export interface FeedbackRespondOptionCardsProps {
      * Shown as an expand affordance on each preview when a caller can open one.
      * Only rendered for options that actually have an artifact to open -- an
      * expand button over a placeholder is a promise the card cannot keep.
+     *
+     * The card reports the element it grew from so the caller can anchor a
+     * popover to it. Where the artifact ends up -- a popover in place, or a tab
+     * -- is the caller's decision, not the card's.
      */
-    onExpand?: (artifact: FeedbackAskArtifact) => void;
+    onExpand?: (artifact: FeedbackAskArtifact, anchor: HTMLElement | null) => void;
     resolveAction?: FeedbackArtifactActionResolver;
 }
 /**

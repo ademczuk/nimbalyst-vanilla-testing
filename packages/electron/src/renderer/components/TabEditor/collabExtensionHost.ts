@@ -24,6 +24,7 @@ import type {
   CollaborationContext,
   CollaborationStatus,
   EditorHost,
+  EditorViewport,
   ExtensionStorage,
   RevisionSnapshotAdapter,
 } from '@nimbalyst/runtime';
@@ -298,6 +299,15 @@ export interface CollabExtensionHostArgs {
   /** Inline collaborative embeds are always marked embedded + read-only. */
   embedded?: boolean;
   readOnly?: boolean;
+  /**
+   * Receives the editor's scroll viewport when it publishes one.
+   *
+   * Only surfaces that show several documents in sequence supply this -- today
+   * the feedback detail popover, which carries the reader's place from one
+   * design alternative to the next. Everywhere else the editor's registration
+   * is dropped, which is the same as never registering.
+   */
+  onViewportRegistered?: (viewport: EditorViewport | null) => void;
 }
 
 /**
@@ -326,6 +336,7 @@ export function createCollabExtensionHost(
     subscribeToThemeChanges,
     embedded = false,
     readOnly = false,
+    onViewportRegistered,
   } = args;
 
   const editorKey = makeEditorKey(filePath);
@@ -398,6 +409,17 @@ export function createCollabExtensionHost(
     setEditorContextItems(items: EditorContextItem[] | null): void {
       if (embedded) return;
       storeSetEditorContextItems(filePath, items);
+    },
+    /*
+     * Not gated on `embedded`, unlike its neighbours. Those guards exist to
+     * stop an inline embed from writing into surfaces that belong to the
+     * *tab* -- the AI context store, the editor API registry, both keyed by
+     * file path and both of which an embed would corrupt for whatever else has
+     * the same document open. A viewport goes nowhere but the caller that
+     * asked for it, and the surface that wants one is an embed by definition.
+     */
+    registerViewport(viewport: EditorViewport | null): void {
+      onViewportRegistered?.(viewport);
     },
     registerEditorAPI(api: unknown | null): void {
       if (embedded) return;

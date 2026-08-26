@@ -43,7 +43,7 @@ import {
   type MilestoneAssignTarget,
 } from './trackerBulkAssign';
 import { saveTrackerFields } from './trackerFieldSave';
-import './TrackerBoardCard.css';
+import '@nimbalyst/collab-client/trackers-ui/board.css';
 
 interface TrackerCardMilestoneChipProps {
   item: TrackerRecord;

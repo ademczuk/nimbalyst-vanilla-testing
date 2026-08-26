@@ -48,6 +48,8 @@ vi.mock('../TrackerIdentityService', () => ({
 vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel', () => ({
   globalRegistry: {
     get: mockGlobalRegistryGet,
+    getForWorkspace: (_workspacePath: string, type: string) => mockGlobalRegistryGet(type),
+    hasWorkspaceLayer: () => true,
   },
 }));
 

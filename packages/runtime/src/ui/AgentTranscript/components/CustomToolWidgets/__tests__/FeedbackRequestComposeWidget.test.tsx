@@ -16,6 +16,7 @@ import { setInteractiveWidgetHost } from '../../../../../store/atoms/interactive
 import { feedbackRecipientDirectoryAtom } from '../../../../../store/atoms/feedbackRecipientDirectory';
 import { clearFeedbackRequestComposeDraft } from '../../../../../store/atoms/feedbackRequestComposeDraft';
 import { FeedbackRequestComposeWidget } from '../feedback/FeedbackRequestComposeWidget';
+import type { FeedbackAskArtifact } from '@nimbalyst/collab-protocol';
 import type { InteractiveWidgetHost } from '../InteractiveWidgetHost';
 
 const SESSION_ID = 'session-compose';
@@ -234,5 +235,82 @@ describe('FeedbackRequestComposeWidget', () => {
     fireEvent.click(screen.getByTestId('feedback-compose-send'));
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0][0].publishSubjectRefs).toEqual([]);
+  });
+});
+
+/**
+ * The author has to be able to see what they are about to send.
+ *
+ * This surface showed flat label rows for a year: an ask could bind a mockup
+ * to every option and compose would render none of them, so the one place you
+ * decide whether to send a comparison was the one place you could not look at
+ * it. Nothing about that was visibly broken -- the rows rendered fine.
+ */
+describe('compose artifact previews', () => {
+  const ARTIFACT_ASK = {
+    asks: [{
+      type: 'singleSelect',
+      id: 'ask-direction',
+      label: 'Direction',
+      description: 'Which of these should we build?',
+      options: [
+        { id: 'a', label: 'A · Split panel' },
+        { id: 'b', label: 'B · Radial' },
+      ],
+      artifacts: [
+        { entryId: 'a', ref: { orgId: 'org-1', kind: 'file', sourceId: 'mockups/a.mockup.html' }, label: 'Split panel' },
+        { entryId: 'b', ref: { orgId: 'org-1', kind: 'file', sourceId: 'mockups/b.mockup.html' }, label: 'Radial' },
+      ],
+    }],
+  };
+
+  it('paints each bound artifact when the host can render one', () => {
+    const painted: string[] = [];
+    setInteractiveWidgetHost(SESSION_ID, {
+      feedbackRequestSend: vi.fn(),
+      feedbackRequestCancel: vi.fn(),
+      renderFeedbackArtifactPreview: (
+        entry: { id: string; label: string },
+        artifact: FeedbackAskArtifact,
+      ) => {
+        painted.push(`${entry.id}:${artifact.ref.sourceId}`);
+        return <div data-testid={`painted-${entry.id}`} />;
+      },
+    } as unknown as InteractiveWidgetHost);
+
+    clearFeedbackRequestComposeDraft('tc-artifacts');
+    // Scoped to this render: the file has no global cleanup, so `screen` also
+    // sees every earlier test's tree.
+    const { container } = renderWidget('tc-artifacts', ARTIFACT_ASK);
+
+    // Each option gets its *own* artifact — binding is by entry id, and getting
+    // that mapping backwards would still render two previews.
+    expect(painted).toEqual([
+      'a:mockups/a.mockup.html',
+      'b:mockups/b.mockup.html',
+    ]);
+    expect(
+      container.querySelectorAll('[data-testid="feedback-compose-option-card"]'),
+    ).toHaveLength(2);
+  });
+
+  it('keeps the plain option rows when the host cannot paint artifacts', () => {
+    // Set explicitly rather than inherited: this describe is a sibling of the
+    // one that owns the shared beforeEach, and "a host with no renderer" is the
+    // precondition under test rather than a default to fall into.
+    setInteractiveWidgetHost(SESSION_ID, {
+      feedbackRequestSend: vi.fn(),
+      feedbackRequestCancel: vi.fn(),
+    } as unknown as InteractiveWidgetHost);
+
+    clearFeedbackRequestComposeDraft('tc-no-renderer');
+    const { container } = renderWidget('tc-no-renderer', ARTIFACT_ASK);
+
+    // A host with no renderer — mobile, or a build with no editor registry —
+    // still shows a complete, readable draft rather than a row of empty frames.
+    expect(
+      container.querySelector('[data-testid="feedback-compose-option-card"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain('A · Split panel');
   });
 });

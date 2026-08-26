@@ -39,7 +39,11 @@ function defaultExportTarget(definition) {
 export function deriveCollabClientHeadlessEntryPoints(exportsMap, packageRoot) {
   return Object.fromEntries(Object.entries(exportsMap ?? {}).flatMap(([subpath, definition]) => {
     const name = subpath.replace(/^\.\//, '');
-    if (!name || name === 'ui' || name.endsWith('-ui')) return [];
+    // A UI domain is excluded by its first segment, not by the whole subpath, so
+    // a nested asset export (`./trackers-ui/board.css`) is excluded with its
+    // domain rather than being mistaken for a headless entry point of its own.
+    const [domain] = name.split('/');
+    if (!name || domain === 'ui' || domain.endsWith('-ui') || name.endsWith('.css')) return [];
     const target = defaultExportTarget(definition);
     return target ? [[name, path.resolve(packageRoot, target)]] : [];
   }));
@@ -75,6 +79,10 @@ export const COLLAB_CLIENT_FORBIDDEN_DEPENDENCIES = [
   {
     name: 'node:*',
     test: (id) => id.startsWith('node:'),
+  },
+  {
+    name: 'fs',
+    test: (id) => id === 'fs' || id.startsWith('fs/'),
   },
 ];
 

@@ -726,6 +726,38 @@ export function registerWorkspaceHandlers() {
         return getWorkspaceState(workspacePath);
     });
 
+    /**
+     * Write one workstream's UI state without round-tripping the whole bag.
+     *
+     * The renderer used to read the ENTIRE workspace state over IPC, spread
+     * every existing workstreamStates entry into a new object, and send all of
+     * them back on each debounced persist. With thousands of accumulated
+     * entries that made dragging a splitter cost a multi-megabyte read plus a
+     * multi-megabyte write. Merging by id in main keeps the payload to one
+     * entry; deletions are still possible by passing a null state.
+     */
+    safeHandle('workspace:set-workstream-state', async (
+        _event,
+        payload: { workspacePath: string; workstreamId: string; state: unknown },
+    ) => {
+        if (!payload || typeof payload.workspacePath !== 'string' || payload.workspacePath.trim().length === 0) {
+            throw new Error('workspace:set-workstream-state requires workspacePath');
+        }
+        if (typeof payload.workstreamId !== 'string' || payload.workstreamId.trim().length === 0) {
+            throw new Error('workspace:set-workstream-state requires workstreamId');
+        }
+        updateWorkspaceState(payload.workspacePath, (state) => {
+            const next = { ...(state.workstreamStates ?? {}) };
+            if (payload.state === null || payload.state === undefined) {
+                delete next[payload.workstreamId];
+            } else {
+                next[payload.workstreamId] = payload.state;
+            }
+            state.workstreamStates = next;
+        });
+        return { success: true };
+    });
+
     safeHandle('tracker-local-key:get-prefix-config', async (_event, workspacePath: string) => {
         if (typeof workspacePath !== 'string' || workspacePath.trim().length === 0) {
             throw new Error('tracker-local-key:get-prefix-config requires workspacePath');

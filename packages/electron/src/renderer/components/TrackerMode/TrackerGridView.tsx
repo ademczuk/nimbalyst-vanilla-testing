@@ -73,14 +73,12 @@ import {
   buildGridSource,
   ROW_ACTIONS,
   ROW_ITEM_ID,
-} from './grid/trackerGridColumns';
-import type { RelationshipCandidate } from './grid/trackerGridEditors';
-import {
   TrackerFilterValueMenu,
-} from './TrackerFilterValueMenu';
-import type { TrackerFilterField } from './TrackerViewHeaderControls';
+  type RelationshipCandidate,
+  type TrackerFilterField,
+} from '@nimbalyst/collab-client/trackers-ui';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
-import './grid/trackerGrid.css';
+import '@nimbalyst/collab-client/trackers-ui/grid.css';
 
 const ROW_GROUP_LABEL = '__trackerGroupLabel';
 
@@ -278,6 +276,7 @@ export function TrackerGridView({
   });
   const {
     handleItemUpdate,
+    handleItemsUpdate,
     runUndoable,
     recordUndoEntry,
     captureUndoGeneration,
@@ -530,13 +529,13 @@ export function TrackerGridView({
     return { fieldName, field };
   }, [isItemEditable, visibleColumnDefs]);
 
-  /** Commit one or more cells from the same row as one durable item update. */
-  const commitRow = useCallback(async (
+  /** Resolve one row edit without writing, so a range can cross IPC once. */
+  const prepareRow = useCallback(async (
     rowIndex: number,
     changes: Record<string, unknown>,
-  ): Promise<void> => {
+  ): Promise<{ item: TrackerRecord; updates: Record<string, unknown> } | null> => {
     const item = await resolveGridRowItem(rowIndex);
-    if (!item) return;
+    if (!item) return null;
 
     const updates: Record<string, unknown> = {};
     for (const [prop, rawValue] of Object.entries(changes)) {
@@ -548,26 +547,34 @@ export function TrackerGridView({
         updates[editable.fieldName] = value;
       }
     }
-    if (Object.keys(updates).length > 0) {
-      await handleItemUpdate(item, updates);
-    }
-  }, [handleItemUpdate, resolveEditableField, resolveGridRowItem]);
+    return Object.keys(updates).length > 0 ? { item, updates } : null;
+  }, [resolveEditableField, resolveGridRowItem]);
+
+  /** Commit one or more cells from the same row as one durable item update. */
+  const commitRow = useCallback(async (
+    rowIndex: number,
+    changes: Record<string, unknown>,
+  ): Promise<void> => {
+    const entry = await prepareRow(rowIndex, changes);
+    if (entry) await handleItemUpdate(entry.item, entry.updates);
+  }, [handleItemUpdate, prepareRow]);
 
   const handleAfterEdit = useCallback((event: RevoGridCustomEvent<AfterEditEvent>) => {
     const detail = event.detail;
 
     if (isRangeEdit(detail)) {
-      // Paste / fill-down: one write per touched row, so two cells in the same
-      // JSON-backed item cannot race and overwrite each other. The whole range
-      // is one undo entry so a mis-landed paste takes one Cmd+Z, not one per row.
+      // Paste / fill-down: collect one update per touched row, then cross IPC
+      // through the update-items batch seam. The whole range is one undo entry
+      // so a mis-landed paste takes one Cmd+Z, not one per row.
       const rowEntries = Object.entries(detail.data ?? {});
       const cellCount = rowEntries.reduce(
         (total, [, changes]) => total + Object.keys(changes as Record<string, unknown>).length,
         0,
       );
       void runUndoable(`Paste ${cellCount} cell${cellCount === 1 ? '' : 's'}`, async () => {
-        await Promise.all(rowEntries.map(([rowKey, changes]) =>
-          commitRow(Number(rowKey), changes as Record<string, unknown>)));
+        const resolved = await Promise.all(rowEntries.map(([rowKey, changes]) =>
+          prepareRow(Number(rowKey), changes as Record<string, unknown>)));
+        await handleItemsUpdate(resolved.filter((entry): entry is NonNullable<typeof entry> => entry !== null));
       });
       return;
     }
@@ -576,7 +583,7 @@ export function TrackerGridView({
     const prop = String(single.prop);
     const columnLabel = visibleColumnDefs.find(column => column.id === prop)?.label ?? prop;
     void runUndoable(`Edit ${columnLabel}`, () => commitRow(single.rowIndex, { [prop]: single.val }));
-  }, [commitRow, runUndoable, visibleColumnDefs]);
+  }, [commitRow, handleItemsUpdate, prepareRow, runUndoable, visibleColumnDefs]);
 
   /**
    * Double-click edits an editable cell and opens the row's item as a document

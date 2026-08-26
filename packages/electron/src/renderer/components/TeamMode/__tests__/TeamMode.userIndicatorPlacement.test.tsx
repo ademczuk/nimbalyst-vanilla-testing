@@ -20,7 +20,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OrgModeHost } from '../OrgModeHost';
 import { ORG_WINDOW_SURFACE_ID } from '../orgWindowState';
 
-vi.mock('@nimbalyst/runtime', () => ({
+vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
 }));
 vi.mock('../Inbox', () => ({ InboxSection: () => <div data-testid="inbox" /> }));

@@ -19,6 +19,13 @@
       "@nimbalyst/collab-client": ["../collab-client/src/core/index.ts"],
       "@nimbalyst/collab-client/*": ["../collab-client/src/*/index.ts"],
       "@nimbalyst/runtime/*": ["../runtime/src/*"],
+      // A handful of extension-SDK subpaths are published under a name that is
+      // not their source filename, so the wildcard below resolves them to a
+      // file that does not exist. `noCheck` hides that at compile time and the
+      // declaration rewrite in scripts/build-types.mjs is where it surfaces --
+      // keep these two lists in step.
+      "@nimbalyst/extension-sdk/file-tree": ["../extension-sdk/src/fileDirectoryTree.ts"],
+      "@nimbalyst/extension-sdk/file-mask": ["../extension-sdk/src/fileMask.ts"],
       "@nimbalyst/extension-sdk/*": ["../extension-sdk/src/*"]
     }
   },

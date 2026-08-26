@@ -5,7 +5,7 @@ import React, {
   useState,
 } from 'react';
 
-import type { EditorHost } from '@nimbalyst/runtime';
+import type { EditorHost, EditorViewport } from '@nimbalyst/runtime';
 
 import type { CustomEditorRegistration } from '../CustomEditors/types';
 import { useTheme } from '../../hooks/useTheme';
@@ -21,11 +21,19 @@ import { createCollabExtensionHost } from '../TabEditor/collabExtensionHost';
 interface CollaborativeEmbedEditorProps {
   registration: CustomEditorRegistration;
   request: CollaborativeEmbedProviderRequest;
+  /**
+   * Receives the editor's scroll viewport, when it publishes one.
+   *
+   * Only the feedback detail popover passes this, so it can carry the reader's
+   * place from one design alternative to the next. An embed with no listener,
+   * or an editor that never registers, simply has no viewport.
+   */
+  onViewportRegistered?: (viewport: EditorViewport | null) => void;
 }
 
 export const CollaborativeEmbedEditor: React.FC<
   CollaborativeEmbedEditorProps
-> = ({ registration, request }) => {
+> = ({ registration, request, onViewportRegistered }) => {
   const { theme } = useTheme();
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -70,6 +78,15 @@ export const CollaborativeEmbedEditor: React.FC<
     };
   }, [resourceKey]);
 
+  /*
+   * Held off the host's dependencies. The host object is a mount dependency for
+   * the extension component, and a caller passing a fresh arrow function each
+   * render would rebuild it -- tearing down a live collaborative editor and its
+   * Y.Doc on every parent re-render.
+   */
+  const viewportRef = useRef(onViewportRegistered);
+  viewportRef.current = onViewportRegistered;
+
   const { orgId, documentId, title, workspacePath } = request;
   const host = useMemo<EditorHost | null>(() => {
     if (!acquisition) return null;
@@ -90,6 +107,9 @@ export const CollaborativeEmbedEditor: React.FC<
       },
       embedded: true,
       readOnly: true,
+      // Reads the ref at call time rather than capturing it, so a caller that
+      // swaps its handler still gets the next registration.
+      onViewportRegistered: viewport => viewportRef.current?.(viewport),
     });
   }, [acquisition, documentId, orgId, title, workspacePath]);
 

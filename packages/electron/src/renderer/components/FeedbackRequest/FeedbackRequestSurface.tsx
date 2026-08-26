@@ -37,6 +37,7 @@ import {
 import { createFeedbackDiscussionAdapter } from './feedbackDiscussionAdapter';
 import { useFeedbackArtifactActionResolver } from './feedbackArtifactActions';
 import { renderLazyFeedbackOptionPreview } from './lazyFeedbackOptionPreview';
+import { renderFeedbackArtifactDetail } from './FeedbackArtifactDetail';
 import { feedbackRequestViewMode } from './feedbackRequestViewMode';
 
 export interface FeedbackRequestSurfaceProps {
@@ -189,6 +190,7 @@ export function FeedbackRequestSurface({
             host={respondHost}
             resolveArtifactAction={resolveArtifactAction}
             renderOptionPreview={renderLazyFeedbackOptionPreview}
+            renderArtifactDetail={renderFeedbackArtifactDetail}
             discussion={discussion}
           />
         )

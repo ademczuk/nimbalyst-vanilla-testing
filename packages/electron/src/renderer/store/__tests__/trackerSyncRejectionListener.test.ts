@@ -10,7 +10,7 @@ import { atom } from 'jotai';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { store } from '@nimbalyst/runtime/store';
 
-vi.mock('@nimbalyst/runtime', () => ({
+vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms', () => ({
   replaceAllTrackerItemsAtom: atom(null, () => {}),
   upsertTrackerItemAtom: atom(null, () => {}),
   removeTrackerItemAtom: atom(null, () => {}),
@@ -31,11 +31,12 @@ vi.mock('../atoms/trackerNavigation', () => ({
 }));
 vi.mock('../atoms/trackers', () => ({
   initTrackerPanelLayout: async () => {},
-  loadSharedTrackerViewsAtom: atom(null, async () => {}),
+  replaceSharedTrackerViewsAtom: atom(null, () => {}),
+  setTrackerDataSourceAtom: atom(null, () => {}),
 }));
 // Keeps the collab/sync graph (and the extension SDK behind it) out of a test
 // that only exercises rejection routing; that graph re-enters the mocked
-// runtime barrel and fails on exports this test has no reason to stub.
+// tracker-data atom module and fails on exports this test has no reason to stub.
 vi.mock('../../services/BodyDocCache', () => ({
   getBodyDocCache: () => ({ applyMarkdownToWarmEntry: async () => 'acknowledged' as const }),
 }));
@@ -54,7 +55,10 @@ function makeApi() {
       return () => handlers.delete(channel);
     }),
     invoke: vi.fn(async (channel: string) => {
+      if (channel === 'get-initial-state') return { mode: 'workspace', workspacePath: WS };
       if (channel === 'document-service:tracker-items-list') return [];
+      if (channel === 'tracker-saved-views:list') return [];
+      if (channel === 'tracker-sync:get-status') return { status: 'connected', projectId: null };
       return {};
     }),
     send: vi.fn(),

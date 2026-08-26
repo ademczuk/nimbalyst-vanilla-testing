@@ -145,7 +145,11 @@ describe('useTrackerRows cell writes', () => {
   it('applies a bulk field update across every selected item', async () => {
     registerCustomType();
     const updateTrackerItem = vi.fn().mockResolvedValue({ success: true });
-    (window as any).electronAPI = { documentService: { updateTrackerItem } };
+    const updateTrackerItems = vi.fn(async ({ entries }: { entries: Array<{ itemId: string }> }) => ({
+      success: true,
+      results: entries.map(entry => ({ itemId: entry.itemId, success: true })),
+    }));
+    (window as any).electronAPI = { documentService: { updateTrackerItem, updateTrackerItems } };
 
     const items = [makeRecord('item-1'), makeRecord('item-2'), makeRecord('item-3')];
     const { result } = renderHook(() => useTrackerRows({ items, activeTypeFilter: customType }));
@@ -154,11 +158,34 @@ describe('useTrackerRows cell writes', () => {
       await result.current.handleBulkFieldUpdate(items, 'labels', ['triage']);
     });
 
-    expect(updateTrackerItem).toHaveBeenCalledTimes(3);
-    expect(updateTrackerItem.mock.calls.map(c => c[0].itemId).sort()).toEqual(['item-1', 'item-2', 'item-3']);
-    for (const call of updateTrackerItem.mock.calls) {
-      expect(call[0].updates).toEqual({ labels: ['triage'] });
-    }
+    expect(updateTrackerItems).toHaveBeenCalledTimes(1);
+    expect(updateTrackerItems).toHaveBeenCalledWith({
+      entries: [
+        expect.objectContaining({ itemId: 'item-1', storeUpdates: { labels: ['triage'] } }),
+        expect.objectContaining({ itemId: 'item-2', storeUpdates: { labels: ['triage'] } }),
+        expect.objectContaining({ itemId: 'item-3', storeUpdates: { labels: ['triage'] } }),
+      ],
+    });
+    expect(updateTrackerItem).not.toHaveBeenCalled();
+  });
+
+  it('chunks bulk field updates at the 100-entry contract limit', async () => {
+    registerCustomType();
+    const updateTrackerItems = vi.fn(async ({ entries }: { entries: Array<{ itemId: string }> }) => ({
+      success: true,
+      results: entries.map(entry => ({ itemId: entry.itemId, success: true })),
+    }));
+    (window as any).electronAPI = { documentService: { updateTrackerItems } };
+
+    const items = Array.from({ length: 101 }, (_, index) => makeRecord(`item-${index + 1}`));
+    const { result } = renderHook(() => useTrackerRows({ items, activeTypeFilter: customType }));
+
+    await act(async () => {
+      await result.current.handleBulkFieldUpdate(items, 'labels', ['triage']);
+    });
+
+    expect(updateTrackerItems).toHaveBeenCalledTimes(2);
+    expect(updateTrackerItems.mock.calls.map(([call]) => call.entries.length)).toEqual([100, 1]);
   });
 
   it('routes document-backed items through the in-file write path', async () => {

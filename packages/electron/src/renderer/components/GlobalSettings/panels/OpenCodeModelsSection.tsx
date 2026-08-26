@@ -70,12 +70,16 @@ export function useOpenCodeModelCatalog(workspacePath?: string) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!workspacePath) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     // Read-only path: it reuses an OpenCode server only if one is already
     // running, so opening settings never spawns `opencode serve`.
     void (async () => {
       try {
-        const response = await window.electronAPI.openCodeModelCatalogGet();
+        const response = await window.electronAPI.openCodeModelCatalogGet({ workspacePath });
         if (cancelled) return;
         if (response.success) {
           setSnapshot(response.catalog);
@@ -90,7 +94,7 @@ export function useOpenCodeModelCatalog(workspacePath?: string) {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [workspacePath]);
 
   const refresh = useCallback(async () => {
     if (!workspacePath) return;

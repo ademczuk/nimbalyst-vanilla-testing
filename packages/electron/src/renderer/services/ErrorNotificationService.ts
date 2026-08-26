@@ -29,6 +29,35 @@ export interface ErrorNotification {
 
 type ErrorListener = (notification: ErrorNotification) => void;
 
+/**
+ * Failures that arrive as a storm rather than as an event.
+ *
+ * When one shared resource stalls, everything queued behind it fails at once,
+ * each naming whichever request happened to be waiting — 221 SQLite worker
+ * timeouts in a two-second burst on 2026-08-21, surfacing under different
+ * titles and messages so ordinary title+message dedup let several through.
+ * To the user that is one thing going wrong, so collapse the whole class onto
+ * a single dedup key.
+ */
+const STORM_SIGNATURES: Array<{ match: RegExp; signature: string }> = [
+  { match: /SQLite worker request '[^']*' timed out after \d+ms/, signature: 'sqlite-worker-timeout' },
+];
+
+/**
+ * Dedup key for a notification. Storm-class failures key on the class alone;
+ * everything else keys on its own severity, title and message.
+ */
+export function notificationDedupKey(
+  severity: ErrorSeverity,
+  title: string,
+  message: string,
+): string {
+  for (const { match, signature } of STORM_SIGNATURES) {
+    if (match.test(message)) return `storm:${signature}`;
+  }
+  return `${severity}:${title}:${message}`;
+}
+
 class ErrorNotificationService {
   private listeners: Set<ErrorListener> = new Set();
   private notifications: ErrorNotification[] = [];
@@ -143,7 +172,7 @@ class ErrorNotificationService {
   }): string {
     const { allowDuplicate, ...notificationOptions } = options;
     // Deduplicate: suppress identical title+message within the dedup window
-    const dedupKey = `${options.severity}:${options.title}:${options.message}`;
+    const dedupKey = notificationDedupKey(options.severity, options.title, options.message);
     const now = Date.now();
     const existing = this.recentErrorKeys.get(dedupKey);
     if (!allowDuplicate && existing && (now - existing.firstSeen) < ErrorNotificationService.DEDUP_WINDOW_MS) {

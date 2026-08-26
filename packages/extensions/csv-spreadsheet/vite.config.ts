@@ -4,6 +4,10 @@ import { createExtensionConfig, mergeExtensionConfig } from '@nimbalyst/extensio
 
 const baseConfig = createExtensionConfig({
   entry: './src/index.tsx',
+  // RevoGrid self-registers <revo-grid> globally. The desktop and browser
+  // extension hosts both provide one shared wrapper/runtime instance; bundling
+  // a private copy here makes a later grid load throw or silently paint blank.
+  additionalExternals: ['@revolist/react-datagrid', '@revolist/revogrid'],
   plugins: [
     react({
       jsxRuntime: 'automatic',

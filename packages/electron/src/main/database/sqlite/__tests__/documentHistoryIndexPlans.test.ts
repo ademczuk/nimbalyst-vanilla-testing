@@ -93,7 +93,19 @@ describe('document_history expression indexes', () => {
         AND ${arrow('status')} = 'pending-review'
         AND file_path LIKE $2
     `, ['sess-1', '/tmp/%']);
+    // SCAN, never SEARCH: no predicate seeks. The planner may still pick a
+    // narrow non-expression index (idx_history_file_timestamp) to scan instead
+    // of the table, which is why this names the expression indexes rather than
+    // asserting no index at all.
     expect(plan).toContain('SCAN document_history');
-    expect(plan).not.toContain('USING INDEX idx_history');
+    expect(plan).not.toContain('SEARCH document_history');
+    for (const expressionIndex of [
+      'idx_history_pending_session_file',
+      'idx_history_preedit_session',
+      'idx_history_one_pending_per_file',
+      'idx_history_file_content_hash',
+    ]) {
+      expect(plan).not.toContain(expressionIndex);
+    }
   });
 });

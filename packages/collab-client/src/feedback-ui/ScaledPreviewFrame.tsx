@@ -25,11 +25,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 /**
- * The width previews are composed at. Mockups in this codebase are authored
- * around 800-1200px; rendering at the low end of that and scaling produces a
- * legible layout rather than a mobile reflow.
+ * The width previews are composed at.
+ *
+ * Lowered from 1000 to 800 after measuring the real thing: at 1000 a card was
+ * scaling a design to 0.29 and rendering its content ten pixels tall, which is
+ * a smudge rather than a recognisable layout. Every 100px shaved here is scale
+ * handed back to the reader.
+ *
+ * 800 rather than lower because it has to stay a *desktop* width. The common
+ * responsive breakpoint is 768px, so composing much below this starts tripping
+ * designs into their mobile layout -- and a preview that shows a different
+ * layout than the artifact is worse than a small one, because nothing on screen
+ * says it lied.
  */
-export const PREVIEW_AUTHORED_WIDTH = 1000;
+export const PREVIEW_AUTHORED_WIDTH = 800;
 
 export interface ScaledPreviewFrameProps {
   children: React.ReactNode;

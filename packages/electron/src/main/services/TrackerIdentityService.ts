@@ -5,32 +5,63 @@
  * Also provides the `isMyItem()` utility for filtering "my items".
  */
 
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import type { TrackerIdentity, TrackerItem } from '@nimbalyst/runtime/core/DocumentService';
 import { getUserEmail, getAuthState } from './StytchAuthService';
+
+interface GitUserConfig {
+  gitName: string | null;
+  gitEmail: string | null;
+}
+
+/**
+ * Git identity is a per-directory near-constant, but `getCurrentIdentity` is
+ * called per incoming read-receipt message. Two synchronous `git config`
+ * spawns per call put 4,782ms of a 5,125ms CPU profile inside `spawn` alone --
+ * process creation is expensive, and far worse when the machine is swapping.
+ *
+ * The TTL is long because the value effectively never changes, but bounded so
+ * someone who edits their git config does not have to restart to see it.
+ */
+const GIT_CONFIG_TTL_MS = 5 * 60 * 1000;
+const gitConfigCache = new Map<string, { value: GitUserConfig; readAt: number }>();
+
+/** Reset between tests. */
+export function __resetGitIdentityCacheForTests(): void {
+  gitConfigCache.clear();
+}
+
+function readGitConfigValue(cwd: string, key: string): string | null {
+  try {
+    // execFileSync, not execSync: no intermediate shell to spawn.
+    return execFileSync('git', ['config', key], { cwd, stdio: 'pipe' }).toString().trim() || null;
+  } catch {
+    // git not configured or not a git repo
+    return null;
+  }
+}
 
 /**
  * Read git user config from a workspace directory.
  * Returns null values if git is not configured or the command fails.
  */
-function getGitUserConfig(workspacePath?: string): { gitName: string | null; gitEmail: string | null } {
+function getGitUserConfig(workspacePath?: string): GitUserConfig {
   const cwd = workspacePath || process.cwd();
-  let gitName: string | null = null;
-  let gitEmail: string | null = null;
 
-  try {
-    gitName = execSync('git config user.name', { cwd, stdio: 'pipe' }).toString().trim() || null;
-  } catch {
-    // git not configured or not a git repo
+  const cached = gitConfigCache.get(cwd);
+  if (cached && Date.now() - cached.readAt < GIT_CONFIG_TTL_MS) {
+    return cached.value;
   }
 
-  try {
-    gitEmail = execSync('git config user.email', { cwd, stdio: 'pipe' }).toString().trim() || null;
-  } catch {
-    // git not configured or not a git repo
-  }
-
-  return { gitName, gitEmail };
+  // Cache the not-configured answer too. Without that, a directory that is not
+  // a git repo respawns twice on every single call -- the worst case, not the
+  // cheapest one.
+  const value: GitUserConfig = {
+    gitName: readGitConfigValue(cwd, 'user.name'),
+    gitEmail: readGitConfigValue(cwd, 'user.email'),
+  };
+  gitConfigCache.set(cwd, { value, readAt: Date.now() });
+  return value;
 }
 
 /**

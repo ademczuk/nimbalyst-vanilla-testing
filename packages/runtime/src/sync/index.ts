@@ -242,6 +242,7 @@ export type {
   TrackerNavigationMutationRequestMessage,
   TrackerSetConfigMessage,
   TrackerPingMessage,
+  TrackerPresenceMessage,
   TrackerSyncResponseMessage,
   TrackerDeltaMessage,
   TrackerMutationAckMessage,
@@ -251,6 +252,9 @@ export type {
   TrackerMutationRejectCode,
   TrackerConfigBroadcastMessage,
   TrackerPongMessage,
+  TrackerPresenceRosterMessage,
+  TrackerPresenceDeltaMessage,
+  TrackerPresenceMember,
   TrackerErrorMessage,
   TrackerRoomConfig,
   TrackerTransactionState,
@@ -271,10 +275,13 @@ export {
 } from './trackerEnvelopeCodec';
 
 export {
+  IndexedDbTrackerPersistence,
   InMemoryTrackerPersistence,
 } from './trackerPersistence';
 
 export type {
+  IndexedDbTrackerSavedViewRow,
+  StoredTrackerItem,
   TrackerPersistence,
   TrackerRowSnapshot,
 } from './trackerPersistence';
@@ -307,8 +314,12 @@ export {
 export type {
   TrackerSyncEngineConfig,
   TrackerSyncStatus,
+  TrackerPresenceIdentity,
+  TrackerPresenceParticipant,
   AppliedTrackerItem,
   RejectedTrackerMutation,
+  TrackerNavigationSyncHooks,
+  TrackerSchemaSyncHooks,
 } from './TrackerSyncEngine';
 
 export {

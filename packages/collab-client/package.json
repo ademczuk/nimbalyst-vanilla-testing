@@ -5,7 +5,9 @@
   "license": "MIT",
   "description": "Shared headless and React collaboration client surfaces for Nimbalyst hosts.",
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "**/*.css"
+  ],
   "exports": {
     "./core": {
       "types": "./src/core/index.ts",
@@ -19,14 +21,36 @@
       "types": "./src/docs-ui/index.ts",
       "default": "./src/docs-ui/index.ts"
     },
+    "./docs-ui/EditorHeaderBar": {
+      "types": "./src/docs-ui/primitives/EditorHeaderBar.tsx",
+      "default": "./src/docs-ui/primitives/EditorHeaderBar.tsx"
+    },
     "./feedback": {
       "types": "./src/feedback/index.ts",
       "default": "./src/feedback/index.ts"
     },
+    "./trackers": {
+      "types": "./src/trackers/index.ts",
+      "default": "./src/trackers/index.ts"
+    },
+    "./quick-open": {
+      "types": "./src/quick-open/index.ts",
+      "default": "./src/quick-open/index.ts"
+    },
     "./feedback-ui": {
       "types": "./src/feedback-ui/index.ts",
       "default": "./src/feedback-ui/index.ts"
-    }
+    },
+    "./feedback-ui/FeedbackArtifactDetailPopover": {
+      "types": "./src/feedback-ui/FeedbackArtifactDetailPopover.tsx",
+      "default": "./src/feedback-ui/FeedbackArtifactDetailPopover.tsx"
+    },
+    "./trackers-ui": {
+      "types": "./src/trackers-ui/index.ts",
+      "default": "./src/trackers-ui/index.ts"
+    },
+    "./trackers-ui/board.css": "./src/trackers-ui/board/TrackerBoardCard.css",
+    "./trackers-ui/grid.css": "./src/trackers-ui/grid/trackerGrid.css"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -39,10 +63,22 @@
     "jotai-family": "^1.1.0"
   },
   "peerDependencies": {
+    "@revolist/react-datagrid": "4.21.4",
+    "@revolist/revogrid": "4.21.4",
     "react": "^19.2.7",
     "yjs": ">=13.5.42"
   },
+  "peerDependenciesMeta": {
+    "@revolist/react-datagrid": {
+      "optional": true
+    },
+    "@revolist/revogrid": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@revolist/react-datagrid": "4.21.4",
+    "@revolist/revogrid": "4.21.4",
     "@types/react": "^19.2.17",
     "react": "^19.2.7",
     "typescript": "^5.0.0",

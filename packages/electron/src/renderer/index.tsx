@@ -221,6 +221,7 @@ const root = ReactDOM.createRoot(rootElement);
 const analyticsId = await window.electronAPI.analytics?.getDistinctId() ?? '';
 const analyticsAllowed = await window.electronAPI.analytics?.allowedToSendAnalytics() ?? false;
 const nimbalystVersion = await window.electronAPI.getAppVersion?.() ?? '';
+const releaseAttribution = await window.electronAPI.analytics?.getReleaseAttribution?.().catch(() => null) ?? null;
 const isDevInstallation = process.env.NODE_ENV?.toLowerCase() === 'development';
 const isDevMode = process.env.IS_DEV_MODE === 'true';
 const isOfficialBuild = process.env.OFFICIAL_BUILD === 'true';
@@ -246,7 +247,11 @@ const posthogClient = posthog.init(
     loaded: (posthog) => {
       console.log(`[RENDERER] PostHog loaded (analytics ID: ${posthog.get_distinct_id()}, session: ${posthog.get_session_id()}, official build: ${isOfficialBuild})`);
 
-      posthog.register({ nimbalyst_version: nimbalystVersion });
+      // Release attribution as super-properties, so every renderer capture
+      // carries it without touching call sites. Resolved from the main service
+      // rather than re-derived from env vars here, so both processes report the
+      // same values.
+      posthog.register({ nimbalyst_version: nimbalystVersion, ...(releaseAttribution ?? {}) });
 
       // Mark users as dev users if they've ever used a non-official build
       // This property persists across all future events for this user

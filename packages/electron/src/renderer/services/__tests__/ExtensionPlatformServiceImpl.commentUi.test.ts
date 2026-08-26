@@ -16,7 +16,6 @@ class CapturingBlob {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  delete (window as any).__nimbalyst_extensions;
 });
 
 describe('ExtensionPlatformServiceImpl comment UI external', () => {

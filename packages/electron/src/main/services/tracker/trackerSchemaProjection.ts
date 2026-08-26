@@ -11,6 +11,8 @@ import {
   resolveTrackerSchemaPatch,
   diffTrackerSchema,
   normalizeTrackerSharingModel,
+  resolveTrackerSchemaFileContent,
+  isTrackerPatchFileName,
   type TrackerDataModel,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import {
@@ -66,9 +68,7 @@ function schemaOwnershipNotice(teamName: string, editor: string | null): string 
  * improvements flow through and git diffs stay small. See the configurable-
  * builtin-tracker-types plan.
  */
-export function isTrackerPatchFileName(fileName: string): boolean {
-  return /\.patch\.ya?ml$/i.test(fileName);
-}
+export { isTrackerPatchFileName };
 
 /** Deterministic patch file name for a type's builtin override. */
 export function patchFileNameForType(type: string): string {
@@ -82,17 +82,7 @@ export function patchFileNameForType(type: string): string {
  * whose target type has no seed, so a stray patch surfaces instead of silently
  * registering a broken model.
  */
-export function resolveSchemaModelFromContent(fileName: string, content: string): TrackerDataModel {
-  if (isTrackerPatchFileName(fileName)) {
-    const patch = parseTrackerSchemaPatchYAML(content);
-    const seed = globalRegistry.getBuiltinModel(patch.type) ?? globalRegistry.get(patch.type);
-    if (!seed) {
-      throw new Error(`Tracker schema patch targets unknown type '${patch.type}'`);
-    }
-    return resolveTrackerSchemaPatch(seed, patch);
-  }
-  return parseTrackerYAML(content);
-}
+export const resolveSchemaModelFromContent = resolveTrackerSchemaFileContent;
 
 /** Read the `type` a schema file targets without fully resolving a patch. */
 export function readSchemaFileType(fileName: string, content: string): string | undefined {

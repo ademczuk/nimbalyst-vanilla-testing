@@ -51,7 +51,11 @@ describe('OpenCodeModelsSection', () => {
     const api = installCatalogApi(readyCatalog);
     renderSection();
 
-    await waitFor(() => expect(api.openCodeModelCatalogGet).toHaveBeenCalledTimes(1));
+    // The read is workspace-scoped: passing no workspace is what made every
+    // install's catalog fall back to hardcoded presets (#1382).
+    await waitFor(() =>
+      expect(api.openCodeModelCatalogGet).toHaveBeenCalledWith({ workspacePath: '/tmp/project' })
+    );
     // The read path must never start `opencode serve`; only the button may.
     expect(api.openCodeModelCatalogRefresh).not.toHaveBeenCalled();
 
@@ -61,12 +65,12 @@ describe('OpenCodeModelsSection', () => {
     );
   });
 
-  it('cannot discover without a workspace to discover for', async () => {
+  it('neither reads nor discovers without a workspace to do it for', async () => {
     const api = installCatalogApi(readyCatalog);
     renderSection({ workspacePath: undefined });
 
-    await waitFor(() => expect(api.openCodeModelCatalogGet).toHaveBeenCalled());
-    fireEvent.click(screen.getByTestId('opencode-models-refresh'));
+    fireEvent.click(await screen.findByTestId('opencode-models-refresh'));
+    expect(api.openCodeModelCatalogGet).not.toHaveBeenCalled();
     expect(api.openCodeModelCatalogRefresh).not.toHaveBeenCalled();
   });
 

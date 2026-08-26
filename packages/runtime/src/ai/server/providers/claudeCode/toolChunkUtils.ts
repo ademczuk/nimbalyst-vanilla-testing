@@ -1,4 +1,6 @@
 import { isBackgroundedToolAck, isInteractiveWidgetTool } from '../../interactivePromptTools';
+import { isTransientClaudeCodeFrame } from '../../../../storage/nonRenderingFrames';
+import { isImageBlock } from '../../../../utils/contentBytes';
 
 // Claude Agent SDK emits several chunk types that are pure runtime side-channels:
 // the live in-memory dispatch loop reacts to them (status text, auth detection,
@@ -7,33 +9,17 @@ import { isBackgroundedToolAck, isInteractiveWidgetTool } from '../../interactiv
 // Persisting them just inflates ai_agent_messages and SessionRoom storage with
 // rows that never produce a canonical transcript event.
 //
-// Kept persisted on purpose:
+// The classification itself lives in `storage/nonRenderingFrames` because the
+// sync wire gate and the storage backfill need the same answer, and when each
+// kept its own copy they drifted -- see that module's header for what the drift
+// cost.
+//
+// Kept persisted on purpose (so deliberately NOT in that set):
 //   - system/init           -- carries session_id + tool/MCP context useful for forensics
 //   - system/compact_boundary -- marks where the SDK compacted the conversation
 //   - summary               -- carries auth-error text the parser may surface later
-const CLAUDE_CODE_TRANSIENT_SYSTEM_SUBTYPES = new Set([
-  'hook_started',
-  'hook_response',
-  'task_started',
-  'task_progress',
-  'task_notification',
-  'task_updated',
-]);
-
-const CLAUDE_CODE_TRANSIENT_CHUNK_TYPES = new Set([
-  'tool_progress',
-  'tool_use_summary',
-  'auth_status',
-  'rate_limit_event',
-]);
-
 export function isTransientClaudeCodeChunk(chunk: unknown): boolean {
-  if (!chunk || typeof chunk !== 'object') return false;
-  const c = chunk as { type?: string; subtype?: string };
-  if (c.type === 'system' && typeof c.subtype === 'string') {
-    return CLAUDE_CODE_TRANSIENT_SYSTEM_SUBTYPES.has(c.subtype);
-  }
-  return typeof c.type === 'string' && CLAUDE_CODE_TRANSIENT_CHUNK_TYPES.has(c.type);
+  return isTransientClaudeCodeFrame(chunk);
 }
 
 // Fields on a chunk that are pure dead weight in the persisted raw log:
@@ -63,8 +49,24 @@ export function slimClaudeCodeChunkForStorage(chunk: unknown): unknown {
   const ensureClone = (): Record<string, unknown> => (clone ??= { ...c });
 
   // 1) Slim the tool_use_result sidecar: keep only small scalars.
+  //
+  // An ARRAY sidecar is the MCP tool-result content array, and it used to skip
+  // this pass entirely because the guard here was `!Array.isArray(tur)`. Almost
+  // all of those blocks are `{type:"text"}` and stay -- but an IMAGE block in
+  // that array is a byte-for-byte second copy of the screenshot already in
+  // `message.content`. Measured on the install this was found on: 468 rows at
+  // 263 MB, where sidecar and message.content differed only by the 82-byte
+  // tool_use_id wrapper. The row was exactly twice the picture.
+  //
+  // Only image blocks are dropped. Text blocks are left alone here and bounded
+  // downstream by `capClaudeCodeChunkForStorage`.
   const tur = c.tool_use_result;
-  if (tur && typeof tur === 'object' && !Array.isArray(tur)) {
+  if (Array.isArray(tur)) {
+    const withoutImages = tur.filter((b) => !isImageBlock(b));
+    if (withoutImages.length !== tur.length) {
+      ensureClone().tool_use_result = withoutImages;
+    }
+  } else if (tur && typeof tur === 'object') {
     const turObj = tur as Record<string, unknown>;
     let trimmed = false;
     const slim: Record<string, unknown> = {};

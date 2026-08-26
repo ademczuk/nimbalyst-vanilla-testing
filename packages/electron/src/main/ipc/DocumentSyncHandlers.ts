@@ -22,6 +22,7 @@ import { createSingleFlight } from '../utils/asyncCache';
 import { getDialogDefaultPath, rememberDialogSelection } from '../utils/dialogPaths';
 import { getPersonalDocSyncConfig, isSyncEnabled } from '../services/SyncManager';
 import { resolveCollabDocumentType } from './collabDocumentTypeResolver';
+import { drainLegacyPendingUpdates } from './legacyPendingUpdateDrain';
 import { getSyncId } from '../services/DocSyncService';
 import {
   registerCollabAssetDocument,
@@ -182,21 +183,31 @@ export function registerDocumentSyncHandlers(): void {
     });
 
     const accountId = getPersonalUserId() ?? activeMemberId;
-    if (pendingUpdateBase64) {
-      try {
-        const legacyUpdateCommitted = await getCollabDocumentReplicaStore().migrateLegacyPendingUpdate(
-          { accountId, orgId, documentId: payload.documentId },
-          resolvedDocumentType ?? 'markdown',
-          Buffer.from(pendingUpdateBase64, 'base64'),
-        );
-        if (legacyUpdateCommitted) {
-          updateWorkspaceState(payload.workspacePath, state => {
-            delete state.collabPendingUpdates?.[pendingKey];
-          });
-          pendingUpdateBase64 = undefined;
-        }
-      } catch (error) {
-        logger.main.error('[DocumentSyncHandlers] Failed to migrate legacy pending update:', error);
+    const pendingUpdates = workspaceState.collabPendingUpdates;
+    if (pendingUpdates && Object.keys(pendingUpdates).length > 0) {
+      // Drain every legacy entry, not only the document being opened. Entries for
+      // documents the user never reopens used to accumulate in workspace settings
+      // and inflate the cost of every workspace-state read in the main process.
+      const { migrated } = await drainLegacyPendingUpdates({
+        pending: pendingUpdates,
+        accountId,
+        resolveDocumentType: documentId =>
+          resolveCollabDocumentType({
+            callerDocumentType: documentId === payload.documentId ? payload.documentType : undefined,
+            workspaceState: workspaceState as unknown as { openCollabDocumentEntries?: unknown },
+            documentId,
+          }),
+        migrate: (identity, documentType, update) =>
+          getCollabDocumentReplicaStore().migrateLegacyPendingUpdate(identity, documentType, update),
+        onError: (key, error) =>
+          logger.main.error('[DocumentSyncHandlers] Failed to migrate legacy pending update:', key, error),
+      });
+
+      if (migrated.length > 0) {
+        updateWorkspaceState(payload.workspacePath, state => {
+          for (const key of migrated) delete state.collabPendingUpdates?.[key];
+        });
+        if (migrated.includes(pendingKey)) pendingUpdateBase64 = undefined;
       }
     }
 

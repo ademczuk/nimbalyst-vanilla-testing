@@ -63,4 +63,42 @@ describe('escapeCurrencyDollars', () => {
   it('preserves a lone unpaired $ (no closing pair on the line)', () => {
     expect(escapeCurrencyDollars('the price is $5')).toBe('the price is $5');
   });
+
+  // #1373: a backslash is literal inside code, so escaping there is visible on
+  // screen and travels with any copy, breaking the copied command.
+  describe('code is exempt (#1373)', () => {
+    const identity = (label: string, input: string) => {
+      it(label, () => {
+        expect(escapeCurrencyDollars(input)).toBe(input);
+      });
+    };
+
+    identity('fenced code', "```sh\nawk '{print $1, $2}'\n```");
+    identity('inline code span', "run `awk '{print $1, $2}'` now");
+    identity('fence inside a blockquote', "> ```sh\n> jq '.a[$1] + $2'\n> ```");
+    identity('nested fence', "````md\n```sh\nawk '{print $1, $2}'\n```\n````");
+    identity('indented code', "    awk '{print $1, $2}'");
+
+    it('escapes prose but not the fence between it', () => {
+      const input = 'prose $7 to $40 then\n```sh\necho $1 $2\n```\nand $3 to $50';
+      expect(escapeCurrencyDollars(input)).toBe(
+        'prose \\$7 to \\$40 then\n```sh\necho $1 $2\n```\nand \\$3 to \\$50',
+      );
+    });
+
+    it('escapes around an inline span on the same line', () => {
+      expect(escapeCurrencyDollars('paid $5 to $10 running `echo $1 $2` daily')).toBe(
+        'paid \\$5 to \\$10 running `echo $1 $2` daily',
+      );
+    });
+  });
+
+  // The escape runs on the source, before the document is parsed, so inline
+  // markup spanning a currency pair still renders. Reverting `inlineMath`
+  // nodes after the fact would flatten this to literal asterisks.
+  it('preserves markdown that crosses the currency span', () => {
+    expect(escapeCurrencyDollars('grew from $7M to **$40M** total')).toBe(
+      'grew from \\$7M to **\\$40M** total',
+    );
+  });
 });

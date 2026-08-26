@@ -1212,20 +1212,15 @@ function schedulePersist(workstreamId: string): void {
     try {
       const state = store.get(workstreamStateAtom(workstreamId));
       // console.log(`[workstreamState] Persisting workstream ${workstreamId}:`, JSON.stringify(state));
-      const workspaceState = await window.electronAPI.invoke(
-        'workspace:get-state',
-        workspacePath
-      );
-
-      const existingStates = workspaceState?.workstreamStates ?? {};
-
-      const result = await window.electronAPI.invoke('workspace:update-state', workspacePath, {
-        workstreamStates: {
-          ...existingStates,
-          [workstreamId]: state,
-        },
+      // Send only this workstream's entry. Reading the whole workspace state
+      // here and spreading every other entry back made each persist cost a
+      // multi-megabyte round trip once enough workstreams had accumulated.
+      await window.electronAPI.invoke('workspace:set-workstream-state', {
+        workspacePath,
+        workstreamId,
+        state,
       });
-      // console.log(`[workstreamState] Persist complete for ${workstreamId}, result:`, result);
+      // console.log(`[workstreamState] Persist complete for ${workstreamId}`);
     } catch (err) {
       console.error('[workstreamState] Failed to persist state:', err);
     }

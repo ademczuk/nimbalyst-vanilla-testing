@@ -31,7 +31,23 @@
       "types": "./types/feedback-ui.d.ts",
       "import": "./dist/feedback-ui.js"
     },
-    "./inbox": {
+    "./trackers-ui": {
+      "types": "./types/trackers-ui.d.ts",
+      "import": "./dist/trackers-ui.js"
+    },
+    "./trackers-ui/TagBoard": {
+      "types": "./types/internal/collab-client/src/trackers-ui/TagBoard.d.ts",
+      "import": "./dist/trackers-ui.js"
+    },
+    "./trackers-ui/TrackerTimelineView": {
+      "types": "./types/internal/collab-client/src/trackers-ui/TrackerTimelineView.d.ts",
+      "import": "./dist/trackers-ui.js"
+    },
+    "./quick-open": {
+   "types": "./types/quick-open.d.ts",
+   "import": "./dist/quick-open.js"
+  },
+  "./inbox": {
       "types": "./types/inbox.d.ts",
       "import": "./dist/inbox.js"
     },
@@ -52,6 +68,8 @@
   },
   "peerDependencies": {
     "@lexical/yjs": "^0.44.0",
+    "@revolist/react-datagrid": "4.21.4",
+    "@revolist/revogrid": "4.21.4",
     "lexical": "^0.44.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -59,13 +77,15 @@
     "yjs": ">=13.5.42"
   },
   "devDependencies": {
+    "@nimbalyst/collab-client": "*",
+    "@nimbalyst/runtime": "*",
+    "@revolist/react-datagrid": "4.21.4",
+    "@revolist/revogrid": "4.21.4",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^20.0.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.2",
-    "@nimbalyst/collab-client": "*",
-    "@nimbalyst/runtime": "*",
     "jsdom": "^26.1.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

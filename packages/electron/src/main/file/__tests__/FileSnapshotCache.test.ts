@@ -28,6 +28,30 @@ vi.mock('child_process', () => ({
   },
 }));
 
+// Baseline reads go through a long-lived `git cat-file --batch` process rather
+// than a `git show` spawn, so the execFile mock above no longer intercepts
+// them. Serve them from the same fixture map, keyed exactly as before
+// (`show <sha>:<path>`), so the cases below read unchanged. The batch
+// protocol itself is covered against real git in GitCatFileBatch.test.ts.
+const gitFixtures = vi.hoisted(() => ({
+  current: {} as Record<string, string | Error>,
+  /** Baseline lookups that actually reached git, for cache-hit assertions. */
+  reads: 0,
+}));
+
+vi.mock('../GitCatFileBatch', () => ({
+  GitCatFileBatch: class {
+    spawnCount = 0;
+    constructor(_workspacePath: string, _options?: unknown) {}
+    async read(sha: string, relativePath: string): Promise<string | null> {
+      gitFixtures.reads++;
+      const hit = gitFixtures.current[`show ${sha}:${relativePath}`];
+      return typeof hit === 'string' ? hit : null;
+    }
+    dispose(): void {}
+  },
+}));
+
 // Mock fs/promises
 vi.mock('fs/promises', () => ({
   readdir: (...args: any[]) => mockReaddir(...args),
@@ -55,6 +79,7 @@ describe('FileSnapshotCache', () => {
       'status --porcelain': '',
       ...overrides,
     };
+    gitFixtures.current = defaults;
 
     mockExecFile.mockImplementation(
       (cmd: string, args: string[], opts: any, callback: Function) => {
@@ -245,36 +270,19 @@ describe('FileSnapshotCache', () => {
     });
 
     it('should cache git show results for subsequent lookups', async () => {
-      let gitShowCallCount = 0;
-
-      mockExecFile.mockImplementation(
-        (cmd: string, args: string[], opts: any, callback: Function) => {
-          const argStr = args.join(' ');
-          if (argStr.includes('rev-parse --git-dir')) {
-            callback(null, '.git\n', '');
-          } else if (argStr.includes('rev-parse HEAD')) {
-            callback(null, 'abc123\n', '');
-          } else if (argStr.includes('status --porcelain')) {
-            callback(null, '', '');
-          } else if (argStr.includes('show abc123:src/file.ts')) {
-            gitShowCallCount++;
-            callback(null, 'file content', '');
-          } else {
-            callback(null, '', '');
-          }
-        }
-      );
+      setupGitMocks({ 'show abc123:src/file.ts': 'file content' });
+      gitFixtures.reads = 0;
 
       const cache = new FileSnapshotCache();
       await cache.startSession(workspacePath, 'session-1');
 
       const content1 = await cache.getBeforeState(path.resolve(workspacePath, 'src/file.ts'));
       expect(content1).toBe('file content');
-      expect(gitShowCallCount).toBe(1);
+      expect(gitFixtures.reads).toBe(1);
 
       const content2 = await cache.getBeforeState(path.resolve(workspacePath, 'src/file.ts'));
       expect(content2).toBe('file content');
-      expect(gitShowCallCount).toBe(1); // No additional git call
+      expect(gitFixtures.reads).toBe(1); // Served from the in-memory cache
     });
   });
 

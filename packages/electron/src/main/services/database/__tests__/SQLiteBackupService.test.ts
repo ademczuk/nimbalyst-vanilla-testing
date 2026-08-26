@@ -192,6 +192,37 @@ describe('SQLiteBackupService', () => {
     expect(stragglers).toEqual([]);
   });
 
+  it('verifies through the injected verifier, never the live connection', async () => {
+    // The whole point of the injection: verification is a synchronous multi-GB
+    // scan, and the live connection lives on the thread that serves every
+    // `query`. If this ever falls back to `sqlite.verifyBackup` inside the
+    // worker, the worker stops dequeuing messages for the duration and every
+    // queued request times out. Nothing at the call site shows that.
+    const inlineVerify = vi.spyOn(sqlite, 'verifyBackup');
+    const verify = vi.fn().mockResolvedValue({ valid: true, hasData: true });
+    const injected = new SQLiteBackupService({ sqliteDir, backupDir, sqlite, verify });
+    await injected.initialize();
+
+    const result = await injected.createBackup();
+
+    expect(result.success).toBe(true);
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(inlineVerify).not.toHaveBeenCalled();
+  });
+
+  it('does not promote a backup the verifier rejects', async () => {
+    const verify = vi.fn().mockResolvedValue({ valid: false, error: 'quick_check returned: bad' });
+    const injected = new SQLiteBackupService({ sqliteDir, backupDir, sqlite, verify });
+    await injected.initialize();
+
+    const result = await injected.createBackup();
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('quick_check returned: bad');
+    expect(fs.existsSync(slotPath('current'))).toBe(false);
+    expect(fs.readdirSync(backupDir).filter((n) => n.startsWith('temp-backup-'))).toEqual([]);
+  });
+
   it('cleanupOldCorruptedBackups removes pre-existing stranded temp files', async () => {
     // Simulate stragglers from an older build that didn't clean WAL/SHM siblings.
     fs.writeFileSync(path.join(backupDir, 'temp-backup-2024-01-01.sqlite'), 'x');

@@ -173,32 +173,6 @@ export type {
 } from './mockup/types';
 // Import for side effects - registers globals on Window
 import './mockup/types';
-// Mockup Plugin - Node exported separately to avoid circular dependency
-export {
-  MockupNode,
-  $createMockupNode,
-  $isMockupNode,
-} from './plugins/MockupPlugin/MockupNode';
-export type {
-  MockupPayload,
-  SerializedMockupNode,
-} from './plugins/MockupPlugin/MockupNode';
-export { MOCKUP_TRANSFORMER } from './plugins/MockupPlugin/MockupTransformer';
-export {
-  INSERT_MOCKUP_COMMAND,
-  MockupLexicalExtension,
-  generateMockupScreenshot,
-} from './plugins/MockupPlugin';
-export type {
-  MockupPlatformService,
-  MockupFileInfo,
-  MockupPickerResult,
-} from './plugins/MockupPlugin/MockupPlatformService';
-export {
-  setMockupPlatformService,
-  getMockupPlatformService,
-  hasMockupPlatformService,
-} from './plugins/MockupPlugin/MockupPlatformService';
 // Config
 export { STYTCH_CONFIG, getStytchConfig } from './config/stytch';
 // Extensions

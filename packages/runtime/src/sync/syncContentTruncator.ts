@@ -30,6 +30,12 @@
  * snapshot for inspection.
  */
 import { utf8ByteLen, formatBytes, isImageBlock } from '../utils/contentBytes';
+import {
+  CLAUDE_CODE_TRANSIENT_CHUNK_TYPES,
+  CLAUDE_CODE_TRANSIENT_SYSTEM_SUBTYPES,
+  CODEX_APP_SERVER_TRANSIENT_EVENT_TYPES,
+  CODEX_LEGACY_TRANSIENT_EVENT_TYPES,
+} from '../storage/nonRenderingFrames';
 
 const TRUNCATE_THRESHOLD_BYTES = 4 * 1024;
 const MAX_SYNC_MESSAGE_BYTES = 16 * 1024;
@@ -74,42 +80,14 @@ export function setSyncImageCompressor(compressor: SyncImageCompressor | null): 
   syncImageCompressor = compressor;
 }
 
-const CODEX_APP_SERVER_TRANSIENT_EVENT_TYPES = new Set([
-  'item/agentMessage/delta',
-  'item/commandExecution/outputDelta',
-  'thread/tokenUsage/updated',
-  'account/rateLimits/updated',
-  'thread/status/changed',
-  'mcpServer/startupStatus/updated',
-  'turn/started',
-  'turn/completed',
-  'turn/diff/updated',
-  'skills/changed',
-]);
-
-// Claude Agent SDK chunk types whose persisted form never renders -- they only
-// drive live in-memory side effects in ClaudeCodeProvider. The provider now
-// skips persisting these, but this sync-side filter catches the same chunks if
-// they're already sitting in ai_agent_messages from before the persistence fix
-// (e.g. older sessions replayed on first reconnect).
-const CLAUDE_CODE_TRANSIENT_CHUNK_TYPES = new Set([
-  'tool_progress',
-  'tool_use_summary',
-  'auth_status',
-  'rate_limit_event',
-]);
-const CLAUDE_CODE_TRANSIENT_SYSTEM_SUBTYPES = new Set([
-  'hook_started',
-  'hook_response',
-  'task_started',
-  'task_progress',
-  'task_notification',
-  // Live "estimated thinking tokens" progress ticks. A long turn emits dozens
-  // (190 in one observed session, ~37 KB + 190 extra synced rows). They drive a
-  // live in-memory indicator only and produce no descriptor on reparse, so they
-  // are pure waste on the wire.
-  'thinking_tokens',
-]);
+// The three "renders nothing" sets below are shared with the provider write
+// path and the storage backfill -- see `storage/nonRenderingFrames`. They used
+// to be a private copy here, which is how `thinking_tokens` ended up filtered
+// on the wire and persisted to disk for months.
+//
+// This sync-side filter still earns its keep independently of the write-path
+// gate: it catches chunks already sitting in ai_agent_messages from before that
+// gate landed (older sessions replayed on first reconnect).
 
 // System subtypes that ARE persisted locally (so the desktop's own transcript
 // build can read e.g. the SDK session_id) but must NOT cross the sync wire.
@@ -121,11 +99,8 @@ const CLAUDE_CODE_TRANSIENT_SYSTEM_SUBTYPES = new Set([
 // assistant branch, rendering a stray bubble desktop never shows. Drop it.
 const CLAUDE_CODE_NON_SYNCED_SYSTEM_SUBTYPES = new Set(['init']);
 
-// Legacy codex SDK/exec transport events that render nothing on mobile.
-// `thread.started` only captures a thread id; `token_count` (bare or wrapped in
-// an `event_msg` envelope) only feeds a turn_ended descriptor, which the
-// projector drops. Text deltas / item events DO render and must pass through.
-const CODEX_LEGACY_TRANSIENT_EVENT_TYPES = new Set(['thread.started', 'token_count']);
+// Legacy codex `event_msg` envelopes are additionally unwrapped below; the bare
+// event-type set itself lives in `storage/nonRenderingFrames`.
 
 // OpenCode SSE event types that can produce something the mobile transcript
 // renders, mirroring the switch in OpenCodeRawParser.parseOutputMessage. That

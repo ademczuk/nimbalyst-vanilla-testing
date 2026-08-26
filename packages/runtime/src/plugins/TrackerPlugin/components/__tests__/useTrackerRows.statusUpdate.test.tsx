@@ -38,9 +38,9 @@ function registerCustomType(): void {
   globalRegistry.register(model);
 }
 
-function makeRecord(): TrackerRecord {
+function makeRecord(id: string): TrackerRecord {
   return {
-    id: 'item-1',
+    id,
     primaryType: customType,
     typeTags: [customType],
     source: 'native',
@@ -51,7 +51,7 @@ function makeRecord(): TrackerRecord {
       createdAt: '2026-06-29T00:00:00.000Z',
       updatedAt: '2026-06-29T00:00:00.000Z',
     },
-    fields: { title: 'Custom item', phase: 'draft' },
+    fields: { title: `Custom item ${id}`, phase: 'draft' },
   };
 }
 
@@ -65,29 +65,37 @@ describe('useTrackerRows bulk status update', () => {
   it('writes bulk status updates to the field mapped by workflowStatus', async () => {
     registerCustomType();
     const updateTrackerItem = vi.fn().mockResolvedValue({ success: true });
+    const updateTrackerItems = vi.fn(async ({ entries }: { entries: Array<{ itemId: string }> }) => ({
+      success: true,
+      results: entries.map(entry => ({ itemId: entry.itemId, success: true })),
+    }));
     (window as any).electronAPI = {
-      documentService: { updateTrackerItem },
+      documentService: { updateTrackerItem, updateTrackerItems },
     };
 
-    const item = makeRecord();
+    const items = [makeRecord('item-1'), makeRecord('item-2')];
     const { result } = renderHook(() => useTrackerRows({
-      items: [item],
+      items,
       activeTypeFilter: customType,
     }));
 
     await act(async () => {
-      result.current.setSelectedIds(new Set([item.id]));
+      result.current.setSelectedIds(new Set(items.map(item => item.id)));
     });
 
     await act(async () => {
       await result.current.handleBulkStatusUpdate('reviewing');
     });
 
-    expect(updateTrackerItem).toHaveBeenCalledWith({
-      itemId: item.id,
-      updates: { phase: 'reviewing' },
-      sharing: 'personal',
-      draftByDefault: false,
+    expect(updateTrackerItems).toHaveBeenCalledTimes(1);
+    expect(updateTrackerItems).toHaveBeenCalledWith({
+      entries: items.map(item => ({
+        itemId: item.id,
+        storeUpdates: { phase: 'reviewing' },
+        sharing: 'personal',
+        draftByDefault: false,
+      })),
     });
+    expect(updateTrackerItem).not.toHaveBeenCalled();
   });
 });

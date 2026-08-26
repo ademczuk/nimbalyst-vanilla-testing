@@ -31,32 +31,12 @@ import {
 import { WriteCoordinator } from './WriteCoordinator';
 import { runMigrations } from './MigrationRunner';
 import { translateAndBind, translateSql } from './dialectTranslator';
-
-// better-sqlite3 ships its own types. We import the constructor lazily inside
-// `open()` so this module can be statically imported in environments where
-// the native binding hasn't been compiled (e.g. some test runners). The
-// production main process always has the binding.
-type SqliteCtor = typeof import('better-sqlite3');
-type SqliteDatabaseHandle = import('better-sqlite3').Database;
-
-let cachedBetterSqlite: SqliteCtor | null = null;
-function loadBetterSqlite(): SqliteCtor {
-  if (cachedBetterSqlite) return cachedBetterSqlite;
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const mod = require('better-sqlite3') as SqliteCtor | { default: SqliteCtor };
-  cachedBetterSqlite = (mod as { default?: SqliteCtor }).default ?? (mod as SqliteCtor);
-  return cachedBetterSqlite;
-}
-
-/**
- * Optional override for the native better-sqlite3 binding path. Set by
- * vitest.globalSetup.ts so unit tests can load a Node-ABI prebuild without
- * disturbing the Electron-ABI binary in `node_modules/.../build/Release/`
- * that the dev server depends on.
- */
-function nativeBindingOverride(): string | undefined {
-  return process.env.NIMBALYST_BETTER_SQLITE3_NATIVE || undefined;
-}
+import {
+  loadBetterSqlite,
+  nativeBindingOverride,
+  type SqliteDatabaseHandle,
+} from './betterSqliteLoader';
+import { verifyBackupFile, type BackupVerificationResult } from './backupVerification';
 
 export interface SQLiteDatabaseOptions {
   /** Directory holding `nimbalyst.sqlite` and its WAL/SHM siblings. */
@@ -335,43 +315,13 @@ export class SQLiteDatabase {
     };
   }
 
-  async verifyBackup(backupPath: string): Promise<{
-    valid: boolean;
-    error?: string;
-    hasData?: boolean;
-    sessionCount?: number;
-    historyCount?: number;
-  }> {
-    try {
-      const Sqlite = loadBetterSqlite();
-      const nativeBinding = nativeBindingOverride();
-      const handle = new Sqlite(
-        backupPath,
-        nativeBinding
-          ? { fileMustExist: true, readonly: true, nativeBinding }
-          : { fileMustExist: true, readonly: true },
-      );
-      const integrity = (handle.pragma('integrity_check', { simple: true }) as string) ?? '';
-      if (integrity !== 'ok') {
-        handle.close();
-        return { valid: false, error: `integrity_check returned: ${integrity}` };
-      }
-      const sessionCount = (handle.prepare('SELECT COUNT(*) AS c FROM ai_sessions').get() as
-        | { c: number }
-        | undefined)?.c ?? 0;
-      const historyCount = (handle.prepare('SELECT COUNT(*) AS c FROM document_history').get() as
-        | { c: number }
-        | undefined)?.c ?? 0;
-      handle.close();
-      return {
-        valid: true,
-        hasData: sessionCount > 0 || historyCount > 0,
-        sessionCount,
-        historyCount,
-      };
-    } catch (err) {
-      return { valid: false, error: (err as Error).message };
-    }
+  /**
+   * Inline verification against the calling thread. The backup service does
+   * NOT use this path in production — it verifies on a dedicated worker
+   * thread so the query queue keeps draining. See backupVerification.ts.
+   */
+  async verifyBackup(backupPath: string): Promise<BackupVerificationResult> {
+    return verifyBackupFile(backupPath);
   }
 
   async createBackup(): Promise<{ success: boolean; error?: string }> {

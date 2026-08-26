@@ -272,6 +272,8 @@ export type EditorHostCapability =
   | 'aiContext'
   /** `registerEditorAPI` publishes the editor to AI tools. */
   | 'editorApi'
+  /** `registerViewport` reaches a host that carries scroll between documents. */
+  | 'viewport'
   /** `registerMenuItems` reaches a real actions menu. */
   | 'menuItems'
   /** `storage` survives a reload. */
@@ -303,6 +305,23 @@ export interface EditorHostCapabilities {
 
   /** Every capability this host cannot provide, each with a reason. */
   readonly unavailable: readonly EditorHostCapabilityGap[];
+}
+
+/**
+ * An editor's scroll position, expressed so it survives the trip to a document
+ * of a different length. See {@link EditorHost.registerViewport}.
+ *
+ * A **fraction of scrollable height**, never a pixel offset. Two variants of a
+ * screen are rarely the same length, and 2000px down a 2400px design is near
+ * the end of it while 2000px down a 9000px design is barely started. Carrying
+ * pixels would land the reader somewhere arbitrary, and nothing on screen would
+ * say why.
+ */
+export interface EditorViewport {
+  /** Current position in `[0, 1]`. Content with nowhere to scroll returns 0. */
+  getScrollFraction(): number;
+  /** Restore a position captured from a document of any length. */
+  setScrollFraction(fraction: number): void;
 }
 
 // ============================================================================
@@ -806,6 +825,46 @@ export interface EditorHost {
    * ```
    */
   registerEditorAPI(api: unknown | null): void;
+
+  // ============ VIEWPORT (OPTIONAL) ============
+
+  /**
+   * Publish this editor's scroll position, so a host showing several documents
+   * in sequence can carry the reader's place from one to the next.
+   *
+   * The case this exists for: comparing design alternatives. Open option A,
+   * scroll to the pricing table, step to option B, and land on B's pricing
+   * table. Without it, stepping between options is three separate lookups and
+   * the reader is comparing against memory again.
+   *
+   * The host cannot do this itself. An editor that paints into an iframe --
+   * which every mockup does -- owns a scroll position in a document the host
+   * has no business reaching into, and an editor that scrolls a `<div>` owns
+   * one the host cannot find. Only the editor knows what scrolls.
+   *
+   * Optional on both sides, and silence is a supported answer: an editor that
+   * never calls this simply does not carry scroll, and each document opens at
+   * the top. Call with `null` to unregister, as with `registerEditorAPI`.
+   *
+   * @example
+   * ```tsx
+   * useEffect(() => {
+   *   host.registerViewport?.({
+   *     getScrollFraction: () => {
+   *       const doc = iframeRef.current?.contentDocument?.documentElement;
+   *       if (!doc) return 0;
+   *       return scrollFractionOf(doc.scrollTop, doc.scrollHeight - doc.clientHeight);
+   *     },
+   *     setScrollFraction: (fraction) => {
+   *       const doc = iframeRef.current?.contentDocument?.documentElement;
+   *       if (doc) doc.scrollTop = fraction * (doc.scrollHeight - doc.clientHeight);
+   *     },
+   *   });
+   *   return () => host.registerViewport?.(null);
+   * }, [host]);
+   * ```
+   */
+  registerViewport?(viewport: EditorViewport | null): void;
 
   // ============ MENU ITEMS ============
 

@@ -10,16 +10,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Work your team's shared trackers from the web console: search and filter, sort and group, choose your columns, switch between list, table, board, timeline and tag board, open an item and read its body live, edit fields, comment, create items, and drag cards between columns, all converging with the desktop app in real time.
+- Invite people to your organization from the web console, see who has not accepted yet, and resend or revoke a pending invitation.
+- Open anything in the web console with Cmd+K, right-click a tracker row for its actions, and pick from the full set of Nimbalyst themes.
+- A tracker now shows who else is viewing it.
+- Ask a teammate to pick between mockups and they see the designs themselves: every option shows a live preview, and clicking one opens it full size to read, step between options and vote without leaving the request.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- The web console now reads as Nimbalyst rather than a separate admin tool: the same header, navigation and controls as the desktop app, and a layout that holds up on a phone when you follow a link to a request or a single tracker item.
+- The web console's Requests inbox now also carries mentions, replies, tracker comments and document discussions, filtered by what you are looking for, and each row says what it is about instead of repeating the sender's name.
+- Mockups and data models embedded in a document now render as the live editor instead of a saved screenshot, and existing embeds convert on open.
+- Editing many tracker rows at once — pasting a range, or changing status or priority on a multi-row selection — now applies as a single update instead of one per row.
+- Quick open now finds a tracker by its issue key or number and puts it at the top, instead of only ever ranking trackers by meaning.
+- AI sessions take less disk: Nimbalyst stops recording progress counters and duplicate screenshots it never displays, and clearing old tool output now also removes that history from sessions you already have — about 1 GB of a 5.6 GB database on one measured install.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Code in the AI transcript no longer picks up stray backslashes before dollar signs, so a shell command you copy out of it still runs.
+- A scheduled automation no longer stops running for good, with an error on every launch, when its schedule was hand-edited into a shape Nimbalyst didn't expect; it now repairs what it can and names what you need to fix.
+- A tracker type now shows the same colour and icon everywhere it appears; decisions and features were drawn differently in the AI transcript than in the tracker itself.
+- Searching quick open's trackers no longer closes the whole dialog with an error when any tracker item has no title.
+- The inbox now names who sent each message instead of showing your teammates as "Unknown member".
+- Saved views shared with your team no longer go missing from the tracker sidebar on startup.
 - Sending a queued prompt while a background sub-agent is running no longer leaves the session stuck on "Thinking..." or later claims a sub-agent was interrupted when none was.
+- Nimbalyst no longer removes items from your team's tracker when it can't tell which of your trackers are shared; it now holds off and tells you instead of assuming they were made private.
+- Tracker items that were stuck and never reached your team now sync, including in a project that isn't the one you're focused on, and items belonging to a tracker that is no longer shared stop being retried on every reconnect.
+- Settings can now edit a built-in tracker type you have already customised; the edit button silently did nothing for those types.
+- On a large database, the startup backup no longer stalls everything you do for about a minute, flooding the app with timeout errors and then reporting the backup as failed when it had actually succeeded.
+- Nimbalyst no longer freezes for seconds at a time during startup, while an AI session edits files, or while opening shared documents, switching projects, loading sessions, or resizing panes.
+- OpenCode models you discover now show up in the session model picker and stay in Settings, instead of both falling back to a fixed handful of built-in models; each project keeps its own discovered list.
+- Hiding a model in Settings now takes effect in the session model picker for OpenCode, Codex and Copilot, which previously ignored the setting.
 
 ### Removed
 <!-- Removed features go here -->
+- The `/datamodel` and `/Mockup` slash commands; embed either in a document the same way as any other file, by putting a link to it on its own line.
 
 ## [0.75.2] - 2026-08-24
 

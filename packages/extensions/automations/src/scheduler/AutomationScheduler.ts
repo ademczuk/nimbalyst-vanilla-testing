@@ -6,7 +6,7 @@
  */
 
 import type { AutomationStatus, ExecutionRecord } from '../frontmatter/types';
-import { parseAutomationStatus, extractPromptBody, updateAutomationStatus } from '../frontmatter/parser';
+import { parseAutomation, parseAutomationStatus, extractPromptBody, updateAutomationStatus } from '../frontmatter/parser';
 import { calculateNextRun, msUntilNextRun } from './scheduleUtils';
 
 interface ExtensionFileSystem {
@@ -66,6 +66,8 @@ export class AutomationScheduler {
   private onFire: OnAutomationFire | null = null;
   private activeRuns = new Map<string, Promise<AutomationFireResult>>();
   private disposed = false;
+  /** Last reported schedule problem per file, so a 30s rescan doesn't re-nag. */
+  private reportedProblems = new Map<string, string>();
 
   constructor(fs: ExtensionFileSystem, ui: ExtensionUI) {
     this.fs = fs;
@@ -108,9 +110,27 @@ export class AutomationScheduler {
     for (const filePath of files) {
       try {
         const content = await this.fs.readFile(filePath);
-        const parsedStatus = parseAutomationStatus(content);
-        if (!parsedStatus) continue;
-        const status = await this.repairStaleCompletedOccurrence(filePath, content, parsedStatus);
+        const parsed = parseAutomation(content);
+        if (!parsed) continue;
+
+        let currentContent = content;
+        if (parsed.changed) {
+          // Self-heal: rewrite the canonical schedule so later launches read a
+          // well-formed value and the header's day chips keep working. Only
+          // ever reached for a fully coercible schedule (#1374).
+          currentContent = updateAutomationStatus(content, { schedule: parsed.status.schedule });
+          await this.fs.writeFile(filePath, currentContent);
+        }
+
+        if (parsed.problem) {
+          // Track it so the automations list still shows it, but never arm a
+          // timer for a schedule that cannot fire.
+          this.holdUnschedulable(filePath, parsed.status, parsed.problem);
+          continue;
+        }
+        this.reportedProblems.delete(filePath);
+
+        const status = await this.repairStaleCompletedOccurrence(filePath, currentContent, parsed.status);
 
         const existing = this.automations.get(filePath);
         if (existing) {
@@ -164,16 +184,25 @@ export class AutomationScheduler {
   applyDefinition(filePath: string, content: string): void {
     if (this.disposed) return;
 
-    const status = parseAutomationStatus(content);
+    const parsed = parseAutomation(content);
     const existing = this.automations.get(filePath);
 
-    if (!status) {
+    if (!parsed) {
       if (existing) {
         this.clearTimer(existing);
         this.automations.delete(filePath);
       }
       return;
     }
+
+    const status = parsed.status;
+    if (parsed.problem) {
+      // No write-back here: the header owns this content and its autosave flush
+      // is still in flight, so repairing the file is left to the next rescan.
+      this.holdUnschedulable(filePath, status, parsed.problem);
+      return;
+    }
+    this.reportedProblems.delete(filePath);
 
     if (existing) {
       existing.status = status;
@@ -190,6 +219,29 @@ export class AutomationScheduler {
       this.automations.set(filePath, automation);
       this.scheduleNext(automation);
     }
+  }
+
+  /**
+   * Keep an automation whose schedule can never fire visible in the list, with
+   * no timer armed, and tell the user once why it will not run. Re-reported
+   * only if the problem itself changes, so the 30s rescan stays quiet.
+   */
+  private holdUnschedulable(filePath: string, status: AutomationStatus, problem: string): void {
+    const existing = this.automations.get(filePath);
+    if (existing) {
+      this.clearTimer(existing);
+      existing.status = status;
+      existing.nextRunAt = null;
+    } else {
+      this.automations.set(filePath, { filePath, status, timerId: null, nextRunAt: null });
+    }
+
+    if (this.reportedProblems.get(filePath) === problem) return;
+    this.reportedProblems.set(filePath, problem);
+    const fileName = filePath.split('/').pop() ?? filePath;
+    this.ui.showError(
+      `Automation "${status.title}" (${fileName}) will not run — invalid schedule: ${problem}`,
+    );
   }
 
   /** Manually run an automation immediately. */
@@ -274,37 +326,47 @@ export class AutomationScheduler {
     const cappedMs = Math.min(delay, 86_400_000);
 
     automation.timerId = setTimeout(async () => {
-      if (this.disposed) return;
+      // Nothing awaits this callback, so an escaping rejection surfaces as an
+      // app-level "Unhandled Promise Rejection" toast and takes this
+      // automation's timer chain down with it (#1374). One automation's
+      // failure must stay that automation's failure.
+      try {
+        if (this.disposed) return;
 
-      // Not yet due (the 24h cap fired us early) — re-arm toward the same target.
-      if (automation.nextRunAt !== null && Date.now() < automation.nextRunAt - SLACK_MS) {
-        this.armTimer(automation);
-        return;
-      }
+        // Not yet due (the 24h cap fired us early) — re-arm toward the same target.
+        if (automation.nextRunAt !== null && Date.now() < automation.nextRunAt - SLACK_MS) {
+          this.armTimer(automation);
+          return;
+        }
 
-      // The in-memory status can be minutes stale — the file may have been
-      // disabled since this timer was armed, and the 30s poll may not have run
-      // yet. The scheduled path decides from disk, never from memory (#1351).
-      // `runNow` deliberately still honors a manual trigger on a disabled
-      // automation; only the automatic path is gated.
-      if (!(await this.refreshEnabledFromDisk(automation))) {
+        // The in-memory status can be minutes stale — the file may have been
+        // disabled since this timer was armed, and the 30s poll may not have run
+        // yet. The scheduled path decides from disk, never from memory (#1351).
+        // `runNow` deliberately still honors a manual trigger on a disabled
+        // automation; only the automatic path is gated.
+        if (!(await this.refreshEnabledFromDisk(automation))) {
+          this.clearTimer(automation);
+          automation.nextRunAt = null;
+          return;
+        }
+
+        await this.runNow(automation.filePath);
+
+        // Compute the next target from a fresh now (a single overdue run catches
+        // up, then cadence resumes going forward).
+        const next = calculateNextRun(automation.status.schedule);
+        automation.nextRunAt = next ? next.getTime() : null;
+        // Re-arm through scheduleNext so the enabled check sits on the only path
+        // that arms a timer — a run that finishes after a disable must not
+        // resurrect the chain. A null target means the schedule can never fire
+        // again, so stay unarmed rather than letting scheduleNext fall back to a
+        // stale persisted nextRun.
+        if (automation.nextRunAt !== null) this.scheduleNext(automation);
+      } catch (err) {
+        console.error(`[Automations] Timer for ${automation.filePath} failed:`, err);
         this.clearTimer(automation);
         automation.nextRunAt = null;
-        return;
       }
-
-      await this.runNow(automation.filePath);
-
-      // Compute the next target from a fresh now (a single overdue run catches
-      // up, then cadence resumes going forward).
-      const next = calculateNextRun(automation.status.schedule);
-      automation.nextRunAt = next ? next.getTime() : null;
-      // Re-arm through scheduleNext so the enabled check sits on the only path
-      // that arms a timer — a run that finishes after a disable must not
-      // resurrect the chain. A null target means the schedule can never fire
-      // again, so stay unarmed rather than letting scheduleNext fall back to a
-      // stale persisted nextRun.
-      if (automation.nextRunAt !== null) this.scheduleNext(automation);
     }, cappedMs);
   }
 
@@ -486,16 +548,19 @@ export class AutomationScheduler {
   ): Promise<void> {
     try {
       const now = new Date().toISOString();
-      const nextRun = calculateNextRun(status.schedule);
-      const freshContent = await this.fs.readFile(filePath);
-      const updated = updateAutomationStatus(freshContent, {
-        lastRun: now,
-        lastRunStatus: 'error',
-        lastRunError: error,
-        nextRun: nextRun?.toISOString(),
-      });
-      await this.fs.writeFile(filePath, updated);
-
+      // Recording a failure must never depend on the thing that failed. When a
+      // bad schedule is itself the cause, computing the next run here threw and
+      // took the whole record with it — so the run vanished from both the
+      // frontmatter and the history and the user saw nothing (#1374).
+      let nextRun: Date | null = null;
+      try {
+        nextRun = calculateNextRun(status.schedule);
+      } catch (scheduleError) {
+        console.error('[Automations] Could not compute next run while recording a failure:', scheduleError);
+      }
+      // History first: it is the durable record of the failure and it swallows
+      // its own errors, so a subsequent unreadable/unwritable definition file
+      // can no longer erase the evidence that the run happened.
       await this.appendHistory(status, {
         id: `run_${Date.now()}`,
         timestamp: now,
@@ -504,6 +569,15 @@ export class AutomationScheduler {
         error,
         outputFile,
       });
+
+      const freshContent = await this.fs.readFile(filePath);
+      const updated = updateAutomationStatus(freshContent, {
+        lastRun: now,
+        lastRunStatus: 'error',
+        lastRunError: error,
+        nextRun: nextRun?.toISOString(),
+      });
+      await this.fs.writeFile(filePath, updated);
 
       const tracked = this.automations.get(filePath);
       if (tracked) {

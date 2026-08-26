@@ -100,6 +100,10 @@ export interface UseTrackerRowsResult {
   handleFieldUpdate: (item: TrackerRecord, field: string, value: unknown) => Promise<void>;
   /** Write several fields on one item as a single update (one sync write). */
   handleItemUpdate: (item: TrackerRecord, updates: Record<string, unknown>) => Promise<void>;
+  /** Write fields across many items through the renderer's batch command. */
+  handleItemsUpdate: (
+    entries: readonly { item: TrackerRecord; updates: Record<string, unknown> }[],
+  ) => Promise<{ written: number; failed: number }>;
   /** Apply the same field/value pair across many items (bulk edit, fill-down, paste). */
   handleBulkFieldUpdate: (items: TrackerRecord[], field: string, value: unknown) => Promise<void>;
 
@@ -371,6 +375,82 @@ export function useTrackerRows({
     await updateItem(item, updates);
   }, [updateItem]);
 
+  const handleItemsUpdate = useCallback(async (
+    entries: readonly { item: TrackerRecord; updates: Record<string, unknown> }[],
+  ): Promise<{ written: number; failed: number }> => {
+    const electronAPI = (window as any).electronAPI;
+    if (!electronAPI?.documentService?.updateTrackerItems) {
+      return { written: 0, failed: entries.length };
+    }
+
+    const generation = undoGenerationRef.current;
+    const routed = entries
+      .filter(entry => Object.keys(entry.updates).length > 0)
+      .map(entry => {
+        const fileBacked = (
+          entry.item.source === 'frontmatter'
+          || entry.item.source === 'import'
+          || entry.item.source === 'inline'
+        ) && Boolean(entry.item.system.documentPath);
+        const tracker = globalRegistry.get(entry.item.primaryType);
+        return {
+          item: entry.item,
+          updates: entry.updates,
+          command: {
+            itemId: entry.item.id,
+            ...(fileBacked
+              ? { fileUpdates: entry.updates }
+              : { storeUpdates: entry.updates }),
+            sharing: tracker?.sharing ?? 'personal',
+            draftByDefault: tracker?.draftByDefault ?? false,
+          },
+        };
+      });
+    if (routed.length === 0) return { written: 0, failed: 0 };
+
+    let written = 0;
+    let failed = 0;
+    for (let offset = 0; offset < routed.length; offset += 100) {
+      const chunk = routed.slice(offset, offset + 100);
+      try {
+        const result = await electronAPI.documentService.updateTrackerItems({
+          entries: chunk.map(entry => entry.command),
+        }) as {
+          success?: boolean;
+          results?: Array<{ itemId: string; success: boolean; error?: string }>;
+          error?: string;
+        };
+        const successById = new Map(
+          (result.results ?? []).map(item => [item.itemId, item.success]),
+        );
+        const assumeWholeChunk = result.results === undefined;
+        for (const entry of chunk) {
+          const succeeded = assumeWholeChunk ? result.success !== false : successById.get(entry.item.id) === true;
+          if (!succeeded) {
+            failed += 1;
+            continue;
+          }
+          written += 1;
+          const changes: Array<Extract<TrackerUndoChange, { kind: 'field' }>> = Object.keys(entry.updates).map(field => ({
+            kind: 'field',
+            itemId: entry.item.id,
+            field,
+            previousValue: entry.item.fields[field],
+            nextValue: entry.updates[field],
+          }));
+          const label = changes.length === 1
+            ? `Edit ${changes[0].field.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, c => c.toUpperCase())}`
+            : `Edit ${changes.length} fields`;
+          recordUndoEntry({ label, changes }, generation);
+        }
+      } catch (err) {
+        console.error('[useTrackerRows] Failed to update item batch:', err);
+        failed += chunk.length;
+      }
+    }
+    return { written, failed };
+  }, [recordUndoEntry]);
+
   const replayEntry = useCallback(async (
     entry: TrackerUndoEntry,
     direction: 'undo' | 'redo',
@@ -514,20 +594,16 @@ export function useTrackerRows({
     setEditingCell(null);
   }, [handleItemUpdate]);
 
-  /**
-   * Apply one field/value across many items. Writes run concurrently -- each is an
-   * independent per-item update, and serializing them made bulk edits over a large
-   * selection feel like a hang.
-   */
+  /** Apply one field/value through the document service's update-items batch seam. */
   const handleBulkFieldUpdate = useCallback(async (
     targets: TrackerRecord[],
     field: string,
     value: unknown,
   ) => {
     const editable = targets.filter(isItemEditable);
-    await Promise.all(editable.map(item => handleItemUpdate(item, { [field]: value })));
+    await handleItemsUpdate(editable.map(item => ({ item, updates: { [field]: value } })));
     setEditingCell(null);
-  }, [handleItemUpdate, isItemEditable]);
+  }, [handleItemsUpdate, isItemEditable]);
 
   /** Toggle select all / deselect all */
   const handleSelectAll = useCallback(() => {
@@ -591,12 +667,13 @@ export function useTrackerRows({
     const itemsToUpdate = itemsRef.current.filter(i => selectedIds.has(i.id) && isItemEditable(i));
     const roleLabel = role === 'workflowStatus' ? 'Status' : 'Priority';
     await runUndoable(`Set ${roleLabel} on ${itemsToUpdate.length} items`, async () => {
-      await Promise.all(itemsToUpdate.map(item =>
-        handleItemUpdate(item, { [resolveRoleFieldName(item.primaryType, role)]: value })
-      ));
+      await handleItemsUpdate(itemsToUpdate.map(item => ({
+        item,
+        updates: { [resolveRoleFieldName(item.primaryType, role)]: value },
+      })));
     });
     setEditingCell(null);
-  }, [selectedIds, closeContextMenu, isItemEditable, handleItemUpdate, runUndoable]);
+  }, [selectedIds, closeContextMenu, isItemEditable, handleItemsUpdate, runUndoable]);
 
   /** Bulk status update for selected items */
   const handleBulkStatusUpdate = useCallback(
@@ -850,6 +927,7 @@ export function useTrackerRows({
     titleInputRef,
     handleFieldUpdate,
     handleItemUpdate,
+    handleItemsUpdate,
     handleBulkFieldUpdate,
     runUndoable,
     recordUndoEntry,

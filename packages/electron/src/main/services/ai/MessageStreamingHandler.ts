@@ -134,6 +134,7 @@ import { disableParentNotificationsAfterDirectTakeover } from './childSessionTak
 import { installScopedProviderListener } from './providerListenerRegistry';
 import { shouldSettleUnterminatedTurn } from './sessionSettlePolicy';
 import { captureTutorialMilestone } from '../tutorial/tutorialAnalytics';
+import { trackSendBlocked } from '../analytics/sendWallAnalytics';
 import type Store from 'electron-store';
 import type { AIService } from './AIService';
 import type { HooklessAgentFileWatcher } from './HooklessAgentFileWatcher';
@@ -348,6 +349,7 @@ export class MessageStreamingHandler {
     if (queuedPromptId) {
       if (this.svc.processingQueuedPromptIds.has(queuedPromptId)) {
         logger.main.info(`[AIService] SKIPPING duplicate queued prompt: ${queuedPromptId}`);
+        trackSendBlocked('duplicate_prompt');
         return { content: '' }; // Already being processed, return empty response
       }
 
@@ -385,6 +387,7 @@ export class MessageStreamingHandler {
 
     // ALWAYS load session by ID - never use "current" session (causes cross-window issues)
     if (!sessionId) {
+      trackSendBlocked('no_session_id');
       throw new Error('No session ID provided - cannot send message');
     }
 
@@ -396,6 +399,7 @@ export class MessageStreamingHandler {
 
     // Require workspace path for AI operations
     if (!workspacePath) {
+      trackSendBlocked('no_workspace');
       throw new Error('No workspace path available - AI operations require an open workspace');
     }
 
@@ -404,6 +408,7 @@ export class MessageStreamingHandler {
     perfLog.sessionLoadTime = Date.now() - loadStartTime;
 
     if (!session) {
+      trackSendBlocked('session_not_found');
       throw new Error(`Session ${sessionId} not found`);
     }
 
@@ -411,6 +416,7 @@ export class MessageStreamingHandler {
     // Verify we got the right session
     if (session.id !== sessionId) {
       console.error(`[AIService] CRITICAL ERROR: Requested session ${sessionId} but got session ${session.id}!`);
+      trackSendBlocked('session_mismatch', session.provider);
       throw new Error(`Session mismatch: requested ${sessionId} but got ${session.id}`);
     }
 
@@ -557,11 +563,13 @@ export class MessageStreamingHandler {
             apiKey = 'not-required'; // Dummy value since LMStudio doesn't need a key
             break;
           default:
+            trackSendBlocked('no_provider', session.provider);
             throw new Error(`Unknown provider: ${session.provider}`);
         }
       }
 
       if (!apiKey && requiresApiKey) {
+        trackSendBlocked('no_api_key', session.provider);
         throw new Error(errorMessage);
       }
 
@@ -794,7 +802,10 @@ export class MessageStreamingHandler {
     let selectedModelContextWindow: number | undefined;
     const sessionModelId = session.model || session.providerConfig?.model;
     if (sessionModelId) {
-      const models = await ModelRegistry.getModelsForProvider(session.provider as AIProviderType);
+      const models = await ModelRegistry.getModelsForProvider(
+        session.provider as AIProviderType,
+        effectiveWorkspacePath,
+      );
       selectedModelContextWindow = models.find(m => m.id === sessionModelId)?.contextWindow;
     }
 

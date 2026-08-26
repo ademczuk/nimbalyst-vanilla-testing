@@ -13,6 +13,8 @@
     "src/commenting-ui.ts",
     "src/docs-ui.ts",
     "src/feedback-ui.ts",
+    "src/trackers-ui.ts",
+    "src/quick-open.ts",
     "src/inbox.ts",
     "src/editor/hostTypes.ts"
   ],

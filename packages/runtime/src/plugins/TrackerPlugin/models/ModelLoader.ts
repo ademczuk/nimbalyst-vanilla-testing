@@ -4,6 +4,7 @@
 
 import { parseTrackerYAML } from './YAMLParser';
 import { globalRegistry, type TrackerDataModel } from './TrackerDataModel';
+import { parseTrackerSchemaPatchYAML, resolveTrackerSchemaPatch } from './schemaPatch';
 
 // Built-in tracker definitions are authored as YAML under ./builtins and bundled
 // as raw strings via Vite's `?raw` loader (see runtime/src/env.d.ts). This is the
@@ -54,6 +55,38 @@ export function parseBuiltinTrackers(): TrackerDataModel[] {
   });
 }
 
+
+/**
+ * True for the `<type>.patch.yaml` shape, which carries only a delta from a
+ * builtin seed and legitimately has no `displayName`.
+ */
+export function isTrackerPatchFileName(fileName: string): boolean {
+  return /\.patch\.ya?ml$/i.test(fileName);
+}
+
+/**
+ * Resolve a workspace schema file's content to a fully-resolved model,
+ * whichever of the two on-disk shapes it is.
+ *
+ * Every reader of `.nimbalyst/trackers/*.yaml` must go through this. Running
+ * the full-model parser over a patch throws `Missing required field:
+ * displayName` — which is how the renderer silently dropped every builtin
+ * override on each workspace load, and how the Settings "Edit schema override"
+ * button silently did nothing (NIM-3065).
+ *
+ * Throws on a patch whose target type has no seed, so a stray patch surfaces
+ * instead of registering a broken model.
+ */
+export function resolveTrackerSchemaFileContent(
+  fileName: string,
+  content: string,
+): TrackerDataModel {
+  if (!isTrackerPatchFileName(fileName)) return parseTrackerYAML(content);
+  const patch = parseTrackerSchemaPatchYAML(content);
+  const seed = globalRegistry.getBuiltinModel(patch.type) ?? globalRegistry.get(patch.type);
+  if (!seed) throw new Error(`Tracker schema patch targets unknown type '${patch.type}'`);
+  return resolveTrackerSchemaPatch(seed, patch);
+}
 
 /**
  * Load all built-in tracker definitions

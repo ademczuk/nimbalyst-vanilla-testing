@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const typesRoot = path.join(packageRoot, 'types');
 const internalRoot = path.join(typesRoot, 'internal');
-const publicEntries = ['commenting-ui', 'docs-ui', 'feedback-ui', 'inbox'].map((entryName) => ({
+const publicEntries = ['commenting-ui', 'docs-ui', 'feedback-ui', 'trackers-ui', 'quick-open', 'inbox'].map((entryName) => ({
   generated: path.join(internalRoot, `collab-bundle/src/${entryName}.d.ts`),
   public: path.join(typesRoot, `${entryName}.d.ts`),
 }));
@@ -33,8 +33,20 @@ function declarationFiles(directory) {
   });
 }
 
+/**
+ * Extension-SDK subpaths whose published name differs from the source filename
+ * (see the `exports` map in packages/extension-sdk/package.json). Without these
+ * the rewrite below looks for `src/file-tree.d.ts`, finds nothing, and the
+ * whole types build fails on any bundled module that imports one. Mirrored in
+ * the `paths` block of tsconfig.json so tsc resolves them the same way.
+ */
+const EXTENSION_SDK_SOURCE_NAMES = {
+  'file-tree': 'fileDirectoryTree',
+  'file-mask': 'fileMask',
+};
+
 function internalTarget(specifier) {
-  const collabClient = specifier.match(/^@nimbalyst\/collab-client\/(core|docs|docs-ui|feedback|feedback-ui)$/);
+  const collabClient = specifier.match(/^@nimbalyst\/collab-client\/(core|docs|docs-ui|feedback|feedback-ui|trackers|trackers-ui|quick-open)$/);
   if (collabClient) {
     return path.join(internalRoot, 'collab-client/src', collabClient[1], 'index.d.ts');
   }
@@ -49,10 +61,11 @@ function internalTarget(specifier) {
   // `EditorHost` is the SDK's own declaration rather than a hand-kept copy.
   const extensionSdk = specifier.match(/^@nimbalyst\/extension-sdk\/(.+)$/);
   if (extensionSdk) {
-    const direct = path.join(internalRoot, 'extension-sdk/src', `${extensionSdk[1]}.d.ts`);
+    const subpath = EXTENSION_SDK_SOURCE_NAMES[extensionSdk[1]] ?? extensionSdk[1];
+    const direct = path.join(internalRoot, 'extension-sdk/src', `${subpath}.d.ts`);
     return fs.existsSync(direct)
       ? direct
-      : path.join(internalRoot, 'extension-sdk/src', extensionSdk[1], 'index.d.ts');
+      : path.join(internalRoot, 'extension-sdk/src', subpath, 'index.d.ts');
   }
   return null;
 }

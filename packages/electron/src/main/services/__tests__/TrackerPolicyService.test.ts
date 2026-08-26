@@ -2,13 +2,18 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockGlobalRegistryGet } = vi.hoisted(() => ({
+const { mockGlobalRegistryGet, mockHasWorkspaceLayer } = vi.hoisted(() => ({
   mockGlobalRegistryGet: vi.fn((..._args: any[]) => undefined as any),
+  mockHasWorkspaceLayer: vi.fn((..._args: any[]) => true),
 }));
 
 vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel', () => ({
   globalRegistry: {
     get: mockGlobalRegistryGet,
+    // The policy resolver reads by explicit workspace (NIM-3702); the workspace
+    // argument is irrelevant to these cases, so both spellings share one stub.
+    getForWorkspace: (_workspacePath: string, type: string) => mockGlobalRegistryGet(type),
+    hasWorkspaceLayer: mockHasWorkspaceLayer,
   },
 }));
 
@@ -18,8 +23,13 @@ import {
   getInitialTrackerSyncStatus,
   isTrackerItemPublished,
   migrateTrackerSharingModels,
+  resolveTrackerSharingPolicy,
   shouldSyncTrackerItem,
 } from '../TrackerPolicyService';
+
+/** A resolution that succeeded, for the cases that are not about the miss. */
+const known = (sharing: 'team' | 'personal', draftByDefault = false) =>
+  ({ known: true, policy: { sharing, draftByDefault } }) as const;
 
 describe('TrackerPolicyService', () => {
   beforeEach(() => {
@@ -43,10 +53,36 @@ describe('TrackerPolicyService', () => {
     })).toEqual({ sharing: 'team', draftByDefault: false });
   });
 
-  it('defaults an unknown tracker to personal', () => {
+  it('defaults an unknown tracker to personal on the display-only read', () => {
+    // The wrapper still collapses, deliberately: showing an unresolvable tracker
+    // as private is the safe direction FOR A DISPLAY. It is the wrong direction
+    // for a write, which is why the sync lane uses resolveTrackerSharingPolicy.
     expect(getEffectiveTrackerSharingPolicy('/tmp/ws', 'unknown')).toEqual({
       sharing: 'personal',
       draftByDefault: false,
+    });
+  });
+
+  describe('resolveTrackerSharingPolicy', () => {
+    it('reports a registry miss as unknown rather than answering personal', () => {
+      // NIM-2968: `undefined -> personal` is what let the drain read "I have not
+      // loaded this schema" as "the user made this private" and delete the
+      // team's copy. The miss must be representable.
+      const resolution = resolveTrackerSharingPolicy('/tmp/ws', 'unknown');
+
+      expect(resolution.known).toBe(false);
+      expect(resolution).toMatchObject({ reason: 'no-model', trackerType: 'unknown' });
+    });
+
+    it('resolves a registered tracker', () => {
+      mockGlobalRegistryGet.mockReturnValue({ sharing: 'team', draftByDefault: true });
+
+      expect(resolveTrackerSharingPolicy('/tmp/ws', 'plan')).toEqual(known('team', true));
+    });
+
+    it('falls back to the caller policy only when the registry misses', () => {
+      expect(resolveTrackerSharingPolicy('/tmp/ws', 'bug', { sharing: 'team', draftByDefault: false }))
+        .toEqual(known('team'));
     });
   });
 
@@ -146,7 +182,7 @@ describe('TrackerPolicyService', () => {
   });
 
   describe('decideBackfillAction', () => {
-    const drafts = { sharing: 'team' as const, draftByDefault: true };
+    const drafts = known('team', true);
 
     it('upserts a published item regardless of prior state', () => {
       expect(decideBackfillAction(drafts, { shared: true }, false)).toBe('upsert');
@@ -156,6 +192,28 @@ describe('TrackerPolicyService', () => {
     it('deletes a draft that was previously published and skips a never-published draft', () => {
       expect(decideBackfillAction(drafts, {}, true)).toBe('delete');
       expect(decideBackfillAction(drafts, {}, false)).toBe('skip');
+    });
+
+    it('aborts rather than deleting when the policy could not be resolved', () => {
+      // The NIM-2968 branch. A miss and a deliberate unshare were the same
+      // value, so an unloaded registry deleted 26 team items.
+      const unresolved = {
+        known: false as const, reason: 'no-model' as const,
+        trackerType: 'bug', workspacePath: '/tmp/ws',
+      };
+
+      expect(decideBackfillAction(unresolved, {}, true)).toBe('abort');
+    });
+
+    it('skips rather than aborting when an unresolved item was never shared', () => {
+      // Nothing to destroy, so an unresolved policy here is not worth taking the
+      // whole run down for -- but it is still counted separately, not as routine.
+      const unresolved = {
+        known: false as const, reason: 'no-layer' as const,
+        trackerType: 'bug', workspacePath: '/tmp/ws',
+      };
+
+      expect(decideBackfillAction(unresolved, {}, false)).toBe('skip');
     });
   });
 });

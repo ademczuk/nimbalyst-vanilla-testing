@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { build } from 'esbuild';
 
 export function normalizeBrowserModuleId(moduleId) {
@@ -32,6 +33,11 @@ export async function collectBrowserBundleGraph({
     platform: 'browser',
     treeShaking,
     write: false,
+    // Runtime source is compiled by Vite everywhere it actually ships, so these
+    // gates have to understand Vite's `?raw` suffix too -- otherwise esbuild
+    // cannot pick a loader and the whole boundary analysis aborts instead of
+    // reporting on the graph. See runtime/src/env.d.ts for the matching types.
+    loader: { '.yaml': 'text', '.yml': 'text' },
     plugins: [
       {
         name: 'record-browser-dependencies',
@@ -43,6 +49,14 @@ export async function collectBrowserBundleGraph({
         },
       },
       ...plugins,
+      {
+        name: 'vite-raw-suffix',
+        setup(buildApi) {
+          buildApi.onResolve({ filter: /\?raw$/ }, (args) => ({
+            path: path.resolve(args.resolveDir, args.path.replace(/\?raw$/, '')),
+          }));
+        },
+      },
     ],
   });
 

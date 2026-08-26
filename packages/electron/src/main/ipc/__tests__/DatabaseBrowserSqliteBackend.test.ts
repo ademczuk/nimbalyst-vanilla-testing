@@ -10,7 +10,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { SQLiteDatabase } from '../../database/sqlite/SQLiteDatabase';
-import { DatabaseBrowserSqliteBackend } from '../DatabaseBrowserSqliteHandlers';
+import { DatabaseBrowserSqliteBackend, vacuumDatabase } from '../DatabaseBrowserSqliteHandlers';
 
 vi.mock('../../utils/logger', () => ({
   logger: { main: { info: () => {}, warn: () => {}, error: () => {} } },
@@ -38,6 +38,39 @@ describe('DatabaseBrowserSqliteBackend', () => {
   afterEach(async () => {
     await sqlite.close();
     fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('vacuum returns freed pages to the filesystem', async () => {
+    // Build real freelist: insert, then delete. SQLite keeps those pages.
+    const handle = (sqlite as any).getRawHandle();
+    const insert = handle.prepare(
+      "INSERT INTO ai_sessions (id, title, provider, workspace_id, created_at, updated_at)"
+        + " VALUES (?, ?, 'claude-code', '/w', '2026-01-01', '2026-01-01')",
+    );
+    const big = 'x'.repeat(4000);
+    handle.transaction(() => {
+      for (let i = 0; i < 2000; i++) insert.run(`s-${i}`, big);
+    })();
+    handle.prepare('DELETE FROM ai_sessions').run();
+
+    const freelistBefore = handle.prepare('PRAGMA freelist_count').get().freelist_count as number;
+    expect(freelistBefore).toBeGreaterThan(0);
+
+    const result = await vacuumDatabase(sqlite);
+
+    expect(result.freelistPagesBefore).toBe(freelistBefore);
+    expect(result.bytesReclaimed).toBeGreaterThan(0);
+    // The whole point: the file is smaller and the freelist is gone.
+    expect(handle.prepare('PRAGMA freelist_count').get().freelist_count).toBe(0);
+  });
+
+  it('vacuum on a database with nothing to reclaim still succeeds', async () => {
+    // A freshly-initialised database may carry a page or two of freelist, so
+    // this pins "does not throw, does not report a bogus reclaim" rather than
+    // an exact zero.
+    const result = await vacuumDatabase(sqlite);
+    expect(result.bytesReclaimed).toBeGreaterThanOrEqual(0);
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it('lists user tables and excludes sqlite_* + _migrations + _perf_slow_queries', async () => {

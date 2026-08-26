@@ -1,0 +1,31 @@
+/**
+ * Layout rules for the compact list that Tailwind utilities cannot express.
+ *
+ * The row is otherwise authored in utilities beside its markup; these two are
+ * here because both are about the column the eye runs down, and neither has a
+ * utility.
+ */
+
+/* Reserved on every row, not only assigned ones.
+ *
+ * The avatar is the row's last element and the swatch pills before it are
+ * right-aligned, so rendering it conditionally moved both pills 26px left on
+ * exactly the rows that had an assignee. Across a real corpus, where some items
+ * are assigned and some are not, that is a 26px zig-zag in both columns from
+ * one row to the next -- the pills stop being columns at all. `min-w` on the
+ * pills settles their widths; this settles their position. */
+.tracker-list-row-owner {
+  display: flex;
+  flex: 0 0 auto;
+  width: 18px;
+  justify-content: center;
+}
+
+/* The gutter is held whether or not the list currently overflows, so the pill
+   columns keep the same right edge as the toolbar above them, a filtered view
+   that fits does not shift its rows against one that scrolls, and a platform
+   with classic (non-overlay) scrollbars does not paint one over the status
+   pill. */
+.tracker-list-view {
+  scrollbar-gutter: stable;
+}

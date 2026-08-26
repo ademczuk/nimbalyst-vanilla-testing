@@ -52,8 +52,12 @@ export interface FeedbackRespondOptionCardsProps {
    * Shown as an expand affordance on each preview when a caller can open one.
    * Only rendered for options that actually have an artifact to open -- an
    * expand button over a placeholder is a promise the card cannot keep.
+   *
+   * The card reports the element it grew from so the caller can anchor a
+   * popover to it. Where the artifact ends up -- a popover in place, or a tab
+   * -- is the caller's decision, not the card's.
    */
-  onExpand?: (artifact: FeedbackAskArtifact) => void;
+  onExpand?: (artifact: FeedbackAskArtifact, anchor: HTMLElement | null) => void;
   resolveAction?: FeedbackArtifactActionResolver;
 }
 
@@ -109,16 +113,32 @@ export const FeedbackRespondOptionCards: React.FC<FeedbackRespondOptionCardsProp
 }) => (
   <div
     data-testid="feedback-respond-option-cards"
-    className="feedback-respond-option-cards grid grid-cols-3 gap-2.5 @[max-560px]/feedback-respond:grid-cols-2 @[max-380px]/feedback-respond:grid-cols-1"
+    className="feedback-respond-option-cards grid gap-2.5"
+    /*
+     * Sized to the options, not to a fixed three.
+     *
+     * A hard `grid-cols-3` gave two mockups a third of the width each and left
+     * the last column empty -- measured, that put a 1000px design at 0.29 scale
+     * with 10px-tall content. `auto-fit` spends the whole row on however many
+     * options there are, and still wraps rather than crushing them when there
+     * are five. The 260px floor is what keeps a wrapped row recognisable.
+     */
+    style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}
   >
     {options.map((option, index) => {
       const selected = option.id === selectedId;
       const artifact = artifacts?.find((entry) => entry.entryId === option.id);
       const preview = renderPreview?.(option, index, artifact);
-      const open = artifact
-        ? resolveAction?.(artifact).open
-          ?? (onExpand ? () => onExpand(artifact) : undefined)
-        : undefined;
+      /*
+       * A host that recognised the artifact's kind but could not resolve it
+       * reports `unavailableReason` and no `open`. There is nothing behind the
+       * button in that case, so there is no button -- the same rule the
+       * placeholder follows one line up.
+       */
+      const resolved = artifact ? resolveAction?.(artifact) : undefined;
+      const canExpand = Boolean(
+        artifact && onExpand && (resolveAction === undefined || resolved?.open),
+      );
       return (
         <div
           key={option.id}
@@ -132,32 +152,45 @@ export const FeedbackRespondOptionCards: React.FC<FeedbackRespondOptionCardsProp
               : 'feedback-respond-option-card relative overflow-hidden rounded-md border border-nim bg-nim-secondary'
           }
         >
-          <div className="feedback-respond-option-preview relative h-32 border-b border-nim bg-nim p-2.5">
-            {preview ?? (
-              <FeedbackOptionPlaceholderPreview
-                label={option.label}
-                artifactLabel={artifact?.label}
-              />
-            )}
-            {open && artifact && (
-              <button
-                type="button"
-                data-testid="feedback-respond-option-expand"
-                aria-label={`Open ${artifact.label}`}
-                onClick={open}
-                className="feedback-respond-option-expand absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded border border-nim bg-nim-secondary text-nim-muted cursor-pointer hover:text-nim"
-              >
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  <path
-                    d="M6 1h3v3M4 9H1V6M9 1 5.6 4.4M1 9l3.4-3.4"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </button>
-            )}
-          </div>
+          {/*
+            The whole panel is the target, not a corner icon. `ScaledPreviewFrame`
+            already makes the scaled document `pointer-events: none`, so nothing
+            inside the mockup can take the click -- which is exactly what makes
+            the panel safe to click, and what made a 20px button beside it an
+            arbitrarily small version of the same thing.
+
+            The split is legible without being labelled: the picture is for
+            looking, the row beneath it is for choosing.
+          */}
+          {canExpand && artifact ? (
+            <button
+              type="button"
+              data-testid="feedback-respond-option-expand"
+              aria-label={`Open ${artifact.label}`}
+              onClick={(event) =>
+                onExpand?.(
+                  artifact,
+                  event.currentTarget.closest<HTMLElement>('.feedback-respond-option-card'),
+                )}
+              className="feedback-respond-option-preview relative block h-44 w-full border-b border-nim bg-nim p-2.5 text-left cursor-zoom-in hover:ring-1 hover:ring-inset hover:ring-nim-primary"
+            >
+              {preview ?? (
+                <FeedbackOptionPlaceholderPreview
+                  label={option.label}
+                  artifactLabel={artifact.label}
+                />
+              )}
+            </button>
+          ) : (
+            <div className="feedback-respond-option-preview relative h-44 border-b border-nim bg-nim p-2.5">
+              {preview ?? (
+                <FeedbackOptionPlaceholderPreview
+                  label={option.label}
+                  artifactLabel={artifact?.label}
+                />
+              )}
+            </div>
+          )}
           <button
             type="button"
             data-testid="feedback-respond-option-choose"

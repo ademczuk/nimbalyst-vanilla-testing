@@ -192,7 +192,7 @@ export const FeedbackRequestComposeWidget: React.FC<CustomToolWidgetProps> = ({
   if (parsedResult && parsedResult.status !== 'draftReady') {
     return (
       <InteractiveWidgetCard
-        rootClassName="feedback-request-compose-widget"
+        rootClassName="feedback-request-compose-widget @container/feedback-compose"
         testId="feedback-request-compose-widget"
         state={parsedResult.status}
         tone="active"
@@ -228,7 +228,7 @@ export const FeedbackRequestComposeWidget: React.FC<CustomToolWidgetProps> = ({
   if (hasSent) {
     return (
       <InteractiveWidgetCard
-        rootClassName="feedback-request-compose-widget"
+        rootClassName="feedback-request-compose-widget @container/feedback-compose"
         testId="feedback-request-compose-widget"
         state="sent"
         tone="resolved"
@@ -420,7 +420,11 @@ export const FeedbackRequestComposeWidget: React.FC<CustomToolWidgetProps> = ({
               question={ask.description || ask.label}
               selectableQuestion
             >
-              <FeedbackComposeAskPreview ask={ask} />
+              <FeedbackComposeAskPreview
+                ask={ask}
+                renderArtifact={host?.renderFeedbackArtifactPreview}
+                renderArtifactPopover={host?.renderFeedbackArtifactPopover}
+              />
             </WidgetBlock>
           );
         })}

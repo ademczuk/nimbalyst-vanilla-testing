@@ -1,0 +1,28 @@
+/**
+ * Layout rules the utility pass cannot express.
+ *
+ * Container queries, not media queries: this panel is a resizable pane beside a
+ * list, so the window's width says nothing about how much room it was given.
+ * The console lets the reader drag it between 380px and roughly half the
+ * content region, and the desktop docks it at a different width again.
+ */
+
+.tracker-item-detail-scroll {
+  container-type: inline-size;
+  container-name: tracker-item-detail;
+}
+
+/**
+ * Two field columns once the pane is wide enough to hold two readable ones.
+ *
+ * Fields sit above the body so an item's status and owner are legible before
+ * the Y.Doc resolves, which means every row of fields is a row the body starts
+ * further down. Pairing them at width is what keeps that from pushing the
+ * content off-screen on a wide pane.
+ */
+@container tracker-item-detail (min-width: 520px) {
+  .tracker-item-detail-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 1rem;
+  }
+}

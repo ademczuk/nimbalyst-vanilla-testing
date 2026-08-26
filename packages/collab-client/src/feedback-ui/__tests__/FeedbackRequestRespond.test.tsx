@@ -18,6 +18,10 @@ import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 import type { FeedbackArtifact, FeedbackRequestReadModel } from '@nimbalyst/collab-protocol';
 
 import { FeedbackRequestRespond, type FeedbackRespondHost } from '../FeedbackRequestRespond';
+import type {
+  FeedbackArtifactDetailRenderer,
+  FeedbackArtifactScrollViewport,
+} from '../FeedbackArtifactDetailPopover';
 
 const TARGET = {
   workspacePath: '/work/acme',
@@ -98,6 +102,7 @@ function renderRespond(options: {
   discussion?: React.ReactNode;
   onOpenSubject?: (subject: FeedbackArtifact) => void;
   renderOptionPreview?: () => React.ReactNode;
+  renderArtifactDetail?: FeedbackArtifactDetailRenderer;
 } = {}) {
   const viewerUserId = options.viewerUserId ?? VIEWER;
   render(
@@ -112,9 +117,36 @@ function renderRespond(options: {
       discussion={options.discussion}
       onOpenSubject={options.onOpenSubject}
       renderOptionPreview={options.renderOptionPreview}
+      renderArtifactDetail={options.renderArtifactDetail}
       now={1_000}
     />,
   );
+}
+
+/** A two-mockup pick-one, which is the scenario the popover exists for. */
+function twoArtifactRequest(): FeedbackRequestReadModel {
+  return makeRequest({
+    asks: [{
+      type: 'singleSelect',
+      id: 'ask-direction',
+      label: 'Direction',
+      description: 'Which of these should we build?',
+      options: [{ id: 'a', label: 'A · Split panel' }, { id: 'b', label: 'B · Radial' }],
+      artifacts: [
+        {
+          entryId: 'a',
+          ref: { orgId: 'org-1', kind: 'document', sourceId: 'doc-a' },
+          label: 'Split panel mockup',
+        },
+        {
+          entryId: 'b',
+          ref: { orgId: 'org-1', kind: 'document', sourceId: 'doc-b' },
+          label: 'Radial mockup',
+        },
+      ],
+    }],
+    assignments: [{ askId: 'ask-direction', target: { kind: 'user', userId: VIEWER } }],
+  });
 }
 
 /** Answers both of Karl's asks; the reorder arrives pre-ordered. */
@@ -269,4 +301,86 @@ describe('FeedbackRequestRespond', () => {
     expect(screen.getByTestId('feedback-respond-discussion-unavailable').textContent)
       .toBe('Commenting on this request is not available here yet.');
   });
+});
+
+/**
+ * The popover is where a comparison actually gets decided, and two of its three
+ * behaviours fail silently: a carry that loses the reader's place looks like a
+ * document that happens to start at the top, and a vote that does not reach the
+ * draft looks like a button that was not clicked hard enough.
+ */
+describe('artifact detail popover', () => {
+  /** Records what the host published and what the popover asked it for. */
+  function fakeViewports() {
+    const viewports = new Map<string, FeedbackArtifactScrollViewport>();
+    const restored: Array<{ entryId: string; fraction: number }> = [];
+    const fractions = new Map<string, number>();
+
+    const renderArtifactDetail: FeedbackArtifactDetailRenderer = (entry, api) => {
+      const viewport: FeedbackArtifactScrollViewport = {
+        getScrollFraction: () => fractions.get(entry.entryId) ?? 0,
+        setScrollFraction: (fraction) => {
+          restored.push({ entryId: entry.entryId, fraction });
+          fractions.set(entry.entryId, fraction);
+        },
+      };
+      viewports.set(entry.entryId, viewport);
+      // Mirrors a real host: the editor publishes its viewport once mounted.
+      queueMicrotask(() => api.onViewportReady(viewport));
+      return <div data-testid={`artifact-${entry.entryId}`} />;
+    };
+
+    return { renderArtifactDetail, restored, fractions };
+  }
+
+  it('opens in place instead of a tab when the host can paint the artifact', async () => {
+    const onOpenSubject = vi.fn();
+    const { renderArtifactDetail } = fakeViewports();
+    renderRespond({ request: twoArtifactRequest(), onOpenSubject, renderArtifactDetail });
+
+    fireEvent.click(screen.getAllByTestId('feedback-respond-option-expand')[0]!);
+
+    // The whole point of the level: expand no longer costs you the comparison.
+    expect(await screen.findByTestId('feedback-artifact-detail-popover')).toBeDefined();
+    expect(onOpenSubject).not.toHaveBeenCalled();
+  });
+
+  it('carries the reader down the page when stepping to the next option', async () => {
+    const { renderArtifactDetail, restored, fractions } = fakeViewports();
+    renderRespond({ request: twoArtifactRequest(), renderArtifactDetail });
+
+    fireEvent.click(screen.getAllByTestId('feedback-respond-option-expand')[0]!);
+    await screen.findByTestId('artifact-a');
+
+    // The reader scrolls two fifths down the first design.
+    fractions.set('a', 0.4);
+    fireEvent.click(screen.getByTestId('feedback-artifact-detail-next'));
+    await screen.findByTestId('artifact-b');
+
+    // ...and arrives two fifths down the second, whatever its length. Without
+    // the carry this is 0, which reads as a document that opens at the top
+    // rather than as a comparison that lost its place.
+    await waitFor(() => {
+      expect(restored).toContainEqual({ entryId: 'b', fraction: 0.4 });
+    });
+  });
+
+  it('records the vote from the footer without dismissing first', async () => {
+    const submitAnswers = vi.fn().mockResolvedValue({ success: true });
+    const { renderArtifactDetail } = fakeViewports();
+    renderRespond({ request: twoArtifactRequest(), renderArtifactDetail, host: { submitAnswers } });
+
+    fireEvent.click(screen.getAllByTestId('feedback-respond-option-expand')[0]!);
+    fireEvent.click(await screen.findByTestId('feedback-artifact-detail-select'));
+
+    // Deciding inside the popover is the reason the footer holds a vote at all;
+    // if this reached nothing, the surface would have split the comparison from
+    // the decision all over again.
+    const card = screen.getAllByTestId('feedback-respond-option-card')[0]!;
+    await waitFor(() => expect(card.getAttribute('data-selected')).toBe('true'));
+  });
+
+  // The fallback -- no detail renderer, so expand still opens a tab -- is
+  // covered by 'offers expand only for options that have an artifact to open'
+  // above, which asserts the opener is called. Not repeated here.
 });

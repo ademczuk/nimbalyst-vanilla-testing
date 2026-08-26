@@ -694,6 +694,23 @@ export interface CustomEditorContribution {
     awarenessFields?: string[];
 
     /**
+     * The `documentType` this editor's collab codec registers, when it is not
+     * simply the primary file suffix.
+     *
+     * A host that has only the manifest -- the browser console, which declares
+     * every pinned extension up front but imports a bundle only when someone
+     * opens one of its documents -- has to name the document type before any
+     * codec exists to ask. It falls back to the suffix, which is right for
+     * `.csv` -> `csv` and `.excalidraw` -> `excalidraw`, and wrong for
+     * `.prisma` -> `datamodel`. Declare it here whenever the two differ, or a
+     * shared document of this type reads as unsupported until the bundle that
+     * would have opened it happens to be loaded for some other reason.
+     *
+     * Must match the codec's own `documentType` exactly.
+     */
+    documentType?: string;
+
+    /**
      * User-facing explanation shown in place of the generic "does not declare a
      * collaborative editor binding" text when `supported` is false.
      *

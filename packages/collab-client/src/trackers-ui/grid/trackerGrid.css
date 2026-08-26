@@ -1,0 +1,329 @@
+/**
+ * RevoGrid theming for the tracker grid.
+ *
+ * RevoGrid ships light-only default themes, so every surface color is remapped
+ * onto the canonical `--nim-*` tokens; that keeps the grid correct in dark mode
+ * and in any custom theme without a per-theme stylesheet.
+ */
+
+.tracker-grid-view,
+.tracker-grid-view revo-grid {
+  --revo-grid-primary: var(--nim-primary);
+  --revo-grid-primary-transparent: color-mix(in srgb, var(--nim-primary) 75%, transparent);
+  --revo-grid-background: var(--nim-bg);
+  --revo-grid-foreground: var(--nim-text);
+  --revo-grid-divider: var(--nim-border);
+  --revo-grid-shadow: color-mix(in srgb, var(--nim-bg) 55%, transparent);
+  --revo-grid-text: var(--nim-text);
+  --revo-grid-border: var(--nim-border);
+  --revo-grid-header-bg: var(--nim-bg-secondary);
+  --revo-grid-header-color: var(--nim-text-muted);
+  --revo-grid-header-border: var(--nim-border);
+  --revo-grid-cell-border: var(--nim-border);
+  --revo-grid-focused-bg: color-mix(in srgb, var(--nim-primary) 10%, var(--nim-bg));
+  --revo-grid-row-hover: var(--nim-bg-hover);
+  --revo-grid-cell-disabled-bg: color-mix(in srgb, var(--nim-bg-secondary) 55%, transparent);
+}
+
+.tracker-grid-view revo-grid {
+  height: 100%;
+  width: 100%;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--nim-text);
+  background: var(--nim-bg);
+  border: 0;
+}
+
+/* Header */
+.tracker-grid-view revogr-header {
+  background: var(--nim-bg-secondary);
+  color: var(--nim-text-muted);
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 32px;
+  border-bottom: 1px solid var(--nim-border);
+}
+
+.tracker-grid-view revogr-header .header-rgRow {
+  height: 32px;
+}
+
+.tracker-grid-view revogr-header .rgHeaderCell {
+  border-right: 1px solid var(--nim-border);
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+}
+
+/* Data cells */
+.tracker-grid-view .rgCell {
+  border-right: 1px solid var(--nim-border);
+  border-bottom: 1px solid var(--nim-border);
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  color: var(--nim-text);
+  background: var(--nim-bg);
+}
+
+.tracker-grid-view .rgRow:hover .rgCell {
+  background: var(--nim-bg-hover);
+}
+
+/*
+ * The open row. Tinted rather than filled: the focused-cell rectangle and the
+ * range selection are both drawn in `--nim-primary` on top of this, so a solid
+ * fill would leave nothing for them to read against.
+ */
+.tracker-grid-view .rgRow.tracker-grid-row-selected .rgCell,
+.tracker-grid-view .rgRow.tracker-grid-row-selected:hover .rgCell {
+  background: color-mix(in srgb, var(--nim-primary) 14%, var(--nim-bg));
+}
+
+/* Focus + range selection */
+.tracker-grid-view revogr-focus {
+  border: 2px solid var(--nim-primary);
+}
+
+.tracker-grid-view revogr-temp-range,
+.tracker-grid-view .selection-border-range {
+  border: 1px solid var(--nim-primary);
+  background: color-mix(in srgb, var(--nim-primary) 12%, transparent);
+}
+
+/*
+ * Drag-to-clone is removed: the handle sits a few pixels from the cell you reach
+ * for when extending a selection, and one stray drag rewrites a whole column of
+ * tracker items with no undo. Hiding it also stops the drag, since
+ * AutoFillService.selectionStart only arms on this element as the pointer target.
+ * The `beforeautofill` guard in TrackerGridView is the belt to this suspenders.
+ */
+.tracker-grid-view revogr-overlay-selection .autofill-handle {
+  display: none;
+}
+
+/* Readonly cells read as inert rather than merely uneditable */
+.tracker-grid-view .rgCell[data-readonly='true'] {
+  color: var(--nim-text-muted);
+}
+
+/* Cell content */
+.tracker-grid-cell-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Same derivation as `trackerSwatch.css`: the cell supplies only the hue. */
+.tracker-grid-cell-badge {
+  --tracker-swatch: var(--nim-text-muted);
+
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in srgb, var(--tracker-swatch) 32%, transparent);
+  background: color-mix(in srgb, var(--tracker-swatch) 15%, transparent);
+  color: color-mix(in oklab, var(--tracker-swatch) 55%, var(--nim-text));
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tracker-grid-cell-tags {
+  display: inline-flex;
+  gap: 4px;
+  overflow: hidden;
+}
+
+/* Type cell: the same 20px icon box desktop's `TrackerTable` draws. */
+.tracker-grid-cell-type-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+.tracker-grid-cell-type-icon .material-symbols-outlined {
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* Title cell: favorite star + text, matching the list view's affordance. */
+.tracker-grid-cell-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.tracker-grid-cell-title > .tracker-grid-cell-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tracker-grid-cell-favorite {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+  color: var(--nim-text-faint);
+  opacity: 0.35;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.tracker-grid-cell-favorite.is-favorite,
+.tracker-grid-cell-favorite:hover {
+  opacity: 1;
+}
+
+.tracker-grid-cell-favorite.is-favorite {
+  color: var(--nim-warning, #f59e0b);
+}
+
+.tracker-grid-cell-favorite-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.tracker-grid-cell-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nim-text-faint);
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+.tracker-grid-view .rgRow:hover .tracker-grid-cell-menu,
+.tracker-grid-cell-menu:hover,
+.tracker-grid-cell-menu:focus-visible {
+  opacity: 1;
+}
+
+.tracker-grid-cell-menu:hover,
+.tracker-grid-cell-menu:focus-visible {
+  color: var(--nim-text);
+  background: var(--nim-bg-hover);
+  outline: none;
+}
+
+.tracker-grid-cell-menu-icon {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.tracker-grid-cell-menu-title {
+  opacity: 0;
+}
+
+.tracker-grid-view .rgRow:hover .tracker-grid-cell-menu-title,
+.tracker-grid-cell-menu-title:hover,
+.tracker-grid-cell-menu-title:focus-visible {
+  opacity: 1;
+}
+
+/* Editors */
+.tracker-grid-editor-input,
+.tracker-grid-editor-select {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0 6px;
+  border: none;
+  outline: 2px solid var(--nim-primary);
+  outline-offset: -2px;
+  background: var(--nim-bg);
+  color: var(--nim-text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.tracker-grid-editor-checkbox {
+  margin: 0 6px;
+  accent-color: var(--nim-primary);
+}
+
+/* Column header: label plus compact sort/filter affordances */
+.tracker-grid-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.tracker-grid-header-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tracker-grid-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/*
+ * Header affordances collapse to zero width at rest so the label gets the full
+ * column, then expand on hover (or when active). Otherwise the icon boxes
+ * reserve layout width on every column and truncate short headers to "K…".
+ */
+.tracker-grid-header-filter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0;
+  height: 15px;
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0;
+  overflow: hidden;
+  color: var(--nim-text-faint);
+  transition: color 120ms ease, opacity 120ms ease, width 120ms ease, background-color 120ms ease;
+}
+
+.tracker-grid-header:hover .tracker-grid-header-filter,
+.tracker-grid-header-filter:focus-visible,
+.tracker-grid-header-filter.is-filtered {
+  width: 15px;
+  opacity: 1;
+}
+
+.tracker-grid-header-filter:hover {
+  color: var(--nim-text);
+  background: var(--nim-bg-hover);
+}
+
+.tracker-grid-header-filter.is-filtered {
+  color: var(--nim-primary);
+  background: color-mix(in srgb, var(--nim-primary) 12%, transparent);
+}
+
+.tracker-grid-header-filter-icon {
+  font-size: 11px;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+}

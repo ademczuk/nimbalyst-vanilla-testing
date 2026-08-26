@@ -9,6 +9,7 @@ import {
 import type {
   OpenCodeModelCatalogIpcResponse,
   OpenCodeModelCatalogRefreshRequest,
+  OpenCodeModelCatalogRequest,
 } from '../../shared/openCodeModelCatalog';
 import type {
   OpenCodeAgentCatalogIpcResponse,
@@ -40,15 +41,30 @@ async function fetchLMStudioModels(baseUrl: string): Promise<string[]> {
 }
 
 export function registerOpenCodeConfigHandlers(): void {
-  safeHandle('opencode-model-catalog:get', async (): Promise<OpenCodeModelCatalogIpcResponse> => {
-    try {
-      return { success: true, catalog: await getOpenCodeModelCatalog() };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      logger.ai.error('[OpenCode] Failed to read model catalog:', error);
-      return { success: false, error: message };
+  safeHandle(
+    'opencode-model-catalog:get',
+    async (
+      _event,
+      request: OpenCodeModelCatalogRequest
+    ): Promise<OpenCodeModelCatalogIpcResponse> => {
+      // Matches opencode-model-catalog:refresh and opencode-agent-catalog:get.
+      // This handler used to omit the workspace entirely, which is why Settings
+      // showed presets the moment it re-read from the backend (#1382).
+      if (!request?.workspacePath || typeof request.workspacePath !== 'string') {
+        throw new Error('opencode-model-catalog:get requires workspacePath');
+      }
+      try {
+        return {
+          success: true,
+          catalog: await getOpenCodeModelCatalog(request.workspacePath),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        logger.ai.error('[OpenCode] Failed to read model catalog:', error);
+        return { success: false, error: message };
+      }
     }
-  });
+  );
 
   safeHandle(
     'opencode-model-catalog:refresh',

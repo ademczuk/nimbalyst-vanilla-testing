@@ -17,6 +17,7 @@ const scriptPath = path.resolve(
 test('classifies every forbidden headless dependency', () => {
   const violations = findCollabClientBoundaryViolations([
     'node:fs',
+    'fs/promises',
     'node_modules/react-dom/client.js',
     '/repo/packages/extension-sdk/src/index.ts',
     '/repo/packages/electron/src/renderer/App.tsx',
@@ -24,11 +25,11 @@ test('classifies every forbidden headless dependency', () => {
 
   assert.deepEqual(
     violations.map(({ name }) => name),
-    ['react-dom', '@nimbalyst/extension-sdk', 'Electron', 'node:*'],
+    ['react-dom', '@nimbalyst/extension-sdk', 'Electron', 'node:*', 'fs'],
   );
 });
 
-test('current core and docs entry graphs satisfy the boundary', () => {
+test('current headless entry graphs satisfy the boundary', () => {
   const result = spawnSync(process.execPath, [scriptPath], { encoding: 'utf8' });
 
   assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -40,6 +41,7 @@ test('current core and docs entry graphs satisfy the boundary', () => {
   const checkedEntries = summary[1].split('/');
   assert.ok(checkedEntries.includes('core'), summary[1]);
   assert.ok(checkedEntries.includes('docs'), summary[1]);
+  assert.ok(checkedEntries.includes('trackers'), summary[1]);
 });
 
 test('derives future headless domains from package exports and excludes UI entries', () => {
@@ -49,6 +51,7 @@ test('derives future headless domains from package exports and excludes UI entri
     './docs-ui': { default: './src/docs-ui/index.ts' },
     './trackers': { default: './src/trackers/index.ts' },
     './trackers-ui': { default: './src/trackers-ui/index.ts' },
+    './trackers-ui/board.css': './src/trackers-ui/board/TrackerBoardCard.css',
   }, '/repo/packages/collab-client');
 
   // Compare relative to the synthetic root, normalized to POSIX separators,

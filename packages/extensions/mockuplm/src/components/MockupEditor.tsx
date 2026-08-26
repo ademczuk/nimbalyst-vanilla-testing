@@ -469,6 +469,63 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
       setRenderedVersion((rendered) => rendered + 1);
     }, [contentVersion, diffState, frameElement, mockupTheme]);
 
+    /*
+     * Publish where the reader is, so a host showing several mockups in
+     * sequence can carry their place between them -- the feedback detail
+     * popover comparing design alternatives is the case this exists for.
+     *
+     * The host cannot read this itself: the scroll lives on the iframe's own
+     * documentElement, which is the extension's business and not the host's.
+     * As a fraction rather than pixels, because two variants of a screen are
+     * rarely the same length.
+     *
+     * Re-registers on `renderedVersion` because a re-render replaces the
+     * iframe document, and the accessors close over `iframeRef` rather than a
+     * document so they keep working across one.
+     */
+    useEffect(() => {
+      if (!host.registerViewport) return;
+      const scrollableHeight = (element: HTMLElement) =>
+        element.scrollHeight - element.clientHeight;
+      host.registerViewport({
+        getScrollFraction: () => {
+          const root = iframeRef.current?.contentDocument?.documentElement;
+          if (!root) return 0;
+          const travel = scrollableHeight(root);
+          return travel > 0 ? Math.min(1, Math.max(0, root.scrollTop / travel)) : 0;
+        },
+        setScrollFraction: (fraction) => {
+          const root = iframeRef.current?.contentDocument?.documentElement;
+          if (!root) return;
+          const travel = scrollableHeight(root);
+          if (travel > 0) root.scrollTop = Math.min(1, Math.max(0, fraction)) * travel;
+        },
+      });
+      return () => host.registerViewport?.(null);
+    }, [host, renderedVersion]);
+
+    /*
+     * A link inside a mockup is a drawing of a link. The iframe renders from a
+     * string with no base URL, so following one replaces the design with a
+     * failed navigation and there is no back button inside an embed. The
+     * sandbox already withholds top-level navigation; this covers the frame's
+     * own.
+     *
+     * Read-only embeds only: in the full editor the author may well want to
+     * click through their own prototype.
+     */
+    useEffect(() => {
+      if (!host.embedded && !host.readOnly) return;
+      const iframeDoc = iframeRef.current?.contentDocument;
+      if (!iframeDoc) return;
+      const swallowNavigation = (event: Event) => {
+        const anchor = (event.target as Element | null)?.closest?.("a[href]");
+        if (anchor) event.preventDefault();
+      };
+      iframeDoc.addEventListener("click", swallowNavigation);
+      return () => iframeDoc.removeEventListener("click", swallowNavigation);
+    }, [host.embedded, host.readOnly, renderedVersion]);
+
     // Separate effect for click handler -- toggling interactive mode shouldn't re-render iframe
     useEffect(() => {
       if (diffState || isInteractive || isCommentMode) return;

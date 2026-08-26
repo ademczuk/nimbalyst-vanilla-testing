@@ -3,7 +3,8 @@
  *
  * Storage seam between the platform-neutral `TrackerSyncEngine` and the
  * underlying database. Electron implements this over the PGLite worker
- * (`TrackerPGLiteStore`); tests use `InMemoryTrackerPersistence`.
+ * (`TrackerPGLiteStore`), browsers use `IndexedDbTrackerPersistence`, and
+ * tests use `InMemoryTrackerPersistence`.
  *
  * The engine owns all writes that go through these methods. The renderer
  * NEVER calls them directly -- it observes engine output via IPC events.
@@ -38,6 +39,7 @@ import type {
   TrackerTransactionState,
   TrackerMutationRejectCode,
 } from './trackerProtocol';
+import type { TeamMemberId } from '../auth/jwtScopes';
 import { mergeLabelMaps } from './trackerLabels';
 
 // ============================================================================
@@ -54,6 +56,64 @@ export interface TrackerRowSnapshot {
   syncId: SyncId | null;
   /** `true` if the prior state was a tombstone (we re-tombstone on rollback). */
   isTombstone: boolean;
+}
+
+/**
+ * Identity tuple that owns a durable browser mutation.
+ *
+ * `teamMemberId` is the TEAM-org member id, not the personal one — Stytch B2B
+ * issues a different member id per org, so an outbox row keyed by the personal
+ * id would replay under an identity the tracker room does not recognize. The
+ * branded type makes that mix-up a compile error rather than a sync bug.
+ */
+export interface TrackerTransactionOwner {
+  orgId: string;
+  teamProjectId: string;
+  teamMemberId: TeamMemberId;
+}
+
+/**
+ * Browser-only durable fields carried beside the wire-neutral transaction row.
+ * They are optional while reading so pre-fix rows fail closed instead of being
+ * guessed into the current member's outbox.
+ */
+export interface PersistedTrackerTransactionRow extends TrackerTransactionRow {
+  owner?: TrackerTransactionOwner;
+  /** Groups update-many rows so reconnect replay preserves one wire command. */
+  batchId?: string;
+  rollbackSnapshot?: TrackerRowSnapshot;
+  terminalRejection?: boolean;
+}
+
+export interface TrackerAtomicMutation {
+  itemId: string;
+  payload: TrackerItemPayload;
+  row: PersistedTrackerTransactionRow;
+}
+
+/** Tracker mutation codes that cannot succeed by replaying the same payload. */
+export function isPermanentTrackerRejection(code: TrackerMutationRejectCode): boolean {
+  return code === 'forbidden'
+    || code === 'legacy_encryption_retired'
+    || code === 'issueKeyPrefixConflict'
+    || code === 'adminRequired'
+    || code === 'malformed';
+}
+
+function transactionBelongsTo(
+  row: PersistedTrackerTransactionRow,
+  owner: TrackerTransactionOwner | undefined,
+): boolean {
+  if (!owner) return true;
+  return row.owner?.orgId === owner.orgId
+    && row.owner.teamProjectId === owner.teamProjectId
+    && row.owner.teamMemberId === owner.teamMemberId;
+}
+
+function transactionIsPending(row: PersistedTrackerTransactionRow): boolean {
+  return !row.confirmedSyncId
+    && !row.terminalRejection
+    && !(row.lastRejection && isPermanentTrackerRejection(row.lastRejection.code));
 }
 
 // ============================================================================
@@ -137,6 +197,18 @@ export interface TrackerPersistence {
     row: TrackerTransactionRow,
   ): Promise<TrackerRowSnapshot>;
 
+  /** Browser update-many seam: all projections and queue rows share one transaction. */
+  applyAndEnqueueBatchAtomically?(
+    entries: readonly TrackerAtomicMutation[],
+  ): Promise<TrackerRowSnapshot[]>;
+
+  /** Move a batch to one lifecycle state in one persistence transaction. */
+  markTransactionStates?(
+    clientMutationIds: readonly string[],
+    state: TrackerTransactionState,
+    startedAt?: number,
+  ): Promise<void>;
+
   /**
    * Transition an existing row through its lifecycle. The engine calls
    * `markTransactionState(id, 'queued')` once a queued row is about to be
@@ -166,6 +238,7 @@ export interface TrackerPersistence {
       message: string;
       occurredAt: number;
     },
+    terminal?: boolean,
   ): Promise<void>;
 
   /**
@@ -175,7 +248,459 @@ export interface TrackerPersistence {
    * `enqueued_at ASC` so the server sees writes in roughly the order the
    * user made them.
    */
-  loadPendingTransactions(): Promise<TrackerTransactionRow[]>;
+  loadPendingTransactions(owner?: TrackerTransactionOwner): Promise<PersistedTrackerTransactionRow[]>;
+}
+
+// ============================================================================
+// IndexedDB implementation for browsers
+// ============================================================================
+
+const INDEXED_DB_VERSION = 1;
+const ITEM_STORE = 'items';
+const TRANSACTION_STORE = 'transactions';
+const SAVED_VIEW_STORE = 'savedViews';
+
+export interface StoredTrackerItem {
+  envelope: TrackerItemEnvelope;
+  payload: TrackerItemPayload | null;
+}
+
+interface IndexedDbTrackerItemRow extends StoredTrackerItem {
+  itemId: string;
+  syncId: SyncId;
+}
+
+export interface IndexedDbTrackerSavedViewRow {
+  viewId: string;
+  payload: string | null;
+  syncId: SyncId;
+  unsynced: boolean;
+  deleted: boolean;
+  /** Present only while this row is a member-owned, unconfirmed local change. */
+  owner?: TrackerTransactionOwner;
+  lastRejection?: { code: string; occurredAt: number };
+}
+
+function requestResult<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.addEventListener('success', () => resolve(request.result), { once: true });
+    request.addEventListener('error', () => reject(request.error ?? new Error('IndexedDB request failed')), {
+      once: true,
+    });
+  });
+}
+
+function transactionComplete(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.addEventListener('complete', () => resolve(), { once: true });
+    transaction.addEventListener(
+      'abort',
+      () => reject(transaction.error ?? new Error('IndexedDB transaction aborted')),
+      { once: true },
+    );
+    transaction.addEventListener(
+      'error',
+      () => reject(transaction.error ?? new Error('IndexedDB transaction failed')),
+      { once: true },
+    );
+  });
+}
+
+function snapshotStoredItem(existing: IndexedDbTrackerItemRow | undefined): TrackerRowSnapshot {
+  return existing
+    ? {
+        payload: existing.payload,
+        syncId: existing.envelope.syncId,
+        isTombstone: existing.envelope.encryptedPayload === null,
+      }
+    : { payload: null, syncId: null, isTombstone: false };
+}
+
+function optimisticItemRow(
+  itemId: string,
+  payload: TrackerItemPayload | null,
+  existing: IndexedDbTrackerItemRow | undefined,
+): IndexedDbTrackerItemRow {
+  const envelope: TrackerItemEnvelope = {
+    itemId,
+    syncId: existing?.envelope.syncId ?? 0,
+    encryptedPayload: payload === null ? null : 'optimistic',
+    iv: payload === null ? undefined : 'optimistic-iv',
+    updatedAt: Date.now(),
+    deletedAt: payload === null ? Date.now() : null,
+    orgKeyFingerprint: existing?.envelope.orgKeyFingerprint ?? null,
+    issueNumber: existing?.envelope.issueNumber,
+    issueKey: existing?.envelope.issueKey,
+  };
+  return { itemId, syncId: envelope.syncId, envelope, payload };
+}
+
+/**
+ * Durable browser persistence for one tracker room.
+ *
+ * Callers must give each team tracker room its own database name. The item
+ * projection and mutation queue are separate object stores; the atomic enqueue
+ * path opens one read-write transaction across both stores so a tab close cannot
+ * preserve only half of an optimistic mutation. A third store holds the
+ * server-owned saved-view lane used by the browser data source.
+ */
+export class IndexedDbTrackerPersistence implements TrackerPersistence {
+  private readonly databasePromise: Promise<IDBDatabase>;
+  private closed = false;
+
+  constructor(
+    readonly databaseName: string,
+    indexedDbFactory: IDBFactory = globalThis.indexedDB,
+  ) {
+    if (!databaseName.trim()) throw new Error('IndexedDB tracker persistence requires a database name');
+    if (!indexedDbFactory) throw new Error('IndexedDB is not available in this environment');
+
+    const openRequest = indexedDbFactory.open(databaseName, INDEXED_DB_VERSION);
+    openRequest.addEventListener('upgradeneeded', () => {
+      const database = openRequest.result;
+      if (!database.objectStoreNames.contains(ITEM_STORE)) {
+        const items = database.createObjectStore(ITEM_STORE, { keyPath: 'itemId' });
+        items.createIndex('syncId', 'syncId');
+      }
+      if (!database.objectStoreNames.contains(TRANSACTION_STORE)) {
+        const transactions = database.createObjectStore(TRANSACTION_STORE, {
+          keyPath: 'clientMutationId',
+        });
+        transactions.createIndex('enqueuedAt', 'enqueuedAt');
+      }
+      if (!database.objectStoreNames.contains(SAVED_VIEW_STORE)) {
+        const savedViews = database.createObjectStore(SAVED_VIEW_STORE, { keyPath: 'viewId' });
+        savedViews.createIndex('syncId', 'syncId');
+      }
+    });
+    this.databasePromise = requestResult(openRequest);
+  }
+
+  private async openTransaction(
+    storeNames: string | string[],
+    mode: IDBTransactionMode,
+  ): Promise<IDBTransaction | null> {
+    const database = await this.databasePromise;
+    if (this.closed) return null;
+    try {
+      return database.transaction(storeNames, mode);
+    } catch (error) {
+      if (this.closed) return null;
+      throw error;
+    }
+  }
+
+  async getMaxSyncId(): Promise<SyncId> {
+    const transaction = await this.openTransaction(ITEM_STORE, 'readonly');
+    if (!transaction) return 0;
+    const cursor = await requestResult(transaction.objectStore(ITEM_STORE).index('syncId').openCursor(null, 'prev'));
+    await transactionComplete(transaction);
+    const row = cursor?.value as IndexedDbTrackerItemRow | undefined;
+    return row?.syncId ?? 0;
+  }
+
+  async applyRemoteItem(
+    envelope: TrackerItemEnvelope,
+    payload: TrackerItemPayload | null,
+  ): Promise<void> {
+    const transaction = await this.openTransaction(ITEM_STORE, 'readwrite');
+    if (!transaction) return;
+    const store = transaction.objectStore(ITEM_STORE);
+    const existing = await requestResult(store.get(envelope.itemId)) as IndexedDbTrackerItemRow | undefined;
+    if (!existing || existing.envelope.syncId <= envelope.syncId) {
+      let mergedPayload = payload;
+      if (payload && existing?.payload) {
+        mergedPayload = {
+          ...payload,
+          labels: mergeLabelMaps(existing.payload.labels, payload.labels),
+        };
+      }
+      store.put({
+        itemId: envelope.itemId,
+        syncId: envelope.syncId,
+        envelope,
+        payload: mergedPayload,
+      } satisfies IndexedDbTrackerItemRow);
+    }
+    await transactionComplete(transaction);
+  }
+
+  async applyOptimistic(
+    itemId: string,
+    payload: TrackerItemPayload | null,
+  ): Promise<TrackerRowSnapshot> {
+    const transaction = await this.openTransaction(ITEM_STORE, 'readwrite');
+    if (!transaction) return snapshotStoredItem(undefined);
+    const store = transaction.objectStore(ITEM_STORE);
+    const existing = await requestResult(store.get(itemId)) as IndexedDbTrackerItemRow | undefined;
+    const snapshot = snapshotStoredItem(existing);
+    store.put(optimisticItemRow(itemId, payload, existing));
+    await transactionComplete(transaction);
+    return snapshot;
+  }
+
+  async rollbackOptimistic(itemId: string, snapshot: TrackerRowSnapshot): Promise<void> {
+    const transaction = await this.openTransaction(ITEM_STORE, 'readwrite');
+    if (!transaction) return;
+    const store = transaction.objectStore(ITEM_STORE);
+    if (snapshot.payload === null && !snapshot.isTombstone && snapshot.syncId === null) {
+      store.delete(itemId);
+    } else {
+      const envelope: TrackerItemEnvelope = {
+        itemId,
+        syncId: snapshot.syncId ?? 0,
+        encryptedPayload: snapshot.isTombstone ? null : 'restored',
+        iv: snapshot.isTombstone ? undefined : 'restored-iv',
+        updatedAt: Date.now(),
+        deletedAt: snapshot.isTombstone ? Date.now() : null,
+        orgKeyFingerprint: null,
+      };
+      store.put({ itemId, syncId: envelope.syncId, envelope, payload: snapshot.payload } satisfies IndexedDbTrackerItemRow);
+    }
+    await transactionComplete(transaction);
+  }
+
+  async enqueueTransaction(row: TrackerTransactionRow): Promise<void> {
+    const transaction = await this.openTransaction(TRANSACTION_STORE, 'readwrite');
+    if (!transaction) return;
+    transaction.objectStore(TRANSACTION_STORE).put(row);
+    await transactionComplete(transaction);
+  }
+
+  async applyAndEnqueueAtomically(
+    itemId: string,
+    payload: TrackerItemPayload | null,
+    row: TrackerTransactionRow,
+  ): Promise<TrackerRowSnapshot> {
+    const transaction = await this.openTransaction([ITEM_STORE, TRANSACTION_STORE], 'readwrite');
+    if (!transaction) return snapshotStoredItem(undefined);
+    const itemStore = transaction.objectStore(ITEM_STORE);
+    const transactionStore = transaction.objectStore(TRANSACTION_STORE);
+    const existing = await requestResult(itemStore.get(itemId)) as IndexedDbTrackerItemRow | undefined;
+    const snapshot = snapshotStoredItem(existing);
+    transactionStore.put({ ...row, state: 'pendingApply', rollbackSnapshot: snapshot });
+    itemStore.put(optimisticItemRow(itemId, payload, existing));
+    transactionStore.put({ ...row, state: 'persistedEnqueue', rollbackSnapshot: snapshot });
+    await transactionComplete(transaction);
+    return snapshot;
+  }
+
+  async applyAndEnqueueBatchAtomically(
+    entries: readonly TrackerAtomicMutation[],
+  ): Promise<TrackerRowSnapshot[]> {
+    const transaction = await this.openTransaction([ITEM_STORE, TRANSACTION_STORE], 'readwrite');
+    if (!transaction) return entries.map(() => snapshotStoredItem(undefined));
+    const itemStore = transaction.objectStore(ITEM_STORE);
+    const transactionStore = transaction.objectStore(TRANSACTION_STORE);
+    const snapshots: TrackerRowSnapshot[] = [];
+    for (const entry of entries) {
+      const existing = await requestResult(itemStore.get(entry.itemId)) as IndexedDbTrackerItemRow | undefined;
+      const snapshot = snapshotStoredItem(existing);
+      snapshots.push(snapshot);
+      transactionStore.put({ ...entry.row, state: 'pendingApply', rollbackSnapshot: snapshot });
+      itemStore.put(optimisticItemRow(entry.itemId, entry.payload, existing));
+      transactionStore.put({ ...entry.row, state: 'persistedEnqueue', rollbackSnapshot: snapshot });
+    }
+    await transactionComplete(transaction);
+    return snapshots;
+  }
+
+  async markTransactionStates(
+    clientMutationIds: readonly string[],
+    state: TrackerTransactionState,
+    startedAt?: number,
+  ): Promise<void> {
+    const transaction = await this.openTransaction(TRANSACTION_STORE, 'readwrite');
+    if (!transaction) return;
+    const store = transaction.objectStore(TRANSACTION_STORE);
+    for (const clientMutationId of clientMutationIds) {
+      const row = await requestResult(store.get(clientMutationId)) as TrackerTransactionRow | undefined;
+      if (row) store.put({ ...row, state, ...(startedAt === undefined ? {} : { startedAt }) });
+    }
+    await transactionComplete(transaction);
+  }
+
+  async markTransactionState(
+    clientMutationId: string,
+    state: TrackerTransactionState,
+    startedAt?: number,
+  ): Promise<void> {
+    const transaction = await this.openTransaction(TRANSACTION_STORE, 'readwrite');
+    if (!transaction) return;
+    const store = transaction.objectStore(TRANSACTION_STORE);
+    const row = await requestResult(store.get(clientMutationId)) as TrackerTransactionRow | undefined;
+    if (row) store.put({ ...row, state, ...(startedAt === undefined ? {} : { startedAt }) });
+    await transactionComplete(transaction);
+  }
+
+  async ackTransaction(clientMutationId: string, _syncId: SyncId): Promise<void> {
+    const transaction = await this.openTransaction(TRANSACTION_STORE, 'readwrite');
+    if (!transaction) return;
+    transaction.objectStore(TRANSACTION_STORE).delete(clientMutationId);
+    await transactionComplete(transaction);
+  }
+
+  async rejectTransaction(
+    clientMutationId: string,
+    rejection: { code: TrackerMutationRejectCode; message: string; occurredAt: number },
+    terminal = isPermanentTrackerRejection(rejection.code),
+  ): Promise<void> {
+    const transaction = await this.openTransaction(TRANSACTION_STORE, 'readwrite');
+    if (!transaction) return;
+    const store = transaction.objectStore(TRANSACTION_STORE);
+    const row = await requestResult(store.get(clientMutationId)) as PersistedTrackerTransactionRow | undefined;
+    if (row) store.put({ ...row, lastRejection: rejection, terminalRejection: terminal });
+    await transactionComplete(transaction);
+  }
+
+  async loadPendingTransactions(owner?: TrackerTransactionOwner): Promise<PersistedTrackerTransactionRow[]> {
+    const transaction = await this.openTransaction(TRANSACTION_STORE, 'readonly');
+    if (!transaction) return [];
+    const rows = await requestResult(transaction.objectStore(TRANSACTION_STORE).getAll()) as PersistedTrackerTransactionRow[];
+    await transactionComplete(transaction);
+    return rows
+      .filter(row => transactionBelongsTo(row, owner) && transactionIsPending(row))
+      .sort((a, b) => a.enqueuedAt - b.enqueuedAt);
+  }
+
+  async getItem(itemId: string): Promise<StoredTrackerItem | undefined> {
+    const transaction = await this.openTransaction(ITEM_STORE, 'readonly');
+    if (!transaction) return undefined;
+    const row = await requestResult(transaction.objectStore(ITEM_STORE).get(itemId)) as IndexedDbTrackerItemRow | undefined;
+    await transactionComplete(transaction);
+    return row ? { envelope: row.envelope, payload: row.payload } : undefined;
+  }
+
+  async getItems(itemIds: readonly string[]): Promise<Array<StoredTrackerItem | undefined>> {
+    const transaction = await this.openTransaction(ITEM_STORE, 'readonly');
+    if (!transaction) return itemIds.map(() => undefined);
+    const store = transaction.objectStore(ITEM_STORE);
+    const rows: Array<StoredTrackerItem | undefined> = [];
+    for (const itemId of itemIds) {
+      const row = await requestResult(store.get(itemId)) as IndexedDbTrackerItemRow | undefined;
+      rows.push(row ? { envelope: row.envelope, payload: row.payload } : undefined);
+    }
+    await transactionComplete(transaction);
+    return rows;
+  }
+
+  async listItems(): Promise<StoredTrackerItem[]> {
+    const transaction = await this.openTransaction(ITEM_STORE, 'readonly');
+    if (!transaction) return [];
+    const rows = await requestResult(transaction.objectStore(ITEM_STORE).getAll()) as IndexedDbTrackerItemRow[];
+    await transactionComplete(transaction);
+    return rows.map(({ envelope, payload }) => ({ envelope, payload }));
+  }
+
+  async putItem(item: StoredTrackerItem): Promise<void> {
+    const transaction = await this.openTransaction(ITEM_STORE, 'readwrite');
+    if (!transaction) return;
+    transaction.objectStore(ITEM_STORE).put({
+      itemId: item.envelope.itemId,
+      syncId: item.envelope.syncId,
+      ...item,
+    } satisfies IndexedDbTrackerItemRow);
+    await transactionComplete(transaction);
+  }
+
+  async getTransaction(clientMutationId: string): Promise<TrackerTransactionRow | undefined> {
+    const transaction = await this.openTransaction(TRANSACTION_STORE, 'readonly');
+    if (!transaction) return undefined;
+    const row = await requestResult(transaction.objectStore(TRANSACTION_STORE).get(clientMutationId)) as TrackerTransactionRow | undefined;
+    await transactionComplete(transaction);
+    return row;
+  }
+
+  async getMaxSavedViewSyncId(): Promise<SyncId> {
+    const transaction = await this.openTransaction(SAVED_VIEW_STORE, 'readonly');
+    if (!transaction) return 0;
+    const cursor = await requestResult(transaction.objectStore(SAVED_VIEW_STORE).index('syncId').openCursor(null, 'prev'));
+    await transactionComplete(transaction);
+    return (cursor?.value as IndexedDbTrackerSavedViewRow | undefined)?.syncId ?? 0;
+  }
+
+  async listSavedViews(): Promise<IndexedDbTrackerSavedViewRow[]> {
+    const transaction = await this.openTransaction(SAVED_VIEW_STORE, 'readonly');
+    if (!transaction) return [];
+    const rows = await requestResult(transaction.objectStore(SAVED_VIEW_STORE).getAll()) as IndexedDbTrackerSavedViewRow[];
+    await transactionComplete(transaction);
+    return rows;
+  }
+
+  async putLocalSavedView(
+    viewId: string,
+    payload: string | null,
+    owner?: TrackerTransactionOwner,
+  ): Promise<void> {
+    const transaction = await this.openTransaction(SAVED_VIEW_STORE, 'readwrite');
+    if (!transaction) return;
+    const store = transaction.objectStore(SAVED_VIEW_STORE);
+    const existing = await requestResult(store.get(viewId)) as IndexedDbTrackerSavedViewRow | undefined;
+    store.put({
+      viewId,
+      payload,
+      syncId: existing?.syncId ?? 0,
+      unsynced: true,
+      deleted: payload === null,
+      owner,
+    } satisfies IndexedDbTrackerSavedViewRow);
+    await transactionComplete(transaction);
+  }
+
+  async applyRemoteSavedView(viewId: string, payload: string | null, syncId: SyncId): Promise<void> {
+    const transaction = await this.openTransaction(SAVED_VIEW_STORE, 'readwrite');
+    if (!transaction) return;
+    const store = transaction.objectStore(SAVED_VIEW_STORE);
+    const existing = await requestResult(store.get(viewId)) as IndexedDbTrackerSavedViewRow | undefined;
+    if (existing && existing.syncId > syncId) {
+      await transactionComplete(transaction);
+      return;
+    }
+    const acknowledgesLocalChange = existing?.unsynced && existing.payload === payload;
+    store.put({
+      viewId,
+      payload: existing?.unsynced && !acknowledgesLocalChange ? existing.payload : payload,
+      syncId,
+      unsynced: !!existing?.unsynced && !acknowledgesLocalChange,
+      deleted: existing?.unsynced && !acknowledgesLocalChange ? existing.deleted : payload === null,
+      ...(existing?.unsynced && !acknowledgesLocalChange ? { owner: existing.owner } : {}),
+    } satisfies IndexedDbTrackerSavedViewRow);
+    await transactionComplete(transaction);
+  }
+
+  async markSavedViewRejected(viewId: string, code: string): Promise<void> {
+    const transaction = await this.openTransaction(SAVED_VIEW_STORE, 'readwrite');
+    if (!transaction) return;
+    const store = transaction.objectStore(SAVED_VIEW_STORE);
+    const existing = await requestResult(store.get(viewId)) as IndexedDbTrackerSavedViewRow | undefined;
+    if (existing) {
+      store.put({
+        ...existing,
+        unsynced: false,
+        lastRejection: { code, occurredAt: Date.now() },
+      } satisfies IndexedDbTrackerSavedViewRow);
+    }
+    await transactionComplete(transaction);
+  }
+
+  /** Purge every plaintext projection and member outbox row for this room. */
+  async purgeAll(): Promise<void> {
+    const transaction = await this.openTransaction(
+      [ITEM_STORE, TRANSACTION_STORE, SAVED_VIEW_STORE],
+      'readwrite',
+    );
+    if (!transaction) return;
+    transaction.objectStore(ITEM_STORE).clear();
+    transaction.objectStore(TRANSACTION_STORE).clear();
+    transaction.objectStore(SAVED_VIEW_STORE).clear();
+    await transactionComplete(transaction);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    (await this.databasePromise).close();
+  }
 }
 
 // ============================================================================
@@ -195,7 +720,7 @@ export class InMemoryTrackerPersistence implements TrackerPersistence {
     payload: TrackerItemPayload | null;
   }>();
 
-  readonly transactions = new Map<string, TrackerTransactionRow>();
+  readonly transactions = new Map<string, PersistedTrackerTransactionRow>();
 
   async getMaxSyncId(): Promise<SyncId> {
     let max = 0;
@@ -296,10 +821,64 @@ export class InMemoryTrackerPersistence implements TrackerPersistence {
           isTombstone: existing.envelope.encryptedPayload === null,
         }
       : { payload: null, syncId: null, isTombstone: false };
-    await this.enqueueTransaction({ ...row, state: 'pendingApply' });
+    const pendingRow: PersistedTrackerTransactionRow = {
+      ...row,
+      state: 'pendingApply',
+      rollbackSnapshot: snapshot,
+    };
+    await this.enqueueTransaction(pendingRow);
     await this.applyOptimistic(itemId, payload);
     await this.markTransactionState(row.clientMutationId, 'persistedEnqueue');
     return snapshot;
+  }
+
+  async applyAndEnqueueBatchAtomically(
+    entries: readonly TrackerAtomicMutation[],
+  ): Promise<TrackerRowSnapshot[]> {
+    const snapshots = entries.map(entry => {
+      const existing = this.items.get(entry.itemId);
+      return existing
+        ? {
+            payload: existing.payload,
+            syncId: existing.envelope.syncId,
+            isTombstone: existing.envelope.encryptedPayload === null,
+          }
+        : { payload: null, syncId: null, isTombstone: false };
+    });
+    entries.forEach((entry, index) => {
+      this.transactions.set(entry.row.clientMutationId, {
+        ...entry.row,
+        state: 'persistedEnqueue',
+        rollbackSnapshot: snapshots[index],
+      });
+      const existing = this.items.get(entry.itemId);
+      const envelope: TrackerItemEnvelope = {
+        itemId: entry.itemId,
+        syncId: existing?.envelope.syncId ?? 0,
+        encryptedPayload: 'optimistic',
+        iv: 'optimistic-iv',
+        updatedAt: Date.now(),
+        deletedAt: null,
+        orgKeyFingerprint: existing?.envelope.orgKeyFingerprint ?? null,
+        issueNumber: existing?.envelope.issueNumber,
+        issueKey: existing?.envelope.issueKey,
+      };
+      this.items.set(entry.itemId, {
+        envelope,
+        payload: entry.payload,
+      });
+    });
+    return snapshots;
+  }
+
+  async markTransactionStates(
+    clientMutationIds: readonly string[],
+    state: TrackerTransactionState,
+    startedAt?: number,
+  ): Promise<void> {
+    for (const clientMutationId of clientMutationIds) {
+      await this.markTransactionState(clientMutationId, state, startedAt);
+    }
   }
 
   async markTransactionState(
@@ -323,15 +902,17 @@ export class InMemoryTrackerPersistence implements TrackerPersistence {
   async rejectTransaction(
     clientMutationId: string,
     rejection: { code: TrackerMutationRejectCode; message: string; occurredAt: number },
+    terminal = isPermanentTrackerRejection(rejection.code),
   ): Promise<void> {
     const row = this.transactions.get(clientMutationId);
     if (!row) return;
     row.lastRejection = rejection;
+    row.terminalRejection = terminal;
   }
 
-  async loadPendingTransactions(): Promise<TrackerTransactionRow[]> {
+  async loadPendingTransactions(owner?: TrackerTransactionOwner): Promise<PersistedTrackerTransactionRow[]> {
     return [...this.transactions.values()]
-      .filter(r => !r.confirmedSyncId)
+      .filter(row => transactionBelongsTo(row, owner) && transactionIsPending(row))
       .sort((a, b) => a.enqueuedAt - b.enqueuedAt);
   }
 }

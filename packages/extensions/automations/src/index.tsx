@@ -129,8 +129,13 @@ export async function activate(context: {
   // Initialize scheduler (discover and schedule automations)
   await scheduler.initialize();
 
-  // Poll for file changes every 30 seconds
-  const pollInterval = setInterval(() => scheduler?.rescan(), 30_000);
+  // Poll for file changes every 30 seconds. Nothing awaits the rescan, so its
+  // rejection would surface as an app-level unhandled-rejection toast (#1374).
+  const pollInterval = setInterval(() => {
+    scheduler?.rescan().catch((err) => {
+      console.error('[Automations] Scheduled rescan failed:', err);
+    });
+  }, 30_000);
 
   context.subscriptions.push({
     dispose: () => {

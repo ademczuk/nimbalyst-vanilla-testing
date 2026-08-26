@@ -32,6 +32,13 @@ import { getDatabaseMaintenanceSettings } from '../utils/store';
 // nothing on main holds a reference.
 let backupService: DatabaseBackupService | SQLiteBackupService | null = null;
 let periodicBackupTimer: NodeJS.Timeout | null = null;
+let startupBackupTimer: NodeJS.Timeout | null = null;
+/**
+ * How long after database init the catch-up staleness backup waits. Long
+ * enough for the launch query burst to drain; short enough that a session that
+ * only lasts a few minutes still gets its overdue snapshot.
+ */
+const STARTUP_BACKUP_DELAY_MS = 2 * 60_000;
 /**
  * Periodic backup cadence, from settings. Was a hardcoded 4 hours against a
  * rolling-3 of full copies, which made a 4.6 GiB database occupy 18.5 GiB on
@@ -430,10 +437,20 @@ export async function initializeDatabase(): Promise<SessionStore> {
       }
 
       // If we missed a backup window (e.g. macOS slept through the 4h
-      // setInterval), fire one now. setInterval pauses during system sleep
-      // and does NOT catch up on wake, so a single overnight sleep silently
-      // skips the snapshot.
-      void runStalenessBackup('startup');
+      // setInterval), fire one. setInterval pauses during system sleep and
+      // does NOT catch up on wake, so a single overnight sleep silently skips
+      // the snapshot.
+      //
+      // Deferred rather than immediate: launch queues hundreds of queries
+      // (project restore, sync handshake, tracker and document loads) and the
+      // online copy competes with all of them for the SQLite worker — ~44s of
+      // it on a 6.3 GB store. Let the burst drain first; a catch-up snapshot
+      // that is already hours stale is not urgent to the minute.
+      startupBackupTimer = setTimeout(() => {
+        startupBackupTimer = null;
+        void runStalenessBackup('startup');
+      }, STARTUP_BACKUP_DELAY_MS);
+      startupBackupTimer.unref?.();
 
       const backupIntervalMs = getBackupIntervalMs();
       if (backupIntervalMs > 0) {
@@ -612,15 +629,20 @@ function unmangleIsoTimestamp(stamp: string): string {
 }
 
 /**
- * Stop the periodic-backup interval. Must be called before db.close() during
- * shutdown, otherwise the timer can fire after the SQLite handle is closed
- * and throws "The database connection is not open" from inside the better-
- * sqlite3 Online Backup API's setImmediate-driven step loop.
+ * Stop the periodic-backup interval and the deferred startup backup. Must be
+ * called before db.close() during shutdown, otherwise a timer can fire after
+ * the SQLite handle is closed and throw "The database connection is not open"
+ * from inside the better-sqlite3 Online Backup API's setImmediate-driven step
+ * loop.
  */
 export function stopPeriodicBackupTimer(): void {
   if (periodicBackupTimer) {
     clearInterval(periodicBackupTimer);
     periodicBackupTimer = null;
+  }
+  if (startupBackupTimer) {
+    clearTimeout(startupBackupTimer);
+    startupBackupTimer = null;
   }
 }
 

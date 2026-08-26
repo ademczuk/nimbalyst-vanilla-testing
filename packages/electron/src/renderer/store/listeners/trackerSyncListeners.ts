@@ -21,20 +21,29 @@
  */
 
 import { store } from '@nimbalyst/runtime/store';
+import type {
+  TrackerDataChange,
+  TrackerDataSource,
+  TrackerItem,
+} from '@nimbalyst/collab-client/trackers';
 import {
   replaceAllTrackerItemsAtom,
   upsertTrackerItemAtom,
   removeTrackerItemAtom,
   trackerDataLoadedAtom,
-} from '@nimbalyst/runtime';
-import type { TrackerItem, TrackerItemChangeEvent } from '@nimbalyst/runtime';
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import { trackerItemToRecord, type TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { globalRegistry, isRelationshipField } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
-import { trackerSyncConfigChangeAtom, trackerSyncConnectionAtom, trackerSyncRejectionAtom, type TrackerSyncRejectionCode } from '../atoms/trackerSync';
+import { trackerSyncConfigChangeAtom, trackerSyncConnectionAtom, trackerSyncDrainHoldAtom, trackerSyncRejectionAtom, type TrackerSyncRejectionCode } from '../atoms/trackerSync';
 import { activeWorkspacePathAtom } from '../atoms/openProjects';
 import { loadTrackerNavigationAtom } from '../atoms/trackerNavigation';
-import { initTrackerPanelLayout, loadSharedTrackerViewsAtom } from '../atoms/trackers';
+import {
+  initTrackerPanelLayout,
+  replaceSharedTrackerViewsAtom,
+  setTrackerDataSourceAtom,
+} from '../atoms/trackers';
 import { getBodyDocCache } from '../../services/BodyDocCache';
+import { ElectronTrackerDataSource } from '../../services/ElectronTrackerDataSource';
 
 /** Auto-clear delay for transient rotation locks. Matches the typical
  *  team rotation window -- by 30s the org-wide write freeze should have
@@ -94,10 +103,10 @@ function itemCarriesRelationshipField(item: TrackerItem): boolean {
  * Fetch all tracker items from the main-process tracker read model and load
  * them into atoms.
  */
-async function loadAllTrackerItems(): Promise<void> {
+async function loadAllTrackerItems(dataSource: TrackerDataSource): Promise<void> {
   try {
-    const items = await window.electronAPI.invoke('document-service:tracker-items-list') as TrackerItem[];
-    const records = (items || []).map(trackerItemToRecord);
+    const { items = [] } = await dataSource.command({ type: 'list-items' });
+    const records = items.map(trackerItemToRecord);
     store.set(replaceAllTrackerItemsAtom, records);
   } catch (err) {
     console.error('[trackerSyncListeners] Failed to load tracker items:', err);
@@ -113,9 +122,9 @@ async function loadAllTrackerItems(): Promise<void> {
  * We do this after the initial load so the UI shows cached data immediately,
  * then updates reactively via tracker-items-changed events as the scan indexes files.
  */
-async function triggerWorkspaceScan(): Promise<void> {
+async function triggerWorkspaceScan(dataSource: TrackerDataSource): Promise<void> {
   try {
-    await window.electronAPI.invoke('document-service:refresh-workspace');
+    await dataSource.command({ type: 'refresh-items' });
   } catch (err) {
     console.error('[trackerSyncListeners] Workspace scan failed:', err);
   }
@@ -133,6 +142,8 @@ export function initTrackerSyncListeners(): () => void {
   let initialScanTimer: ReturnType<typeof setTimeout> | null = null;
   let rotationLockedClearTimer: ReturnType<typeof setTimeout> | null = null;
   let relationshipReconcileTimer: ReturnType<typeof setTimeout> | null = null;
+  let trackerDataSource: TrackerDataSource | null = null;
+  let unsubscribeTrackerDataSource: (() => void) | null = null;
 
   // Debounced safety net: after a relationship-bearing change event, reload the
   // full tracker read model so a partial/out-of-order granular upsert can't
@@ -143,30 +154,56 @@ export function initTrackerSyncListeners(): () => void {
     relationshipReconcileTimer = setTimeout(() => {
       relationshipReconcileTimer = null;
       if (disposed) return;
-      void loadAllTrackerItems();
+      if (trackerDataSource) void loadAllTrackerItems(trackerDataSource);
     }, RELATIONSHIP_RECONCILE_DEBOUNCE_MS);
   };
 
-  // `tracker-sync:mutation-rejected` is broadcast when the server rejects
-  // a write. `staleKeyEpoch + refreshKey succeeds` is silently retried by
-  // the engine; the only events that reach the renderer are the unrecovered
-  // ones the user needs to see. `forbidden` and `malformed` are bugs
-  // (not user-facing) and stay off the banner -- log them and let the
-  // optimistic-rollback surface the failure indirectly.
-  cleanups.push(
-    window.electronAPI.on(
-      'tracker-sync:mutation-rejected',
-      (data: {
-        workspacePath: string;
-        itemId: string;
-        clientMutationId?: string;
-        code: TrackerSyncRejectionCode | 'forbidden' | 'malformed';
-        message?: string;
-      }) => {
-        if (!data) return;
-        // staleKeyEpoch/rotationLocked are legacy codes retained for old-server
-        // compatibility; custodyUnavailable is the current server-managed
-        // rejection (server could not load the team DEK).
+  let configChangeVersion = 0;
+
+  const upsertItems = (items: TrackerItem[]) => {
+    let sawRelationshipChange = false;
+    for (const item of items) {
+      store.set(upsertTrackerItemAtom, trackerItemToRecord(item));
+      if (itemCarriesRelationshipField(item)) sawRelationshipChange = true;
+    }
+    if (sawRelationshipChange) scheduleRelationshipReconcile();
+  };
+
+  const handleTrackerDataChange = (change: TrackerDataChange) => {
+    switch (change.type) {
+      case 'items-replaced':
+        store.set(replaceAllTrackerItemsAtom, change.items.map(trackerItemToRecord));
+        return;
+      case 'items-upserted':
+        upsertItems(change.items);
+        return;
+      case 'items-removed':
+        for (const itemId of change.itemIds) store.set(removeTrackerItemAtom, itemId);
+        return;
+      case 'saved-views-replaced':
+        store.set(replaceSharedTrackerViewsAtom, change.savedViews);
+        return;
+      case 'status':
+        store.set(trackerSyncConnectionAtom, change.sync);
+        // Rides on the sync state rather than its own event: the socket is
+        // `connected` while a drain hold is in force, so `status` alone cannot
+        // carry it (NIM-2968). Null clears the banner on recovery.
+        store.set(
+          trackerSyncDrainHoldAtom,
+          change.sync.drainHold
+            ? { workspacePath: change.sync.workspacePath, ...change.sync.drainHold }
+            : null,
+        );
+        return;
+      case 'config-changed':
+        configChangeVersion += 1;
+        store.set(trackerSyncConfigChangeAtom, {
+          version: configChangeVersion,
+          payload: { workspacePath: change.workspacePath, config: change.config },
+        });
+        return;
+      case 'mutation-rejected': {
+        const data = change.rejection;
         if (
           data.code !== 'staleKeyEpoch' &&
           data.code !== 'rotationLocked' &&
@@ -187,39 +224,25 @@ export function initTrackerSyncListeners(): () => void {
           [data.code as TrackerSyncRejectionCode]: rejection,
         }));
         if (data.code === 'rotationLocked') {
-          // Each fresh rotationLocked event resets the TTL -- writes
-          // during an extended freeze should not surprise the user with
-          // an empty banner mid-rotation.
           if (rotationLockedClearTimer) clearTimeout(rotationLockedClearTimer);
           rotationLockedClearTimer = setTimeout(() => {
             rotationLockedClearTimer = null;
             store.set(trackerSyncRejectionAtom, (prev) => ({ ...prev, rotationLocked: null }));
           }, ROTATION_LOCKED_TTL_MS);
         }
-      },
-    ),
-  );
+      }
+    }
+  };
 
-  // `tracker-sync:config-changed` is broadcast by the main process whenever a
-  // tracker-sync subscription updates its config (e.g. issueKeyPrefix) -- can
-  // happen on any workspace. Bumped into a request atom so the Settings >
-  // Tracker Config panel can mirror the change without subscribing to IPC
-  // itself. Registered outside the workspace-mode block below because this
-  // event is workspace-tagged in the payload.
-  let configChangeVersion = 0;
-  cleanups.push(
-    window.electronAPI.on(
-      'tracker-sync:config-changed',
-      (data: { workspacePath: string; config: { issueKeyPrefix: string } }) => {
-        if (!data?.workspacePath || !data.config) return;
-        configChangeVersion += 1;
-        store.set(trackerSyncConfigChangeAtom, {
-          version: configChangeVersion,
-          payload: data,
-        });
-      },
-    ),
-  );
+  const bindTrackerDataSource = (workspacePath: string): TrackerDataSource => {
+    unsubscribeTrackerDataSource?.();
+    trackerDataSource?.dispose();
+    const next = new ElectronTrackerDataSource({ workspacePath });
+    trackerDataSource = next;
+    store.set(setTrackerDataSourceAtom, next);
+    unsubscribeTrackerDataSource = next.subscribe(handleTrackerDataChange);
+    return next;
+  };
 
   // console.log('[trackerSyncListeners] Initializing tracker data listeners');
 
@@ -287,36 +310,11 @@ export function initTrackerSyncListeners(): () => void {
     ),
   );
   cleanups.push(
-    window.electronAPI.on('tracker-sync:status-changed', (value: string | { workspacePath: string; status: string; shared?: boolean }) => {
-      if (!currentWorkspacePath) return;
-      const status = typeof value === 'string' ? value : value.status;
-      const eventWorkspace = typeof value === 'string' ? currentWorkspacePath : value.workspacePath;
-      if (eventWorkspace !== currentWorkspacePath) return;
-      const current = store.get(trackerSyncConnectionAtom);
-      store.set(trackerSyncConnectionAtom, {
-        workspacePath: currentWorkspacePath,
-        status,
-        projectId: typeof value !== 'string' && value.shared
-          ? 'shared'
-          : current?.workspacePath === currentWorkspacePath ? current.projectId : null,
-      });
-    }),
-  );
-  cleanups.push(
     window.electronAPI.on(
       'tracker-navigation:changed',
       (data: { workspacePath: string }) => {
         if (!data?.workspacePath || data.workspacePath !== currentWorkspacePath) return;
         void store.set(loadTrackerNavigationAtom, data.workspacePath);
-      },
-    ),
-  );
-  cleanups.push(
-    window.electronAPI.on(
-      'tracker-saved-views:changed',
-      (data: { workspacePath: string }) => {
-        if (!data?.workspacePath || data.workspacePath !== currentWorkspacePath) return;
-        void store.set(loadSharedTrackerViewsAtom, data.workspacePath);
       },
     ),
   );
@@ -334,103 +332,32 @@ export function initTrackerSyncListeners(): () => void {
 
       currentWorkspacePath = state.workspacePath;
       const requestedWorkspacePath = currentWorkspacePath;
+      const dataSource = bindTrackerDataSource(requestedWorkspacePath);
 
       void store.set(loadTrackerNavigationAtom, requestedWorkspacePath).catch((error) => {
         console.error('[trackerSyncListeners] Failed to load tracker navigation:', error);
       });
-      void store.set(loadSharedTrackerViewsAtom, requestedWorkspacePath).catch((error) => {
-        console.error('[trackerSyncListeners] Failed to load shared saved views:', error);
-      });
-      void window.electronAPI.invoke(
-        'tracker-sync:get-status',
-        { workspacePath: requestedWorkspacePath },
-      ).then((syncStatus: { status?: string; projectId?: string | null } | undefined) => {
-        if (disposed || !syncStatus || currentWorkspacePath !== requestedWorkspacePath) return;
-        store.set(trackerSyncConnectionAtom, {
-          workspacePath: requestedWorkspacePath,
-          status: syncStatus.status ?? 'disconnected',
-          projectId: syncStatus.projectId ?? null,
-        });
-      }).catch((error: unknown) => {
-        console.error('[trackerSyncListeners] Failed to load tracker sync status:', error);
-      });
-
       // Initial load from the shared tracker read model (DB projection +
       // frontmatter-backed full-document items).
-      await loadAllTrackerItems();
-      if (disposed) return;
+      try {
+        const snapshot = await dataSource.snapshot();
+        if (disposed || currentWorkspacePath !== requestedWorkspacePath) return;
+        store.set(replaceAllTrackerItemsAtom, snapshot.items.map(trackerItemToRecord));
+        store.set(replaceSharedTrackerViewsAtom, snapshot.savedViews);
+        store.set(trackerSyncConnectionAtom, snapshot.sync);
+      } catch (error) {
+        console.error('[trackerSyncListeners] Failed to load tracker snapshot:', error);
+        store.set(trackerDataLoadedAtom, true);
+      }
+      if (disposed || currentWorkspacePath !== requestedWorkspacePath) return;
 
       // Trigger a workspace scan to index new/changed files into PGLite.
       // The DocumentService skips scanning on startup for performance,
       // so without this, tracker items won't appear until an @ mention or file open.
       // Delay slightly to avoid blocking app startup.
       initialScanTimer = setTimeout(() => {
-        void triggerWorkspaceScan();
+        if (trackerDataSource) void triggerWorkspaceScan(trackerDataSource);
       }, 3000);
-
-      // Subscribe to tracker item changes from ElectronDocumentService (local indexer changes)
-      // This is the subscription-based IPC: we send a 'watch' message, then receive events.
-      window.electronAPI.send('document-service:tracker-items-watch');
-
-      // Handle change events with granular atom updates
-      cleanups.push(
-        window.electronAPI.on(
-          'document-service:tracker-items-changed',
-          (change: TrackerItemChangeEvent) => {
-            // console.log('[trackerSyncListeners] Received tracker-items-changed:', {
-            //   added: change.added?.length || 0,
-            //   updated: change.updated?.length || 0,
-            //   removed: change.removed?.length || 0,
-            // });
-            // Defensive workspace filter: drop items that belong to a different
-            // workspace. If we don't know our own workspace yet (init race), pass
-            // through -- the main process already filters. Items without a
-            // `workspace` field (legacy / frontmatter) also pass through.
-            const belongsToThisWorkspace = (item: TrackerItem): boolean => {
-              if (!currentWorkspacePath) return true;
-              if (!item.workspace) return true;
-              return item.workspace === currentWorkspacePath;
-            };
-
-            // Apply granular updates to the atom map (convert to TrackerRecord)
-            let sawRelationshipChange = false;
-            if (change.added?.length) {
-              for (const item of change.added) {
-                if (!belongsToThisWorkspace(item)) continue;
-                store.set(upsertTrackerItemAtom, trackerItemToRecord(item));
-                if (itemCarriesRelationshipField(item)) sawRelationshipChange = true;
-              }
-            }
-            if (change.updated?.length) {
-              for (const item of change.updated) {
-                if (!belongsToThisWorkspace(item)) continue;
-                store.set(upsertTrackerItemAtom, trackerItemToRecord(item));
-                if (itemCarriesRelationshipField(item)) sawRelationshipChange = true;
-              }
-            }
-            if (change.removed?.length) {
-              for (const id of change.removed) {
-                store.set(removeTrackerItemAtom, id);
-              }
-            }
-
-            // Relationship-bearing changes can land via inverse propagation as a
-            // burst of out-of-order partial events; reconcile from the read model
-            // so the detail panel never sticks on stale `No links` (NIM-1305).
-            if (sawRelationshipChange) scheduleRelationshipReconcile();
-          }
-        )
-      );
-
-      // Metadata changes can add/remove/update full-document tracker items, so
-      // re-fetch the merged read model whenever frontmatter changes.
-      window.electronAPI.send('document-service:metadata-watch');
-
-      cleanups.push(
-        window.electronAPI.on('document-service:metadata-changed', () => {
-          void loadAllTrackerItems();
-        })
-      );
 
       // Refetch when the user switches projects in the multi-project rail.
       // Without this, `currentWorkspacePath` stays pinned to the startup
@@ -442,14 +369,20 @@ export function initTrackerSyncListeners(): () => void {
         const nextPath = store.get(activeWorkspacePathAtom);
         if (!nextPath || nextPath === currentWorkspacePath) return;
         currentWorkspacePath = nextPath;
+        const nextDataSource = bindTrackerDataSource(nextPath);
         void initTrackerPanelLayout(nextPath);
         void store.set(loadTrackerNavigationAtom, nextPath).catch((error) => {
           console.error('[trackerSyncListeners] Failed to load tracker navigation after project switch:', error);
         });
-        void store.set(loadSharedTrackerViewsAtom, nextPath).catch((error) => {
-          console.error('[trackerSyncListeners] Failed to load shared saved views after project switch:', error);
+        void nextDataSource.snapshot().then((snapshot) => {
+          if (disposed || currentWorkspacePath !== nextPath) return;
+          store.set(replaceAllTrackerItemsAtom, snapshot.items.map(trackerItemToRecord));
+          store.set(replaceSharedTrackerViewsAtom, snapshot.savedViews);
+          store.set(trackerSyncConnectionAtom, snapshot.sync);
+        }).catch((error) => {
+          console.error('[trackerSyncListeners] Failed to load tracker snapshot after project switch:', error);
+          store.set(trackerDataLoadedAtom, true);
         });
-        void loadAllTrackerItems();
       });
       cleanups.push(unsubscribeActivePath);
     })
@@ -468,6 +401,9 @@ export function initTrackerSyncListeners(): () => void {
     if (relationshipReconcileTimer) {
       clearTimeout(relationshipReconcileTimer);
     }
+    unsubscribeTrackerDataSource?.();
+    trackerDataSource?.dispose();
+    store.set(setTrackerDataSourceAtom, null);
     cleanups.forEach((cleanup) => cleanup());
   };
 }

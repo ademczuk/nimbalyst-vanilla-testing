@@ -12,7 +12,7 @@ import { orgTrackerItemsAtom, trackerItemsMapAtom } from '@nimbalyst/runtime/plu
 import { OrgModeHost } from '../OrgModeHost';
 import { ORG_WINDOW_SURFACE_ID } from '../orgWindowState';
 
-vi.mock('@nimbalyst/runtime', () => ({
+vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
 }));
 vi.mock('../../Settings/panels/OrganizationProjectsPanel', () => ({ OrganizationProjectsPanel: () => <div /> }));

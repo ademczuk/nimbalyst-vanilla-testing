@@ -48,7 +48,13 @@ vi.mock('../../utils/store', () => ({
 }));
 
 vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel', () => ({
-  globalRegistry: { get: mockGlobalRegistryGet },
+  globalRegistry: {
+    get: mockGlobalRegistryGet,
+    // The policy resolver reads by explicit workspace (NIM-3702). These tests
+    // are single-workspace, so both spellings answer from the same stub.
+    getForWorkspace: (_workspacePath: string, type: string) => mockGlobalRegistryGet(type),
+    hasWorkspaceLayer: () => true,
+  },
 }));
 
 import { ElectronDocumentService } from '../ElectronDocumentService';

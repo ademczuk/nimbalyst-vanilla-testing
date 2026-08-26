@@ -41,11 +41,11 @@ function renderPanel() {
 }
 
 describe('DisplayOptionsPanel grouping select', () => {
-  it('selects a grouping option instead of dismissing the panel', () => {
+  it('selects a grouping option instead of dismissing the panel', async () => {
     const { onGroupByChange, onClose } = renderPanel();
 
     fireEvent.click(within(screen.getByTestId('tracker-display-group-by')).getByRole('button'));
-    const option = screen.getByRole('button', { name: 'Status' });
+    const option = await screen.findByRole('button', { name: 'Status' });
 
     fireEvent.mouseDown(option);
     expect(onClose).not.toHaveBeenCalled();

@@ -60,7 +60,7 @@ import { logger } from '../../utils/logger';
 import { getSettingsService } from '../SettingsService';
 import { subscribeProviderSettingsInvalidation } from './providerSettingsCacheInvalidation';
 import { windowStates, findWindowByWorkspace, getWindowId, createWindow, isAppQuitting } from '../../window/WindowManager';
-import { resolveActiveWorkspacePathForWindowId } from '../../window/windowState';
+import { getWindowIdForWindow, resolveActiveWorkspacePathForWindowId } from '../../window/windowState';
 import { sessionFileTracker } from '../SessionFileTracker';
 import { extractFilePath } from './tools/extractFilePath';
 import { handleBackendTool } from '../../mcp/tools/backendToolHandler';
@@ -3404,7 +3404,8 @@ export class AIService {
       try {
         // For OpenAI, just try to list models as a connection test
         if (provider === 'openai') {
-          const models = await ModelRegistry.getModelsForProvider('openai', apiKey);
+          // OpenAI's model list is account-scoped, not project-scoped.
+          const models = await ModelRegistry.getModelsForProvider('openai', undefined, apiKey);
           return { success: models.length > 0, provider };
         }
 
@@ -3567,10 +3568,15 @@ export class AIService {
     });
 
     // Get ALL available models for configuration UI
-    safeHandle('ai:getAllModels', async () => {
+    safeHandle('ai:getAllModels', async (event) => {
       // Clear cache to get fresh models
       ModelRegistry.clearCache();
 
+      // Settings lists OpenCode's discovered models as checkboxes, so this read
+      // is scoped to the sending window's project too -- see ai:getModels.
+      const workspacePath = resolveActiveWorkspacePathForWindowId(
+        getWindowIdForWindow(BrowserWindow.fromWebContents(event.sender)),
+      ) ?? undefined;
       const providerSettings = this.getNormalizedProviderSettings() as Record<AIProviderType, any>;
       const apiKeys = this.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
 
@@ -3590,7 +3596,7 @@ export class AIService {
         ...apiKeys,
         lmstudio_url: providerSettings['lmstudio']?.baseUrl || 'http://127.0.0.1:8234'
       };
-      const allModels = await ModelRegistry.getAllModels(modelsConfig, enabledSet);
+      const allModels = await ModelRegistry.getAllModels(modelsConfig, workspacePath, enabledSet);
 
       // Append extension-contributed agent provider models (see ai:getModels).
       for (const agentEntry of getAgentProviderRegistry().list()) {
@@ -3775,8 +3781,15 @@ export class AIService {
     });
 
     // Get ENABLED models for actual use
-    safeHandle('ai:getModels', async () => {
+    safeHandle('ai:getModels', async (event) => {
       // console.log('[AIService] ai:getModels called - fetching enabled models');
+      // OpenCode resolves its provider set from project config, so this listing
+      // is workspace-scoped even though every other provider is global. Resolve
+      // the sender's project rather than threading a path through nine renderer
+      // call sites -- same approach TrackerSchemaService takes for #1178.
+      const workspacePath = resolveActiveWorkspacePathForWindowId(
+        getWindowIdForWindow(BrowserWindow.fromWebContents(event.sender)),
+      ) ?? undefined;
       const providerSettings = this.getNormalizedProviderSettings() as Record<AIProviderType, any>;
       const apiKeys = this.getSettingsStore().get('apiKeys', {}) as Record<string, string>;
       const claudeCodeSettings = providerSettings['claude-code'] || {};
@@ -3811,21 +3824,29 @@ export class AIService {
           models: providerSettings['openai']?.models,
           hiddenModels: providerSettings['openai']?.hiddenModels
         },
+        // These four each authenticate through their own CLI or config, so no
+        // API key is required -- but they still need models/hiddenModels
+        // forwarded, or hiding a model in Settings does nothing to the session
+        // picker (#1382).
         'openai-codex': {
-          // Codex SDK uses its own auth (codex auth login), API key is optional
           enabled: providerSettings['openai-codex']?.enabled === true,
+          models: providerSettings['openai-codex']?.models,
+          hiddenModels: providerSettings['openai-codex']?.hiddenModels
         },
         'openai-codex-acp': {
-          // Codex ACP uses the codex-acp binary directly; API key is optional
           enabled: providerSettings['openai-codex-acp']?.enabled === true,
+          models: providerSettings['openai-codex-acp']?.models,
+          hiddenModels: providerSettings['openai-codex-acp']?.hiddenModels
         },
         'opencode': {
-          // OpenCode uses its own config, API key is optional
           enabled: providerSettings['opencode']?.enabled === true,
+          models: providerSettings['opencode']?.models,
+          hiddenModels: providerSettings['opencode']?.hiddenModels
         },
         'copilot-cli': {
-          // Copilot uses its own CLI auth (copilot auth login), no API key needed
           enabled: providerSettings['copilot-cli']?.enabled === true,
+          models: providerSettings['copilot-cli']?.models,
+          hiddenModels: providerSettings['copilot-cli']?.hiddenModels
         },
         'lmstudio': {
           enabled: providerSettings['lmstudio']?.enabled === true,
@@ -3844,7 +3865,7 @@ export class AIService {
         ...apiKeys,
         lmstudio_url: providerSettings['lmstudio']?.baseUrl || 'http://127.0.0.1:8234'
       };
-      const allModels = await ModelRegistry.getAllModels(modelsConfig, enabledProviderSet);
+      const allModels = await ModelRegistry.getAllModels(modelsConfig, workspacePath, enabledProviderSet);
 
       // const claudeCodeModels = allModels.filter(m => m.provider === 'claude-code');
       // console.log('[AIService] ai:getModels - claude-code models from registry:',
@@ -4176,7 +4197,8 @@ export class AIService {
         const baseUrl = provider === 'lmstudio' ? (globalApiKeys['lmstudio_url'] || undefined) : undefined;
 
         try {
-          const models = await ModelRegistry.getModelsForProvider(provider, apiKey, baseUrl);
+          // CHAT_PROVIDERS above is claude/openai/lmstudio -- none project-scoped.
+          const models = await ModelRegistry.getModelsForProvider(provider, undefined, apiKey, baseUrl);
           const enabledModelIds = settings?.models as string[] | undefined;
 
           for (const model of models) {
@@ -4467,7 +4489,7 @@ export class AIService {
       } else {
         // Try to find this model across providers
         for (const p of CHAT_PROVIDERS) {
-          const models = await ModelRegistry.getModelsForProvider(p);
+          const models = await ModelRegistry.getModelsForProvider(p, undefined);
           if (models.some(m => m.id === options.model)) {
             providerType = p;
             modelId = options.model;

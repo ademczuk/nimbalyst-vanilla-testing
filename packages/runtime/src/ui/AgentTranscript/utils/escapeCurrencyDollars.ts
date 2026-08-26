@@ -27,14 +27,81 @@
  *   - already-escaped currency `\$5 to \$10` (skipped via lookbehind)
  *   - lone unpaired `$` with no closing pair on the same line
  *   - currency split across newlines (the regex content class excludes newlines)
+ *
+ * Code is exempt (nimbalyst/nimbalyst#1373). A backslash is not an escape
+ * character inside `code` / `inlineCode`, so escaping there is not invisible
+ * the way it is in prose: `awk '{print $1, $2}'` renders — and copies — as
+ * `awk '{print \$1, \$2}'`, and the copied command no longer runs.
+ *
+ * The exempt regions come from a real parse rather than a line scan, because a
+ * scan cannot see fences inside blockquotes or list items, nested fences, or
+ * inline spans. The escape still happens on the *source*, before the document
+ * is parsed for rendering, so markdown that crosses a currency span survives:
+ * `from $7M to **$40M**` stays bold, which reverting `inlineMath` nodes after
+ * the fact would not preserve.
  */
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
+import remarkGfm from 'remark-gfm';
+import type { Root, RootContent } from 'mdast';
+
 const CURRENCY_PAIR_RE = /(?<!\\)\$([^$\n]*?)(?<!\\)\$(?=\d)/g;
+
+/** Backtick/tilde fence or span, or an indented code line. */
+const MAY_CONTAIN_CODE_RE = /[`~]|^(?: {4}|\t)/m;
+
+const codeScanProcessor = unified().use(remarkParse).use(remarkGfm);
+
+function escapeSegment(segment: string): string {
+  return segment.replace(CURRENCY_PAIR_RE, (_match, content: string) => `\\$${content}\\$`);
+}
+
+/** Source offsets of every `code` / `inlineCode` node, in document order. */
+function collectCodeRanges(source: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const walk = (node: Root | RootContent): void => {
+    if ((node.type === 'code' || node.type === 'inlineCode') && node.position) {
+      const { start, end } = node.position;
+      if (start.offset !== undefined && end.offset !== undefined) {
+        ranges.push([start.offset, end.offset]);
+      }
+      return;
+    }
+    if ('children' in node && Array.isArray(node.children)) {
+      for (const child of node.children) {
+        walk(child as RootContent);
+      }
+    }
+  };
+  walk(codeScanProcessor.parse(source));
+  return ranges.sort((a, b) => a[0] - b[0]);
+}
 
 export function escapeCurrencyDollars(source: string): string {
   if (!source) {
     return source;
   }
-  return source.replace(CURRENCY_PAIR_RE, (_match, content: string) => {
-    return `\\$${content}\\$`;
-  });
+
+  // Nothing to escape: skip the parse entirely. This is the common case, so
+  // the code-range scan never runs for the vast majority of transcript text.
+  CURRENCY_PAIR_RE.lastIndex = 0;
+  if (!CURRENCY_PAIR_RE.test(source)) {
+    return source;
+  }
+
+  // No construct that could produce a code node: the whole source is fair game.
+  if (!MAY_CONTAIN_CODE_RE.test(source)) {
+    return escapeSegment(source);
+  }
+
+  let result = '';
+  let cursor = 0;
+  for (const [start, end] of collectCodeRanges(source)) {
+    if (start < cursor) {
+      continue;
+    }
+    result += escapeSegment(source.slice(cursor, start)) + source.slice(start, end);
+    cursor = end;
+  }
+  return result + escapeSegment(source.slice(cursor));
 }

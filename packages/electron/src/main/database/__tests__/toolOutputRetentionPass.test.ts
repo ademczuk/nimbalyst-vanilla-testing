@@ -10,6 +10,8 @@ import Database from 'better-sqlite3';
 import type { Database as SqliteDatabase } from 'better-sqlite3';
 import {
   createToolOutputRetentionWork,
+  createRawMessagePruneWork,
+  createInitDedupWork,
   estimateReclaimableBytes,
 } from '../toolOutputRetentionPass';
 
@@ -318,5 +320,138 @@ describe('estimate confidence', () => {
     expect(est.sampleCoverage).toBeGreaterThan(0);
     expect(est.sampleCoverage).toBeLessThanOrEqual(1);
     expect(est.probesTaken).toBeGreaterThan(0);
+  });
+});
+
+/** Drive the prune lane to completion, as runBackground would. */
+function runPrune(db: SqliteDatabase, retentionDays = 30, ignoreAge = false) {
+  let result: any = null;
+  const work = createRawMessagePruneWork(
+    { retentionDays, ignoreAge, now: () => NOW },
+    (r) => { result = r; },
+  );
+  for (let i = 0; i < 100; i++) {
+    if (work.chunk(db).done) break;
+  }
+  return result;
+}
+
+function runInitDedup(db: SqliteDatabase) {
+  let result: any = null;
+  const work = createInitDedupWork({ now: () => NOW }, (r) => { result = r; });
+  for (let i = 0; i < 100; i++) {
+    if (work.chunk(db).done) break;
+  }
+  return result;
+}
+
+const exists = (db: SqliteDatabase, id: number): boolean =>
+  db.prepare('SELECT 1 FROM ai_agent_messages WHERE id = ?').get(id) !== undefined;
+
+const thinkingTick = JSON.stringify({
+  type: 'system', subtype: 'thinking_tokens', estimated_tokens: 250, estimated_tokens_delta: 100,
+});
+const initFrame = (n: number) =>
+  JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', tools: Array(n).fill('Tool') });
+
+describe('raw message prune lane', () => {
+  it('deletes aged non-rendering frames and reports why', () => {
+    const db = makeDb();
+    const tick = insert(db, { content: thinkingTick, kind: 'system' });
+    const delta = insert(db, {
+      source: 'openai-codex', kind: 'meta',
+      content: JSON.stringify({ method: 'item/agentMessage/delta', params: { delta: 'hi' } }),
+    });
+    const started = insert(db, {
+      source: 'openai-codex', kind: 'meta',
+      content: JSON.stringify({ method: 'item/started', params: { item: { type: 'reasoning' } } }),
+    });
+
+    const result = runPrune(db);
+
+    expect(result.deleted).toBe(3);
+    expect(result.byReason).toEqual({
+      claudeCodeTransient: 1, codexAppServerTransient: 1, codexItemStartedNonRendering: 1,
+    });
+    expect(result.bytesFreed).toBeGreaterThan(0);
+    for (const id of [tick, delta, started]) expect(exists(db, id)).toBe(false);
+  });
+
+  // Every guard the tombstone lane has, the prune lane must have too -- it is
+  // strictly more destructive.
+  it('never touches recent rows, input, live sessions, or rendering frames', () => {
+    const db = makeDb();
+    const survivors = [
+      insert(db, { content: thinkingTick, kind: 'system', createdAt: RECENT }),
+      insert(db, { content: thinkingTick, kind: 'system', direction: 'input' }),
+      insert(db, { content: thinkingTick, kind: 'system', session: 'live-session' }),
+      insert(db, { content: initFrame(3), kind: 'system' }),
+      insert(db, { content: toolResult(BIG) }),
+      insert(db, { content: toolUse('x') }),
+      insert(db, {
+        source: 'openai-codex', kind: 'meta',
+        content: JSON.stringify({ method: 'item/started', params: { item: { type: 'mcpToolCall' } } }),
+      }),
+    ];
+
+    const result = runPrune(db);
+
+    expect(result.deleted).toBe(0);
+    for (const id of survivors) expect(exists(db, id)).toBe(true);
+  });
+
+  it('is idempotent', () => {
+    const db = makeDb();
+    insert(db, { content: thinkingTick, kind: 'system' });
+    expect(runPrune(db).deleted).toBe(1);
+    expect(runPrune(db).deleted).toBe(0);
+  });
+
+  // A frame that renders nothing renders nothing on the day it is written, so
+  // this lane can drop the age gate. The session-status guard is what actually
+  // protects a turn in flight, and it still applies.
+  it('with ignoreAge, takes recent dead frames but still spares live sessions', () => {
+    const db = makeDb();
+    const recentTick = insert(db, { content: thinkingTick, kind: 'system', createdAt: RECENT });
+    const liveTick = insert(db, {
+      content: thinkingTick, kind: 'system', createdAt: RECENT, session: 'live-session',
+    });
+    const realOutput = insert(db, { content: toolResult(BIG), createdAt: RECENT });
+
+    const result = runPrune(db, 30, true);
+
+    expect(result.deleted).toBe(1);
+    expect(exists(db, recentTick)).toBe(false);
+    expect(exists(db, liveTick)).toBe(true);
+    expect(exists(db, realOutput)).toBe(true);
+  });
+});
+
+describe('claude-code init dedup lane', () => {
+  it('keeps the newest init per session and deletes the rest', () => {
+    const db = makeDb();
+    const first = insert(db, { content: initFrame(5), kind: 'system' });
+    const second = insert(db, { content: initFrame(6), kind: 'system' });
+    const newest = insert(db, { content: initFrame(7), kind: 'system' });
+    const otherSession = insert(db, {
+      content: initFrame(2), kind: 'system', session: 'live-session',
+    });
+
+    const result = runInitDedup(db);
+
+    expect(result.deleted).toBe(2);
+    expect(exists(db, first)).toBe(false);
+    expect(exists(db, second)).toBe(false);
+    // Newest survives, and a running session is never touched at all.
+    expect(exists(db, newest)).toBe(true);
+    expect(exists(db, otherSession)).toBe(true);
+    expect(result.bytesFreed).toBeGreaterThan(0);
+  });
+
+  it('leaves a session with a single init alone, and is idempotent', () => {
+    const db = makeDb();
+    const only = insert(db, { content: initFrame(4), kind: 'system' });
+    expect(runInitDedup(db).deleted).toBe(0);
+    expect(exists(db, only)).toBe(true);
   });
 });

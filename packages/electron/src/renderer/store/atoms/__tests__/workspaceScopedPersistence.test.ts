@@ -34,16 +34,20 @@ describe('workspace-scoped debounced persistence', () => {
     initWorkstreamState('/workspace-b');
     await vi.advanceTimersByTimeAsync(500);
 
-    expect(invoke).toHaveBeenCalledWith('workspace:get-state', '/workspace-a');
+    // Sends only this workstream's entry -- reading the whole workspace state
+    // back to merge it made each persist a multi-megabyte round trip.
     expect(invoke).toHaveBeenCalledWith(
-      'workspace:update-state',
-      '/workspace-a',
-      expect.objectContaining({ workstreamStates: expect.any(Object) }),
+      'workspace:set-workstream-state',
+      expect.objectContaining({
+        workspacePath: '/workspace-a',
+        workstreamId: 'workstream-a',
+        state: expect.objectContaining({ splitRatio: 0.7 }),
+      }),
     );
+    expect(invoke).not.toHaveBeenCalledWith('workspace:get-state', expect.anything());
     expect(invoke).not.toHaveBeenCalledWith(
-      'workspace:update-state',
-      '/workspace-b',
-      expect.anything(),
+      'workspace:set-workstream-state',
+      expect.objectContaining({ workspacePath: '/workspace-b' }),
     );
   });
 

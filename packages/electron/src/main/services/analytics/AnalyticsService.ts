@@ -3,15 +3,27 @@ import {PostHog} from "posthog-node";
 import {ulid} from "ulid";
 import {logger} from "../../utils/logger";
 import {app} from "electron";
-import {isAnalyticsEnabled, setAnalyticsEnabled} from "../../utils/store";
+import {getReleaseChannel, isAnalyticsEnabled, setAnalyticsEnabled} from "../../utils/store";
 import {isGitAvailable} from "../../utils/gitUtils";
+import {bucketDaysSinceInstall, bucketLaunchNumber, decideLaunch, type BuildType} from "./launchAttribution";
 
 const POSTHOG_PROJECT_PUBLIC_ID = 'phc_s3lQIILexwlGHvxrMBqti355xUgkRocjMXW4LjV0ATw';
 
 type AnalyticsSettings = {
   analyticsEnabled: boolean;
   analyticsId: string;
+  /**
+   * Install-scoped launch attribution. Lives here rather than in the app store
+   * so it shares the analytics store's lifetime — it goes away when the user
+   * removes the app, which is the point. This is deliberately NOT a
+   * machine-scoped identifier: nothing here survives an uninstall, so it cannot
+   * be used to re-link a user who chose to leave.
+   */
+  firstLaunchAt?: string;
+  launchCount?: number;
 }
+
+export type { BuildType } from './launchAttribution';
 
 /**
  * Singleton analytics service for server side (electron) events. If you need to send events from the renderer on
@@ -47,6 +59,7 @@ export class AnalyticsService {
   private sessionId?: string;
   private isDevInstallation: boolean = process.env.NODE_ENV?.toLowerCase() === 'development';
   private isOfficialBuild: boolean = process.env.OFFICIAL_BUILD === 'true';
+  private launchAttribution?: { launchNumber: number; daysSinceInstall: number };
 
   public init(): void {
     this.postHogClient ??= this.initPostHogClient();
@@ -81,6 +94,7 @@ export class AnalyticsService {
     const eventProperties: Record<string | number, any> = {
       '$session_id': this.sessionId,
       'nimbalyst_version': app.getVersion(),
+      ...this.releaseAttribution(),
       ...properties,
     }
 
@@ -157,9 +171,19 @@ export class AnalyticsService {
       return;
     }
 
+    // `nimbalyst_session_start` is the one event every install emits — it is
+    // even sent for opted-out users as the retention ping — and until now it
+    // was the one event that carried the version only as a person property
+    // ($set, latest wins), so no funnel built on it could be attributed to a
+    // release. Stamped on the event here as well as $set.
+    const { launchNumber, daysSinceInstall } = this.recordLaunch();
     const eventProperties: Record<string | number, any> = {
       '$session_id': this.sessionId,
       'has_git_installed': isGitAvailable(),
+      'nimbalyst_version': app.getVersion(),
+      ...this.releaseAttribution(),
+      'launch_number': bucketLaunchNumber(launchNumber),
+      'days_since_install': bucketDaysSinceInstall(daysSinceInstall),
       $set: {
         'nimbalyst_version': app.getVersion(),
         'cpu_arch': process.arch,
@@ -249,6 +273,58 @@ export class AnalyticsService {
 
   public getDistinctId(): string {
     return this.distinctId ??= this.getSettingsStore().get('analyticsId');
+  }
+
+  /**
+   * Release attribution, on every event.
+   *
+   * `nimbalyst_version` was already an event property here, but `build_type`
+   * was only recoverable from the `is_dev_user` person property — which is
+   * `$set_once` and sticky forever, so a user who ever ran a dev build has
+   * every later official-build event indistinguishable from their dev ones.
+   * A per-event value is what actually lets a funnel exclude dev traffic.
+   */
+  public buildType(): BuildType {
+    if (this.isDevInstallation) return 'dev';
+    return this.isOfficialBuild ? 'official' : 'local';
+  }
+
+  /** Same values the main process stamps, for the renderer to register. */
+  public releaseAttributionForRenderer(): { release_channel: string; build_type: string } {
+    const { release_channel, build_type } = this.releaseAttribution();
+    return { release_channel: release_channel ?? 'unknown', build_type };
+  }
+
+  private releaseAttribution(): { release_channel?: string; build_type: string } {
+    try {
+      return {
+        'release_channel': getReleaseChannel(),
+        'build_type': this.buildType(),
+      };
+    } catch (error) {
+      // Never let a store read failure drop an event.
+      this.log.warn('[Analytics] Could not resolve release attribution', { error });
+      return { 'build_type': this.buildType() };
+    }
+  }
+
+  /**
+   * Increment and read this install's launch attribution.
+   *
+   * Memoized per process because `setSessionId` is driven by
+   * `posthog.onSessionId`, which fires once per WINDOW and again on session
+   * rotation — incrementing there would count windows, not launches.
+   */
+  private recordLaunch(): { launchNumber: number; daysSinceInstall: number } {
+    if (this.launchAttribution) return this.launchAttribution;
+    const store = this.getSettingsStore();
+    const { next, launchNumber, daysSinceInstall } = decideLaunch(
+      { firstLaunchAt: store.get('firstLaunchAt'), launchCount: store.get('launchCount') },
+      Date.now(),
+    );
+    store.set('firstLaunchAt', next.firstLaunchAt);
+    store.set('launchCount', next.launchCount);
+    return this.launchAttribution = { launchNumber, daysSinceInstall };
   }
 
   private getSettingsStore(): Store<AnalyticsSettings> {

@@ -13,7 +13,7 @@ import { ORG_WINDOW_SURFACE_ID, orgWindowRouteAtomFamily } from '../orgWindowSta
 
 const orgWindowRouteAtom = orgWindowRouteAtomFamily(ORG_WINDOW_SURFACE_ID);
 
-vi.mock('@nimbalyst/runtime', () => ({
+vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span>{icon}</span>,
 }));
 vi.mock('../Inbox', () => ({ InboxSection: () => <div data-testid="inbox" /> }));

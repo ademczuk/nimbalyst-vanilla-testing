@@ -138,6 +138,7 @@ export function initTrackerSchemaService(workspacePath?: string | null): void {
  */
 export function updateTrackerSchemaWorkspace(workspacePath: string | null): void {
   if (workspacePath === currentWorkspacePath) return;
+  const previous = currentWorkspacePath;
   setCurrentWorkspacePath(workspacePath);
 
   if (workspacePath) {
@@ -147,6 +148,13 @@ export function updateTrackerSchemaWorkspace(workspacePath: string | null): void
     globalRegistry.clearWorkspaceSchemas();
     stopWatcher();
   }
+
+  // The workspace that just stopped being active keeps its schemas somewhere
+  // readable. Otherwise the only record of its custom types was the live view
+  // we just overwrote, and every later read on its behalf -- notably the
+  // reconnect drain, which is not scoped and cannot be -- resolves nothing
+  // (NIM-3702). Its own YAML is the source; this is a demotion, not a load.
+  if (previous && previous !== workspacePath) ensureWorkspaceTrackerSchemasLoaded(previous);
 }
 
 // ---------------------------------------------------------------------------
@@ -504,6 +512,19 @@ async function readSchemasForWorkspace<T>(
  * CLI-created). Mirrors the precedence the active view gets from
  * loadWorkspaceSchemas + registerMaterializedSyncedTypes.
  */
+/**
+ * Rebuild a workspace's cached schema layer from disk plus the DB mirror.
+ *
+ * The tracker drain calls this before giving up on an unresolved policy: an
+ * unresolvable type is usually a race with schema load rather than a real
+ * absence, and "retry before you destroy" is the first requirement in
+ * destructive-data-paths.md. Cheap next to a wrong delete.
+ */
+export async function refreshWorkspaceSchemaLayer(workspacePath: string): Promise<void> {
+  if (!workspacePath || workspacePath === currentWorkspacePath) return;
+  await buildWorkspaceSchemaLayer(workspacePath);
+}
+
 async function buildWorkspaceSchemaLayer(workspacePath: string): Promise<void> {
   const byType = new Map<string, TrackerDataModel>();
   for (const model of readWorkspaceSchemaModelsFromDisk(workspacePath).models) {
@@ -953,8 +974,14 @@ export async function customizeWorkspaceTrackerSchema(
 
   const existing = await findWorkspaceSchemaFileByType(workspacePath, type);
   if (existing) {
+    // An override of a builtin is stored as `<type>.patch.yaml`, which
+    // legitimately has no `displayName`; the full-model parser threw on it, the
+    // IPC handler never returned a path, and the Settings -> Trackers edit
+    // pencil silently did nothing for every overridden type (NIM-3065).
+    // `resolveSchemaModelFromContent` is what the loader and watcher already
+    // use and handles both file shapes.
     const content = await fsPromises.readFile(existing, 'utf-8');
-    return { model: parseTrackerYAML(content), filePath: existing, created: false };
+    return { model: resolveSchemaModelFromContent(path.basename(existing), content), filePath: existing, created: false };
   }
 
   const model = globalRegistry.get(type);

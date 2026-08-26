@@ -10,6 +10,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { BrowserWindow } from 'electron';
+import { bucketPromptLength } from '../../../shared/analytics/sendOutcomes';
 import {
   OpenAICodexProvider,
   type AIProvider,
@@ -119,10 +120,10 @@ export function previewForLog(value?: string, max: number = LOG_PREVIEW_LENGTH):
 }
 
 // Helper functions for bucketing analytics values
+// Delegates so `ai_message_sent` and `ai_message_submit_attempted` can never
+// drift into incomparable length scales — see shared/analytics/sendOutcomes.ts.
 export function bucketMessageLength(length: number): 'short' | 'medium' | 'long' {
-  if (length < 100) return 'short';
-  if (length < 500) return 'medium';
-  return 'long';
+  return bucketPromptLength(length);
 }
 
 export function bucketResponseTime(ms: number): 'fast' | 'medium' | 'slow' {

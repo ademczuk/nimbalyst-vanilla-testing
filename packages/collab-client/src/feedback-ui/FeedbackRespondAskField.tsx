@@ -24,6 +24,34 @@ import {
   FeedbackRespondOptionCards,
   type FeedbackOptionPreviewRenderer,
 } from './FeedbackRespondOptionCards';
+import type {
+  FeedbackArtifactDetailEntry,
+  FeedbackArtifactDetailRenderer,
+} from './FeedbackArtifactDetailPopover';
+
+/**
+ * Lazy, and for bundle size specifically -- unlike the desktop preview's lazy
+ * import, which is about module-graph cost in tests.
+ *
+ * The popover pulls in `@floating-ui/react`. Imported statically it lands in
+ * the `feedback-ui` entry's eager graph, which is budgeted and which it
+ * overshot by two thirds on the first attempt. Nobody sees this component
+ * without clicking expand, so it loads on that click.
+ */
+const LazyDetailPopover = React.lazy(async () => ({
+  default: (await import('./FeedbackArtifactDetailPopover')).FeedbackArtifactDetailPopover,
+}));
+
+/**
+ * The suspense fallback is nothing on purpose. The popover is an overlay: a
+ * spinner where it will be is a flash of chrome in the middle of the screen,
+ * and the chunk resolves in the time it takes the click to finish.
+ */
+const FeedbackArtifactDetailPopover: typeof LazyDetailPopover = ((props) => (
+  <React.Suspense fallback={null}>
+    <LazyDetailPopover {...props} />
+  </React.Suspense>
+)) as typeof LazyDetailPopover;
 import type { FeedbackArtifactActionResolver } from './FeedbackArtifactSubjects';
 import { OTHER_OPTION_ID } from '@nimbalyst/collab-client/feedback';
 
@@ -35,19 +63,51 @@ export interface FeedbackRespondAskFieldProps {
   renderOptionPreview?: FeedbackOptionPreviewRenderer;
   /** Opens a bound artifact; absent means no expand affordance is offered. */
   onExpandArtifact?: (artifact: FeedbackAskArtifact) => void;
+  /**
+   * Paints one artifact full-size for the detail popover.
+   *
+   * Supplied means expand opens the popover; absent means expand still opens a
+   * tab, which is what every host did before the popover existed. That
+   * fallback is why a host can adopt this one at a time rather than all at
+   * once, and why the browser keeps a working expand button until it has an
+   * inline document component of its own.
+   */
+  renderArtifactDetail?: FeedbackArtifactDetailRenderer;
   resolveArtifactAction?: FeedbackArtifactActionResolver;
+}
+
+/**
+ * The popover's walkable list: every entry in this ask that has an artifact,
+ * in ask order.
+ *
+ * Ask order, not artifact order. `artifacts` is a parallel array keyed by entry
+ * id and nothing requires it to be sorted, so stepping "next" off the artifact
+ * array would walk the options in whatever order the author happened to bind
+ * them -- which reads as the arrows being broken.
+ */
+function detailEntries(
+  artifacts: readonly FeedbackAskArtifact[] | undefined,
+  entries: readonly { id: string; label: string }[],
+): FeedbackArtifactDetailEntry[] {
+  if (!artifacts?.length) return [];
+  const detail: FeedbackArtifactDetailEntry[] = [];
+  for (const entry of entries) {
+    const artifact = artifacts.find((candidate) => candidate.entryId === entry.id);
+    if (artifact) detail.push({ entryId: entry.id, artifact, label: entry.label });
+  }
+  return detail;
 }
 
 /** An opener for one reorder row, so ranked artifacts are reachable too. */
 const ReorderArtifactButton: React.FC<{
   artifact: FeedbackAskArtifact;
-  onExpand: (artifact: FeedbackAskArtifact) => void;
+  onExpand: (anchor: HTMLElement | null) => void;
 }> = ({ artifact, onExpand }) => (
   <button
     type="button"
     data-testid="feedback-respond-reorder-open"
     aria-label={`Open ${artifact.label}`}
-    onClick={() => onExpand(artifact)}
+    onClick={(event) => onExpand(event.currentTarget)}
     className="feedback-respond-reorder-artifact-button shrink-0 rounded border border-nim bg-nim px-1.5 py-0.5 text-[0.6875rem] text-nim-muted cursor-pointer hover:text-nim"
   >
     Open
@@ -61,9 +121,37 @@ export const FeedbackRespondAskField: React.FC<FeedbackRespondAskFieldProps> = (
   disabled = false,
   renderOptionPreview,
   onExpandArtifact,
+  renderArtifactDetail,
   resolveArtifactAction,
 }) => {
   const artifacts = 'artifacts' in ask ? ask.artifacts : undefined;
+
+  /**
+   * Which artifact is open in the detail popover, and what it grew from.
+   *
+   * Owned here rather than in the cards because stepping between options is a
+   * property of the *ask* -- the popover needs every entry in the ask to walk
+   * them, and a card only knows about itself.
+   */
+  const [expanded, setExpanded] = React.useState<
+    { entryId: string; anchor: HTMLElement | null } | null
+  >(null);
+
+  const handleExpand = React.useCallback(
+    (artifact: FeedbackAskArtifact, anchor: HTMLElement | null) => {
+      // Without a detail renderer the popover has nothing to paint, so expand
+      // keeps its old meaning and opens a tab.
+      if (!renderArtifactDetail) {
+        const open = resolveArtifactAction?.(artifact).open;
+        if (open) open();
+        else onExpandArtifact?.(artifact);
+        return;
+      }
+      setExpanded({ entryId: artifact.entryId, anchor });
+    },
+    [renderArtifactDetail, resolveArtifactAction, onExpandArtifact],
+  );
+
   switch (ask.type) {
     case 'singleSelect': {
       const selectedId = answer?.type === 'singleSelect' ? answer.selectedId : undefined;
@@ -77,11 +165,30 @@ export const FeedbackRespondAskField: React.FC<FeedbackRespondAskFieldProps> = (
             selectedId={selectedId}
             disabled={disabled}
             renderPreview={renderOptionPreview}
-            onExpand={onExpandArtifact}
+            onExpand={handleExpand}
             resolveAction={resolveArtifactAction}
             onSelect={(optionId) =>
               onChange({ type: 'singleSelect', selectedId: optionId })}
           />
+          {expanded && renderArtifactDetail && (
+            <FeedbackArtifactDetailPopover
+              entries={detailEntries(
+                artifacts,
+                ask.options.map((option) => ({ id: option.id, label: option.label })),
+              )}
+              activeEntryId={expanded.entryId}
+              onActiveEntryChange={(entryId) =>
+                setExpanded((current) => (current ? { ...current, entryId } : current))}
+              onDismiss={() => setExpanded(null)}
+              anchor={expanded.anchor}
+              renderArtifact={renderArtifactDetail}
+              selectedId={selectedId}
+              disabled={disabled}
+              onSelect={(entryId) =>
+                onChange({ type: 'singleSelect', selectedId: entryId })}
+              onOpenInTab={onExpandArtifact}
+            />
+          )}
           {ask.allowOther && (
             <input
               type="text"
@@ -137,6 +244,7 @@ export const FeedbackRespondAskField: React.FC<FeedbackRespondAskFieldProps> = (
         ? { orderedIds: answer.orderedIds, removedIds: answer.removedIds }
         : { orderedIds: ask.items.map((item) => item.id), removedIds: [] };
       return (
+        <>
         <ReorderList
           items={ask.items}
           state={state}
@@ -148,19 +256,46 @@ export const FeedbackRespondAskField: React.FC<FeedbackRespondAskFieldProps> = (
             row: 'feedback-respond-reorder-row',
             remove: 'feedback-respond-reorder-remove',
           }}
-          renderTrailing={onExpandArtifact || resolveArtifactAction
+          renderTrailing={onExpandArtifact || resolveArtifactAction || renderArtifactDetail
             ? (itemId) => {
                 const artifact = artifacts?.find((entry) => entry.entryId === itemId);
                 if (!artifact) return null;
-                const open = resolveArtifactAction?.(artifact).open
-                  ?? (onExpandArtifact ? () => onExpandArtifact(artifact) : undefined);
-                return open
-                  ? <ReorderArtifactButton artifact={artifact} onExpand={() => open()} />
-                  : null;
+                if (resolveArtifactAction && !resolveArtifactAction(artifact).open) return null;
+                return (
+                  <ReorderArtifactButton
+                    artifact={artifact}
+                    onExpand={(target) => handleExpand(artifact, target)}
+                  />
+                );
               }
             : undefined}
           onChange={(next) => onChange({ type: 'reorder', ...next })}
         />
+        {expanded && renderArtifactDetail && (
+          <FeedbackArtifactDetailPopover
+            entries={detailEntries(
+              artifacts,
+              // Ranking order, so stepping through the popover walks the list
+              // the way it currently reads on screen rather than the order the
+              // ask was authored in.
+              state.orderedIds
+                .map((id) => ask.items.find((item) => item.id === id))
+                .filter((item): item is NonNullable<typeof item> => item !== undefined)
+                .map((item) => ({ id: item.id, label: item.title })),
+            )}
+            activeEntryId={expanded.entryId}
+            onActiveEntryChange={(entryId) =>
+              setExpanded((current) => (current ? { ...current, entryId } : current))}
+            onDismiss={() => setExpanded(null)}
+            anchor={expanded.anchor}
+            renderArtifact={renderArtifactDetail}
+            // No `onSelect`: ranking is done by dragging the list, so a "pick
+            // this" button in the footer would be a second, contradictory way
+            // to answer the same ask.
+            onOpenInTab={onExpandArtifact}
+          />
+        )}
+        </>
       );
     }
 

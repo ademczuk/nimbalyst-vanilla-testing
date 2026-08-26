@@ -109,6 +109,16 @@ function serializeBridgeError(err: unknown): SerializedError {
   return { message: String(err) };
 }
 
+/**
+ * Backup requests copy and scan the whole database, so their duration scales
+ * with the store, not with a UI expectation: a 6.3 GB database takes ~44s for
+ * the online copy alone. Under the default 60s request timeout the proxy gave
+ * up, dropped the pending entry, and discarded the success response that
+ * arrived later — so a backup that in fact completed was logged as failed and
+ * never recorded in backup health. This ceiling is a bus-drop guard only.
+ */
+const BACKUP_REQUEST_TIMEOUT_MS = 30 * 60_000;
+
 /** Resolve the on-disk path to the SQLite worker bundle. */
 function resolveWorkerPath(): string {
   if (app.isPackaged) {
@@ -269,7 +279,7 @@ export class SQLiteDatabaseProxy {
     sessionCount?: number;
     historyCount?: number;
   }> {
-    return (await this.send('verifyBackup', { backupPath })) as {
+    return (await this.send('verifyBackup', { backupPath }, BACKUP_REQUEST_TIMEOUT_MS)) as {
       valid: boolean;
       error?: string;
       hasData?: boolean;
@@ -279,7 +289,11 @@ export class SQLiteDatabaseProxy {
   }
 
   async createBackup(): Promise<{ success: boolean; error?: string }> {
-    return (await this.send('createBackup')) as { success: boolean; error?: string };
+    return (await this.send(
+      'createBackup',
+      undefined,
+      BACKUP_REQUEST_TIMEOUT_MS,
+    )) as { success: boolean; error?: string };
   }
 
   /** Read-side backup status (returns null when no backup has run yet). */
@@ -367,6 +381,19 @@ export class SQLiteDatabaseProxy {
    */
   async toolRetentionRun(retentionDays: number, maxRows?: number): Promise<unknown> {
     return this.send('toolRetentionRun', { retentionDays, maxRows });
+  }
+
+  /**
+   * Delete raw rows that render nothing, and collapse duplicate session/init
+   * frames. Separate from `toolRetentionRun` because it removes rows rather
+   * than rewriting payloads; see `createRawMessagePruneWork`.
+   */
+  async rawMessagePruneRun(
+    retentionDays: number,
+    maxRows?: number,
+    ignoreAge?: boolean,
+  ): Promise<unknown> {
+    return this.send('rawMessagePruneRun', { retentionDays, maxRows, ignoreAge });
   }
 
   // --------------------------------------------------------------------------

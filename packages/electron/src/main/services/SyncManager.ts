@@ -1249,7 +1249,9 @@ async function getAvailableModelsForMobile(): Promise<{ models: Array<{ id: stri
       ...apiKeys,
       lmstudio_url: providerSettings['lmstudio']?.baseUrl || 'http://127.0.0.1:8234'
     };
-    const allModels = await ModelRegistry.getAllModels(modelsConfig, enabledSet as Set<any>);
+    // Mobile syncs one account-wide model list, not a per-project one, and
+    // `enabledSet` above never includes opencode -- the only project-scoped lane.
+    const allModels = await ModelRegistry.getAllModels(modelsConfig, undefined, enabledSet as Set<any>);
     // Filter to enabled models (model-level filtering for specific model selection)
     const enabledModels = allModels.filter(model => {
       const ps = providerSettings[model.provider] as { enabled?: boolean; models?: string[]; hiddenModels?: string[] } | undefined;

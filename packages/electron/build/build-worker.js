@@ -103,6 +103,32 @@ async function buildWorker() {
       },
     });
 
+    // ------------------------------------------------------------------------
+    // SQLite backup verification worker — a short-lived thread that opens one
+    // backup file read-only, runs the structural check, posts the result and
+    // exits. Split out of the SQLite worker because that check is synchronous
+    // and multi-GB: run in-thread it stops the query message loop for a minute
+    // or more. Ships beside sqlite-worker.bundle.js; the spawner locates it
+    // relative to its own bundle.
+    // ------------------------------------------------------------------------
+    await esbuild.build({
+      entryPoints: [
+        path.join(__dirname, '../src/main/database/sqlite/worker/sqliteVerifyWorker.ts'),
+      ],
+      bundle: true,
+      platform: 'node',
+      target: 'node18',
+      outfile: path.join(outDir, 'sqlite-verify-worker.bundle.js'),
+      external: ['worker_threads', 'path', 'fs', 'better-sqlite3'],
+      minify: false,
+      sourcemap: process.env.NODE_ENV !== 'production',
+      format: 'cjs',
+      loader: { '.node': 'file' },
+      define: {
+        'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'production'),
+      },
+    });
+
     await esbuild.build({
       entryPoints: [
         path.join(__dirname, '../src/main/workers/historyDiffWorker.ts'),
@@ -136,6 +162,7 @@ async function buildWorker() {
 
     console.log('Worker bundle created successfully at out/worker.bundle.js');
     console.log('SQLite worker bundle created successfully at out/sqlite-worker.bundle.js');
+    console.log('SQLite verify worker bundle created successfully at out/sqlite-verify-worker.bundle.js');
     console.log('History diff worker bundle created successfully at out/history-diff-worker.bundle.js');
     console.log('Project manifest worker bundle created successfully at out/project-manifest-worker.bundle.js');
 

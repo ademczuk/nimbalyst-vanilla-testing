@@ -8,6 +8,8 @@
  * This interface lives in runtime so widgets can use it without Electron-specific dependencies.
  */
 
+import type React from 'react';
+import type { FeedbackAskArtifact } from '@nimbalyst/collab-protocol';
 import type { HunkSelection } from '../../../git/unifiedDiffModel';
 
 export type { HunkSelection };
@@ -39,6 +41,44 @@ export interface RequestUserInputResponse {
 
 import type { FeedbackComposeSendPayload } from './feedback/feedbackComposeDraft';
 export type { FeedbackComposeSendPayload };
+
+/**
+ * Declared with protocol types rather than imported from `collab-client`,
+ * which depends on this package and cannot be depended on back. Structurally
+ * identical to that package's `FeedbackOptionPreviewRenderer`, so one host
+ * implementation satisfies both surfaces.
+ */
+export type FeedbackComposeArtifactRenderer = (
+  entry: { id: string; label: string },
+  artifact: FeedbackAskArtifact,
+) => React.ReactNode;
+
+/** One entry the compose popover can step to. */
+export interface FeedbackComposeArtifactEntry {
+  entryId: string;
+  artifact: FeedbackAskArtifact;
+  label: string;
+}
+
+export interface FeedbackComposeArtifactPopoverProps {
+  entries: readonly FeedbackComposeArtifactEntry[];
+  activeEntryId: string;
+  onActiveEntryChange(entryId: string): void;
+  onDismiss(): void;
+  /** The card the popover grew from, so it anchors where the click landed. */
+  anchor: HTMLElement | null;
+}
+
+/**
+ * Opens one artifact full-size, in place.
+ *
+ * Same reason the renderer above is injected: the popover lives in
+ * `collab-client`, which depends on this package, so this package cannot
+ * import it. The Electron host can, and does.
+ */
+export type FeedbackComposeArtifactPopoverRenderer = (
+  props: FeedbackComposeArtifactPopoverProps,
+) => React.ReactNode;
 
 export interface FeedbackRequestSendResult {
   success: boolean;
@@ -138,6 +178,32 @@ export interface InteractiveWidgetHost {
    * AskUserQuestion path acquiring a transport dependency by proximity.
    */
   feedbackRequestSend?(payload: FeedbackComposeSendPayload): Promise<FeedbackRequestSendResult>;
+
+  /**
+   * Paint one artifact bound to an ask entry, so the author can see what they
+   * are about to send rather than a label for it.
+   *
+   * Optional for the same reason `feedbackRequestSend` is: the compose surface
+   * renders a complete, honest draft without it, and a host that cannot reach
+   * the custom-editor registry simply shows the titled placeholder. It also
+   * keeps this package free of a dependency on the editor registry, which lives
+   * in the Electron renderer and has no mobile counterpart.
+   *
+   * Returning nullish is a supported answer -- "I can paint artifacts, and this
+   * one has nothing to show" -- and lands on the same placeholder.
+   */
+  renderFeedbackArtifactPreview?: FeedbackComposeArtifactRenderer;
+
+  /**
+   * Opens a bound artifact full-size from the compose surface.
+   *
+   * A 128px card scaled from a 1000px design is a *recognition* aid and
+   * nothing more -- a dark mockup at that size is a dark smudge. Reviewing a
+   * draft means being able to look at what you are about to send, so the card
+   * needs a way in. Optional, like everything else here: without it the card
+   * still shows its preview and simply cannot be opened.
+   */
+  renderFeedbackArtifactPopover?: FeedbackComposeArtifactPopoverRenderer;
 
   /** Discard a drafted feedback request without sending it. */
   feedbackRequestCancel?(draftId: string): Promise<void>;

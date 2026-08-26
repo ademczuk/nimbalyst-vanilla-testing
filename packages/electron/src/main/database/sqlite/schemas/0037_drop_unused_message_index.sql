@@ -1,0 +1,31 @@
+-- Drop idx_ai_agent_messages_source_direction.
+--
+-- It indexes (source, direction) on ai_agent_messages, which on a real install
+-- is six distinct sources by two directions: twelve distinct values across 2.4
+-- million rows. An index cannot be selective at that cardinality.
+--
+-- It is worse than dead weight. This database has no sqlite_stat1 -- ANALYZE
+-- has never run on it -- so the planner works from defaults, and with defaults
+-- it picks this index for the `WHERE source = 'claude-code' AND id > ? ORDER BY
+-- id` maintenance scan and then adds USE TEMP B-TREE FOR ORDER BY, sorting a
+-- ~900,000-row match set. Dropping the index makes that query a plain rowid
+-- range read with no sort. Verified with EXPLAIN QUERY PLAN both with realistic
+-- injected stats and, as the app actually runs, with none: no query shape gets
+-- a worse plan without it, and one gets a materially better one.
+--
+-- Measured cost of keeping it: 64 MB.
+--
+-- The other four indexes on this table were audited the same way and all stay.
+-- Two are close calls worth recording so nobody re-opens them:
+--
+--   idx_ai_agent_messages_session (session_id, id) -- 115 MB -- looks redundant
+--   against idx_agent_messages_direction_hidden, whose leading column is also
+--   session_id. It is not: dropping it makes loading a session's transcript,
+--   the hottest read in the app, fall back to USE TEMP B-TREE FOR ORDER BY.
+--
+--   idx_agent_messages_direction_hidden (session_id, direction, hidden, id) --
+--   135 MB -- is a COVERING index for the session-list message-count join.
+--   Dropping it turns that into a non-covering lookup over the widest table in
+--   the database.
+
+DROP INDEX IF EXISTS idx_ai_agent_messages_source_direction;

@@ -57,6 +57,14 @@ import {
   type FilterChipOption,
 } from './UnifiedQuickOpen/FilterChip';
 import { useRecentHistory } from './UnifiedQuickOpen/useRecentHistory';
+import {
+  findTrackersByIssueKey,
+  matchesTrackerText,
+  mergeIssueKeyMatches,
+  parseIssueKeyQuery,
+  type QuickOpenSearchResult,
+} from './UnifiedQuickOpen/issueKeyLookup';
+import { getTypeIcon } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerColumns';
 import { revealEditorPosition } from './TabEditor/editorRevealCommand';
 import { parseFileMask, matchesFileMask } from '@nimbalyst/extension-sdk/file-mask';
 import type { TrackerItem } from '@nimbalyst/runtime/core/DocumentService';
@@ -2645,10 +2653,11 @@ function refTypeLabel(result: SemanticSearchResult): string {
   }
 }
 
-function refTypeIcon(refType: string): string {
-  switch (refType) {
+function refTypeIcon(result: QuickOpenSearchResult): string {
+  switch (result.refType) {
     case 'tracker':
-      return 'label';
+      // Semantic hits carry no type, so they keep the generic tracker glyph.
+      return result.trackerType ? getTypeIcon(result.trackerType) : 'label';
     case 'session':
       return 'forum';
     case 'doc-file':
@@ -2669,7 +2678,7 @@ const SearchPane: React.FC<SearchPaneProps> = memo(({
   onSessionSelect,
   onClose,
 }) => {
-  const [results, setResults] = useState<SemanticSearchResult[]>([]);
+  const [semanticResults, setSemanticResults] = useState<SemanticSearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [mouseHasMoved, setMouseHasMoved] = useState(false);
@@ -2677,6 +2686,15 @@ const SearchPane: React.FC<SearchPaneProps> = memo(({
   // Guards against out-of-order responses clobbering a newer query's results.
   const latestReq = useRef(0);
   const visibleQuery = isActive ? query : '';
+  // Tracker list backing exact issue-key lookup. Loaded lazily the first time
+  // the user types something key-shaped — the list is large and most Memory
+  // queries never need it.
+  const [keyLookupItems, setKeyLookupItems] = useState<TrackerItem[] | null>(null);
+  const keyLookupRequested = useRef(false);
+  // Only the merged "all" scope reaches trackers here; the dedicated Trackers
+  // scope renders TrackersPane, which already matches on issue key.
+  const issueKeyQuery =
+    scope === 'all' && parseIssueKeyQuery(visibleQuery) ? visibleQuery : '';
   const scopeSpec =
     SEMANTIC_SEARCH_SCOPES.find((candidate) => candidate.id === scope) ??
     SEMANTIC_SEARCH_SCOPES[0];
@@ -2686,7 +2704,7 @@ const SearchPane: React.FC<SearchPaneProps> = memo(({
   }, [visibleQuery, scope]);
 
   useEffect(() => {
-    setResults([]);
+    setSemanticResults([]);
   }, [scope]);
 
   // Debounced query → engine. Embedding the query is per-submit, not per
@@ -2695,7 +2713,7 @@ const SearchPane: React.FC<SearchPaneProps> = memo(({
     if (!isOpen || !isActive) return;
     const q = visibleQuery.trim();
     if (!q) {
-      setResults([]);
+      setSemanticResults([]);
       setIsLoading(false);
       return;
     }
@@ -2705,10 +2723,12 @@ const SearchPane: React.FC<SearchPaneProps> = memo(({
       window.electronAPI.semanticSearch
         .query(workspacePath, q, 25, scopeSpec.sourceClasses)
         .then((res) => {
-          if (reqId === latestReq.current) setResults(Array.isArray(res) ? res : []);
+          if (reqId === latestReq.current) {
+            setSemanticResults(Array.isArray(res) ? res : []);
+          }
         })
         .catch(() => {
-          if (reqId === latestReq.current) setResults([]);
+          if (reqId === latestReq.current) setSemanticResults([]);
         })
         .finally(() => {
           if (reqId === latestReq.current) setIsLoading(false);
@@ -2716,6 +2736,30 @@ const SearchPane: React.FC<SearchPaneProps> = memo(({
     }, 200);
     return () => clearTimeout(timer);
   }, [isOpen, isActive, visibleQuery, workspacePath, scopeSpec]);
+
+  // Fetch the tracker list once, on the first key-shaped query.
+  useEffect(() => {
+    if (!issueKeyQuery || keyLookupRequested.current) return;
+    keyLookupRequested.current = true;
+    window.electronAPI
+      .invoke('document-service:tracker-items-list')
+      .then((result: TrackerItem[] | null) => {
+        setKeyLookupItems(Array.isArray(result) ? result : []);
+      })
+      .catch(() => setKeyLookupItems([]));
+  }, [issueKeyQuery]);
+
+  // Exact issue-key hits are pinned above the semantic ranking.
+  const results = useMemo(
+    () =>
+      mergeIssueKeyMatches(
+        issueKeyQuery && keyLookupItems
+          ? findTrackersByIssueKey(issueKeyQuery, keyLookupItems)
+          : [],
+        semanticResults,
+      ),
+    [issueKeyQuery, keyLookupItems, semanticResults],
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -2816,7 +2860,7 @@ const SearchPane: React.FC<SearchPaneProps> = memo(({
               }}
             >
               <div className="shrink-0 mt-0.5 text-nim-muted">
-                <MaterialSymbol icon={refTypeIcon(result.refType)} size={16} />
+                <MaterialSymbol icon={refTypeIcon(result)} size={16} />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-nim flex items-center gap-2 overflow-hidden text-ellipsis whitespace-nowrap">
@@ -2954,13 +2998,7 @@ const TrackersPane: React.FC<TrackersPaneProps> = memo(({
 
     const q = visibleQuery.toLowerCase();
     const exactItems = pool
-      .filter((it) => {
-        if (it.title.toLowerCase().includes(q)) return true;
-        if (it.issueKey?.toLowerCase().includes(q)) return true;
-        if (it.description?.toLowerCase().includes(q)) return true;
-        if (it.id.toLowerCase().includes(q)) return true;
-        return false;
-      })
+      .filter((it) => matchesTrackerText(it, q))
       .sort(byRecency);
     if (!includeSemantic) return exactItems.slice(0, 200);
 
@@ -3058,7 +3096,7 @@ const TrackersPane: React.FC<TrackersPaneProps> = memo(({
               }}
             >
               <div className="shrink-0 mt-0.5 text-nim-muted">
-                <MaterialSymbol icon={trackerTypeIcon(it.type)} size={16} />
+                <MaterialSymbol icon={getTypeIcon(it.type)} size={16} />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-nim flex items-center gap-2 overflow-hidden text-ellipsis whitespace-nowrap">
@@ -3067,7 +3105,7 @@ const TrackersPane: React.FC<TrackersPaneProps> = memo(({
                       {it.issueKey}
                     </span>
                   )}
-                  <span className="truncate">{it.title}</span>
+                  <span className="truncate">{it.title || it.id}</span>
                 </div>
                 <div className="text-xs text-nim-faint mt-0.5 flex items-center gap-2">
                   <span
@@ -3100,22 +3138,3 @@ const TrackersPane: React.FC<TrackersPaneProps> = memo(({
     </div>
   );
 });
-
-function trackerTypeIcon(type: string): string {
-  switch (type) {
-    case 'bug':
-      return 'bug_report';
-    case 'task':
-      return 'task_alt';
-    case 'plan':
-      return 'flag';
-    case 'idea':
-      return 'lightbulb';
-    case 'decision':
-      return 'gavel';
-    case 'feature':
-      return 'auto_awesome';
-    default:
-      return 'label';
-  }
-}

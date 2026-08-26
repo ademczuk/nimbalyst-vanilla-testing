@@ -8,6 +8,7 @@ export type {
   EditorMenuItem,
   EditorContext,
   EditorContextItem,
+  EditorViewport,
   DiffConfig,
   DiffResult,
   CollaborationContext,

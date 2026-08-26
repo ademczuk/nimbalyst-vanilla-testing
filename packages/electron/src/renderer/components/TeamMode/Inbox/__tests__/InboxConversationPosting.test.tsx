@@ -101,6 +101,21 @@ describe('Inbox conversation posting', () => {
       configurable: true,
       value: {
         invoke,
+        // #3729: the thread names its authors from the org roster. Without it
+        // every teammate rendered as "Unknown member".
+        organization: {
+          listMembers: vi.fn(async () => ({
+            success: true,
+            callerRole: 'member',
+            members: [
+              { memberId: 'u-priya', email: 'priya@example.test', name: 'Priya Raman', role: 'member' },
+            ],
+          })),
+        },
+        stytch: {
+          getAccounts: vi.fn(async () => []),
+          getSyncAccount: vi.fn(async () => null),
+        },
         on: vi.fn((
           channel: string,
           listener: (payload: unknown) => void,
@@ -157,9 +172,10 @@ describe('Inbox conversation posting', () => {
       });
     });
 
-    expect(
-      (await screen.findByTestId('comment-row-remote-message-1')).textContent,
-    ).toContain('arrived from another teammate');
+    const arrival = await screen.findByTestId('comment-row-remote-message-1');
+    expect(arrival.textContent).toContain('arrived from another teammate');
+    await waitFor(() => expect(arrival.textContent).toContain('Priya Raman'));
+    expect(arrival.textContent).not.toContain('Unknown member');
     expect(
       invoke.mock.calls.some(([channel]) => channel === 'conversation:append'),
     ).toBe(false);

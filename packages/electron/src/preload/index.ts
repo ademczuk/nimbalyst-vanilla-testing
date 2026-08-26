@@ -33,6 +33,7 @@ import type { TutorialEntryPoint, TutorialStartResult, TutorialStatusResult } fr
 import type {
   OpenCodeModelCatalogIpcResponse,
   OpenCodeModelCatalogRefreshRequest,
+  OpenCodeModelCatalogRequest,
 } from '../shared/openCodeModelCatalog.ts';
 import type {
   OpenCodeAgentCatalogIpcResponse,
@@ -609,8 +610,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aiGetAllModels: () => ipcRenderer.invoke('ai:getAllModels'),
   aiClearModelCache: () => ipcRenderer.invoke('ai:clearModelCache'),
   aiRefreshSessionProvider: (sessionId: string) => ipcRenderer.invoke('ai:refreshSessionProvider', sessionId),
-  openCodeModelCatalogGet: (): Promise<OpenCodeModelCatalogIpcResponse> =>
-    ipcRenderer.invoke('opencode-model-catalog:get'),
+  openCodeModelCatalogGet: (
+    request: OpenCodeModelCatalogRequest
+  ): Promise<OpenCodeModelCatalogIpcResponse> =>
+    ipcRenderer.invoke('opencode-model-catalog:get', request),
   openCodeModelCatalogRefresh: (
     request: OpenCodeModelCatalogRefreshRequest
   ): Promise<OpenCodeModelCatalogIpcResponse> =>
@@ -1666,6 +1669,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   analytics: {
     allowedToSendAnalytics: () => ipcRenderer.invoke('analytics:allowed'),
     getDistinctId: () => ipcRenderer.invoke('analytics:get-distinct-id'),
+    getReleaseAttribution: () => ipcRenderer.invoke('analytics:get-release-attribution'),
     optIn: () => ipcRenderer.invoke('analytics:opt-in'),
     optOut: () => ipcRenderer.invoke('analytics:opt-out'),
     setSessionId: (sessionId: string) => ipcRenderer.invoke('analytics:set-session-id', sessionId),

@@ -2354,7 +2354,7 @@ app.whenReady().then(async () => {
     CopilotCLIProvider.setEnhancedPathLoader(() => getEnhancedPath());
 
     configureOpenCodeModelCatalog({
-      loadCache: () => getOpenCodeModelCatalogCache(),
+      loadCache: (workspacePath) => getOpenCodeModelCatalogCache(workspacePath),
       saveCache: (cache) => setOpenCodeModelCatalogCache(cache),
       getCacheKey: (workspacePath) => {
         const shellEnvironment = getShellEnvironment();

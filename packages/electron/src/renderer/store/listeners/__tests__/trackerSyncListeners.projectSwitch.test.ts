@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { store } from '@nimbalyst/runtime/store';
 import { activeWorkspacePathAtom } from '../../atoms/openProjects';
-import { sharedTrackerSavedViewsAtom } from '../../atoms/trackers';
+import { initTrackerPanelLayout, sharedTrackerSavedViewsAtom } from '../../atoms/trackers';
 import { initTrackerSyncListeners } from '../trackerSyncListeners';
 import {
   createDefaultViewDefinition,
@@ -114,6 +114,27 @@ describe('initTrackerSyncListeners project switch (NIM-668)', () => {
     await vi.waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('tracker-saved-views:list', '/ws/B');
       expect(store.get(sharedTrackerSavedViewsAtom).map(view => view.id)).toEqual(['view-b']);
+    });
+  });
+
+  /**
+   * NIM-3731: App's `initTrackerPanelLayout` effect and this listener's startup
+   * snapshot both own the shared-view atom. The effect clears it synchronously
+   * and then reloads only the LOCAL views from workspace state, so when the
+   * snapshot's IPC round trips beat React's commit of `workspacePath`, the clear
+   * lands last and every team-shared view disappears from the sidebar until an
+   * unrelated share/unshare event happens to refill it.
+   */
+  it('keeps shared views loaded when the layout init runs after the snapshot', async () => {
+    cleanup = initTrackerSyncListeners();
+    await vi.waitFor(() => {
+      expect(store.get(sharedTrackerSavedViewsAtom).map(view => view.id)).toEqual(['view-a']);
+    });
+
+    await initTrackerPanelLayout('/ws/A');
+
+    await vi.waitFor(() => {
+      expect(store.get(sharedTrackerSavedViewsAtom).map(view => view.id)).toEqual(['view-a']);
     });
   });
 

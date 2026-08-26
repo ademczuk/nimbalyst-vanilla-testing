@@ -9,9 +9,11 @@ export type {
   OpenCodeModelCatalogStaleReason,
 } from '@nimbalyst/runtime/ai/server';
 
-export interface OpenCodeModelCatalogRefreshRequest {
+export interface OpenCodeModelCatalogRequest {
   workspacePath: string;
 }
+
+export type OpenCodeModelCatalogRefreshRequest = OpenCodeModelCatalogRequest;
 
 export type OpenCodeModelCatalogIpcResponse =
   | { success: true; catalog: OpenCodeModelCatalogSnapshot }

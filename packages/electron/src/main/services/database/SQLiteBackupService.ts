@@ -16,6 +16,7 @@ import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import * as path from 'path';
 import type { SQLiteDatabase } from '../../database/sqlite/SQLiteDatabase';
+import type { BackupVerifier } from '../../database/sqlite/backupVerification';
 
 export type SQLiteBackupLogFn = (
   level: 'info' | 'warn' | 'error',
@@ -92,6 +93,14 @@ export interface SQLiteBackupServiceOptions {
    * multiplier on disk usage.
    */
   copiesKept?: number;
+  /**
+   * How a candidate backup file is checked before it is promoted or restored
+   * from. Defaults to `sqlite.verifyBackup`, which runs synchronously on the
+   * calling thread — fine for tests, fatal in the worker, where a multi-GB
+   * scan stops it dequeuing `query` messages for a minute or more. The worker
+   * passes an off-thread verifier instead.
+   */
+  verify?: BackupVerifier;
 }
 
 export class SQLiteBackupService {
@@ -101,6 +110,7 @@ export class SQLiteBackupService {
   private metadataPath: string;
   private log: SQLiteBackupLogFn;
   private copiesKept: number;
+  private verify: BackupVerifier;
   private metadata: BackupMetadata = {
     currentBackup: null,
     previousBackup: null,
@@ -116,6 +126,7 @@ export class SQLiteBackupService {
     this.metadataPath = path.join(this.backupDir, METADATA_FILENAME);
     this.log = opts.log ?? (() => { /* no-op */ });
     this.copiesKept = clampCopiesKept(opts.copiesKept);
+    this.verify = opts.verify ?? ((backupPath) => this.sqlite.verifyBackup(backupPath));
   }
 
   /**
@@ -172,7 +183,7 @@ export class SQLiteBackupService {
       const sizeBytes = (await fs.stat(tempPath)).size;
       this.log('info', '[SQLite Backup] Online backup complete', { sizeBytes });
 
-      const verification = await this.sqlite.verifyBackup(tempPath);
+      const verification = await this.verify(tempPath);
       if (!verification.valid) {
         await this.removeTempBackup(tempPath);
         return { success: false, error: `Verification failed: ${verification.error}` };
@@ -358,7 +369,7 @@ export class SQLiteBackupService {
     source: string,
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      const verification = await this.sqlite.verifyBackup(backupPath);
+      const verification = await this.verify(backupPath);
       if (!verification.valid) {
         return { success: false, error: `${source} verification failed: ${verification.error}` };
       }

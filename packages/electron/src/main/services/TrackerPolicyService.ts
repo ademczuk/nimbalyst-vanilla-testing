@@ -46,7 +46,7 @@ function legacyModeFromModel(model: TrackerDataModel): LegacyTrackerSharing {
   return model.draftByDefault ? 'hybrid' : 'shared';
 }
 
-function normalizeSharingPolicy(policy: Partial<TrackerSharingPolicy> | TrackerSharing | null | undefined): TrackerSharingPolicy {
+function normalizeSharingPolicy(policy: Partial<TrackerSharingPolicy> | TrackerSharing): TrackerSharingPolicy {
   const sharing: TrackerSharing = policy === 'team' || (typeof policy === 'object' && policy?.sharing === 'team')
     ? 'team'
     : 'personal';
@@ -56,14 +56,78 @@ function normalizeSharingPolicy(policy: Partial<TrackerSharingPolicy> | TrackerS
   };
 }
 
-/** Resolve the one tracker-level sharing policy. The workspace path is retained for call-site symmetry. */
+/** Why a policy could not be resolved. Both mean "do not guess", not "personal". */
+export type TrackerSharingUnresolvedReason =
+  /** The workspace's schemas are loaded, and this type is not among them. */
+  | 'no-model'
+  /** No schema layer is cached for this workspace at all — it may not be loaded yet. */
+  | 'no-layer';
+
+/**
+ * The result of a policy read, with "I do not know" as a first-class answer.
+ *
+ * `normalizeSharingPolicy` used to take `undefined` and return `personal`, so
+ * "this tracker is private" and "I have not loaded this schema yet" were the
+ * same value. Every consequence in NIM-3702 and NIM-2968 follows from that one
+ * collapse — including a reconnect drain that read a registry miss as a
+ * deliberate unshare and deleted 26 items out of a team's tracker room.
+ */
+export type TrackerSharingResolution =
+  | { known: true; policy: TrackerSharingPolicy }
+  | {
+      known: false;
+      reason: TrackerSharingUnresolvedReason;
+      trackerType: string;
+      workspacePath: string;
+    };
+
+/**
+ * Resolve a tracker's sharing policy for an explicit workspace.
+ *
+ * Use this anywhere the answer drives a WRITE — `sync_status`, or a push /
+ * skip / delete decision. Callers must handle `known: false`; there is no safe
+ * default for a write, which is the whole point.
+ *
+ * For display-only reads see `getEffectiveTrackerSharingPolicy`.
+ */
+export function resolveTrackerSharingPolicy(
+  workspacePath: string,
+  trackerType: string,
+  callerPolicy?: Partial<TrackerSharingPolicy> | TrackerSharing,
+): TrackerSharingResolution {
+  const model = globalRegistry.getForWorkspace(workspacePath, trackerType);
+  const source = model ?? callerPolicy;
+  if (source == null) {
+    return {
+      known: false,
+      // `no-layer` says the workspace's schemas may simply not be loaded yet,
+      // which is the case a retry can rescue. `no-model` says they are loaded
+      // and this type is genuinely not among them.
+      reason: globalRegistry.hasWorkspaceLayer(workspacePath) ? 'no-model' : 'no-layer',
+      trackerType,
+      workspacePath,
+    };
+  }
+  return { known: true, policy: normalizeSharingPolicy(source) };
+}
+
+/**
+ * Display-only policy read. Collapses an unresolved policy to `personal`,
+ * because rendering an unresolvable tracker as private is the safe direction
+ * for a *display*.
+ *
+ * It is the wrong direction for a write — `personal` on a previously-shared
+ * item means "delete it from the room" — so this must not be reachable from the
+ * sync lane. `scripts/check-tracker-policy-reads.mjs` enforces that; use
+ * `resolveTrackerSharingPolicy` for anything that decides a sync outcome.
+ */
 export function getEffectiveTrackerSharingPolicy(
-  _workspacePath: string,
+  workspacePath: string,
   trackerType: string,
   callerPolicy?: Partial<TrackerSharingPolicy> | TrackerSharing,
 ): TrackerSharingPolicy {
-  const model = globalRegistry.get(trackerType);
-  return normalizeSharingPolicy(model ?? callerPolicy);
+  const resolution = resolveTrackerSharingPolicy(workspacePath, trackerType, callerPolicy);
+  return resolution.known ? resolution.policy : { sharing: 'personal', draftByDefault: false };
 }
 
 /** True when the tracker has any team-visible item lane. */
@@ -106,14 +170,36 @@ export function shouldSyncTrackerItem(
   return policy.sharing === 'team' && isTrackerItemPublished(source, policy.draftByDefault);
 }
 
-export type BackfillAction = 'upsert' | 'delete' | 'skip';
+export type BackfillAction = 'upsert' | 'delete' | 'skip' | 'abort';
 
+/**
+ * The per-row verdict for the reconnect drain.
+ *
+ * Takes a resolution rather than a policy so the unresolved case cannot be
+ * silently omitted. Before NIM-2968 this took a policy, an unresolved read
+ * arrived as `personal`, and the `previouslyPublished` branch below deleted the
+ * team's copy on the strength of a registry that had failed to load.
+ *
+ * | Resolution        | Previously shared | Action                        |
+ * | ----------------- | ----------------- | ----------------------------- |
+ * | team, published   | either            | `upsert`                      |
+ * | personal          | yes               | `delete` — a real unshare     |
+ * | personal          | no                | `skip`                        |
+ * | **unresolved**    | **yes**           | **`abort` the run**           |
+ * | unresolved        | no                | `skip` — nothing to destroy   |
+ */
 export function decideBackfillAction(
-  policy: TrackerSharingPolicy,
+  resolution: TrackerSharingResolution,
   source: Record<string, any> | null | undefined,
   previouslyPublished: boolean,
 ): BackfillAction {
-  if (shouldSyncTrackerItem(policy, source)) return 'upsert';
+  if (!resolution.known) {
+    // Deleting on a guess is the one outcome that is never recoverable here.
+    // A never-shared row has nothing in the room to lose, so it degrades to a
+    // counted skip rather than taking the whole drain down.
+    return previouslyPublished ? 'abort' : 'skip';
+  }
+  if (shouldSyncTrackerItem(resolution.policy, source)) return 'upsert';
   return previouslyPublished ? 'delete' : 'skip';
 }
 

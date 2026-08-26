@@ -39,6 +39,12 @@ import {
   type ThinkingMode,
 } from '../../utils/modelUtils';
 import { isClaudeCliTerminalSession } from './claudeCliInputRouting';
+import { trackSendWallEvent } from '../../utils/sendWallAnalytics';
+import {
+  bucketPromptLength,
+  toStableAnalyticsCategory,
+  type SendBlockedReason,
+} from '../../../shared/analytics/sendOutcomes';
 
 interface SessionLaunchPopupProps {
   workspacePath: string | null;
@@ -283,7 +289,33 @@ export const SessionLaunchPopup: React.FC<SessionLaunchPopupProps> = ({ workspac
 
   const handleSend = useCallback(async () => {
     let prompt = draft.value.trim();
-    if (!prompt || !workspacePath || !draft.pendingSessionId || !selectedModel || isSubmitting) return;
+
+    // Denominator for the send wall, before every guard — see
+    // shared/analytics/sendOutcomes.ts. This surface always starts a session's
+    // first turn, so `isFirstMessageInSession` is unconditionally true here.
+    const blocked = (reason: SendBlockedReason) =>
+      trackSendWallEvent('ai_send_blocked', {
+        surface: 'launch_popup',
+        reason,
+        provider: toStableAnalyticsCategory(provider),
+      });
+
+    trackSendWallEvent('ai_message_submit_attempted', {
+      surface: 'launch_popup',
+      provider: toStableAnalyticsCategory(provider),
+      promptLengthBucket: bucketPromptLength(prompt.length),
+      isFirstMessageInSession: true,
+      sessionMode: toStableAnalyticsCategory(draft.mode),
+    });
+
+    if (!prompt) {
+      blocked('empty_draft');
+      return;
+    }
+    if (!workspacePath || !draft.pendingSessionId || !selectedModel || isSubmitting) {
+      blocked('no_session_data');
+      return;
+    }
 
     let launchMode = draft.mode;
     const planCommand = prompt.match(/^\/plan(?:\s|$)/);
@@ -292,6 +324,7 @@ export const SessionLaunchPopup: React.FC<SessionLaunchPopupProps> = ({ workspac
       prompt = prompt.slice(planCommand[0].length).trim();
       if (!prompt) {
         setError('Add instructions after /plan before starting the session.');
+        blocked('slash_command_only');
         return;
       }
     }

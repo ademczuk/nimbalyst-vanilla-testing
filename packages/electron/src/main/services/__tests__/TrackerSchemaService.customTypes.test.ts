@@ -366,6 +366,28 @@ describe('TrackerSchemaService builtin override via patch', () => {
     expect(path.basename(override.filePath!)).toBe('bug.patch.yaml');
   });
 
+  it('opens an existing patch override instead of throwing on it (NIM-3065)', async () => {
+    // A patch has no `displayName` by design, and this path used to run the
+    // full-model parser over it: the throw meant the IPC handler never returned
+    // a filePath, so the Settings "Edit schema override" pencil silently did
+    // nothing for every overridden builtin.
+    await fs.writeFile(
+      path.join(trackersDir, 'bug.patch.yaml'),
+      `type: bug\nfields:\n  - name: status\n    options:\n      set:\n        - value: wont-fix\n          label: Wont Fix\n          icon: block\n`,
+      'utf-8',
+    );
+    service.updateTrackerSchemaWorkspace(null);
+    service.updateTrackerSchemaWorkspace(workspacePath);
+
+    const opened = await service.customizeWorkspaceTrackerSchema(workspacePath, 'bug');
+
+    expect(opened.created).toBe(false);
+    expect(path.basename(opened.filePath)).toBe('bug.patch.yaml');
+    // Resolved against the builtin seed, so it is a usable model, not the delta.
+    expect(opened.model.type).toBe('bug');
+    expect(opened.model.displayName).toBeTruthy();
+  });
+
   it('resets a patch override back to the builtin default', async () => {
     await service.upsertWorkspaceTrackerSchemaPatch(workspacePath, {
       type: 'task',

@@ -46,7 +46,7 @@ import {
   menuFindPreviousCommandAtom,
 } from '../store/atoms/menuCommands';
 import { openEditorFind } from '../components/TabEditor/editorFindCommand';
-import { dispatchTrackerFocusSearch } from '../components/TrackerMode/trackerSearchFocus';
+import { dispatchTrackerFocusSearch } from '@nimbalyst/collab-client/trackers-ui';
 import { acquireHeadlessCollabCommentController } from '../services/HeadlessCollabCommentController';
 import {
   trackDocumentAction,

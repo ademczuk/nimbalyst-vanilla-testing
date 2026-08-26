@@ -62,6 +62,24 @@ export const trackerSyncRejectionAtom = atom<TrackerSyncRejectionState>({
   custodyUnavailable: null,
 });
 
+/**
+ * The reconnect drain refused to run for this workspace, so team items are not
+ * syncing. Written by `trackerSyncListeners` on `tracker-sync:drain-aborted`
+ * and cleared on `tracker-sync:drain-recovered`.
+ *
+ * Not a `TrackerSyncRejection`: nothing was rejected and no edit rolled back.
+ * The socket is `connected` and the client declined to push, because it could
+ * not resolve the sharing policy and would otherwise have deleted previously
+ * shared items from the room on a guess (NIM-2968).
+ */
+export interface TrackerSyncDrainHold {
+  workspacePath: string;
+  reason: 'unresolved-policy-would-delete' | 'zero-upserts-with-deletes';
+  rowsHeldBack: number;
+}
+
+export const trackerSyncDrainHoldAtom = atom<TrackerSyncDrainHold | null>(null);
+
 export interface TrackerSyncConnectionState {
   workspacePath: string;
   status: string;

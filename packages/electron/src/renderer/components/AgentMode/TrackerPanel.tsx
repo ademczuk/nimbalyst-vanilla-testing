@@ -10,6 +10,11 @@ import React, { useCallback, useMemo } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { trackerItemByIdAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
+import {
+  defaultTrackerTypeColor,
+  defaultTrackerTypeIcon,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerTypeIdentity';
+import { TrackerSwatchBadge } from '@nimbalyst/collab-client/trackers-ui';
 import { sessionRegistryAtom, workstreamSessionsAtom } from '../../store/atoms/sessions';
 import { trackerPanelCollapsedAtom, toggleTrackerPanelCollapsedAtom } from '../../store/atoms/agentMode';
 import { setWindowModeAtom } from '../../store/atoms/windowMode';
@@ -21,24 +26,6 @@ interface TrackerPanelProps {
   /** The workstream ID - tracker items from all child sessions will be shown */
   workstreamId: string;
 }
-
-const TYPE_COLORS: Record<string, string> = {
-  bug: '#dc2626',
-  task: '#2563eb',
-  plan: '#7c3aed',
-  idea: '#ca8a04',
-  decision: '#8b5cf6',
-  feature: '#059669',
-};
-
-const TYPE_ICONS: Record<string, string> = {
-  bug: 'bug_report',
-  task: 'task_alt',
-  plan: 'description',
-  idea: 'lightbulb',
-  decision: 'gavel',
-  feature: 'star',
-};
 
 export const TrackerPanel: React.FC<TrackerPanelProps> = React.memo(({
   workstreamId,
@@ -161,8 +148,11 @@ const TrackerItemRow: React.FC<TrackerItemRowProps> = React.memo(({ itemId, onNa
 
   if (!item) return null;
 
-  const color = TYPE_COLORS[item.primaryType] || '#6b7280';
-  const icon = TYPE_ICONS[item.primaryType] || 'label';
+  // Both helpers carry their own fallback, so this panel no longer keeps a
+  // private map that drifts from Tracker Mode -- `task` had a different icon
+  // and `feature` a different accent in the two surfaces.
+  const color = defaultTrackerTypeColor(item.primaryType);
+  const icon = defaultTrackerTypeIcon(item.primaryType);
   const title = (item.fields.title as string) || 'Untitled';
   const status = item.fields.status as string;
 
@@ -197,14 +187,7 @@ const TrackerItemRow: React.FC<TrackerItemRowProps> = React.memo(({ itemId, onNa
           <MaterialSymbol icon="merge" size={14} />
         </span>
       )}
-      {status && (
-        <span
-          className="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
-          style={{ backgroundColor: `${color}15`, color }}
-        >
-          {status}
-        </span>
-      )}
+      {status && <TrackerSwatchBadge label={status} color={color} className="shrink-0" />}
     </button>
   );
 });

@@ -2,5 +2,8 @@ export * from './FeedbackRequestRespond';
 export * from './FeedbackRespondAskField';
 export * from './FeedbackRespondOptionCards';
 export * from './FeedbackArtifactSubjects';
+export * from './ArtifactViewport';
 export * from './ScaledPreviewFrame';
+export * from './artifactScrollCarry';
 export * from './useLivePreviewSlot';
+export type { FeedbackArtifactDetailEntry, FeedbackArtifactDetailMountApi, FeedbackArtifactDetailPopoverProps, FeedbackArtifactDetailRenderer, FeedbackArtifactScrollViewport, } from './FeedbackArtifactDetailPopover';

@@ -506,7 +506,9 @@ interface ElectronAPI {
   aiGetAllModels: () => Promise<any>;
   aiClearModelCache: () => Promise<void>;
   aiRefreshSessionProvider: (sessionId: string) => Promise<void>;
-  openCodeModelCatalogGet: () => Promise<import('../shared/openCodeModelCatalog').OpenCodeModelCatalogIpcResponse>;
+  openCodeModelCatalogGet: (
+    request: import('../shared/openCodeModelCatalog').OpenCodeModelCatalogRequest
+  ) => Promise<import('../shared/openCodeModelCatalog').OpenCodeModelCatalogIpcResponse>;
   openCodeModelCatalogRefresh: (
     request: import('../shared/openCodeModelCatalog').OpenCodeModelCatalogRefreshRequest
   ) => Promise<import('../shared/openCodeModelCatalog').OpenCodeModelCatalogIpcResponse>;
@@ -771,6 +773,7 @@ interface ElectronAPI {
   analytics: {
     allowedToSendAnalytics: () => Promise<boolean>;
     getDistinctId: () => Promise<string>;
+    getReleaseAttribution: () => Promise<{ release_channel: string; build_type: string }>;
     optIn: () => Promise<void>;
     optOut: () => Promise<void>;
     setSessionId: (sessionId: string) => Promise<void>;

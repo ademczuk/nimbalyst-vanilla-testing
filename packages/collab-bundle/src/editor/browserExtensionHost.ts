@@ -29,6 +29,7 @@ import type {
   EditorContextItem,
   EditorHost,
   EditorMenuItem,
+  EditorViewport,
   RevisionSnapshotAdapter,
 } from '@nimbalyst/extension-sdk/types/editor';
 import type { ExtensionStorage } from '@nimbalyst/extension-sdk/types/panel';
@@ -185,6 +186,24 @@ export interface BrowserExtensionEditorHostOptions {
   openExternal?(url: string): Promise<void>;
 
   /**
+   * Receives the editor's scroll viewport when it publishes one.
+   *
+   * Only a page that shows several documents in sequence supplies this -- the
+   * feedback detail popover, carrying the reader's place from one design
+   * alternative to the next. Absent means the `viewport` capability is absent,
+   * so an extension that checks before registering gets a straight answer.
+   */
+  onViewportRegistered?(viewport: EditorViewport | null): void;
+
+  /**
+   * Marks the editor as rendered inside another surface rather than as a full
+   * page, so extensions can drop persistent chrome that makes no sense there.
+   * An inline preview or a detail popover sets this; the document page does
+   * not.
+   */
+  embedded?: boolean;
+
+  /**
    * Called whenever the editor reaches for something this host declared
    * unavailable. The host still throws/rejects; this is the page's hook for
    * logging it, because a rejection inside an extension's effect is otherwise
@@ -224,6 +243,7 @@ export function createBrowserExtensionEditorHost(
     ),
     binaryContent: Boolean(options.getInitialBinaryContent),
     externalLinks: Boolean(options.openExternal),
+    viewport: Boolean(options.onViewportRegistered),
   });
   const filesystemPermission = resolveBrowserFilesystemPermission(options.permissions);
 
@@ -278,7 +298,7 @@ export function createBrowserExtensionEditorHost(
 
     filePath: options.filePath,
     fileName: options.fileName,
-    embedded: false,
+    embedded: options.embedded ?? false,
     get theme() {
       return options.getTheme?.() ?? 'auto';
     },
@@ -384,6 +404,14 @@ export function createBrowserExtensionEditorHost(
     registerEditorAPI(api) {
       editorAPI = api;
       options.onEditorAPIChange?.(api);
+    },
+
+    registerViewport(viewport) {
+      if (!options.onViewportRegistered) {
+        refuse('viewport');
+        return;
+      }
+      options.onViewportRegistered(viewport);
     },
 
     registerMenuItems(items) {

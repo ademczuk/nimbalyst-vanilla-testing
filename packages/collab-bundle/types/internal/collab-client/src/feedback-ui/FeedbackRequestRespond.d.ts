@@ -28,6 +28,7 @@ import React from 'react';
 import type { FeedbackAnswer } from '@nimbalyst/collab-protocol';
 import type { FeedbackRequestServiceState } from '../feedback/index';
 import type { FeedbackOptionPreviewRenderer } from './FeedbackRespondOptionCards';
+import type { FeedbackArtifactDetailRenderer } from './FeedbackArtifactDetailPopover';
 import { type FeedbackArtifactActionResolver, type FeedbackSubjectOpener } from './FeedbackArtifactSubjects';
 export interface FeedbackRespondSubmitResult {
     success: boolean;
@@ -50,6 +51,12 @@ export interface FeedbackRequestRespondProps {
     discussion?: React.ReactNode;
     /** Per-option artifact previews, when the embedding surface has them. */
     renderOptionPreview?: FeedbackOptionPreviewRenderer;
+    /**
+     * Paints one artifact full-size for the detail popover. Supplied means expand
+     * opens the popover in place; absent means expand opens a tab, as it did
+     * before the popover existed.
+     */
+    renderArtifactDetail?: FeedbackArtifactDetailRenderer;
     /**
      * Opens a subject or a bound artifact. Host-supplied because the mechanics
      * differ per host -- a tab in the desktop app, a route in the browser -- and

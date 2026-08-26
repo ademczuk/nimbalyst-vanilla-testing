@@ -22,7 +22,7 @@
  *     material to refresh.
  *
  * Renderer bridge:
- *   The 7 `tracker-sync:*` IPC handlers preserved here keep the existing
+ *   The `tracker-sync:*` IPC handlers preserved here keep the existing
  *   atoms in `store/listeners/trackerSyncListeners.ts` and
  *   `store/atoms/trackerSync.ts` functional without renderer changes.
  *   `tracker-sync:connect-test` is also registered here; the collab E2E
@@ -39,6 +39,7 @@ import {
   type RejectedTrackerMutation,
   type TrackerItemPayload,
   type TrackerRoomConfig,
+  type TrackerPresenceParticipant,
   type LabelsMap,
 } from '@nimbalyst/runtime/sync';
 import { asTeamJwt, asTeamMemberId, type TrackerItem } from '@nimbalyst/runtime';
@@ -48,7 +49,7 @@ import WebSocket from 'ws';
 import { safeHandle } from '../utils/ipcRegistry';
 import { logger } from '../utils/logger';
 import { isAuthenticated } from './StytchAuthService';
-import { getOrgScopedIdentity, getOrgScopedJwt, resolveTeamForWorkspace } from './TeamService';
+import { getOrgScopedIdentity, getOrgScopedJwt, listMembers, resolveTeamForWorkspace } from './TeamService';
 import { getCollabSyncWsUrl } from '../utils/collabSyncUrl';
 import { getDatabase } from '../database/initialize';
 import { TrackerPGLiteStore } from './tracker/TrackerPGLiteStore';
@@ -59,6 +60,7 @@ import {
 import {
   applyRemoteWorkspaceTrackerSchemaDef,
   encodeTrackerSchemaDefForPush,
+  refreshWorkspaceSchemaLayer,
 } from './TrackerSchemaService';
 import {
   applyRemoteWorkspaceTrackerNavigationEntry,
@@ -79,14 +81,14 @@ import {
   registerTrackerSavedViewFlushHandler,
 } from './TrackerSavedViewService';
 import { windows, windowStates } from '../window/windowState';
-import { getEffectiveTrackerSharingPolicy } from './TrackerPolicyService';
-import { drainPendingTrackerItems } from './tracker/trackerItemBackfill';
+import { getEffectiveTrackerSharingPolicy, resolveTrackerSharingPolicy } from './TrackerPolicyService';
+import { drainPendingTrackerItems, type TrackerDrainAbort } from './tracker/trackerItemBackfill';
 import { rowToTrackerItem } from '../mcp/tools/trackerToolHandlers';
 import { getWorkspaceState, updateWorkspaceState } from '../utils/store';
 import { AnalyticsService } from './analytics/AnalyticsService';
 import { sendTeamAnalyticsEvent } from './analytics/TeamAnalytics';
 import { CollaborationHealthAttemptTracker } from '../../shared/analytics/collaborationHealth';
-import { categorizeTeamAnalyticsError, toStableAnalyticsCategory } from '../../shared/analytics/teamAnalytics';
+import { bucketItemCount, categorizeTeamAnalyticsError, toStableAnalyticsCategory } from '../../shared/analytics/teamAnalytics';
 
 // ============================================================================
 // Engine registry (per workspace)
@@ -99,6 +101,8 @@ interface EngineEntry {
   status: TrackerSyncStatus;
   /** Last known room config; renderer queries this via `tracker-sync:get-status`. */
   config: TrackerRoomConfig | null;
+  /** Remote room viewers only; local member is filtered by the engine. */
+  presence: TrackerPresenceParticipant[];
   /** Back-reference to the persistence store so `emitItemApplied` can read
    * the just-written row back as a `TrackerItem`. */
   store: TrackerPGLiteStore;
@@ -350,12 +354,23 @@ async function doInitializeTrackerSync(workspacePath: string): Promise<void> {
 
   const persistence = new TrackerPGLiteStore(db, workspacePath);
   const { teamMemberId } = await getOrgScopedIdentity(team.orgId);
+  const presenceIdentity = await listMembers(team.orgId)
+    .then(({ members }) => ({
+      displayName: members.find(member => member.memberId === teamMemberId)?.name?.trim()
+        || teamMemberId,
+      avatarUrl: null,
+    }))
+    .catch((error) => {
+      logger.main.warn('[TrackerSyncManager] member name unavailable for presence:', error);
+      return { displayName: teamMemberId, avatarUrl: null };
+    });
 
   const config: TrackerSyncEngineConfig = {
     serverUrl: getCollabSyncWsUrl(),
     orgId: team.orgId,
     teamProjectId: team.teamProjectId,
     teamMemberId,
+    presenceIdentity,
     persistence,
     initializeIssueKeyPrefix: getWorkspaceState(workspacePath).issueKeyPrefix,
     schemaSync: {
@@ -408,6 +423,11 @@ async function doInitializeTrackerSync(workspacePath: string): Promise<void> {
           logger.main.warn('[TrackerSyncManager] backfillSharedLocalItems failed for', workspacePath, err);
         });
       }
+    },
+    onPresenceChange: (members) => {
+      const entry = engines.get(workspacePath);
+      if (entry) entry.presence = [...members];
+      broadcastToAllWindows('tracker-sync:presence-changed', { workspacePath, members });
     },
     onItemApplied: (applied) => {
       // logger.main.info('[TrackerSyncManager] onItemApplied for', workspacePath, 'itemId:', applied.itemId, 'tombstone:', applied.isTombstone);
@@ -495,6 +515,7 @@ async function doInitializeTrackerSync(workspacePath: string): Promise<void> {
     engine,
     status: 'disconnected',
     config: null,
+    presence: [],
     store: persistence,
   });
 
@@ -562,17 +583,64 @@ async function backfillSharedLocalItems(workspacePath: string): Promise<void> {
   const db = getDatabase();
   if (!db) return;
 
-  await drainPendingTrackerItems(workspacePath, {
+  const result = await drainPendingTrackerItems(workspacePath, {
     query: (sql, params) => db.query(sql, params),
     upsertItem: async (item) => { await entry.engine.upsertItem(trackerItemToPayload(item)); },
     deleteItem: async (itemId) => { await entry.engine.deleteItem(itemId); },
-    resolvePolicy: (path, type) => getEffectiveTrackerSharingPolicy(path, type),
+    // resolveTrackerSharingPolicy, NOT getEffectiveTrackerSharingPolicy: this
+    // decides whether to delete from the team room, and the display-only read
+    // answers `personal` for a schema it merely failed to load (NIM-2968).
+    resolvePolicy: (path, type) => resolveTrackerSharingPolicy(path, type),
+    countSyncedRows: async (path) => {
+      const result = await db.query(
+        `SELECT COUNT(*)::int AS count FROM tracker_items
+         WHERE workspace = $1 AND sync_id IS NOT NULL AND deleted_at IS NULL`,
+        [path],
+      );
+      return Number(result.rows?.[0]?.count ?? 0);
+    },
+    emitEvent: (event) => { emitTrackerDrainAbort(event); },
+    reloadSchemas: (path) => refreshWorkspaceSchemaLayer(path),
     toItem: (row) => rowToTrackerItem(row) as TrackerItem,
     log: {
       info: (...args) => logger.main.info(...(args as [string, ...unknown[]])),
       warn: (...args) => logger.main.warn(...(args as [string, ...unknown[]])),
     },
   });
+
+  // A pass that ran to completion clears any earlier degraded state, so a
+  // transient resolution failure does not leave a stuck banner. `skippedRun`
+  // means another pass owns this workspace right now and decided nothing.
+  if (!result.aborted && !result.skippedRun) clearTrackerDrainAbort(workspacePath);
+}
+
+/**
+ * An aborted drain means team items are silently not syncing -- the exact
+ * symptom users report as "my teammate can't see this". Surface it rather than
+ * leaving it in the log, and record it for analytics so the abort rate is
+ * observable once this ships.
+ */
+function emitTrackerDrainAbort(event: TrackerDrainAbort): void {
+  lastDrainAbortByWorkspace.set(event.workspacePath, event);
+  broadcastToAllWindows('tracker-sync:drain-aborted', event);
+  sendTeamAnalyticsEvent(trackerSyncAnalytics, 'tracker_drain_aborted', {
+    reason: event.reason,
+    trackerTypeCount: bucketItemCount(event.trackerTypes.length),
+    rowsHeldBack: bucketItemCount(event.heldBack),
+  });
+}
+
+/** Cleared on the next successful drain, so a transient failure self-heals. */
+const lastDrainAbortByWorkspace = new Map<string, TrackerDrainAbort>();
+
+/** The current degraded-sync state for a workspace, or null when healthy. */
+export function getTrackerDrainAbort(workspacePath: string): TrackerDrainAbort | null {
+  return lastDrainAbortByWorkspace.get(workspacePath) ?? null;
+}
+
+export function clearTrackerDrainAbort(workspacePath: string): void {
+  if (!lastDrainAbortByWorkspace.delete(workspacePath)) return;
+  broadcastToAllWindows('tracker-sync:drain-recovered', { workspacePath });
 }
 
 /**
@@ -757,6 +825,11 @@ export function registerTrackerSyncHandlers(): void {
     };
   });
 
+  safeHandle('tracker-sync:get-presence', async (_event, payload?: { workspacePath?: string }) => {
+    if (!payload?.workspacePath) return [];
+    return engines.get(payload.workspacePath)?.presence ?? [];
+  });
+
   safeHandle('tracker-sync:connect', async (_event, payload: { workspacePath: string }) => {
     if (!payload?.workspacePath) {
       return { success: false, error: 'workspacePath required' };
@@ -857,6 +930,8 @@ export function registerTrackerSyncHandlers(): void {
       orgId: string;
       // identity-scope-allow: Playwright IPC payload is branded at the test-only handler boundary
       teamMemberId: string;
+      displayName?: string;
+      avatarUrl?: string | null;
     }) => {
       try {
         if (!payload?.workspacePath || !payload?.teamProjectId || !payload?.orgId) {
@@ -883,6 +958,10 @@ export function registerTrackerSyncHandlers(): void {
           orgId: payload.orgId,
           teamProjectId: payload.teamProjectId,
           teamMemberId: asTeamMemberId(payload.teamMemberId),
+          presenceIdentity: {
+            displayName: payload.displayName?.trim() || payload.teamMemberId,
+            avatarUrl: payload.avatarUrl ?? null,
+          },
           persistence,
           schemaSync: {
                   listUnsynced: async () =>
@@ -913,6 +992,11 @@ export function registerTrackerSyncHandlers(): void {
           onItemApplied: (applied) => {
             emitItemApplied(workspacePath, applied);
           },
+          onPresenceChange: (members) => {
+            const entry = engines.get(workspacePath);
+            if (entry) entry.presence = [...members];
+            broadcastToAllWindows('tracker-sync:presence-changed', { workspacePath, members });
+          },
           onConfigChange: (roomConfig) => {
             const entry = engines.get(workspacePath);
             if (entry) entry.config = roomConfig;
@@ -928,6 +1012,7 @@ export function registerTrackerSyncHandlers(): void {
           engine,
           status: 'disconnected',
           config: null,
+          presence: [],
           store: persistence,
         });
         await engine.connect();

@@ -1,0 +1,75 @@
+/**
+ * The tinted pill that names a type, a status, a tag or a priority.
+ *
+ * A swatch hue is *data*, not theme: it comes from the tracker schema
+ * (`model.color`) or from `DEFAULT_TRACKER_TYPE_COLORS`, and no `--nim-*`
+ * variable can define it. What the theme owns is how that hue is presented, so
+ * the hue arrives as a single `--tracker-swatch` custom property and everything
+ * else is derived here against the canonical variables.
+ *
+ * This replaces per-call-site `${color}20` / `${color}30` string arithmetic. That
+ * idiom assumed a dark surface and paid no attention to the theme: a 600-level
+ * schema hue printed at full strength on a 12% tint of itself measured 2.7-3.2:1
+ * on the dark themes, below AA at any size and well below it at the 9-10px these
+ * pills render at. Mixing toward `--nim-text` instead of toward a literal fixes
+ * that in both directions at once -- it lightens on a dark theme and darkens on
+ * a light one, with no per-theme branch and no second palette to keep in step.
+ *
+ * The 55% blend is the weakest mix that keeps every swatch the tracker surfaces
+ * can paint at or above WCAG AA on all three built-in themes, against both the
+ * primary and secondary surfaces; the measured worst case is 4.76:1 (amber on
+ * Light). Lowering it raises contrast but washes the hue out until the types
+ * stop being distinguishable, which is the other half of the pill's job.
+ * `temptests/swatchMix.mjs` is the sweep that picked the number.
+ *
+ * `in oklab` rather than `in srgb`: an sRGB blend toward white desaturates
+ * unevenly across hues, so blues wash out well before reds do and the mix
+ * percentage would have to be tuned per hue.
+ */
+
+.tracker-swatch-badge {
+  --tracker-swatch: var(--nim-text-muted);
+
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border-radius: 4px;
+  font-weight: 500;
+  line-height: 1.45;
+  white-space: nowrap;
+
+  /* Translucent rather than mixed with `--nim-bg`: the pill sits on a row that
+     may be hovered or selected, and a fill baked against the base background
+     reads as a seam once that row changes color underneath it. */
+  background: color-mix(in srgb, var(--tracker-swatch) 15%, transparent);
+  color: color-mix(in oklab, var(--tracker-swatch) 55%, var(--nim-text));
+}
+
+.tracker-swatch-badge-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The value's own badge. */
+.tracker-swatch-badge-primary {
+  padding: 1px 6px;
+  font-size: 10px;
+}
+
+/* The trailing tags beside it: smaller, and outlined so a run of them still
+   reads as separate pills once the fills sit next to each other. */
+.tracker-swatch-badge-secondary {
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--tracker-swatch) 32%, transparent);
+  font-size: 9px;
+}
+
+/* In a list row the pills are the row's right-hand columns, not free-floating
+   tags. Right-aligned pills whose widths follow their label ("to-do" against
+   "in-progress") leave the type pill beside them at a different x on every row,
+   so the eye has no column to run down. A floor on the width settles the
+   common labels onto a grid; a longer one still grows rather than truncating. */
+.tracker-swatch-badge-column {
+  justify-content: center;
+  min-width: 4.75rem;
+}

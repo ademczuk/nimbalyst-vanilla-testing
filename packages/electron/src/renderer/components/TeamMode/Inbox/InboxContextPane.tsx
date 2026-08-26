@@ -7,6 +7,8 @@ import { CommentThread } from '../../Comments/CommentThread';
 import { createConversationCommentAdapter } from '../../Comments/ConversationCommentAdapter';
 import type { CommentCapabilities } from '../../Comments/commentTypes';
 import { FeedbackRequestSurface } from '../../FeedbackRequest/FeedbackRequestSurface';
+import { useOrgRoster } from '../../../hooks/useOrgRoster';
+import { toMentionDirectory } from '../roomViewModel';
 import { openActionLabel } from './inboxViewModel';
 import type { InboxRowView, InboxSubscriptionState } from './inboxTypes';
 
@@ -296,16 +298,16 @@ function InboxConversationThread({
       viewerActor,
     ],
   );
-  const directory = useMemo(() => ({
-    people: [{
-      userId: row.teamMemberId,
-      displayName: 'You',
-      handle: 'you',
-      avatarInitials: 'YO',
-    }],
-    agents: [],
-    displayNames: { [row.teamMemberId]: 'You' },
-  }), [row.teamMemberId]);
+  // The org roster, not just the viewer: a directory holding one person
+  // attributed every teammate's message to "Unknown member" and mislabelled
+  // their @-mentions with it (#3729). Same directory the room view builds, so
+  // the two surfaces agree. Pass the row's member id as the viewer rather than
+  // the roster's own email-resolved one, so "You" matches `viewerActor`.
+  const { members } = useOrgRoster(row.orgId);
+  const directory = useMemo(
+    () => toMentionDirectory(members, row.teamMemberId),
+    [members, row.teamMemberId],
+  );
 
   return (
     <div

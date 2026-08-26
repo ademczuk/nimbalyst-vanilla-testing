@@ -35,7 +35,10 @@ import { MCPServerConfig } from '../../../types/MCPServerConfig';
 import { safeJSONSerialize } from '../../../utils/serialization';
 import { AgentProtocolTranscriptAdapter } from './agentProtocol/AgentProtocolTranscriptAdapter';
 import { TranscriptMigrationRepository } from '../../../storage/repositories/TranscriptMigrationRepository';
-import { getOpenCodeModelCatalog } from './openCode/OpenCodeModelCatalog';
+import {
+  getOpenCodeColdModelCatalog,
+  getOpenCodeModelCatalog,
+} from './openCode/OpenCodeModelCatalog';
 
 interface OpenCodeProviderDeps {
   protocol?: OpenCodeSDKProtocol;
@@ -201,9 +204,18 @@ export class OpenCodeProvider extends BaseAgentProvider {
     return session;
   }
 
-  /** Read the cached live catalog without starting an OpenCode server. */
-  static async getModels(): Promise<AIModel[]> {
-    return (await getOpenCodeModelCatalog()).models;
+  /**
+   * Read the cached live catalog without starting an OpenCode server.
+   *
+   * `workspacePath` is a required parameter that accepts `undefined` so a
+   * caller with no project context has to say so rather than drift into the
+   * preset list by omission (#1382).
+   */
+  static async getModels(workspacePath: string | undefined): Promise<AIModel[]> {
+    if (!workspacePath) {
+      return (await getOpenCodeColdModelCatalog()).models;
+    }
+    return (await getOpenCodeModelCatalog(workspacePath)).models;
   }
 
   /**

@@ -399,6 +399,42 @@ export class TrackerDataModelRegistry {
     return layer.get(type) ?? this.builtinModels.get(type);
   }
 
+  /** True when a cached layer exists for a non-active workspace. */
+  hasWorkspaceLayer(workspacePath: string): boolean {
+    return this.workspaceLayers.has(workspacePath);
+  }
+
+  /**
+   * Resolve a type on behalf of an EXPLICIT workspace, with no dependence on
+   * ambient async context (#1359 / NIM-3702).
+   *
+   * `get()` reaches the right answer only when a scope provider is installed on
+   * the current async context, which is true for exactly one consumer — the MCP
+   * HTTP server, which wraps a whole request. The tracker sync lane is driven
+   * from a WebSocket `onStatusChange` callback that has no such relationship to
+   * whoever opened the workspace, so it lost the scope and read the *other*
+   * project's schemas. Callers that already hold a workspace path use this.
+   *
+   * Note the builtin fallback: `get()`'s unscoped branch does not have one, so
+   * a miss there returned `undefined` even for `bug`/`task`/`plan`/`decision`,
+   * all of which ship `sharing: team`. Both branches fall back here.
+   */
+  getForWorkspace(workspacePath: string | null | undefined, type: string): TrackerDataModel | undefined {
+    // The live view is authoritative for the active workspace, and no layer is
+    // cached for it — `setActiveWorkspace` drops one if it exists. Exactly one
+    // of the two answers for any workspace.
+    //
+    // An absent path means the caller could not say which workspace it is
+    // acting for (a row with no `workspace` column). Answer from the live view,
+    // which is what an unscoped `get()` did before this method existed —
+    // resolving such a caller against an empty layer would silently demote
+    // every custom type to "unknown".
+    if (!workspacePath || !this.activeWorkspace || workspacePath === this.activeWorkspace) {
+      return this.models.get(type) ?? this.builtinModels.get(type);
+    }
+    return this.workspaceLayers.get(workspacePath)?.get(type) ?? this.builtinModels.get(type);
+  }
+
   getAll(): TrackerDataModel[] {
     const layer = this.scopedLayer();
     if (!layer) return Array.from(this.models.values());

@@ -3,18 +3,15 @@
  * Uses @floating-ui/react + FloatingPortal to escape overflow:hidden/auto containers.
  */
 
-import React, { useState } from 'react';
-import {
-  useFloating,
-  offset,
-  flip,
-  shift,
-  FloatingPortal,
-  size,
-  useFloatingNodeId,
-} from '@floating-ui/react';
-import { windowControlsClearance } from '../../../ui/floating/windowControlsClearance';
+import React, { lazy, Suspense, useState } from 'react';
 import { MaterialSymbol } from '../../../ui/icons/MaterialSymbol';
+
+const loadCustomSelectPopover = () => import('./CustomSelectPopover');
+const CustomSelectPopover = lazy(() =>
+  loadCustomSelectPopover().then((module) => ({
+    default: module.CustomSelectPopover,
+  }))
+);
 
 export interface SelectOption {
   value: string;
@@ -39,41 +36,16 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   required = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [reference, setReference] = useState<HTMLButtonElement | null>(null);
 
-  // Registering in the floating tree is what tells an enclosing popover that a
-  // press on one of these options happened *inside* it. Without it the parent
-  // dismisses itself and unmounts the option before its click lands, so the
-  // select looks like it simply refuses to accept a choice.
-  const nodeId = useFloatingNodeId();
-
-  const { refs, floatingStyles } = useFloating({
-    nodeId,
-    open: isOpen,
-    onOpenChange: setIsOpen,
-    placement: 'bottom-start',
-    middleware: [
-      offset(4),
-      flip({ padding: 8 }),
-      shift({ padding: 8 }),
-      windowControlsClearance(),
-      size({
-        apply({ rects, elements }) {
-          Object.assign(elements.floating.style, {
-            minWidth: `${rects.reference.width}px`,
-          });
-        },
-      }),
-    ],
-  });
-
-  const selectedOption = options.find(opt => opt.value === value);
+  const selectedOption = options.find((opt) => opt.value === value);
 
   const handleSelect = (optionValue: string) => {
     onChange(optionValue);
     setIsOpen(false);
   };
 
-  const handleToggle = () => setIsOpen(prev => !prev);
+  const handleToggle = () => setIsOpen((prev) => !prev);
 
   const handleBlur = (e: React.FocusEvent) => {
     // Close if focus leaves both the trigger and the floating panel
@@ -83,12 +55,24 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   };
 
   return (
-    <div className="custom-select relative inline-block w-full" onBlur={handleBlur}>
+    <div
+      className="custom-select relative inline-block w-full"
+      onBlur={handleBlur}
+    >
       <button
-        ref={refs.setReference}
+        ref={setReference}
         type="button"
         className="custom-select-trigger flex items-center justify-between w-full py-1.5 px-2 bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded text-[13px] text-[var(--nim-text)] cursor-pointer transition-all duration-150 hover:bg-[var(--nim-bg-hover)] hover:border-[var(--nim-primary)] focus:outline-none focus:border-[var(--nim-primary)] focus:shadow-[0_0_0_2px_rgba(59,130,246,0.1)]"
         onClick={handleToggle}
+        onPointerEnter={() => {
+          void loadCustomSelectPopover();
+        }}
+        onFocus={() => {
+          void loadCustomSelectPopover();
+        }}
+        onPointerDown={() => {
+          void loadCustomSelectPopover();
+        }}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
       >
@@ -111,43 +95,26 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
             <span>{String(value)}</span>
           </span>
         ) : (
-          <span className="custom-select-placeholder text-[var(--nim-text-faint)]">{placeholder}</span>
+          <span className="custom-select-placeholder text-[var(--nim-text-faint)]">
+            {placeholder}
+          </span>
         )}
-        <MaterialSymbol icon={isOpen ? 'expand_less' : 'expand_more'} size={16} />
+        <MaterialSymbol
+          icon={isOpen ? 'expand_less' : 'expand_more'}
+          size={16}
+        />
       </button>
 
-      {isOpen && (
-        <FloatingPortal>
-          <div
-            ref={refs.setFloating}
-            className="custom-select-dropdown bg-[var(--nim-bg)] border border-[var(--nim-border)] rounded shadow-[0_4px_12px_rgba(0,0,0,0.15)] max-h-[300px] overflow-y-auto z-[9999]"
-            style={floatingStyles}
-            onMouseDown={(e) => e.preventDefault()} // prevent blur before click registers
-          >
-            {!required && (
-              <button
-                type="button"
-                className="custom-select-option flex items-center gap-1.5 w-full py-2 px-2.5 border-none cursor-pointer text-[13px] text-[var(--nim-text)] text-left transition-colors duration-100 hover:bg-[var(--nim-bg-hover)]"
-                onClick={() => handleSelect('')}
-              >
-                <span className="custom-select-option-label flex-1">None</span>
-              </button>
-            )}
-            {options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`custom-select-option flex items-center gap-1.5 w-full py-2 px-2.5 border-none cursor-pointer text-[13px] text-[var(--nim-text)] text-left transition-colors duration-100 hover:bg-[var(--nim-bg-hover)] ${option.value === value ? 'selected bg-[var(--nim-bg-tertiary)] font-medium' : ''}`}
-                onClick={() => handleSelect(option.value)}
-              >
-                {option.icon && (
-                  <MaterialSymbol icon={option.icon} size={16} />
-                )}
-                <span className="custom-select-option-label flex-1">{option.label}</span>
-              </button>
-            ))}
-          </div>
-        </FloatingPortal>
+      {isOpen && reference && (
+        <Suspense fallback={null}>
+          <CustomSelectPopover
+            reference={reference}
+            value={value}
+            options={options}
+            required={required}
+            onSelect={handleSelect}
+          />
+        </Suspense>
       )}
     </div>
   );

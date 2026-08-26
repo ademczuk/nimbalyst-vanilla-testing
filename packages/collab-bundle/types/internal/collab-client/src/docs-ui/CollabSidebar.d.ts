@@ -1,4 +1,5 @@
 import React from 'react';
+import './collabSidebarTree.css';
 export interface CollabSidebarProps {
     activeDocumentId?: string | null;
     /** Open the discovery hub (center pane). Shown as a Home action. */

@@ -14,6 +14,7 @@
 
 import type {
   FeedbackAsk,
+  FeedbackAskArtifact,
   FeedbackAskAssignment,
   FeedbackRequestRecipient,
   FeedbackRequestVisibility,
@@ -90,6 +91,43 @@ function parseSubject(value: unknown, fallbackOrgId: string): FeedbackComposeSub
   };
 }
 
+/**
+ * Per-entry artifacts, which is what makes "pick one of these three mockups" a
+ * visual question rather than three strings.
+ *
+ * Dropping these was invisible in the worst way: the ask still rendered, every
+ * option still had its label and description, and the only symptom was that the
+ * author reviewing a draft saw no mockups -- with nothing on screen to suggest
+ * the binding had been silently discarded on the way in.
+ *
+ * An artifact naming an entry that does not exist is discarded rather than
+ * kept: it can never be rendered, and carrying it would put a resource in the
+ * publish list that no question refers to.
+ */
+function parseAskArtifacts(
+  value: unknown,
+  entryIds: ReadonlySet<string>,
+  fallbackOrgId: string,
+): FeedbackAskArtifact[] {
+  if (!Array.isArray(value)) return [];
+  const parsed: FeedbackAskArtifact[] = [];
+  for (const candidate of value) {
+    const record = asRecord(candidate);
+    if (!record) continue;
+    const entryId = asString(record.entryId);
+    if (!entryId || !entryIds.has(entryId)) continue;
+    const ref = parseResourceRef(record.ref ?? record, fallbackOrgId);
+    if (!ref) continue;
+    parsed.push({
+      entryId,
+      ref,
+      label: asString(record.label) ?? ref.sourceId,
+      context: asString(record.context) ?? undefined,
+    });
+  }
+  return parsed;
+}
+
 function parseSelectOptions(value: unknown): Array<{ id: string; label: string; description?: string }> {
   if (!Array.isArray(value)) return [];
   const parsed: Array<{ id: string; label: string; description?: string }> = [];
@@ -135,7 +173,7 @@ function parseItems(
 }
 
 /** Returns null for anything that cannot render as one of the six ask types. */
-function parseAsk(value: unknown): FeedbackAsk | null {
+function parseAsk(value: unknown, fallbackOrgId: string): FeedbackAsk | null {
   const record = asRecord(value);
   if (!record) return null;
   const id = asString(record.id);
@@ -148,6 +186,11 @@ function parseAsk(value: unknown): FeedbackAsk | null {
     case 'singleSelect': {
       const options = parseSelectOptions(record.options);
       if (options.length === 0) return null;
+      const artifacts = parseAskArtifacts(
+        record.artifacts,
+        new Set(options.map((option) => option.id)),
+        fallbackOrgId,
+      );
       return {
         type: 'singleSelect',
         id,
@@ -155,6 +198,7 @@ function parseAsk(value: unknown): FeedbackAsk | null {
         description,
         options,
         allowOther: record.allowOther === true ? true : undefined,
+        ...(artifacts.length > 0 ? { artifacts } : {}),
       };
     }
     case 'multiSelect': {
@@ -173,6 +217,11 @@ function parseAsk(value: unknown): FeedbackAsk | null {
     case 'reorder': {
       const items = parseItems(record.items);
       if (items.length === 0) return null;
+      const artifacts = parseAskArtifacts(
+        record.artifacts,
+        new Set(items.map((item) => item.id)),
+        fallbackOrgId,
+      );
       return {
         type: 'reorder',
         id,
@@ -180,6 +229,7 @@ function parseAsk(value: unknown): FeedbackAsk | null {
         description,
         items,
         minItems: asNumber(record.minItems) ?? undefined,
+        ...(artifacts.length > 0 ? { artifacts } : {}),
       };
     }
     case 'editText': {
@@ -269,7 +319,9 @@ export function parseFeedbackComposeArgs(
 
   const orgId = asString(record.orgId) ?? '';
   const asks = Array.isArray(record.asks)
-    ? record.asks.map(parseAsk).filter((ask): ask is FeedbackAsk => ask !== null)
+    ? record.asks
+        .map((ask) => parseAsk(ask, orgId))
+        .filter((ask): ask is FeedbackAsk => ask !== null)
     : [];
   if (asks.length === 0) return null;
 
