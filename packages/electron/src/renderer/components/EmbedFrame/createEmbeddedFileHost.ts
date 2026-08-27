@@ -68,6 +68,21 @@ export interface EmbeddedFileHostOptions {
    */
   subscribeToReadOnlyChanges(cb: (readOnly: boolean) => void): () => void;
   /**
+   * Lets one write through while `getReadOnly()` is true.
+   *
+   * The read-only guard on `saveContent` stops a misbehaving extension from
+   * clobbering disk from view mode, and that is worth keeping. But the write
+   * that matters most arrives exactly when the guard has just closed: an
+   * embed going back to view mode, or a canvas card cooling out of hot, still
+   * holds the edit the user typed a moment ago, and the flush that carries it
+   * is the *end* of the edit session, not a new write during view mode.
+   *
+   * `EmbeddedAutosaveController.isFlushing` is the intended implementation --
+   * it is true only for the duration of one deliberate exit-path flush. A host
+   * that omits this keeps the old absolute guard.
+   */
+  allowSaveWhileReadOnly?(): boolean;
+  /**
    * Called by the host (extension) whenever its dirty state changes.
    * EmbedFrame records this so it can drive the autosave timer and show
    * a dirty indicator in the chrome.
@@ -127,9 +142,10 @@ export function createEmbeddedFileHost(
     // flow. The extension doesn't need to know which mode it's in -- it
     // just calls setDirty/saveContent as usual.
     async saveContent(content) {
-      if (opts.getReadOnly()) {
+      if (opts.getReadOnly() && !opts.allowSaveWhileReadOnly?.()) {
         // Hard guard: a misbehaving extension still won't clobber disk
-        // while the user is in view mode.
+        // while the user is in view mode. The one exception is an
+        // exit-path flush -- see `allowSaveWhileReadOnly`.
         return;
       }
       await opts.saveFile(opts.embedPath, content);

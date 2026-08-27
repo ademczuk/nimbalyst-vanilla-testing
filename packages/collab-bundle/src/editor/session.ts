@@ -207,6 +207,14 @@ export function createCollabDocumentSession(
             setServerAccess('writable');
             return;
           }
+          // The sync response's verdict, unlike an ack, arrives without the
+          // client having written anything. It carries no rejection: nothing
+          // was attempted, so there is no flush to interrupt and no
+          // clientUpdateId to correlate.
+          if (signal.type === 'access-verdict') {
+            setServerAccess(signal.canWrite ? 'writable' : 'read-only');
+            return;
+          }
           if (signal.type === 'read-only') {
             const rejection: CollabEditorWriteRejection = {
               code: 'document_read_only',

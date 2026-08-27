@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CLAUDE_CODE_VARIANTS, ModelIdentifier } from '@nimbalyst/runtime/ai/server/types';
-import { isModelEnabled } from '../modelEnablementFilter';
+import { isModelEnabled, resolveProviderEnabled } from '../modelEnablementFilter';
 
 /**
  * The gate that once hid Fable 5 from the picker (NIM-1486). These lock in the
@@ -83,5 +83,31 @@ describe('isModelEnabled', () => {
       expect(isModelEnabled({ id: 'claude-code-cli:haiku', provider: 'claude-code-cli' }, entry)).toBe(false);
       expect(isModelEnabled({ id: 'claude-code:haiku', provider: 'claude-code' }, entry)).toBe(true);
     });
+  });
+});
+
+/**
+ * The terminal-CLI provider used to default ON, so its models appeared in the
+ * picker for everyone even though the settings toggle rendered off. Using a
+ * Claude subscription never required it — Claude Agent already runs on the
+ * subscription — so an absent setting must mean disabled.
+ */
+describe('resolveProviderEnabled', () => {
+  it('claude-code-cli is off until explicitly enabled', () => {
+    expect(resolveProviderEnabled('claude-code-cli', undefined)).toBe(false);
+    expect(resolveProviderEnabled('claude-code-cli', {})).toBe(false);
+    expect(resolveProviderEnabled('claude-code-cli', { enabled: true })).toBe(true);
+    expect(resolveProviderEnabled('claude-code-cli', { enabled: false })).toBe(false);
+  });
+
+  it('claude-code stays on by default — it is the app default agent', () => {
+    expect(resolveProviderEnabled('claude-code', undefined)).toBe(true);
+    expect(resolveProviderEnabled('claude-code', { enabled: false })).toBe(false);
+  });
+
+  it('every other provider is opt-in', () => {
+    for (const provider of ['claude', 'openai', 'lmstudio', 'opencode']) {
+      expect(resolveProviderEnabled(provider, undefined)).toBe(false);
+    }
   });
 });

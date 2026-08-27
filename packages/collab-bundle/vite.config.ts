@@ -200,6 +200,9 @@ export default defineConfig({
         // host can resolve an extension's externalized comment-UI import to the
         // one instance this build already owns. See src/commenting-ui.ts.
         'commenting-ui': resolve(import.meta.dirname, 'src/commenting-ui.ts'),
+        // Its own entry so a host that never opens a board never fetches
+        // `@xyflow/react`. See src/canvas.ts.
+        canvas: resolve(import.meta.dirname, 'src/canvas.ts'),
         editor: resolve(import.meta.dirname, 'src/editor/index.ts'),
         'docs-ui': resolve(import.meta.dirname, 'src/docs-ui.ts'),
         'feedback-ui': resolve(import.meta.dirname, 'src/feedback-ui.ts'),

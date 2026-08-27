@@ -30,21 +30,21 @@
  * proxy -- `document-sync:ws-connect` itself never rewrites URLs.
  */
 
-import { app } from 'electron';
+import { app } from "electron";
 import {
   asTeamJwt,
   asTeamMemberId,
   type TeamMemberId,
-} from '@nimbalyst/runtime/auth/jwtScopes';
-import { removeHandler, safeHandle } from '../utils/ipcRegistry';
-import { logger } from '../utils/logger';
-import { getWorkspaceState } from '../utils/store';
-import { resolveCollabDocumentType } from './collabDocumentTypeResolver';
-import { setLocalOriginTeamResolverForTests } from '../services/collabLocalOriginTeam';
+} from "@nimbalyst/runtime/auth/jwtScopes";
+import { removeHandler, safeHandle } from "../utils/ipcRegistry";
+import { logger } from "../utils/logger";
+import { getWorkspaceState } from "../utils/store";
+import { resolveCollabDocumentType } from "./collabDocumentTypeResolver";
+import { setLocalOriginTeamResolverForTests } from "../services/collabLocalOriginTeam";
 import {
   clearCollabAssetSender,
   registerCollabAssetDocument,
-} from '../protocols/collabAssetProtocol';
+} from "../protocols/collabAssetProtocol";
 
 interface CollabTestIdentity {
   serverUrl: string;
@@ -59,11 +59,11 @@ interface CollabTestIdentity {
  * worker authorizes off `test_user_id` / `test_org_id` before it ever looks at
  * a token, so the value is opaque and never verified.
  */
-const TEST_BRIDGE_JWT = asTeamJwt('collab-test-bridge-jwt');
+const TEST_BRIDGE_JWT = asTeamJwt("collab-test-bridge-jwt");
 
 function resolveCollabTestIdentity(): CollabTestIdentity | null {
   if (app.isPackaged) return null;
-  if (process.env.PLAYWRIGHT !== '1') return null;
+  if (process.env.PLAYWRIGHT !== "1") return null;
 
   const serverUrl = process.env.NIMBALYST_E2E_COLLAB_SERVER_URL;
   const orgId = process.env.NIMBALYST_E2E_COLLAB_ORG_ID;
@@ -72,11 +72,17 @@ function resolveCollabTestIdentity(): CollabTestIdentity | null {
   const teamMemberId = asTeamMemberId(rawTeamMemberId);
 
   const parsed = new URL(serverUrl);
-  const isLoopback = parsed.hostname === 'localhost'
-    || parsed.hostname === '127.0.0.1'
-    || parsed.hostname === '::1';
-  if (!isLoopback || (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:')) {
-    throw new Error('Playwright collab test server must be a loopback WebSocket URL');
+  const isLoopback =
+    parsed.hostname === "localhost" ||
+    parsed.hostname === "127.0.0.1" ||
+    parsed.hostname === "::1";
+  if (
+    !isLoopback ||
+    (parsed.protocol !== "ws:" && parsed.protocol !== "wss:")
+  ) {
+    throw new Error(
+      "Playwright collab test server must be a loopback WebSocket URL"
+    );
   }
 
   const urlExtraQuery = new URLSearchParams({
@@ -103,8 +109,8 @@ export function registerCollabTestIdentityHandlers(): void {
   if (!identity) return;
 
   logger.main.warn(
-    '[CollabTestIdentity] Playwright collab identity bridge active -- '
-    + `document-sync auth replaced for ${identity.serverUrl} (org ${identity.orgId})`,
+    "[CollabTestIdentity] Playwright collab identity bridge active -- " +
+      `document-sync auth replaced for ${identity.serverUrl} (org ${identity.orgId})`
   );
 
   // Local-origin bindings resolve their org through the same team discovery
@@ -123,64 +129,93 @@ export function registerCollabTestIdentityHandlers(): void {
     gitRemoteHash: null,
   }));
 
-  removeHandler('document-sync:open');
-  safeHandle('document-sync:open', async (event, payload: {
-    workspacePath: string;
-    documentId: string;
-    title?: string;
-    documentType?: string;
-  }) => {
-    const workspaceState = getWorkspaceState(payload.workspacePath);
-    const resolvedDocumentType = resolveCollabDocumentType({
-      callerDocumentType: payload.documentType,
-      workspaceState: workspaceState as unknown as { openCollabDocumentEntries?: unknown },
-      documentId: payload.documentId,
-    });
+  // App's Org/Shared mode guard resolves the active workspace through this
+  // channel, independently of document-sync:resolve-index-config. Without the
+  // matching test identity it immediately redirects a correctly opened shared
+  // tab back to Files, leaving the real collaborative editor at 0x0.
+  removeHandler("team:find-for-workspace");
+  safeHandle("team:find-for-workspace", async () => ({
+    success: true,
+    complete: true,
+    team: {
+      orgId: identity.orgId,
+      name: identity.orgId,
+      teamProjectId: null,
+    },
+  }));
 
-    const senderId = event.sender.id;
-    registerCollabAssetDocument(identity.orgId, payload.documentId, senderId);
-    if (!event.sender.isDestroyed() && !senderDestroyedHooked.has(senderId)) {
-      senderDestroyedHooked.add(senderId);
-      event.sender.once('destroyed', () => {
-        senderDestroyedHooked.delete(senderId);
-        clearCollabAssetSender(senderId);
-      });
-    }
-
-    return {
-      success: true,
-      config: {
-        orgId: identity.orgId,
+  removeHandler("document-sync:open");
+  safeHandle(
+    "document-sync:open",
+    async (
+      event,
+      payload: {
+        workspacePath: string;
+        documentId: string;
+        title?: string;
+        documentType?: string;
+      }
+    ) => {
+      const workspaceState = getWorkspaceState(payload.workspacePath);
+      const resolvedDocumentType = resolveCollabDocumentType({
+        callerDocumentType: payload.documentType,
+        workspaceState: workspaceState as unknown as {
+          openCollabDocumentEntries?: unknown;
+        },
         documentId: payload.documentId,
-        title: payload.title || payload.documentId,
-        documentType: resolvedDocumentType,
-        serverUrl: identity.serverUrl,
-        accountId: identity.teamMemberId,
-        teamMemberId: identity.teamMemberId,
-        userName: 'Playwright User',
-        userEmail: `${identity.teamMemberId}@example.test`,
-        urlExtraQuery: identity.urlExtraQuery,
-      },
-    };
-  });
+      });
 
-  removeHandler('document-sync:get-jwt');
-  safeHandle('document-sync:get-jwt', async (_event, payload: { orgId: string }) => {
-    if (payload?.orgId !== identity.orgId) {
-      return { success: false, error: 'Unknown org for the collab test identity bridge' };
+      const senderId = event.sender.id;
+      registerCollabAssetDocument(identity.orgId, payload.documentId, senderId);
+      if (!event.sender.isDestroyed() && !senderDestroyedHooked.has(senderId)) {
+        senderDestroyedHooked.add(senderId);
+        event.sender.once("destroyed", () => {
+          senderDestroyedHooked.delete(senderId);
+          clearCollabAssetSender(senderId);
+        });
+      }
+
+      return {
+        success: true,
+        config: {
+          orgId: identity.orgId,
+          documentId: payload.documentId,
+          title: payload.title || payload.documentId,
+          documentType: resolvedDocumentType,
+          serverUrl: identity.serverUrl,
+          accountId: identity.teamMemberId,
+          teamMemberId: identity.teamMemberId,
+          userName: "Playwright User",
+          userEmail: `${identity.teamMemberId}@example.test`,
+          urlExtraQuery: identity.urlExtraQuery,
+        },
+      };
     }
-    return { success: true, jwt: TEST_BRIDGE_JWT };
-  });
+  );
 
-  removeHandler('document-sync:resolve-index-config');
-  safeHandle('document-sync:resolve-index-config', async () => ({
+  removeHandler("document-sync:get-jwt");
+  safeHandle(
+    "document-sync:get-jwt",
+    async (_event, payload: { orgId: string }) => {
+      if (payload?.orgId !== identity.orgId) {
+        return {
+          success: false,
+          error: "Unknown org for the collab test identity bridge",
+        };
+      }
+      return { success: true, jwt: TEST_BRIDGE_JWT };
+    }
+  );
+
+  removeHandler("document-sync:resolve-index-config");
+  safeHandle("document-sync:resolve-index-config", async () => ({
     success: true,
     config: {
       orgId: identity.orgId,
       teamProjectId: null,
       serverUrl: identity.serverUrl,
       teamMemberId: identity.teamMemberId,
-      userName: 'Playwright User',
+      userName: "Playwright User",
       userEmail: `${identity.teamMemberId}@example.test`,
       urlExtraQuery: identity.urlExtraQuery,
     },

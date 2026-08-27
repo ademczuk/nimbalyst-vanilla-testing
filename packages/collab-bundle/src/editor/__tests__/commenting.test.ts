@@ -7,22 +7,24 @@ import {
 } from '../commenting';
 
 describe('collab editor comments state', () => {
-  it('combines the host role answer with server access, and hydrates on first connection', () => {
-    // A roster-derived role is not authoritative for this document. Until the
-    // server has acknowledged access, authoring must fail closed.
-    const beforeAnyWrite = deriveCollabEditorCommentsState({
-      connection: 'syncing',
-      serverAccess: 'unknown',
-      hasConnectedOnce: false,
-      hostCanComment: true,
-    });
-    expect(beforeAnyWrite).toEqual({
-      hasConnectedOnce: false,
-      isHydrated: false,
-      capabilities: { read: true, comment: false },
-    });
+  it('lets a permitted host comment before it has written anything', () => {
+    // The regression this guards: `serverAccess` only reaches 'writable' when
+    // the server acknowledges a docUpdate, so a reader who opens a document to
+    // annotate it and never types stays at 'unknown' for the whole session.
+    // Requiring positive write evidence made commenting-without-editing
+    // unreachable for every web console user, admins included.
+    for (const serverAccess of ['unknown', 'writable', 'not-applicable'] as const) {
+      expect(deriveCollabEditorCommentsState({
+        connection: 'connected',
+        serverAccess,
+        hasConnectedOnce: true,
+        hostCanComment: true,
+      }).capabilities).toEqual({ read: true, comment: true });
+    }
+  });
 
-    // The host's answer is authoritative in the other direction: a viewer is
+  it('refuses when either the host role or the server says no', () => {
+    // The host's answer is authoritative in the negative direction: a viewer is
     // refused on a connection the server has said nothing about.
     for (const serverAccess of ['unknown', 'writable', 'not-applicable'] as const) {
       expect(deriveCollabEditorCommentsState({
@@ -33,8 +35,10 @@ describe('collab editor comments state', () => {
       }).capabilities).toEqual({ read: true, comment: false });
     }
 
-    // Every unavailable or negative server answer overrides a host that says yes.
-    for (const serverAccess of ['unknown', 'read-only', 'revoked', 'not-applicable'] as const) {
+    // A server verdict that refuses writes overrides a host that says yes. This
+    // is how a stale role projection is withdrawn: the first rejected write
+    // moves `serverAccess` off 'unknown' and the affordance disappears.
+    for (const serverAccess of ['read-only', 'revoked'] as const) {
       expect(deriveCollabEditorCommentsState({
         connection: 'connected',
         serverAccess,
@@ -42,10 +46,20 @@ describe('collab editor comments state', () => {
         hostCanComment: true,
       }).capabilities).toEqual({ read: true, comment: false });
     }
+  });
+
+  it('hydrates on first connection and stays hydrated across a drop', () => {
+    const beforeConnecting = deriveCollabEditorCommentsState({
+      connection: 'syncing',
+      serverAccess: 'unknown',
+      hasConnectedOnce: false,
+      hostCanComment: true,
+    });
+    expect(beforeConnecting.isHydrated).toBe(false);
 
     const connected = deriveCollabEditorCommentsState({
       connection: 'connected',
-      serverAccess: 'writable',
+      serverAccess: 'unknown',
       hasConnectedOnce: false,
       hostCanComment: true,
     });

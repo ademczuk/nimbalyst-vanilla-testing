@@ -153,6 +153,21 @@ export const CrossSessionToolWidget: React.FC<CustomToolWidgetProps> = ({
           {action.icon}
         </span>
         <span style={{ fontWeight: 600 }}>{action.label}</span>
+        {args.interrupt === true ? (
+          <span
+            className="cross-session-tool-widget-interrupt"
+            title="Sent with interrupt: the target session's current turn was stopped"
+            style={{
+              fontSize: '11px',
+              padding: '1px 6px',
+              borderRadius: '999px',
+              background: 'var(--nim-bg-tertiary)',
+              color: 'var(--nim-text-muted)',
+            }}
+          >
+            interrupt
+          </span>
+        ) : null}
         {sessionIds.length > 0 ? (
           <span
             className="material-symbols-outlined"

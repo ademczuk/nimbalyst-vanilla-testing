@@ -6,12 +6,13 @@ import {ClaudeForWindowsInstallation} from "../../../../main/services/CLIManager
 import {usePostHog} from "posthog-js/react";
 import { hiddenGutterItemsAtom, toggleGutterItemHiddenAtom } from '../../../store/atoms/appSettings';
 import { SettingsToggle, ToggleSwitch } from '../SettingsToggle';
+import { AlphaBadge, SETTINGS_ALPHA_TOOLTIP } from '../../common/AlphaBadge';
 
 // Built-in SDK version (injected at build time via electron.vite.config.ts define)
 declare const __CLAUDE_AGENT_SDK_VERSION__: string;
 const BUNDLED_SDK_VERSION = typeof __CLAUDE_AGENT_SDK_VERSION__ !== 'undefined' ? __CLAUDE_AGENT_SDK_VERSION__ : 'unknown';
 
-/** Props for the sibling Claude Code CLI (subscription) subsection. */
+/** Props for the sibling Claude Code CLI subsection. */
 interface ClaudeCliBundle {
   config: ProviderConfig;
   availableModels: Model[];
@@ -33,7 +34,7 @@ interface ClaudeCodePanelProps {
   onSetAllVisible: (visible: boolean) => void;
   onTestConnection: () => Promise<void>;
   onConfigChange: (updates: Partial<ProviderConfig>) => void;
-  /** The subscription-CLI provider (`claude-code-cli`), toggled independently. */
+  /** The terminal-CLI provider (`claude-code-cli`), toggled independently. */
   cli: ClaudeCliBundle;
   /** Scope this panel is rendered for: 'user' edits global settings, 'project' edits the workspace override. */
   scope?: 'user' | 'project';
@@ -841,23 +842,27 @@ export function ClaudeCodePanel({
         </>
       )}
 
-      {/* Claude Code CLI (Subscription) — a separate provider (`claude-code-cli`)
-          that runs the genuine `claude` CLI on the user's Pro/Max plan. Enabled
+      {/* Claude Code CLI — a separate provider (`claude-code-cli`) that runs the
+          genuine `claude` binary in a terminal. Off by default: it's a workflow
+          preference, not a prerequisite for using a Claude subscription. Enabled
           and trimmed independently of the SDK above. */}
       <div className="provider-panel-section py-4 mb-4 mt-2 border-t border-[var(--nim-border)] last:mb-0 last:pb-0">
-        <h4 className="provider-panel-section-title text-base font-semibold mb-1 text-[var(--nim-text)]">Claude Code CLI (Subscription)</h4>
+        <h4 className="provider-panel-section-title text-base font-semibold mb-1 text-[var(--nim-text)] flex items-center gap-2">
+          Claude Code CLI
+          <AlphaBadge size="sm" tooltip={SETTINGS_ALPHA_TOOLTIP} />
+        </h4>
         <p className="text-xs leading-relaxed text-[var(--nim-text-muted)] mb-3">
-          Runs the genuine <code className="text-xs bg-[var(--nim-bg-tertiary)] px-1 py-0.5 rounded">claude</code> CLI on your Pro/Max subscription. No API metering. Enable or disable this set independently of the SDK.
+          For people who prefer working in the <code className="text-xs bg-[var(--nim-bg-tertiary)] px-1 py-0.5 rounded">claude</code> command-line tool itself. It runs the genuine CLI in a terminal instead of the agent above. You don&rsquo;t need this to use your Claude subscription: Claude Agent already runs on your subscription once you sign in with your Claude plan. Enable or disable this set independently of the SDK.
         </p>
 
         <SettingsToggle
           variant="enable"
           name="Enable Claude Code CLI"
-          checked={cli.config.enabled ?? true}
+          checked={cli.config.enabled ?? false}
           onChange={(checked) => cli.onToggle(checked)}
         />
 
-        {(cli.config.enabled ?? true) && (
+        {(cli.config.enabled ?? false) && (
           <AvailableModelsSection
             models={cli.availableModels}
             hiddenModels={cli.config.hiddenModels || []}

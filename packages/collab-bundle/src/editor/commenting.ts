@@ -39,13 +39,24 @@ export async function resolveDocumentCommentCapabilities(
 /**
  * Whether this user may author comments, from the two facts that decide it.
  *
- * Neither is sufficient alone, and the failure modes are opposite.
+ * The host's role-derived answer is the grant, and a server verdict that
+ * refuses writes is the veto.
  *
- * The host's role-derived answer is only a local projection. It cannot grant
- * access while the server verdict is unknown, because the document may have
- * been downgraded since that projection was populated. Comment authoring is
- * therefore available only after the transport has authoritative positive
- * evidence. Every unavailable or negative server state fails closed.
+ * This deliberately does *not* require positive write evidence from the
+ * transport. `serverAccess` only reaches 'writable' when the server
+ * acknowledges a `docUpdate`, and the server emits that ack in no other
+ * circumstance -- so demanding it made commenting conditional on having first
+ * edited the document. Opening a shared document purely to annotate it, which
+ * is the whole point of the comment panel, was unreachable for every browser
+ * user regardless of role.
+ *
+ * The residual risk is a host projection that has gone stale: an org `member`
+ * whose project grant was downgraded is offered an affordance the server will
+ * refuse. That is bounded and self-correcting rather than silent -- the refusal
+ * arrives as `document_read_only`, which moves `serverAccess` to 'read-only'
+ * and withdraws the affordance here. The two roles that must never reach it,
+ * `viewer` and `guest`, are refused by the host answer itself and never depend
+ * on the veto.
  */
 export function deriveCollabEditorCommentsState(options: {
   connection: CollabEditorConnectionState;
@@ -55,12 +66,14 @@ export function deriveCollabEditorCommentsState(options: {
   hostCanComment: boolean;
 }): CollabEditorCommentsState {
   const hasConnectedOnce = options.hasConnectedOnce || options.connection === 'connected';
+  const serverRefusesWrites = options.serverAccess === 'read-only'
+    || options.serverAccess === 'revoked';
   return {
     hasConnectedOnce,
     isHydrated: hasConnectedOnce,
     capabilities: {
       read: true,
-      comment: options.hostCanComment && options.serverAccess === 'writable',
+      comment: options.hostCanComment && !serverRefusesWrites,
     },
   };
 }

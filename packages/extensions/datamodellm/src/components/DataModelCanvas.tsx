@@ -22,6 +22,7 @@ import {
   applyEdgeChanges,
   type NodeTypes,
   type EdgeTypes,
+  type OnNodeDrag,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { EntityNode, type EntityNodeData } from './EntityNode';
@@ -203,8 +204,8 @@ export const DataModelCanvas = forwardRef<DataModelCanvasRef, DataModelCanvasPro
   );
 
   // Handle node drag stop - save position to store
-  const onNodeDragStop = useCallback(
-    (_event: React.MouseEvent, node: Node) => {
+  const onNodeDragStop: OnNodeDrag<Node<EntityNodeData>> = useCallback(
+    (_event, node) => {
       store.getState().updateEntity(node.id, { position: node.position });
     },
     [store]

@@ -576,6 +576,23 @@ interface ElectronAPI {
     resultChannel: string,
     result: { success: boolean; result?: unknown; code?: string; error?: string },
   ) => void;
+  onMcpCanvasWorkingSet: (callback: (data: {
+    mode: 'declare' | 'release';
+    board: string;
+    nodeIds?: string[];
+    agent: { sessionId: string; sessionName: string };
+    resultChannel: string;
+  }) => void) => () => void;
+  sendMcpCanvasWorkingSetResult: (
+    resultChannel: string,
+    result: {
+      success: boolean;
+      published?: boolean;
+      nodeIds?: string[];
+      code?: string;
+      error?: string;
+    },
+  ) => void;
   onMcpCreateSharedDoc: (callback: (data: { title: string, documentType?: string, parentFolderId?: string | null, folderPath?: string, initialContent?: string, resultChannel: string }) => void) => () => void;
   onMcpCreateSharedFolder: (callback: (data: { name: string, parentFolderId?: string | null, folderPath?: string, resultChannel: string }) => void) => () => void;
   onMcpMoveSharedItem: (callback: (data: { itemId: string, kind: 'doc' | 'folder', newParentFolderId?: string | null, folderPath?: string, resultChannel: string }) => void) => () => void;

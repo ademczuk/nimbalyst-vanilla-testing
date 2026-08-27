@@ -22,6 +22,7 @@
  * - Message reloads (ai:message-logged) for sessions not currently mounted
  */
 
+import { canvasWorkingSetRegistry } from '@nimbalyst/runtime/canvas/canvasPresence';
 import { store } from '@nimbalyst/runtime/store';
 import {
   sessionProcessingAtom,
@@ -285,6 +286,13 @@ export function initSessionStateListeners(): () => void {
       type === 'session:error' ||
       type === 'session:interrupted';
     if (isTerminalEvent) {
+      // A session that has stopped is not editing anything, whether it stopped
+      // by finishing, by erroring, or by being interrupted. This is the local
+      // half of working-set expiry: a session that dies mid-edit without
+      // calling release must not leave a canvas card haloed. The other half is
+      // structural -- awareness drops the whole entry when this client goes
+      // away, taking every claim it carried with it.
+      canvasWorkingSetRegistry.apply({ type: 'disconnect', sessionId });
       store.set(sessionProcessingAtom(sessionId), false);
       store.set(sessionHasPendingInteractivePromptAtom(sessionId), false);
       // Also clear the workspace-scoped streaming flag. The atom looks up

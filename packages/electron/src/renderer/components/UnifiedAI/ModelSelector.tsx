@@ -308,8 +308,11 @@ export function ModelSelector({
     if (providerLabels[provider]) return providerLabels[provider];
     switch (provider) {
       case 'claude': return 'Claude Chat';
-      case 'claude-code': return 'Claude Agent (Claude Code Based)';
-      case 'claude-code-cli': return 'Claude Code CLI (Subscription)';
+      // The default agent, and the one a Claude subscription runs on without any
+      // extra setup. What it's built on lives in the hover help, so the
+      // parenthetical here is spent steering the choice instead.
+      case 'claude-code': return 'Claude Agent (Recommended)';
+      case 'claude-code-cli': return 'Claude Code CLI';
       case 'openai': return 'OpenAI';
       case 'openai-codex': return 'OpenAI Codex';
       case 'openai-codex-acp': return 'OpenAI Codex (ACP)';

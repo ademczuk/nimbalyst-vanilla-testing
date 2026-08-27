@@ -55,6 +55,7 @@ import { registerAttachmentHandlers } from './ipc/AttachmentHandlers';
 import { registerThemeHandlers } from './ipc/ThemeHandlers';
 import { registerWorkspaceWatcherHandlers } from './file/WorkspaceWatcher';
 import { setupSessionFileHandlers } from './ipc/SessionFileHandlers';
+import { setupCanvasRevisionProvenanceHandlers } from './ipc/CanvasRevisionProvenanceHandlers';
 import { registerSlashCommandHandlers } from './ipc/SlashCommandHandlers';
 import { registerActionPromptHandlers } from './ipc/ActionPromptHandlers';
 import { registerClaudeCodeHandlers } from './ipc/ClaudeCodeHandlers';
@@ -1997,6 +1998,7 @@ app.whenReady().then(async () => {
         },
     });
     setupSessionFileHandlers();
+    setupCanvasRevisionProvenanceHandlers();
     registerSlashCommandHandlers();
     registerActionPromptHandlers();
     await registerUsageAnalyticsHandlers();

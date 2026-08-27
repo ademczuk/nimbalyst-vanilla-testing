@@ -2028,7 +2028,14 @@ const ExtensionCollabBranch: React.FC<ExtensionCollabBranchProps> = ({
       >
         <div
           className="extension-collab-branch-editor"
-          style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
         >
           <ExtensionEditor host={host} />
         </div>

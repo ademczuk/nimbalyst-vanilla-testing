@@ -1,30 +1,32 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from "vitest";
 import type {
   CollabCodec,
   CustomEditorContribution,
   ExtensionManifest,
   NewFileMenuContribution,
-} from '@nimbalyst/extension-sdk';
+} from "@nimbalyst/extension-sdk";
 import {
   CollaborativeDocumentTypeCatalog,
   type CollaborativeCatalogCodecSource,
   type CollaborativeCatalogExtensionSource,
-} from '../CollaborativeDocumentTypeCatalog';
+} from "../CollaborativeDocumentTypeCatalog";
 import {
   inferSharedDocumentTypeMetadata,
   resolveSharedDocumentTypePresentation,
-} from '@nimbalyst/collab-client/docs-ui';
+} from "@nimbalyst/collab-client/docs-ui";
 import {
   getMonacoLanguage,
   MONACO_LANGUAGE_BY_EXTENSION,
-} from '../../utils/fileTypeDetector';
+} from "../../utils/fileTypeDetector";
 
 type LoadedExtension = ReturnType<typeof extension>;
 
 class MutableExtensionSource implements CollaborativeCatalogExtensionSource {
   private listeners = new Set<() => void>();
   constructor(private extensions: LoadedExtension[] = []) {}
-  getLoadedExtensions() { return this.extensions; }
+  getLoadedExtensions() {
+    return this.extensions;
+  }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -38,7 +40,9 @@ class MutableExtensionSource implements CollaborativeCatalogExtensionSource {
 class MutableCodecSource implements CollaborativeCatalogCodecSource {
   private listeners = new Set<() => void>();
   constructor(private codecs: CollabCodec[] = []) {}
-  list() { return this.codecs; }
+  list() {
+    return this.codecs;
+  }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -57,8 +61,8 @@ function codec(documentType: string, fileExtensions: string[]): CollabCodec {
     isEmpty: () => true,
     seedFromFile: () => {},
     applyFromFile: () => {},
-    exportToFile: () => '',
-    toPlainText: () => '',
+    exportToFile: () => "",
+    toPlainText: () => "",
   };
 }
 
@@ -74,9 +78,11 @@ function extension(params: {
   const manifest: ExtensionManifest = {
     id: params.id,
     name: params.name ?? params.id,
-    version: '1.0.0',
-    main: 'dist/index.js',
-    marketplace: params.marketplaceIcon ? { icon: params.marketplaceIcon } : undefined,
+    version: "1.0.0",
+    main: "dist/index.js",
+    marketplace: params.marketplaceIcon
+      ? { icon: params.marketplaceIcon }
+      : undefined,
     contributions: {
       newFileMenu: params.menus,
       customEditors: params.editors,
@@ -86,7 +92,9 @@ function extension(params: {
     manifest,
     enabled: params.enabled ?? true,
     module: {
-      components: Object.fromEntries((params.components ?? []).map(name => [name, vi.fn()])),
+      components: Object.fromEntries(
+        (params.components ?? []).map((name) => [name, vi.fn()])
+      ),
     },
   };
 }
@@ -94,24 +102,34 @@ function extension(params: {
 function customEditor(
   suffixes: string[],
   component: string,
-  collaboration: boolean | undefined = true,
+  collaboration: boolean | undefined = true
 ): CustomEditorContribution {
   return {
-    filePatterns: suffixes.map(suffix => `*${suffix}`),
+    filePatterns: suffixes.map((suffix) => `*${suffix}`),
     displayName: `${component} display`,
     component,
-    collaboration: collaboration === undefined ? undefined : { supported: collaboration },
+    collaboration:
+      collaboration === undefined ? undefined : { supported: collaboration },
   };
 }
 
-function menu(extensionName: string, displayName: string, icon: string): NewFileMenuContribution {
-  return { extension: extensionName, displayName, icon, defaultContent: `new ${displayName}` };
+function menu(
+  extensionName: string,
+  displayName: string,
+  icon: string
+): NewFileMenuContribution {
+  return {
+    extension: extensionName,
+    displayName,
+    icon,
+    defaultContent: `new ${displayName}`,
+  };
 }
 
 function makeCatalog(
   extensions: MutableExtensionSource,
   codecs: MutableCodecSource,
-  monacoBindingAvailable = false,
+  monacoBindingAvailable = false
 ) {
   return new CollaborativeDocumentTypeCatalog({
     extensionSource: extensions,
@@ -120,360 +138,451 @@ function makeCatalog(
   });
 }
 
-describe('CollaborativeDocumentTypeCatalog', () => {
-  it('keeps built-ins first and merges menu, editor, and codec contributions', () => {
+describe("CollaborativeDocumentTypeCatalog", () => {
+  it("keeps built-ins first and merges menu, editor, and codec contributions", () => {
     const extensions = new MutableExtensionSource([
       extension({
-        id: 'com.example.diagram',
-        name: 'Diagrammer',
-        menus: [menu('.diagram', 'Diagram', 'draw')],
-        editors: [customEditor(['.diagram'], 'DiagramEditor')],
-        components: ['DiagramEditor'],
+        id: "com.example.diagram",
+        name: "Diagrammer",
+        menus: [menu(".diagram", "Diagram", "draw")],
+        editors: [customEditor([".diagram"], "DiagramEditor")],
+        components: ["DiagramEditor"],
       }),
     ]);
     const codecs = new MutableCodecSource([
-      codec('markdown', ['.md', '.markdown']),
-      codec('diagram', ['.diagram']),
+      codec("markdown", [".md", ".markdown"]),
+      codec("canvas", [".canvas"]),
+      codec("diagram", [".diagram"]),
     ]);
     const catalog = makeCatalog(extensions, codecs);
 
-    expect(catalog.getDescriptors().slice(0, 2).map(item => item.documentType)).toEqual([
-      'markdown',
-      'code',
-    ]);
-    const diagram = catalog.getDescriptors().find(item => item.documentType === 'diagram');
-    expect(diagram).toMatchObject({
-      displayName: 'Diagram',
-      fileExtensions: ['.diagram'],
-      defaultExtension: '.diagram',
-      icon: 'draw',
-      editor: {
-        kind: 'extension',
-        extensionId: 'com.example.diagram',
-        componentName: 'DiagramEditor',
+    expect(
+      catalog
+        .getDescriptors()
+        .slice(0, 3)
+        .map((item) => item.documentType)
+    ).toEqual(["markdown", "code", "canvas"]);
+    expect(catalog.resolveShareability("roadmap.canvas")).toMatchObject({
+      state: "ready",
+      descriptor: {
+        documentType: "canvas",
+        editor: { extensionId: "builtin.canvas" },
       },
-      creation: { defaultContent: 'new Diagram', source: 'newFileMenu' },
+    });
+    const diagram = catalog
+      .getDescriptors()
+      .find((item) => item.documentType === "diagram");
+    expect(diagram).toMatchObject({
+      displayName: "Diagram",
+      fileExtensions: [".diagram"],
+      defaultExtension: ".diagram",
+      icon: "draw",
+      editor: {
+        kind: "extension",
+        extensionId: "com.example.diagram",
+        componentName: "DiagramEditor",
+      },
+      creation: { defaultContent: "new Diagram", source: "newFileMenu" },
       capabilities: { localCreate: true, shareToTeam: true, export: true },
     });
     catalog.dispose();
   });
 
-  it('updates on extension activation/deactivation and codec registry changes', () => {
+  it("updates on extension activation/deactivation and codec registry changes", () => {
     const diagramExtension = extension({
-      id: 'com.example.diagram',
-      menus: [menu('.diagram', 'Diagram', 'draw')],
-      editors: [customEditor(['.diagram'], 'DiagramEditor')],
-      components: ['DiagramEditor'],
+      id: "com.example.diagram",
+      menus: [menu(".diagram", "Diagram", "draw")],
+      editors: [customEditor([".diagram"], "DiagramEditor")],
+      components: ["DiagramEditor"],
     });
     const extensions = new MutableExtensionSource([]);
-    const codecs = new MutableCodecSource([codec('markdown', ['.md']), codec('diagram', ['.diagram'])]);
+    const codecs = new MutableCodecSource([
+      codec("markdown", [".md"]),
+      codec("diagram", [".diagram"]),
+    ]);
     const catalog = makeCatalog(extensions, codecs);
     const listener = vi.fn();
     catalog.subscribe(listener);
 
-    expect(catalog.resolveShareability('roadmap.diagram').state).toBe('unsupported');
+    expect(catalog.resolveShareability("roadmap.diagram").state).toBe(
+      "unsupported"
+    );
     extensions.set([diagramExtension]);
-    expect(catalog.resolveShareability('roadmap.diagram').state).toBe('ready');
-    codecs.set([codec('markdown', ['.md'])]);
-    expect(catalog.resolveShareability('roadmap.diagram')).toMatchObject({
-      state: 'unsupported',
-      reason: 'No collaborative codec is registered for document type "diagram".',
+    expect(catalog.resolveShareability("roadmap.diagram").state).toBe("ready");
+    codecs.set([codec("markdown", [".md"])]);
+    expect(catalog.resolveShareability("roadmap.diagram")).toMatchObject({
+      state: "unsupported",
+      reason:
+        'No collaborative codec is registered for document type "diagram".',
     });
     extensions.set([]);
-    expect(catalog.resolveShareability('roadmap.diagram').state).toBe('unsupported');
+    expect(catalog.resolveShareability("roadmap.diagram").state).toBe(
+      "unsupported"
+    );
     expect(listener).toHaveBeenCalledTimes(3);
     catalog.dispose();
   });
 
-  it('rejects conflicting custom editor ownership deterministically', () => {
-    const editors = ['com.example.a', 'com.example.b'].map(id => extension({
-      id,
-      editors: [customEditor(['.diagram'], 'DiagramEditor')],
-      components: ['DiagramEditor'],
-    }));
+  it("rejects conflicting custom editor ownership deterministically", () => {
+    const editors = ["com.example.a", "com.example.b"].map((id) =>
+      extension({
+        id,
+        editors: [customEditor([".diagram"], "DiagramEditor")],
+        components: ["DiagramEditor"],
+      })
+    );
     const catalog = makeCatalog(
       new MutableExtensionSource(editors),
-      new MutableCodecSource([codec('markdown', ['.md']), codec('diagram', ['.diagram'])]),
+      new MutableCodecSource([
+        codec("markdown", [".md"]),
+        codec("diagram", [".diagram"]),
+      ])
     );
 
-    const result = catalog.resolveShareability('conflict.diagram');
+    const result = catalog.resolveShareability("conflict.diagram");
     expect(result).toMatchObject({
-      state: 'unsupported',
-      reason: 'Conflicting custom editors claim ".diagram": com.example.a, com.example.b.',
+      state: "unsupported",
+      reason:
+        'Conflicting custom editors claim ".diagram": com.example.a, com.example.b.',
     });
     catalog.dispose();
   });
 
-  it('uses longest compound suffixes before generic suffixes', () => {
+  it("uses longest compound suffixes before generic suffixes", () => {
     const extensions = new MutableExtensionSource([
       extension({
-        id: 'com.example.calc',
-        menus: [menu('.calc.md', 'Calc Sheet', 'calculate')],
-        editors: [customEditor(['.calc.md'], 'CalcEditor')],
-        components: ['CalcEditor'],
+        id: "com.example.calc",
+        menus: [menu(".calc.md", "Calc Sheet", "calculate")],
+        editors: [customEditor([".calc.md"], "CalcEditor")],
+        components: ["CalcEditor"],
       }),
       extension({
-        id: 'com.example.mockup',
-        menus: [menu('.mockup.html', 'Mockup', 'palette')],
-        editors: [customEditor(['.mockup.html'], 'MockupEditor')],
-        components: ['MockupEditor'],
+        id: "com.example.mockup",
+        menus: [menu(".mockup.html", "Mockup", "palette")],
+        editors: [customEditor([".mockup.html"], "MockupEditor")],
+        components: ["MockupEditor"],
       }),
     ]);
     const codecs = new MutableCodecSource([
-      codec('markdown', ['.md']),
-      codec('calc.md', ['.calc.md']),
-      codec('mockup.html', ['.mockup.html']),
+      codec("markdown", [".md"]),
+      codec("calc.md", [".calc.md"]),
+      codec("mockup.html", [".mockup.html"]),
     ]);
     const catalog = makeCatalog(extensions, codecs);
 
-    expect(catalog.resolveShareability('budget.calc.md')).toMatchObject({
-      state: 'ready', descriptor: { documentType: 'calc.md' },
+    expect(catalog.resolveShareability("budget.calc.md")).toMatchObject({
+      state: "ready",
+      descriptor: { documentType: "calc.md" },
     });
-    expect(catalog.resolveShareability('screen.mockup.html')).toMatchObject({
-      state: 'ready', descriptor: { documentType: 'mockup.html' },
+    expect(catalog.resolveShareability("screen.mockup.html")).toMatchObject({
+      state: "ready",
+      descriptor: { documentType: "mockup.html" },
     });
-    expect(catalog.inferFileExtension('code', 'types.d.ts')).toBe('.d.ts');
+    expect(catalog.inferFileExtension("code", "types.d.ts")).toBe(".d.ts");
     catalog.dispose();
   });
 
-  it('gives a compound-suffix owner priority over an extension claiming the generic suffix', () => {
+  it("gives a compound-suffix owner priority over an extension claiming the generic suffix", () => {
     // The Browser extension really does claim *.html, which would otherwise swallow
     // every *.mockup.html file and route it to a non-collaborative editor.
     const extensions = new MutableExtensionSource([
       extension({
-        id: 'com.example.browser',
-        editors: [customEditor(['.html'], 'BrowserEditor')],
-        components: ['BrowserEditor'],
+        id: "com.example.browser",
+        editors: [customEditor([".html"], "BrowserEditor")],
+        components: ["BrowserEditor"],
       }),
       extension({
-        id: 'com.example.mockup',
-        menus: [menu('.mockup.html', 'Mockup', 'palette')],
-        editors: [customEditor(['.mockup.html'], 'MockupEditor')],
-        components: ['MockupEditor'],
-      }),
-    ]);
-    const codecs = new MutableCodecSource([codec('mockup.html', ['.mockup.html'])]);
-    const catalog = makeCatalog(extensions, codecs);
-
-    expect(catalog.resolveShareability('screen.mockup.html')).toMatchObject({
-      state: 'ready',
-      descriptor: { documentType: 'mockup.html', editor: { extensionId: 'com.example.mockup' } },
-    });
-    catalog.dispose();
-  });
-
-  it('projects the Monaco suffix/language map without treating markdown as code', () => {
-    const catalog = makeCatalog(
-      new MutableExtensionSource(),
-      new MutableCodecSource([codec('markdown', ['.md'])]),
-    );
-    const code = catalog.getDescriptors().find(item => item.documentType === 'code');
-
-    expect(MONACO_LANGUAGE_BY_EXTENSION['.swift']).toBe('swift');
-    expect(MONACO_LANGUAGE_BY_EXTENSION['.d.ts']).toBe('typescript');
-    expect(getMonacoLanguage('ambient.d.ts')).toBe('typescript');
-    expect(code?.fileExtensions).toContain('.swift');
-    expect(code?.fileExtensions).toContain('.d.ts');
-    expect(code?.fileExtensions).not.toContain('.md');
-    catalog.dispose();
-  });
-
-  it('returns precise missing editor, component, binding, and codec reasons', () => {
-    const extensions = new MutableExtensionSource([
-      extension({ id: 'menu-only', menus: [menu('.menuonly', 'Menu only', 'draft')] }),
-      extension({
-        id: 'missing-component',
-        editors: [customEditor(['.component'], 'MissingEditor')],
-      }),
-      extension({
-        id: 'missing-binding',
-        editors: [customEditor(['.binding'], 'BindingEditor', false)],
-        components: ['BindingEditor'],
-      }),
-      extension({
-        id: 'missing-codec',
-        editors: [customEditor(['.codec'], 'CodecEditor')],
-        components: ['CodecEditor'],
+        id: "com.example.mockup",
+        menus: [menu(".mockup.html", "Mockup", "palette")],
+        editors: [customEditor([".mockup.html"], "MockupEditor")],
+        components: ["MockupEditor"],
       }),
     ]);
     const codecs = new MutableCodecSource([
-      codec('markdown', ['.md']),
-      codec('component', ['.component']),
-      codec('binding', ['.binding']),
+      codec("mockup.html", [".mockup.html"]),
     ]);
     const catalog = makeCatalog(extensions, codecs);
 
-    expect(catalog.resolveShareability('x.menuonly')).toMatchObject({
-      state: 'unsupported',
-      reason: 'The owning extension "menu-only" does not declare a custom editor for ".menuonly".',
+    expect(catalog.resolveShareability("screen.mockup.html")).toMatchObject({
+      state: "ready",
+      descriptor: {
+        documentType: "mockup.html",
+        editor: { extensionId: "com.example.mockup" },
+      },
     });
-    expect(catalog.resolveShareability('x.component')).toMatchObject({
-      state: 'unsupported',
-      reason: 'The owning extension "missing-component" does not provide editor component "MissingEditor".',
+    catalog.dispose();
+  });
+
+  it("projects the Monaco suffix/language map without treating markdown as code", () => {
+    const catalog = makeCatalog(
+      new MutableExtensionSource(),
+      new MutableCodecSource([codec("markdown", [".md"])])
+    );
+    const code = catalog
+      .getDescriptors()
+      .find((item) => item.documentType === "code");
+
+    expect(MONACO_LANGUAGE_BY_EXTENSION[".swift"]).toBe("swift");
+    expect(MONACO_LANGUAGE_BY_EXTENSION[".d.ts"]).toBe("typescript");
+    expect(getMonacoLanguage("ambient.d.ts")).toBe("typescript");
+    expect(code?.fileExtensions).toContain(".swift");
+    expect(code?.fileExtensions).toContain(".d.ts");
+    expect(code?.fileExtensions).not.toContain(".md");
+    catalog.dispose();
+  });
+
+  it("returns precise missing editor, component, binding, and codec reasons", () => {
+    const extensions = new MutableExtensionSource([
+      extension({
+        id: "menu-only",
+        menus: [menu(".menuonly", "Menu only", "draft")],
+      }),
+      extension({
+        id: "missing-component",
+        editors: [customEditor([".component"], "MissingEditor")],
+      }),
+      extension({
+        id: "missing-binding",
+        editors: [customEditor([".binding"], "BindingEditor", false)],
+        components: ["BindingEditor"],
+      }),
+      extension({
+        id: "missing-codec",
+        editors: [customEditor([".codec"], "CodecEditor")],
+        components: ["CodecEditor"],
+      }),
+    ]);
+    const codecs = new MutableCodecSource([
+      codec("markdown", [".md"]),
+      codec("component", [".component"]),
+      codec("binding", [".binding"]),
+    ]);
+    const catalog = makeCatalog(extensions, codecs);
+
+    expect(catalog.resolveShareability("x.menuonly")).toMatchObject({
+      state: "unsupported",
+      reason:
+        'The owning extension "menu-only" does not declare a custom editor for ".menuonly".',
     });
-    expect(catalog.resolveShareability('x.binding')).toMatchObject({
-      state: 'unsupported',
-      reason: 'The owning extension "missing-binding" does not declare a collaborative editor binding for ".binding".',
+    expect(catalog.resolveShareability("x.component")).toMatchObject({
+      state: "unsupported",
+      reason:
+        'The owning extension "missing-component" does not provide editor component "MissingEditor".',
     });
-    expect(catalog.resolveShareability('x.codec')).toMatchObject({
-      state: 'unsupported',
+    expect(catalog.resolveShareability("x.binding")).toMatchObject({
+      state: "unsupported",
+      reason:
+        'The owning extension "missing-binding" does not declare a collaborative editor binding for ".binding".',
+    });
+    expect(catalog.resolveShareability("x.codec")).toMatchObject({
+      state: "unsupported",
       reason: 'No collaborative codec is registered for document type "codec".',
     });
     catalog.dispose();
   });
 
-  it('prefers the manifest opt-out reason over the generic missing-binding text', () => {
+  it("prefers the manifest opt-out reason over the generic missing-binding text", () => {
     // A type with a working binding whose sharing is known to lose data opts
     // out with its own reason, so the user is told what is broken rather than
     // that the work was never started. `.mockupproject` is the live case.
-    const optedOut = customEditor(['.knownbroken'], 'BrokenEditor', false);
+    const optedOut = customEditor([".knownbroken"], "BrokenEditor", false);
     optedOut.collaboration = {
       supported: false,
-      unsupportedReason: 'Screens are still workspace-local, so teammates see empty screens.',
+      unsupportedReason:
+        "Screens are still workspace-local, so teammates see empty screens.",
     };
     const extensions = new MutableExtensionSource([
-      extension({ id: 'opted-out', editors: [optedOut], components: ['BrokenEditor'] }),
+      extension({
+        id: "opted-out",
+        editors: [optedOut],
+        components: ["BrokenEditor"],
+      }),
     ]);
-    const catalog = makeCatalog(extensions, new MutableCodecSource([codec('knownbroken', ['.knownbroken'])]));
+    const catalog = makeCatalog(
+      extensions,
+      new MutableCodecSource([codec("knownbroken", [".knownbroken"])])
+    );
 
-    expect(catalog.resolveShareability('x.knownbroken')).toMatchObject({
-      state: 'unsupported',
-      reason: 'Screens are still workspace-local, so teammates see empty screens.',
+    expect(catalog.resolveShareability("x.knownbroken")).toMatchObject({
+      state: "unsupported",
+      reason:
+        "Screens are still workspace-local, so teammates see empty screens.",
     });
     catalog.dispose();
   });
 
-  it('resolves built-in Monaco files as ready and retains missing-codec diagnostics', () => {
+  it("resolves built-in Monaco files as ready and retains missing-codec diagnostics", () => {
     const extensions = new MutableExtensionSource();
     const readyCatalog = makeCatalog(
       extensions,
       new MutableCodecSource([
-        codec('markdown', ['.md']),
-        codec('code', ['.ts', '.d.ts']),
+        codec("markdown", [".md"]),
+        codec("code", [".ts", ".d.ts"]),
       ]),
-      true,
+      true
     );
 
-    const result = readyCatalog.resolveShareability('x.ts');
+    const result = readyCatalog.resolveShareability("x.ts");
     expect(result).toMatchObject({
-      state: 'ready',
+      state: "ready",
       descriptor: {
-        documentType: 'code',
-        editor: { kind: 'monaco' },
+        documentType: "code",
+        editor: { kind: "monaco" },
       },
     });
-    expect(result.state === 'ready' && readyCatalog.editorIdForDescriptor(result.descriptor))
-      .toBe('builtin.monaco');
-    expect(readyCatalog.inferFileExtension('code', 'x.ts')).toBe('.ts');
+    expect(
+      result.state === "ready" &&
+        readyCatalog.editorIdForDescriptor(result.descriptor)
+    ).toBe("builtin.monaco");
+    expect(readyCatalog.inferFileExtension("code", "x.ts")).toBe(".ts");
     readyCatalog.dispose();
 
     const missingCodecCatalog = makeCatalog(
       extensions,
-      new MutableCodecSource([codec('markdown', ['.md'])]),
-      true,
+      new MutableCodecSource([codec("markdown", [".md"])]),
+      true
     );
-    expect(missingCodecCatalog.resolveShareability('x.ts')).toMatchObject({
-      state: 'unsupported',
+    expect(missingCodecCatalog.resolveShareability("x.ts")).toMatchObject({
+      state: "unsupported",
       reason: 'No collaborative codec is registered for document type "code".',
     });
     missingCodecCatalog.dispose();
   });
 
-  it('excludes openVirtualTab contributions from persistent shared creation', () => {
+  it("excludes openVirtualTab contributions from persistent shared creation", () => {
     const catalog = makeCatalog(
       new MutableExtensionSource([
         extension({
-          id: 'com.example.browser',
-          menus: [{
-            extension: '.browser',
-            displayName: 'Browser Tab',
-            icon: 'language',
-            action: 'openVirtualTab',
-            virtualScheme: 'browser://',
-          }],
+          id: "com.example.browser",
+          menus: [
+            {
+              extension: ".browser",
+              displayName: "Browser Tab",
+              icon: "language",
+              action: "openVirtualTab",
+              virtualScheme: "browser://",
+            },
+          ],
         }),
       ]),
-      new MutableCodecSource([codec('markdown', ['.md'])]),
+      new MutableCodecSource([codec("markdown", [".md"])])
     );
 
-    expect(catalog.getDescriptors().some(item => item.defaultExtension === '.browser')).toBe(false);
-    expect(catalog.resolveShareability('tab.browser')).toMatchObject({ state: 'unsupported' });
+    expect(
+      catalog
+        .getDescriptors()
+        .some((item) => item.defaultExtension === ".browser")
+    ).toBe(false);
+    expect(catalog.resolveShareability("tab.browser")).toMatchObject({
+      state: "unsupported",
+    });
     catalog.dispose();
   });
 });
 
-describe('shared document metadata and presentation', () => {
+describe("shared document metadata and presentation", () => {
   const structuredExtension = extension({
-    id: 'com.example.diagram',
-    name: 'Diagrammer',
-    menus: [menu('.diagram', 'Diagram', 'draw')],
-    editors: [customEditor(['.diagram'], 'DiagramEditor')],
-    components: ['DiagramEditor'],
+    id: "com.example.diagram",
+    name: "Diagrammer",
+    menus: [menu(".diagram", "Diagram", "draw")],
+    editors: [customEditor([".diagram"], "DiagramEditor")],
+    components: ["DiagramEditor"],
   });
 
-  it('infers legacy metadata by document type and longest title suffix', () => {
+  it("infers legacy metadata by document type and longest title suffix", () => {
     const catalog = makeCatalog(
       new MutableExtensionSource([structuredExtension]),
       new MutableCodecSource([
-        codec('markdown', ['.md']),
-        codec('code', ['.ts', '.d.ts']),
-        codec('diagram', ['.diagram']),
+        codec("markdown", [".md"]),
+        codec("code", [".ts", ".d.ts"]),
+        codec("diagram", [".diagram"]),
       ]),
-      true,
+      true
     );
 
-    expect(inferSharedDocumentTypeMetadata({
-      title: 'types.d.ts',
-      documentType: 'code',
-    }, catalog.getDescriptors())).toEqual({
+    expect(
+      inferSharedDocumentTypeMetadata(
+        {
+          title: "types.d.ts",
+          documentType: "code",
+        },
+        catalog.getDescriptors()
+      )
+    ).toEqual({
       metadataVersion: 2,
-      fileExtension: '.d.ts',
-      editorId: 'builtin.monaco',
-      source: 'legacy-inferred',
+      fileExtension: ".d.ts",
+      editorId: "builtin.monaco",
+      source: "legacy-inferred",
     });
     catalog.dispose();
   });
 
-  it('resolves markdown, Monaco, structured, and unavailable-extension icons safely', () => {
+  it("resolves markdown, Monaco, structured, and unavailable-extension icons safely", () => {
     const catalog = makeCatalog(
       new MutableExtensionSource([structuredExtension]),
       new MutableCodecSource([
-        codec('markdown', ['.md']),
-        codec('code', ['.txt', '.ts']),
-        codec('diagram', ['.diagram']),
+        codec("markdown", [".md"]),
+        codec("code", [".txt", ".ts"]),
+        codec("diagram", [".diagram"]),
       ]),
-      true,
+      true
     );
 
-    const presentation = (document: Parameters<typeof resolveSharedDocumentTypePresentation>[0]) =>
+    const presentation = (
+      document: Parameters<typeof resolveSharedDocumentTypePresentation>[0]
+    ) =>
       resolveSharedDocumentTypePresentation(document, catalog.getDescriptors());
 
-    expect(presentation({
-      title: 'Notes.md', documentType: 'markdown', metadataVersion: 2,
-      fileExtension: '.md', editorId: 'builtin.lexical',
-    })).toMatchObject({
-      state: 'ready',
-      icon: 'description',
-      typeLabel: 'Markdown',
+    expect(
+      presentation({
+        title: "Notes.md",
+        documentType: "markdown",
+        metadataVersion: 2,
+        fileExtension: ".md",
+        editorId: "builtin.lexical",
+      })
+    ).toMatchObject({
+      state: "ready",
+      icon: "description",
+      typeLabel: "Markdown",
       metadata: {
         metadataVersion: 2,
-        fileExtension: '.md',
-        editorId: 'builtin.lexical',
-        source: 'v2',
+        fileExtension: ".md",
+        editorId: "builtin.lexical",
+        source: "v2",
       },
     });
-    expect(presentation({
-      title: 'index.ts', documentType: 'code', metadataVersion: 2,
-      fileExtension: '.ts', editorId: 'builtin.monaco',
-    })).toMatchObject({ state: 'ready', icon: 'code', typeLabel: 'Text / Code' });
-    expect(presentation({
-      title: 'Flow.diagram', documentType: 'diagram', metadataVersion: 2,
-      fileExtension: '.diagram', editorId: 'com.example.diagram',
-    })).toMatchObject({ state: 'ready', icon: 'draw', typeLabel: 'Diagram' });
-    expect(presentation({
-      title: 'Map.mindmap', documentType: 'mindmap', metadataVersion: 2,
-      fileExtension: '.mindmap', editorId: 'com.example.unavailable',
-    })).toMatchObject({ state: 'unsupported', icon: 'lock', typeLabel: 'Unsupported document' });
+    expect(
+      presentation({
+        title: "index.ts",
+        documentType: "code",
+        metadataVersion: 2,
+        fileExtension: ".ts",
+        editorId: "builtin.monaco",
+      })
+    ).toMatchObject({ state: "ready", icon: "code", typeLabel: "Text / Code" });
+    expect(
+      presentation({
+        title: "Flow.diagram",
+        documentType: "diagram",
+        metadataVersion: 2,
+        fileExtension: ".diagram",
+        editorId: "com.example.diagram",
+      })
+    ).toMatchObject({ state: "ready", icon: "draw", typeLabel: "Diagram" });
+    expect(
+      presentation({
+        title: "Map.mindmap",
+        documentType: "mindmap",
+        metadataVersion: 2,
+        fileExtension: ".mindmap",
+        editorId: "com.example.unavailable",
+      })
+    ).toMatchObject({
+      state: "unsupported",
+      icon: "lock",
+      typeLabel: "Unsupported document",
+    });
     catalog.dispose();
   });
 });

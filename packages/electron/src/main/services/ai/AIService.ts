@@ -26,7 +26,7 @@ import {
 import { agentCapabilitiesForProviderType } from '@nimbalyst/runtime/ai/server/agentCapabilities';
 import { CLAUDE_CODE_SAFE_FALLBACK_MODEL } from '@nimbalyst/runtime/ai/modelConstants';
 import { reconcileClaudeCodeModels } from './claudeCodeModelReconcile';
-import { isModelEnabled } from './modelEnablementFilter';
+import { isModelEnabled, resolveProviderEnabled } from './modelEnablementFilter';
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
 import { parseContextUsageMessage } from '@nimbalyst/runtime/ai/server/utils/contextUsage';
 import { isBedrockToolSearchError } from '@nimbalyst/runtime/ai/server/utils/errorDetection';
@@ -198,6 +198,15 @@ function scheduleMobileSettingsSync(): void {
       syncSettingsToMobile(apiKeys['openai']);
     }).catch(() => { /* sync manager may not be available */ });
   }, 500);
+}
+
+export interface InterruptCurrentTurnResult {
+  success: boolean;
+  error?: string;
+  /** How the turn was stopped; absent when `success` is false. */
+  method?: 'interrupt' | 'abort' | 'terminal-ctrl-c';
+  /** True when the session was forced idle because no completion event could arrive. */
+  forcedIdle?: boolean;
 }
 
 export class AIService {
@@ -507,6 +516,80 @@ export class AIService {
   ): Promise<boolean> {
     const outcome = await this.driveQueuedPrompts(sessionId, workspacePath, reason);
     return outcome.kind === 'dispatched';
+  }
+
+  /**
+   * Interrupt the current turn (graceful when possible) so queued prompts are
+   * processed sooner. Providers that support a true mid-stream interrupt
+   * (Claude Code) wrap up cleanly; others fall back to abort() via the
+   * BaseAIProvider default. Returns `method` so the caller can distinguish.
+   *
+   * Defensive cleanup runs before the interrupt: clear the in-memory
+   * sessionsProcessingQueue guard and unwedge any rows stuck in 'executing' via
+   * sweepExecutingForSession (delivery-aware -- already delivered prompts are
+   * marked completed, not rolled back, so a follow-up queue drive doesn't
+   * re-send the same input -- NIM-615).
+   */
+  public async interruptCurrentTurn(sessionId: string): Promise<InterruptCurrentTurnResult> {
+    if (!sessionId) {
+      throw new Error('Session ID is required to interrupt');
+    }
+
+    const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
+    const session = await AISessionsRepository.get(sessionId);
+    if (!session) {
+      return { success: false, error: 'Session not found' };
+    }
+
+    if (session.provider === 'claude-code-cli') {
+      const terminalManager = getTerminalSessionManager();
+      if (!terminalManager.isTerminalActive(sessionId)) {
+        return { success: false, error: 'No active terminal for session' };
+      }
+
+      terminalManager.writeToTerminal(sessionId, '\x03');
+      logger.main.info(`[AIService] Interrupted claude-code-cli terminal for session ${sessionId}`);
+      return { success: true, method: 'terminal-ctrl-c' };
+    }
+
+    const provider = ProviderFactory.getProvider(session.provider as AIProviderType, sessionId);
+    if (!provider) {
+      return { success: false, error: 'No active provider for session' };
+    }
+
+    this.sessionsProcessingQueue.delete(sessionId);
+    try {
+      const { getQueuedPromptsStore } = await import('../RepositoryManager');
+      const queueStore = getQueuedPromptsStore();
+      const { completed, failed, rolledBack } = await queueStore.sweepExecutingForSession(sessionId);
+      if (completed > 0 || failed > 0 || rolledBack > 0) {
+        logger.main.info(
+          `[AIService] interruptCurrentTurn: swept session ${sessionId} -- ${completed} answered marked completed, ${failed} delivered-but-unanswered marked failed, ${rolledBack} undelivered rolled back`
+        );
+        await this.publishQueueStateToSync(sessionId);
+      }
+    } catch (sweepErr) {
+      logger.main.error('[AIService] interruptCurrentTurn: sweepExecutingForSession failed:', sweepErr);
+    }
+
+    const result = await provider.interruptCurrentTurn();
+    logger.main.info(`[AIService] Interrupted current turn for session ${sessionId} (method=${result.method})`);
+
+    // A session stuck at running/streaming with no turn behind it -- because
+    // there never was one, or because `method: 'abort'` just destroyed it --
+    // would otherwise defer the follow-up queue drive on a `session:completed`
+    // that can never arrive (NIM-2434, NIM-2512).
+    const stateManager = getSessionStateManager();
+    const forcedIdle = await clearStuckRunningState(
+      {
+        getSessionState: (id) => stateManager.getSessionState(id),
+        interruptSession: (id) => stateManager.interruptSession(id),
+        logWarn: (message) => logger.main.warn(message),
+      },
+      { sessionId, hadActiveTurn: result.hadActiveTurn, method: result.method },
+    );
+
+    return { success: true, method: result.method, forcedIdle };
   }
 
   public async respondToInteractivePrompt(params: {
@@ -3102,79 +3185,9 @@ export class AIService {
       return { success: true };
     });
 
-    // Interrupt the current turn (graceful when possible) so queued prompts
-    // are processed sooner. Providers that support a true mid-stream interrupt
-    // (Claude Code) wrap up cleanly; others fall back to abort() via the
-    // BaseAIProvider default. Returns { method } so the renderer can
-    // distinguish the two paths.
-    //
-    // Defensive cleanup runs before the interrupt: clear the in-memory
-    // sessionsProcessingQueue guard and unwedge any PGLite rows stuck in
-    // 'executing' via sweepExecutingForSession (delivery-aware -- already
-    // delivered prompts are marked completed, not rolled back, so the
-    // follow-up ai:triggerQueueProcessing doesn't re-send the same input
-    // -- NIM-615).
-    safeHandle('ai:interruptCurrentTurn', async (_event, sessionId: string) => {
-      if (!sessionId) {
-        throw new Error('Session ID is required to interrupt');
-      }
-
-      const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
-      const session = await AISessionsRepository.get(sessionId);
-      if (!session) {
-        return { success: false, error: 'Session not found' };
-      }
-
-      if (session.provider === 'claude-code-cli') {
-        const terminalManager = getTerminalSessionManager();
-        if (!terminalManager.isTerminalActive(sessionId)) {
-          return { success: false, error: 'No active terminal for session' };
-        }
-
-        terminalManager.writeToTerminal(sessionId, '\x03');
-        logger.main.info(`[AIService] Interrupted claude-code-cli terminal for session ${sessionId}`);
-        return { success: true, method: 'terminal-ctrl-c' };
-      }
-
-      const provider = ProviderFactory.getProvider(session.provider as AIProviderType, sessionId);
-      if (!provider) {
-        return { success: false, error: 'No active provider for session' };
-      }
-
-      this.sessionsProcessingQueue.delete(sessionId);
-      try {
-        const { getQueuedPromptsStore } = await import('../RepositoryManager');
-        const queueStore = getQueuedPromptsStore();
-        const { completed, failed, rolledBack } = await queueStore.sweepExecutingForSession(sessionId);
-        if (completed > 0 || failed > 0 || rolledBack > 0) {
-          logger.main.info(
-            `[AIService] interruptCurrentTurn: swept session ${sessionId} -- ${completed} answered marked completed, ${failed} delivered-but-unanswered marked failed, ${rolledBack} undelivered rolled back`
-          );
-          await this.publishQueueStateToSync(sessionId);
-        }
-      } catch (sweepErr) {
-        logger.main.error('[AIService] interruptCurrentTurn: sweepExecutingForSession failed:', sweepErr);
-      }
-
-      const result = await provider.interruptCurrentTurn();
-      logger.main.info(`[AIService] Interrupted current turn for session ${sessionId} (method=${result.method})`);
-
-      // A session stuck at running/streaming with no turn behind it -- because
-      // there never was one, or because `method: 'abort'` just destroyed it --
-      // would otherwise defer the follow-up queue drive on a `session:completed`
-      // that can never arrive (NIM-2434, NIM-2512).
-      const stateManager = getSessionStateManager();
-      const forcedIdle = await clearStuckRunningState(
-        {
-          getSessionState: (id) => stateManager.getSessionState(id),
-          interruptSession: (id) => stateManager.interruptSession(id),
-          logWarn: (message) => logger.main.warn(message),
-        },
-        { sessionId, hadActiveTurn: result.hadActiveTurn, method: result.method },
-      );
-
-      return { success: true, method: result.method, forcedIdle };
-    });
+    safeHandle('ai:interruptCurrentTurn', (_event, sessionId: string) =>
+      this.interruptCurrentTurn(sessionId)
+    );
 
     // Settings handlers
     safeHandle('ai:getSettings', async () => {
@@ -3584,9 +3597,9 @@ export class AIService {
       const enabledSet = new Set<AIProviderType>();
       if (providerSettings['claude']?.enabled === true && !!apiKeys['anthropic']) enabledSet.add('claude');
       if (providerSettings['claude-code']?.enabled !== false) enabledSet.add('claude-code');
-      // Include the subscription CLI (on by default) so its variants render as
-      // checkboxes in the settings panel even before the user touches the toggle.
-      if (providerSettings['claude-code-cli']?.enabled !== false) enabledSet.add('claude-code-cli');
+      // The terminal-CLI provider is off until the user opts in, so its variants
+      // only need fetching once the settings toggle is on.
+      if (resolveProviderEnabled('claude-code-cli', providerSettings['claude-code-cli'])) enabledSet.add('claude-code-cli');
       if (providerSettings['openai']?.enabled === true && !!apiKeys['openai']) enabledSet.add('openai');
       if (providerSettings['openai-codex']?.enabled === true) enabledSet.add('openai-codex');
       if (providerSettings['opencode']?.enabled === true) enabledSet.add('opencode');
@@ -3813,9 +3826,10 @@ export class AIService {
           hiddenModels: claudeCodeSettings.hiddenModels
         },
         'claude-code-cli': {
-          // Genuine `claude` CLI on the user's subscription. On by default (like
-          // `claude-code`); no API key required — the CLI uses its own login.
-          enabled: providerSettings['claude-code-cli']?.enabled !== false,
+          // Genuine `claude` CLI in a terminal. Off by default — it's a workflow
+          // preference, not the way to use a Claude subscription. No API key
+          // required; the CLI uses its own login.
+          enabled: resolveProviderEnabled('claude-code-cli', providerSettings['claude-code-cli']),
           models: providerSettings['claude-code-cli']?.models,
           hiddenModels: providerSettings['claude-code-cli']?.hiddenModels
         },

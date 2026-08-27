@@ -486,7 +486,7 @@ function normalizeCollabCommentToolResult(
   };
 }
 
-async function resolveAgentIdentity(
+export async function resolveAgentIdentity(
   sessionId: string | undefined,
   workspacePath: string | undefined,
 ): Promise<{ sessionId: string; sessionName: string }> {

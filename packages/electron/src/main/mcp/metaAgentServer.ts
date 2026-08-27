@@ -122,7 +122,8 @@ interface MetaAgentToolFns {
     metaSessionId: string,
     workspaceId: string,
     targetSessionId: string,
-    prompt: string
+    prompt: string,
+    interrupt?: boolean
   ) => Promise<string>;
   notifyUser: (
     metaSessionId: string,
@@ -344,6 +345,11 @@ export const META_AGENT_TOOL_DEFS: Array<{
           type: "string",
           description: "The follow-up prompt to send.",
         },
+        interrupt: {
+          type: "boolean",
+          description:
+            "Optional. If true, stop the session's current turn and start processing the queue immediately instead of waiting for the turn to finish. The interrupted turn's work is lost, so use this only when the new prompt makes the current one obsolete. Ignored for a session waiting on an interactive prompt (use respond_to_prompt) or a terminal-backed CLI session; the result reports interrupted/interruptSkippedReason. The queue drains oldest-first, so if the session already has queued prompts this delivers the oldest one, not necessarily yours.",
+        },
       },
       required: ["sessionId", "prompt"],
     },
@@ -534,7 +540,8 @@ export async function dispatchMetaAgentTool(
         aiSessionId,
         effectiveWorkspaceId,
         (args?.sessionId as string) ?? "",
-        (args?.prompt as string) ?? ""
+        (args?.prompt as string) ?? "",
+        args?.interrupt === true
       );
     case "notify_user":
       return toolFns.notifyUser(aiSessionId, effectiveWorkspaceId, (args ?? {}) as NotifyUserArgs);

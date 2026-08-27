@@ -18,6 +18,7 @@
  */
 import { registerCollabContentAdapter } from '@nimbalyst/collab-adapters';
 import { MarkdownCollabContentAdapter } from '@nimbalyst/runtime/collab-lexical';
+import { canvasCollabCodec } from '@nimbalyst/runtime/canvas';
 import { CalcSheetCollabContentAdapter } from '@nimbalyst/extension-calc-sheets/collab-adapter';
 import { CsvCollabContentAdapter } from '@nimbalyst/extension-csv-spreadsheet/collab-adapter';
 import { ExcalidrawCollabContentAdapter } from '@nimbalyst/excalidraw-extension/collab-adapter';
@@ -35,11 +36,15 @@ export function registerBuiltinRendererCollabCodecs(): void {
   if (registered) return;
   registered = true;
   registerCollabContentAdapter(MarkdownCollabContentAdapter);
+  registerCollabContentAdapter(canvasCollabCodec);
   registerCollabContentAdapter(CodeCollabContentAdapter);
   registerCollabContentAdapter(CalcSheetCollabContentAdapter);
   registerCollabContentAdapter(CsvCollabContentAdapter);
   registerCollabContentAdapter(ExcalidrawCollabContentAdapter);
   registerCollabContentAdapter(DataModelCollabContentAdapter);
   registerCollabContentAdapter(MockupHtmlCollabContentAdapter);
+  // Compatibility reader for already-shared projects. MockupLM shipped project
+  // sharing before new shares were disabled, so removing this codec would make
+  // those rooms impossible to project back into their original file shape.
   registerCollabContentAdapter(MockupProjectCollabContentAdapter);
 }

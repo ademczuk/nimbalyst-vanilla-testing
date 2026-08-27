@@ -15,6 +15,10 @@
     "**/*.css"
   ],
   "exports": {
+    "./canvas": {
+      "types": "./types/canvas.d.ts",
+      "import": "./dist/canvas.js"
+    },
     "./commenting-ui": {
       "types": "./types/commenting-ui.d.ts",
       "import": "./dist/commenting-ui.js"

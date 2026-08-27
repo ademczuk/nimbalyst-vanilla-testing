@@ -126,6 +126,10 @@
       "import": "./dist/collab-lexical/index.js",
       "types": "./dist/collab-lexical/index.d.ts"
     },
+    "./canvas": {
+      "import": "./dist/canvas/index.js",
+      "types": "./dist/canvas/index.d.ts"
+    },
     "./auth/jwtScopes": {
       "import": "./dist/auth/jwtScopes.js",
       "types": "./dist/auth/jwtScopes.d.ts"
@@ -239,6 +243,7 @@
     "@types/mdast": "^4.0.4",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@types/shell-quote": "^1.7.5",
+    "@xyflow/react": "^12.11.5",
     "@zed-industries/codex-acp": "^0.12.0",
     "ajv-draft-04": "^1.0.0",
     "diff": "^8.0.2",

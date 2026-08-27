@@ -288,6 +288,29 @@ export class CollaborativeEmbedProviderCache {
     };
   }
 
+  /**
+   * The resource for a document that is *already* open, without acquiring one.
+   *
+   * Deliberately does not refcount and deliberately cannot open a room: this is
+   * for read-only observers -- the canvas's in-document comment counts -- that
+   * want to report on a room somebody else is holding and must not extend its
+   * life or start a socket of their own. A caller that needs the room to exist
+   * uses `acquire` and holds the lease.
+   */
+  peek(
+    reference: CollaborativeEmbedReference,
+  ): CollaborativeEmbedProviderResource | null {
+    for (const entry of this.entries.values()) {
+      if (
+        entry.request.orgId === reference.orgId &&
+        entry.request.documentId === reference.documentId
+      ) {
+        return entry.resource;
+      }
+    }
+    return null;
+  }
+
   private async destroyEntry(entry: CacheEntry): Promise<void> {
     entry.resource.destroy();
     await this.dependencies.close(

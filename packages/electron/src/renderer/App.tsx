@@ -212,6 +212,7 @@ import {
   electronStorageBackend,
   initializeElectronStorageBackend,
 } from './extensions/panels';
+import { registerBuiltinCustomEditors } from './components/CustomEditors/registerBuiltinCustomEditors';
 import { setStorageBackend, getExtensionEditorAPI } from '@nimbalyst/runtime';
 import { store, editorDirtyAtom, makeEditorKey } from '@nimbalyst/runtime/store';
 import { extensionPanelAIContextAtom } from './store/atoms/extensionPanels';
@@ -330,6 +331,10 @@ export default function App() {
 
   // Register custom editors and extensions based on settings
   useEffect(() => {
+    // Core editors first and synchronously, so a file type owned by the app
+    // (`.canvas`) is claimed even while extension discovery is still running.
+    registerBuiltinCustomEditors();
+
     const registerCustomEditors = async () => {
       try {
         // Set up storage backend for extensions BEFORE loading extensions

@@ -211,6 +211,9 @@ export const SITUATIONAL_TOOLS: readonly string[] = [
   'readCollabDocComments',
   'replyToCollabDocComment',
   'createCollabDocComment',
+  // project canvas presence: an attention declaration, never a lock
+  'declareCanvasWorkingSet',
+  'releaseCanvasWorkingSet',
   // shared-index (first-class shared folders + documents) management
   'createSharedDoc',
   'createSharedFolder',

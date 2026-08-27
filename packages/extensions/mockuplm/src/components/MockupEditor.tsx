@@ -352,11 +352,6 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
       [host, markDirty]
     );
 
-    // Check if this mockup was opened from a project (for back-link)
-    const projectOrigin = (window.__mockupProjectOrigin || {})[filePath] as
-      | string
-      | undefined;
-
     // Additional UI state
     const [mockupTheme, setMockupTheme] = useState<MockupTheme>("dark");
 
@@ -691,16 +686,6 @@ export const MockupEditor = forwardRef<any, EditorHostProps>(
       <div className="mockup-editor flex flex-col h-full bg-nim relative">
         <MockupToolbar
           fileName={fileName}
-          projectOrigin={projectOrigin}
-          onOpenProject={() => {
-            const workspacePath = window.__workspacePath;
-            if (workspacePath && projectOrigin) {
-              window.electronAPI?.invoke("workspace:open-file", {
-                workspacePath,
-                filePath: projectOrigin,
-              });
-            }
-          }}
           isInteractive={isInteractive}
           onToggleInteractive={toggleInteractive}
           canComment={canComment}

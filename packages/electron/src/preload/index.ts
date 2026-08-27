@@ -757,6 +757,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ) => {
     ipcRenderer.send(resultChannel, result);
   },
+  // Project Canvas working-set declaration (agent presence on a board).
+  onMcpCanvasWorkingSet: (callback: (data: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('mcp:canvasWorkingSet', handler);
+    return () => ipcRenderer.removeListener('mcp:canvasWorkingSet', handler);
+  },
+  sendMcpCanvasWorkingSetResult: (
+    resultChannel: string,
+    result: {
+      success: boolean;
+      published?: boolean;
+      nodeIds?: string[];
+      code?: string;
+      error?: string;
+    },
+  ) => {
+    ipcRenderer.send(resultChannel, result);
+  },
   // Shared-index (first-class shared folders + documents) MCP operations.
   onMcpCreateSharedDoc: (callback: (data: { title: string, documentType?: string, parentFolderId?: string | null, folderPath?: string, initialContent?: string, resultChannel: string }) => void) => {
     const handler = (_event: any, data: any) => callback(data);

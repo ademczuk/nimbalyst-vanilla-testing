@@ -1,26 +1,25 @@
-import React, {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
-import type { EditorHost, EditorViewport } from '@nimbalyst/runtime';
+import type { EditorHost, EditorViewport } from "@nimbalyst/runtime";
 
-import type { CustomEditorRegistration } from '../CustomEditors/types';
-import { useTheme } from '../../hooks/useTheme';
+import type { CustomEditorRegistration } from "../CustomEditors/types";
+import { useTheme } from "../../hooks/useTheme";
 import {
   collaborativeEmbedProviderCache,
   collaborativeEmbedResourceKey,
   type CollaborativeEmbedProviderAcquisition,
   type CollaborativeEmbedProviderRequest,
-} from '../../services/CollaborativeEmbedProviderCache';
-import { buildCollabUri } from '@nimbalyst/collab-protocol';
-import { createCollabExtensionHost } from '../TabEditor/collabExtensionHost';
+} from "../../services/CollaborativeEmbedProviderCache";
+import { buildCollabUri } from "@nimbalyst/collab-protocol";
+import { createCollabExtensionHost } from "../TabEditor/collabExtensionHost";
 
 interface CollaborativeEmbedEditorProps {
   registration: CustomEditorRegistration;
   request: CollaborativeEmbedProviderRequest;
+  /** Defaults to the existing inline-embed behavior: read-only. */
+  readOnly?: boolean;
+  /** Fires only after the cache acquisition has actually released its room. */
+  onConnectionReleased?: () => void;
   /**
    * Receives the editor's scroll viewport, when it publishes one.
    *
@@ -33,18 +32,33 @@ interface CollaborativeEmbedEditorProps {
 
 export const CollaborativeEmbedEditor: React.FC<
   CollaborativeEmbedEditorProps
-> = ({ registration, request, onViewportRegistered }) => {
+> = ({
+  registration,
+  request,
+  readOnly = true,
+  onConnectionReleased,
+  onViewportRegistered,
+}) => {
   const { theme } = useTheme();
   const themeRef = useRef(theme);
   themeRef.current = theme;
   const themeListeners = useRef(new Set<(nextTheme: string) => void>());
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+  const readOnlyListeners = useRef(new Set<(next: boolean) => void>());
   const [acquisition, setAcquisition] =
     useState<CollaborativeEmbedProviderAcquisition | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  const connectionReleasedRef = useRef(onConnectionReleased);
+  connectionReleasedRef.current = onConnectionReleased;
 
   useEffect(() => {
     for (const listener of themeListeners.current) listener(theme);
   }, [theme]);
+
+  useEffect(() => {
+    for (const listener of readOnlyListeners.current) listener(readOnly);
+  }, [readOnly]);
 
   // Acquire on the request's VALUE, not its identity. An equal-but-new request
   // object (a parent re-render) must not disconnect and rebuild a live child
@@ -56,25 +70,51 @@ export const CollaborativeEmbedEditor: React.FC<
   useEffect(() => {
     let cancelled = false;
     let acquired: CollaborativeEmbedProviderAcquisition | null = null;
+    let releaseNotified = false;
+    /*
+     * Captured here, not read at call time. This confirmation is late by
+     * construction -- it can fire after the cache acquisition settles, which
+     * may be after the parent has already swapped to a different room and
+     * handed us a different `onConnectionReleased`. Reading the ref then would
+     * acknowledge the *new* lease and leave the one this acquisition actually
+     * held stuck in `releasing`, silently costing the shared-room ceiling a
+     * slot. `useCanvasRoomConnectionLease` binds each callback to its own
+     * handle so this capture names the right lease.
+     */
+    const notifyOwner = connectionReleasedRef.current;
+    const notifyReleased = () => {
+      if (releaseNotified) return;
+      releaseNotified = true;
+      notifyOwner?.();
+    };
     setAcquisition(null);
     setError(null);
-    void collaborativeEmbedProviderCache.acquire(requestRef.current)
-      .then(next => {
+    void collaborativeEmbedProviderCache
+      .acquire(requestRef.current)
+      .then((next) => {
         if (cancelled) {
           next.release();
+          notifyReleased();
           return;
         }
         acquired = next;
         setAcquisition(next);
       })
-      .catch(reason => {
+      .catch((reason) => {
         if (!cancelled) {
-          setError(reason instanceof Error ? reason : new Error(String(reason)));
+          setError(
+            reason instanceof Error ? reason : new Error(String(reason))
+          );
+        } else {
+          notifyReleased();
         }
       });
     return () => {
       cancelled = true;
-      acquired?.release();
+      if (acquired) {
+        acquired.release();
+        notifyReleased();
+      }
     };
   }, [resourceKey]);
 
@@ -91,7 +131,7 @@ export const CollaborativeEmbedEditor: React.FC<
   const host = useMemo<EditorHost | null>(() => {
     if (!acquisition) return null;
     const filePath = buildCollabUri(orgId, documentId);
-    return createCollabExtensionHost({
+    const base = createCollabExtensionHost({
       filePath,
       fileName: title,
       isActive: true,
@@ -99,18 +139,31 @@ export const CollaborativeEmbedEditor: React.FC<
       activeConfig: acquisition.resource.config,
       collaboration: acquisition.resource.collaboration,
       getTheme: () => themeRef.current,
-      subscribeToThemeChanges: callback => {
+      subscribeToThemeChanges: (callback) => {
         themeListeners.current.add(callback);
         return () => {
           themeListeners.current.delete(callback);
         };
       },
       embedded: true,
-      readOnly: true,
+      readOnly: readOnlyRef.current,
       // Reads the ref at call time rather than capturing it, so a caller that
       // swaps its handler still gets the next registration.
-      onViewportRegistered: viewport => viewportRef.current?.(viewport),
+      onViewportRegistered: (viewport) => viewportRef.current?.(viewport),
     });
+    return {
+      ...base,
+      get readOnly() {
+        return readOnlyRef.current;
+      },
+      onReadOnlyChanged(callback: (next: boolean) => void) {
+        readOnlyListeners.current.add(callback);
+        callback(readOnlyRef.current);
+        return () => {
+          readOnlyListeners.current.delete(callback);
+        };
+      },
+    };
   }, [acquisition, documentId, orgId, title, workspacePath]);
 
   if (error) {

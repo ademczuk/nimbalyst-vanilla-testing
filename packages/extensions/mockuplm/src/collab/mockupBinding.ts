@@ -97,8 +97,7 @@ export class MockupBinding {
       // lands, so filtering it left the editor showing the empty seed. The
       // `lastSyncedContent` check below already suppresses the case that filter
       // was aimed at -- a bootstrap that matches what the editor was seeded
-      // with. Same fix as csvBinding, datamodelBinding, and
-      // mockupProjectBinding; mockupProjectBinding.hydration.test.ts pins it.
+      // with. Same fix as csvBinding and datamodelBinding.
       if (txn.origin === this.localTxnOrigin) return;
       const content = this.yText.toString();
       if (content === this.lastSyncedContent) return;

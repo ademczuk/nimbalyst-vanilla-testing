@@ -180,7 +180,7 @@ describe('the comments service the mount puts on the collaboration context', () 
    * the first answer on a cold open is "not yet known". Without a way to
    * re-publish it the affordance would stay hidden for the rest of the session.
    */
-  it('republishes a resolved host answer without bypassing missing server authority', async () => {
+  it('republishes a host answer that resolved after the mount', async () => {
     let permitted = false;
     const { handle, observed } = await mount({
       comments: { ...SEAM, canComment: () => permitted },
@@ -193,9 +193,7 @@ describe('the comments service the mount puts on the collaboration context', () 
     permitted = true;
     handle.refreshCommentAccess();
 
-    // This harness is in-memory (`serverAccess: not-applicable`), so the
-    // notification is delivered but cannot turn a local role answer into
-    // server-authorized comment access.
-    expect(seen).toEqual([false]);
+    expect(seen).toEqual([true]);
+    expect(comments.getCapabilities().comment).toBe(true);
   });
 });

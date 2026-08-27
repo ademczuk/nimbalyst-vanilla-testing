@@ -537,6 +537,9 @@ export default defineConfig({
         '@lexical/utils',
         '@lexical/yjs',
         '@monaco-editor/react',
+        // Project Canvas loads lazily; without this entry Vite discovers React
+        // Flow mid-session, re-optimizes, and serves a second React.
+        '@xyflow/react',
         'diff',
         'electron-log/renderer',
         'fast-deep-equal',

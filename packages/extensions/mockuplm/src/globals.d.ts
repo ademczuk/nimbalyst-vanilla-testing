@@ -13,7 +13,6 @@ interface Window {
     on: (channel: string, callback: (...args: any[]) => void) => () => void;
   };
   __workspacePath?: string;
-  __mockupProjectOrigin?: Record<string, string>;
   __mockupAnnotations?: Map<string, MockupAnnotationEntry>;
   __mockupFilePath?: string;
   __mockupSelectedElement?: any;

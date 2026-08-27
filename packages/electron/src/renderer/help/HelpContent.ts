@@ -299,12 +299,12 @@ export const HelpContent: Record<string, HelpEntry> = {
     body: 'Choose which AI model to use. Different models have different capabilities and speeds.',
   },
   'model-picker-provider-claude-code': {
-    title: 'Claude Agent (Claude Code Based)',
-    body: 'The in-app agent built on Claude Code with full Nimbalyst integration: it sees your active document and selection, renders the rich inline transcript, and tracks every file it edits. Uses your configured Anthropic API key.',
+    title: 'Claude Agent (Recommended)',
+    body: 'The in-app agent built on Claude Code with full Nimbalyst integration: it sees your active document and selection, renders the rich inline transcript, and tracks every file it edits. Runs on your Claude subscription when you sign in with your Claude plan, or on your Anthropic API key.',
   },
   'model-picker-provider-claude-code-cli': {
     title: 'Claude Code CLI (Terminal Mode)',
-    body: 'Runs the genuine claude terminal binary in an embedded terminal, billed to your Claude subscription. You get native CLI behavior — its slash commands and TUI — in the Raw terminal drawer, while Nimbalyst mirrors the conversation into the rich transcript.',
+    body: 'For people who prefer the command-line tool itself: runs the genuine claude binary in an embedded terminal, so you get its slash commands and TUI in the Raw terminal drawer while Nimbalyst mirrors the conversation into the rich transcript. You do not need this to use your Claude subscription.',
   },
   'action-prompts-dropdown': {
     title: 'Action Prompts',

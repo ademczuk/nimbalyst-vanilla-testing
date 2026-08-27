@@ -1,0 +1,58 @@
+/*
+ * Chrome-less by design: the card's border, accent, selection ring, and
+ * activation ring all come from `.canvas-card` in the runtime's own stylesheet.
+ * A second frame around the editor would double every one of them.
+ */
+
+.canvas-card-host {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.canvas-card-host > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.canvas-card-host__save-error {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--nim-error);
+  background: color-mix(in srgb, var(--nim-error) 12%, transparent);
+  border-top: 1px solid var(--nim-border);
+}
+
+.canvas-card-host__notice {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  padding: 12px 14px;
+  user-select: text;
+}
+
+.canvas-card-host__notice-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--nim-text);
+  overflow-wrap: anywhere;
+}
+
+.canvas-card-host__notice-detail {
+  font-size: 11px;
+  color: var(--nim-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.canvas-card-host__notice-note {
+  font-size: 11px;
+  color: var(--nim-text-faint);
+}

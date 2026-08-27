@@ -24,12 +24,18 @@ import {
   setEmbedPluginCallbacks,
   setEmbeddableExtensions,
 } from '@nimbalyst/runtime';
+import { setCanvasCallbacks } from '@nimbalyst/runtime/canvas';
 
 import { customEditorRegistry } from '../CustomEditors/registry';
 import { EmbedFrame } from './EmbedFrame';
+import { CanvasCardHost } from './CanvasCardHost';
+import { canvasCardCommentCounts } from './canvasCardCommentCounts';
+import { canvasCardRevisions } from './canvasCardRevisions';
+import { dispatchCanvasAgentThread } from './canvasAgentDispatch';
 
 export { EmbedFrame } from './EmbedFrame';
 export { createEmbeddedFileHost } from './createEmbeddedFileHost';
+export { CanvasCardHost } from './CanvasCardHost';
 
 function syncEmbeddableExtensions(): void {
   setEmbeddableExtensions(customEditorRegistry.getRegisteredExtensions());
@@ -37,6 +43,24 @@ function syncEmbeddableExtensions(): void {
 
 export function registerEmbedFrame(): void {
   setEmbedPluginCallbacks({ renderEmbed: EmbedFrame });
+  // The canvas's card slot, filled from the same place and for the same reason:
+  // one renderer-side module owns "how a reference becomes a mounted editor,"
+  // whether the surface arranging those references is a document or a board.
+  setCanvasCallbacks({
+    renderCard: CanvasCardHost,
+    // The other half of a card's dual comment count: threads inside the card's
+    // own document, which live in that document's room and never merge with the
+    // board's own threads.
+    cardComments: canvasCardCommentCounts,
+    // A card's history, and the local sessions and commits behind it. The
+    // browser console leaves this unset for now: it can reach the room, but not
+    // `session_files`, and a rail that could only ever say "By <someone>" is a
+    // weaker answer than no rail.
+    revisions: canvasCardRevisions,
+    dispatchAgentThread: (request) => {
+      void dispatchCanvasAgentThread(request);
+    },
+  });
   syncEmbeddableExtensions();
   customEditorRegistry.onChange(syncEmbeddableExtensions);
 }

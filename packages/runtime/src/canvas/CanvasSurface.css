@@ -1,0 +1,991 @@
+/**
+ * Project Canvas surface styling.
+ *
+ * Plain CSS over the canonical `--nim-*` variables rather than Tailwind
+ * utilities: this module is published to the web console through
+ * `@nimbalyst/collab-bundle`, where the desktop app's Tailwind content glob
+ * does not reach. `user-select` is declared here as well as via `select-text`
+ * for the same reason.
+ */
+
+/* `height: 100%` as well as `flex: 1`, because the host wrapper is not always a
+   flex container: `custom-editor-wrapper` is `display: block`, so `flex: 1`
+   does nothing there and an auto height collapses the board to nothing --
+   `.canvas-surface` is `height: 100%` and has no intrinsic height to fall back
+   on, so the whole editor renders at zero pixels. */
+.canvas-editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.canvas-editor--error {
+  gap: 6px;
+  padding: 24px;
+  color: var(--nim-text-muted);
+}
+
+.canvas-editor__error-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--nim-error);
+}
+
+.canvas-editor__error-detail {
+  font-family: var(--nim-font-mono, monospace);
+  font-size: 12px;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.canvas-editor__error-note {
+  font-size: 12px;
+  color: var(--nim-text-faint);
+}
+
+.canvas-surface {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  container-type: inline-size;
+  container-name: canvas-surface;
+  background: var(--nim-bg);
+  color: var(--nim-text);
+}
+
+.canvas-surface .react-flow__attribution {
+  background: transparent;
+  color: var(--nim-text-faint);
+  font-size: 10px;
+}
+
+.canvas-surface .react-flow__attribution a {
+  color: var(--nim-text-faint);
+}
+
+.canvas-surface .react-flow__controls {
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+}
+
+.canvas-surface .react-flow__controls-button {
+  background: var(--nim-bg-secondary);
+  border-bottom: 1px solid var(--nim-border);
+  fill: var(--nim-text-muted);
+  color: var(--nim-text-muted);
+}
+
+.canvas-surface .react-flow__controls-button:hover {
+  background: var(--nim-bg-hover);
+}
+
+.canvas-surface .react-flow__controls-button svg {
+  fill: var(--nim-text-muted);
+}
+
+.canvas-surface .react-flow__panel {
+  color: var(--nim-text);
+}
+
+/* --- Board toolbar ------------------------------------------------------ */
+
+.canvas-toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+}
+
+.canvas-toolbar__button {
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--nim-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.canvas-toolbar__button:hover {
+  background: var(--nim-bg-hover);
+  color: var(--nim-text);
+}
+
+.canvas-toolbar__button--view {
+  margin-left: 4px;
+  border-left: 1px solid var(--nim-border);
+  border-radius: 0 5px 5px 0;
+}
+
+@container canvas-surface (max-width: 420px) {
+  .canvas-toolbar__button {
+    padding: 4px 6px;
+  }
+}
+
+/* --- Alignment guides ---------------------------------------------------
+   Drawn inside React Flow's transformed viewport, so the coordinates are
+   canvas units. `non-scaling-stroke` is what keeps a guide one pixel wide at
+   every zoom instead of a fat bar at 200% and an invisible hair at 10%. */
+
+.canvas-guides {
+  z-index: 10000;
+  pointer-events: none;
+}
+
+.canvas-guides__line {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1;
+  stroke: var(--nim-primary);
+}
+
+.canvas-guides__line--center {
+  stroke-dasharray: 4 3;
+}
+
+.canvas-guides__line--spacing {
+  stroke: var(--nim-warning);
+  stroke-dasharray: 2 3;
+  stroke-width: 2;
+}
+
+/* --- Cards -------------------------------------------------------------- */
+
+.canvas-card {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-radius: 8px;
+  /* `--nim-canvas-card-rings` is the working-set halo: a list of concentric
+     box-shadow rings, one per claimant, set inline by CanvasCardNode. It goes
+     first in every one of these lists so a claim stays visible on a card that
+     is also selected or activated -- the two say different things and must not
+     hide each other. */
+  box-shadow: var(--nim-canvas-card-rings, 0 0 #0000), 0 2px 8px rgb(0 0 0 / 25%);
+}
+
+.canvas-card--selected {
+  border-color: var(--nim-primary);
+  box-shadow: var(--nim-canvas-card-rings, 0 0 #0000),
+    0 0 0 2px color-mix(in srgb, var(--nim-primary) 30%, transparent);
+}
+
+.canvas-card--active {
+  border-color: var(--nim-primary);
+  box-shadow: var(--nim-canvas-card-rings, 0 0 #0000), 0 0 0 2px var(--nim-primary);
+}
+
+.canvas-card--accented {
+  border-left: 4px solid var(--nim-canvas-card-accent, var(--nim-border));
+}
+
+.canvas-card--sticky {
+  background: color-mix(
+    in srgb,
+    var(--nim-canvas-card-accent, var(--nim-bg-secondary)) 18%,
+    var(--nim-bg-secondary)
+  );
+}
+
+/* A frame is a labelled backdrop, not a container: JSON Canvas group nodes have
+   no parent/child relationship, only geometry. */
+.canvas-card--group {
+  background: color-mix(in srgb, var(--nim-bg-tertiary) 55%, transparent);
+  border-style: dashed;
+  box-shadow: var(--nim-canvas-card-rings, none);
+}
+
+/*
+ * The inert layer. Card content never receives pointer events until the card is
+ * activated -- interactive children capture the wheel and fight the pan, and
+ * pointer-to-content mapping is wrong under React Flow's CSS transform.
+ */
+.canvas-card__body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.canvas-card--active > .canvas-card__body {
+  pointer-events: auto;
+}
+
+.canvas-card__text,
+.canvas-card__text-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--nim-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+}
+
+.canvas-card__text {
+  user-select: text;
+}
+
+.canvas-card__text-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: inherit;
+}
+
+.canvas-card__image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--nim-bg);
+}
+
+.canvas-card__image-empty,
+.canvas-card__link {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.canvas-card__link {
+  user-select: text;
+  overflow-wrap: anywhere;
+  color: var(--nim-link, var(--nim-text-muted));
+}
+
+.canvas-card__url-input,
+.canvas-card__frame-input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--nim-text);
+  background: var(--nim-bg);
+  border: 1px solid var(--nim-primary);
+  border-radius: 4px;
+  outline: none;
+}
+
+.canvas-card__url-input {
+  align-self: center;
+  margin: 0 12px;
+}
+
+.canvas-card__frame {
+  align-self: flex-start;
+  width: 100%;
+  padding: 6px 10px;
+}
+
+.canvas-card__frame-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nim-text-muted);
+  user-select: text;
+}
+
+/* --- Reference cards: cold / warm / hot ---------------------------------- */
+
+/*
+ * A warm card holds the real editor, read-only and pointer-inert. The dimming is
+ * the only affordance distinguishing it from a hot one -- an editor that thinks
+ * it is interactive but cannot be touched is worse than one that reads as a
+ * preview.
+ */
+.canvas-card--reference.canvas-card--lod-warm > .canvas-card__body {
+  opacity: 0.92;
+}
+
+.canvas-card--reference.canvas-card--lod-hot {
+  box-shadow: 0 0 0 2px var(--nim-primary), 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+.canvas-card__cold {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  padding: 12px 14px;
+  user-select: text;
+}
+
+.canvas-card__cold-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--nim-text);
+  overflow-wrap: anywhere;
+}
+
+.canvas-card__cold-detail {
+  font-size: 11px;
+  color: var(--nim-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.canvas-card__cold-note {
+  font-size: 11px;
+  color: var(--nim-text-faint);
+}
+
+.canvas-card__placeholder {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  padding: 12px 14px;
+  user-select: text;
+}
+
+.canvas-card__placeholder-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--nim-text);
+  overflow-wrap: anywhere;
+}
+
+.canvas-card__placeholder-detail {
+  font-size: 11px;
+  color: var(--nim-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.canvas-card__placeholder-note {
+  font-size: 11px;
+  color: var(--nim-text-faint);
+}
+
+.canvas-card__placeholder-text {
+  color: var(--nim-text-faint);
+}
+
+/* --- Handles, resizer, per-card toolbar --------------------------------- */
+
+.canvas-card__handle {
+  width: 8px;
+  height: 8px;
+  background: var(--nim-primary);
+  border: 1px solid var(--nim-bg);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.canvas-card:hover .canvas-card__handle,
+.canvas-card--selected .canvas-card__handle {
+  opacity: 1;
+}
+
+.canvas-card--active .canvas-card__handle {
+  opacity: 0;
+}
+
+.canvas-card__resize-line {
+  border-color: var(--nim-primary);
+}
+
+.canvas-card__resize-handle {
+  background: var(--nim-primary);
+  border: 1px solid var(--nim-bg);
+}
+
+.canvas-card-toolbar {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 35%);
+}
+
+.canvas-card-toolbar__button {
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--nim-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.canvas-card-toolbar__button:hover {
+  background: var(--nim-bg-hover);
+  color: var(--nim-text);
+}
+
+.canvas-card-toolbar__button--danger:hover {
+  color: var(--nim-error);
+}
+
+/* --- Edges -------------------------------------------------------------- */
+
+.canvas-edge__label {
+  position: absolute;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--nim-text-muted);
+  white-space: nowrap;
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-radius: 4px;
+  pointer-events: all;
+  user-select: text;
+}
+
+/* --- Empty board -------------------------------------------------------- */
+
+.canvas-surface__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--nim-text-faint);
+  pointer-events: none;
+}
+
+/* --- Presence ----------------------------------------------------------- */
+
+/*
+ * Cursors, viewport rectangles, and agent markers. Rendered inside React Flow's
+ * ViewportPortal, so every coordinate below is a board coordinate and the layer
+ * transforms with the board. Nothing in here takes the pointer: a presence
+ * marker is a report, and letting it intercept a click would put an
+ * uninteractive element on top of the card the user was aiming at.
+ */
+.canvas-presence {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.canvas-presence__viewport {
+  position: absolute;
+  border: 1px solid currentcolor;
+  border-radius: 4px;
+  opacity: 0.35;
+}
+
+.canvas-presence__viewport-label {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.canvas-presence__marker {
+  position: absolute;
+  display: flex;
+}
+
+.canvas-presence__cursor {
+  display: block;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 40%));
+}
+
+.canvas-presence__agent-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 50%;
+  vertical-align: middle;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentcolor 25%, transparent);
+}
+
+.canvas-presence__name {
+  display: inline-flex;
+  gap: 4px;
+  align-items: baseline;
+  margin-left: 10px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--nim-bg);
+  white-space: nowrap;
+  border-radius: 4px;
+}
+
+/* An agent marker has no cursor arrow to hang off, so its label sits inline. */
+.canvas-presence__marker--agent .canvas-presence__name {
+  margin-left: 0;
+}
+
+.canvas-presence__on-behalf {
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.canvas-presence-panel {
+  pointer-events: none;
+}
+
+.canvas-presence-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+  pointer-events: auto;
+}
+
+.canvas-presence-roster__entry {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  max-width: 220px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--nim-text);
+  cursor: pointer;
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-left-width: 3px;
+  border-radius: 5px;
+}
+
+.canvas-presence-roster__entry:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.canvas-presence-roster__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.canvas-presence-roster__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-presence-roster__badge {
+  padding: 0 4px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--nim-text-faint);
+  border: 1px solid var(--nim-border);
+  border-radius: 3px;
+}
+
+/* The working-set halo: one ring per claimant, agents carrying an extra glow.
+   Advisory only -- a claimed card stays fully editable by everyone. */
+.canvas-card-claims {
+  display: flex;
+  gap: 4px;
+}
+
+.canvas-card-claims__chip {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 2px 7px;
+  font-size: 11px;
+  color: var(--nim-text);
+  white-space: nowrap;
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-left-width: 3px;
+  border-radius: 5px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 30%);
+}
+
+.canvas-card-claims__swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.canvas-card-claims__on-behalf {
+  color: var(--nim-text-faint);
+}
+
+/* --- Comments -----------------------------------------------------------
+   Pins live inside the transformed viewport so they pan and zoom with the
+   cards they annotate; the marker counter-scales in JS to stay legible. The
+   composer deliberately does NOT live there -- it is a React Flow Panel in
+   screen space, because a textarea at 40% zoom is not a form. */
+.canvas-comment-pins {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.canvas-comment-pins__anchor {
+  position: absolute;
+  pointer-events: none;
+}
+
+.canvas-comment-pin {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  max-width: 220px;
+  padding: 3px 8px 3px 5px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--nim-text);
+  cursor: pointer;
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-radius: 10px 10px 10px 2px;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 35%);
+  pointer-events: auto;
+}
+
+.canvas-comment-pin:hover {
+  border-color: var(--nim-accent);
+}
+
+.canvas-comment-pin--resolved {
+  opacity: 0.55;
+}
+
+.canvas-comment-pin__dot {
+  width: 8px;
+  height: 8px;
+  background: var(--nim-accent);
+  border-radius: 50%;
+}
+
+.canvas-comment-pin__preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-comment-pin__replies {
+  padding: 0 5px;
+  font-size: 10px;
+  color: var(--nim-text-muted);
+  background: var(--nim-bg);
+  border-radius: 8px;
+}
+
+.canvas-comment-panel {
+  pointer-events: auto;
+}
+
+.canvas-comment-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 320px;
+  padding: 10px;
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 35%);
+}
+
+.canvas-comment-composer__target {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--nim-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Card comment counts ------------------------------------------------
+   Two badges, never one. The left counts threads about the card's place on
+   this board; the right counts threads inside the card's own document, which
+   live in that document's room and are a different conversation with a
+   different audience. They are styled apart on purpose. */
+.canvas-card-comments {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.canvas-card-comments__button {
+  padding: 0;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.canvas-card-comments__badge {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 18px;
+  border-radius: 9px;
+}
+
+.canvas-card-comments__badge--canvas {
+  color: var(--nim-bg);
+  background: var(--nim-accent);
+}
+
+.canvas-card-comments__badge--document {
+  color: var(--nim-text-muted);
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+}
+
+.canvas-toolbar__button--armed {
+  color: var(--nim-bg);
+  background: var(--nim-accent);
+}
+
+/* --- Revision rail ------------------------------------------------------
+   Screen space rather than board space, like the comment composer: a strip of
+   dates and prompts under React Flow's transform is unreadable at any zoom
+   below 1.0. What lands in board space is the pinned card the rail produces. */
+.canvas-revision-panel {
+  pointer-events: auto;
+}
+
+.canvas-revision-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(720px, 60vw);
+  padding: 10px;
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 35%);
+}
+
+.canvas-revision-rail__header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.canvas-revision-rail__title {
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--nim-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-revision-rail__close {
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--nim-text-muted);
+  background: none;
+  border: 1px solid var(--nim-border);
+  border-radius: 4px;
+}
+
+.canvas-revision-rail__note {
+  font-size: 11px;
+  color: var(--nim-text-muted);
+}
+
+.canvas-revision-rail__strip {
+  display: flex;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  overflow-x: auto;
+  list-style: none;
+}
+
+.canvas-revision-rail__entry {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 6px;
+  width: 190px;
+  padding: 8px;
+  background: var(--nim-bg);
+  border: 1px solid var(--nim-border);
+  border-radius: 6px;
+}
+
+.canvas-revision-rail__entry-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.canvas-revision-rail__version {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nim-text);
+}
+
+.canvas-revision-rail__time {
+  font-size: 10px;
+  color: var(--nim-text-faint);
+}
+
+.canvas-revision-rail__provenance {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  font-size: 10px;
+}
+
+.canvas-revision-rail__fact {
+  display: flex;
+  gap: 6px;
+}
+
+.canvas-revision-rail__fact dt {
+  flex: 0 0 46px;
+  color: var(--nim-text-faint);
+}
+
+.canvas-revision-rail__fact dd {
+  flex: 1 1 auto;
+  margin: 0;
+  overflow: hidden;
+  color: var(--nim-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The prompt is the one field worth more than one line: it is the whole
+   reason this rail says something a file history cannot. */
+.canvas-revision-rail__fact--prompt dd {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: normal;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.canvas-revision-rail__pin {
+  padding: 3px 6px;
+  font-size: 11px;
+  color: var(--nim-text);
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-radius: 4px;
+}
+
+/* A pinned card is history: dashed edge so it never reads as the live card it
+   sits beside. */
+.canvas-card--pinned-revision {
+  border-style: dashed;
+}
+
+/* --- `@agent` consent -----------------------------------------------------
+   A comment asking for a session is a request, not an instruction: the board
+   cannot prove who wrote one, so this panel is where a person decides. Centred
+   at the bottom so it is in the reading path rather than tucked in a corner
+   with the other chrome, and deliberately not styled as a notification. */
+.canvas-agent-request {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(420px, 70vw);
+  padding: 12px;
+  pointer-events: auto;
+  background: var(--nim-bg-secondary);
+  border: 1px solid var(--nim-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 35%);
+}
+
+.canvas-agent-request__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--nim-text);
+}
+
+.canvas-agent-request__where {
+  font-size: 11px;
+  color: var(--nim-text-muted);
+}
+
+.canvas-agent-request__body {
+  max-height: 140px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--nim-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--nim-bg);
+  border-left: 2px solid var(--nim-border);
+  border-radius: 0 4px 4px 0;
+}
+
+.canvas-agent-request__warning {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--nim-text-muted);
+}
+
+.canvas-agent-request__actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.canvas-agent-request__button {
+  padding: 4px 12px;
+  font-size: 12px;
+  line-height: 18px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.canvas-agent-request__button--dismiss {
+  color: var(--nim-text-muted);
+  background: transparent;
+  border: 1px solid var(--nim-border);
+}
+
+.canvas-agent-request__button--dismiss:hover {
+  background: var(--nim-bg-hover);
+  color: var(--nim-text);
+}
+
+.canvas-agent-request__button--confirm {
+  color: var(--nim-bg);
+  background: var(--nim-accent);
+  border: 1px solid var(--nim-accent);
+}
+
+.canvas-agent-request__button--confirm:hover {
+  filter: brightness(1.1);
+}

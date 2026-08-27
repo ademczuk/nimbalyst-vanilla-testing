@@ -11,7 +11,6 @@
  */
 
 import { MockupEditor } from './components/MockupEditor';
-import { MockupProjectEditor } from './components/MockupProjectEditor';
 import type {
   ExtensionContext,
   ExtensionFileSystemService,
@@ -41,6 +40,8 @@ export function getFilesystem(): ExtensionFileSystemService {
  */
 export async function activate(context: ExtensionContext) {
   context.services.collab.registerContentAdapter(MockupHtmlCollabContentAdapter);
+  // Retained after the project editor's retirement so already-shared legacy
+  // rooms can still be exported into the core read-only compatibility opener.
   context.services.collab.registerContentAdapter(MockupProjectCollabContentAdapter);
   console.log('[MockupLM] Extension activated');
   _filesystem = context.services.filesystem;
@@ -61,7 +62,6 @@ export async function deactivate() {
  */
 export const components = {
   MockupEditor,
-  MockupProjectEditor,
 };
 
 /**

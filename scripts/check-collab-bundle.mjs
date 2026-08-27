@@ -26,6 +26,12 @@ export const COLLAB_BUNDLE_EAGER_GZIP_BUDGET_BYTES = {
   // UI has grown an editor or transport dependency it should not have.
   // Initially 29,203 gzip bytes; same ~26% headroom as the shells above.
   'commenting-ui': 37_000,
+  // Project Canvas: React Flow, the card tree, the binding, and the SDK's
+  // collaborative-editor hook. Measured at 94,278 gzip bytes on first build;
+  // same ~26% headroom as the shells above. This entry is never eager in a
+  // host -- the console imports it only when a board opens -- so the ceiling
+  // is about the board's own cost, not the console's first paint.
+  canvas: 118_000,
   editor: 320_000,
   'docs-ui': 70_000,
   'feedback-ui': 35_000,
@@ -90,6 +96,30 @@ export const COLLAB_BUNDLE_FORBIDDEN_DEPENDENCIES = [
       || id.includes('/node_modules/@nimbalyst/extension-sdk/'),
   },
 ];
+
+/**
+ * Entries allowed to carry the extension SDK's runtime, and why.
+ *
+ * The SDK rule exists so the shells cannot quietly become an SDK
+ * re-distributor: `./editor`, `./docs-ui` and `./trackers-ui` implement the
+ * `EditorHost` contract natively (`browserExtensionHost`,
+ * `createBrowserCollaborationContext`) and a pinned extension brings its own
+ * SDK copy, so an SDK module appearing in those graphs means someone imported
+ * the implementation where the contract was meant to be.
+ *
+ * `./canvas` is on the other side of that contract. Project Canvas is an
+ * `EditorHostProps` editor exactly like a pinned extension is -- it consumes
+ * the SDK's `useCollaborativeEditor` rather than implementing a second one --
+ * and the console mounts it through the same `mountExtensionEditor` path. The
+ * copy is confined to the lazily-imported canvas chunk, and `COLLAB_INIT_ORIGIN`
+ * (a `Symbol`, so instance-sensitive) is only ever compared inside that one
+ * copy, between the SDK's seed transaction and `canvasBinding`.
+ *
+ * The exemption is per-entry and per-rule on purpose: every other boundary
+ * (Electron, Node builtins, filesystem, secrets) still applies to the canvas
+ * graph in full.
+ */
+const EXTENSION_SDK_EXEMPT_ENTRIES = ['canvas'];
 
 export const SINGLETON_CATEGORIES = [
   {
@@ -183,6 +213,30 @@ function chunkClosure(entry, chunksByFile, includeDynamicImports = true) {
   return seen;
 }
 
+/**
+ * Modules only the named entries can reach.
+ *
+ * A module shared with any other entry is deliberately absent: an exemption is
+ * a statement about one entry's graph, and a dependency that leaks into a
+ * shared chunk has stopped being that entry's business.
+ */
+export function findEntryExclusiveModuleIds(report, entryNames) {
+  const chunksByFile = new Map(report.chunks.map((chunk) => [chunk.fileName, chunk]));
+  const modulesOf = (entry) => new Set(
+    Array.from(chunkClosure(entry, chunksByFile))
+      .flatMap((fileName) => chunksByFile.get(fileName)?.modules ?? [])
+      .map(normalizeBrowserModuleId),
+  );
+  const exempt = new Set();
+  const shared = new Set();
+  for (const entry of report.chunks.filter((chunk) => chunk.isEntry)) {
+    const target = entryNames.includes(entry.name) ? exempt : shared;
+    for (const moduleId of modulesOf(entry)) target.add(moduleId);
+  }
+  for (const moduleId of shared) exempt.delete(moduleId);
+  return exempt;
+}
+
 export function findEagerEntryFiles(report, entryName) {
   const chunksByFile = new Map(report.chunks.map((chunk) => [chunk.fileName, chunk]));
   const entry = report.chunks.find((chunk) => chunk.isEntry && chunk.name === entryName);
@@ -237,6 +291,18 @@ export const TRACKERS_UI_FORBIDDEN_PERSONAL_LANE = [
 export function findTrackersUiPersonalLaneViolations(moduleIds) {
   return findBrowserDependencyViolations(moduleIds, TRACKERS_UI_FORBIDDEN_PERSONAL_LANE)
     .map(({ name, hits }) => `trackers-ui entry pulls the personal lane (${name}): ${hits.join(', ')}`);
+}
+
+/**
+ * Drop SDK hits that only the exempt entries can reach; leave every other
+ * category, and every shared hit, exactly as reported.
+ */
+export function applyExtensionSdkExemption(violations, exemptModuleIds) {
+  return violations
+    .map((violation) => (violation.name === 'extension SDK leakage'
+      ? { ...violation, hits: violation.hits.filter((hit) => !exemptModuleIds.has(hit)) }
+      : violation))
+    .filter((violation) => violation.hits.length > 0);
 }
 
 export function findEntrySeparationViolations(report) {
@@ -455,9 +521,12 @@ export function checkCollabBundle() {
       bundledModuleIds.has(normalizeBrowserModuleId(importer))
     )))
   ));
-  const boundaryViolations = findBrowserDependencyViolations(
-    relevantModules.map((module) => module.id),
-    COLLAB_BUNDLE_FORBIDDEN_DEPENDENCIES,
+  const boundaryViolations = applyExtensionSdkExemption(
+    findBrowserDependencyViolations(
+      relevantModules.map((module) => module.id),
+      COLLAB_BUNDLE_FORBIDDEN_DEPENDENCIES,
+    ),
+    findEntryExclusiveModuleIds(report, EXTENSION_SDK_EXEMPT_ENTRIES),
   );
   if (boundaryViolations.length > 0) {
     const details = boundaryViolations.flatMap(({ name, hits }) => [

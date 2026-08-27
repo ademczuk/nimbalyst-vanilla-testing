@@ -46,6 +46,11 @@ import {
   getEditorToolSchemas,
 } from "./tools/editorToolHandlers";
 import {
+  CANVAS_WORKING_SET_TOOL_SCHEMAS,
+  handleDeclareCanvasWorkingSet,
+  handleReleaseCanvasWorkingSet,
+} from "./tools/canvasWorkingSetToolHandlers";
+import {
   handleCreateSharedDoc,
   handleCreateSharedFolder,
   handleMoveSharedItem,
@@ -447,6 +452,7 @@ function createSharedMcpServer(
 
     const builtInTools: Array<{ name: string; description: string; inputSchema: any }> = [
       ...getEditorToolSchemas(sessionId),
+      ...CANVAS_WORKING_SET_TOOL_SCHEMAS.map((tool) => ({ ...tool })),
       ...getCollabIndexToolSchemas(),
       ...getCollabReadToolSchemas(),
       ...getRequestFeedbackToolSchemas(),
@@ -535,6 +541,12 @@ function createSharedMcpServer(
             sessionId,
             workspacePath,
           );
+
+        case "declareCanvasWorkingSet":
+          return handleDeclareCanvasWorkingSet(args, sessionId, workspacePath);
+
+        case "releaseCanvasWorkingSet":
+          return handleReleaseCanvasWorkingSet(args, sessionId, workspacePath);
 
         case "createSharedDoc":
           return handleCreateSharedDoc(args, workspacePath);

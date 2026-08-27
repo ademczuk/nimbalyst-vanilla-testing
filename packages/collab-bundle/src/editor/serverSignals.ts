@@ -6,6 +6,11 @@ export type ObservedDocumentServerSignal =
       clientUpdateId: string;
     }
   | {
+      /** The room's current write verdict, carried by every sync response. */
+      type: 'access-verdict';
+      canWrite: boolean;
+    }
+  | {
       type: 'read-only';
       message: string;
       clientUpdateId?: string;
@@ -29,6 +34,11 @@ export function parseDocumentServerSignal(data: unknown): ObservedDocumentServer
   const record = message as Record<string, unknown>;
   if (record.type === 'docUpdateAck' && typeof record.clientUpdateId === 'string') {
     return { type: 'write-acknowledged', clientUpdateId: record.clientUpdateId };
+  }
+  // An older server omits the field. Falling through to null leaves access
+  // unknown, which is what lets the host's own answer still decide.
+  if (record.type === 'docSyncResponse' && typeof record.canWrite === 'boolean') {
+    return { type: 'access-verdict', canWrite: record.canWrite };
   }
   if (record.type !== 'error' || typeof record.code !== 'string') return null;
   const details = {

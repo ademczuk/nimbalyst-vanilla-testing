@@ -210,8 +210,12 @@ class FakeRoomSocket {
     this.emit('open', {});
   }
 
-  /** The server's answer to `docSyncRequest`: a document, and no write verdict. */
-  deliverSyncResponse(): void {
+  /**
+   * The server's answer to `docSyncRequest`. `canWrite` is omitted to stand in
+   * for a server that predates the verdict, which is how the client's fallback
+   * to its own host answer stays covered.
+   */
+  deliverSyncResponse(canWrite?: boolean): void {
     this.emit('message', {
       data: JSON.stringify({
         type: 'docSyncResponse',
@@ -220,6 +224,7 @@ class FakeRoomSocket {
         cursor: 0,
         serverHead: 0,
         serverHasState: true,
+        ...(canWrite === undefined ? {} : { canWrite }),
       }),
     });
   }
@@ -227,6 +232,17 @@ class FakeRoomSocket {
   deliverWriteAcknowledged(): void {
     this.emit('message', {
       data: JSON.stringify({ type: 'docUpdateAck', clientUpdateId: 'probe-access' }),
+    });
+  }
+
+  /** The server refusing a write, which is how a stale host answer is corrected. */
+  deliverReadOnlyRefusal(): void {
+    this.emit('message', {
+      data: JSON.stringify({
+        type: 'error',
+        code: 'document_read_only',
+        message: 'Your current role permits reading this document but not editing it',
+      }),
     });
   }
 
@@ -239,6 +255,7 @@ describe('comment authoring on a document that has not been written to', () => {
   async function openTeamDocument(
     documentId: string,
     canComment: () => boolean,
+    serverCanWrite?: boolean,
   ): Promise<{ handle: CollabEditorHandle; documentUri: string }> {
     FakeRoomSocket.opened.length = 0;
     const element = document.createElement('div');
@@ -279,7 +296,7 @@ describe('comment authoring on a document that has not been written to', () => {
     if (!socket) throw new Error('the editor never opened a room socket');
     await act(async () => {
       socket.open();
-      socket.deliverSyncResponse();
+      socket.deliverSyncResponse(serverCanWrite);
     });
     await settle();
     return { handle, documentUri };
@@ -297,34 +314,74 @@ describe('comment authoring on a document that has not been written to', () => {
     return controller;
   }
 
-  it('withholds authoring until server access is known, then follows host permission', async () => {
+  it('lets a permitted host author on a document it has never written to', async () => {
+    // The server only ever acknowledges a write it was asked to make, so a
+    // document opened to be annotated stays at 'unknown' for its whole session.
+    // Authoring has to be available there or the comment panel is unusable.
     const writer = await openTeamDocument('doc-writer', () => true);
     expect(writer.handle.getState()).toMatchObject({
       connection: 'connected',
       serverAccess: 'unknown',
     });
-    expect(commentCapability(writer.documentUri)).toBe(false);
+    expect(commentCapability(writer.documentUri)).toBe(true);
+    // Reaching anchor resolution at all is the point: this attempt used to be
+    // turned away as COMMENT_FORBIDDEN before the anchor was ever looked at.
     await expect(commentController(writer.documentUri).createAnchored({
       anchor: { exact: 'not present' },
-      body: 'Must not be written locally',
+      body: 'Authored before any edit',
       clientMutationId: 'unknown-access-attempt',
     }, {
       kind: 'user',
       userId: 'member-reader',
       displayName: 'Reader',
-    })).rejects.toMatchObject({ code: 'COMMENT_FORBIDDEN' });
-    expect(writer.handle.getDocument().getArray('comments')).toHaveLength(0);
+    })).rejects.toMatchObject({ code: 'ANCHOR_NOT_FOUND' });
+  });
 
-    const writerSocket = FakeRoomSocket.opened[0];
-    if (!writerSocket) throw new Error('the writer never opened a room socket');
-    await act(async () => writerSocket.deliverWriteAcknowledged());
+  it('takes the sync response write verdict without waiting for a write', async () => {
+    // A server that reports access on connect settles this before the user
+    // touches anything, so a downgraded member is never offered an affordance
+    // that would bounce.
+    const writer = await openTeamDocument('doc-verdict-writer', () => true, true);
+    expect(writer.handle.getState()).toMatchObject({
+      serverAccess: 'writable',
+      readOnly: false,
+    });
     expect(commentCapability(writer.documentUri)).toBe(true);
 
+    const downgraded = await openTeamDocument('doc-verdict-reader', () => true, false);
+    expect(downgraded.handle.getState()).toMatchObject({
+      serverAccess: 'read-only',
+      readOnly: true,
+    });
+    expect(commentCapability(downgraded.documentUri)).toBe(false);
+  });
+
+  it('refuses a host that says no, and withdraws on a server write refusal', async () => {
     const viewer = await openTeamDocument('doc-viewer', () => false);
     expect(viewer.handle.getState()).toMatchObject({
       connection: 'connected',
       serverAccess: 'unknown',
     });
     expect(commentCapability(viewer.documentUri)).toBe(false);
+    await expect(commentController(viewer.documentUri).createAnchored({
+      anchor: { exact: 'not present' },
+      body: 'Must not be written locally',
+      clientMutationId: 'viewer-attempt',
+    }, {
+      kind: 'user',
+      userId: 'member-reader',
+      displayName: 'Reader',
+    })).rejects.toMatchObject({ code: 'COMMENT_FORBIDDEN' });
+    expect(viewer.handle.getDocument().getArray('comments')).toHaveLength(0);
+
+    // A host answer that has gone stale is corrected by the server's refusal
+    // rather than by withholding the affordance up front.
+    const stale = await openTeamDocument('doc-downgraded', () => true);
+    expect(commentCapability(stale.documentUri)).toBe(true);
+    const staleSocket = FakeRoomSocket.opened[0];
+    if (!staleSocket) throw new Error('the downgraded member never opened a room socket');
+    await act(async () => staleSocket.deliverReadOnlyRefusal());
+    expect(stale.handle.getState()).toMatchObject({ serverAccess: 'read-only' });
+    expect(commentCapability(stale.documentUri)).toBe(false);
   });
 });

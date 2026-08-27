@@ -12,8 +12,6 @@ import type { MockupTheme } from "../utils/themeEngine";
 
 export interface MockupToolbarProps {
   fileName: string;
-  projectOrigin: string | undefined;
-  onOpenProject: () => void;
 
   isInteractive: boolean;
   onToggleInteractive: () => void;
@@ -40,8 +38,6 @@ export interface MockupToolbarProps {
 
 export function MockupToolbar({
   fileName,
-  projectOrigin,
-  onOpenProject,
   isInteractive,
   onToggleInteractive,
   canComment,
@@ -62,21 +58,7 @@ export function MockupToolbar({
   return (
     <div className="mockup-toolbar px-4 py-2 border-b border-nim bg-nim-secondary flex items-center justify-between">
       <div className="flex items-center gap-3">
-        {projectOrigin ? (
-          <span className="text-sm flex items-center gap-1">
-            <button
-              onClick={onOpenProject}
-              className="text-nim-primary bg-transparent border-none cursor-pointer text-sm font-medium p-0 hover:underline"
-              title={`Back to project: ${projectOrigin.split("/").pop()}`}
-            >
-              {projectOrigin.split("/").pop()?.replace(".mockupproject", "")}
-            </button>
-            <span className="text-nim-faint text-xs">/</span>
-            <span className="text-nim-muted">{fileName}</span>
-          </span>
-        ) : (
-          <span className="text-sm text-nim-muted">{fileName}</span>
-        )}
+        <span className="text-sm text-nim-muted">{fileName}</span>
         <button
           onClick={onToggleInteractive}
           className={`px-3 py-1 text-xs border rounded cursor-pointer ${

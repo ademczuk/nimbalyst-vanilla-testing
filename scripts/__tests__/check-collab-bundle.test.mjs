@@ -3,7 +3,9 @@ import test from 'node:test';
 
 import {
   COLLAB_BUNDLE_FORBIDDEN_DEPENDENCIES,
+  applyExtensionSdkExemption,
   findEagerEntryFiles,
+  findEntryExclusiveModuleIds,
   findBundledSingletons,
   findEmbeddedLaneViolations,
   findEntrySeparationViolations,
@@ -65,6 +67,52 @@ test('fails loudly when Jotai or the runtime store resolves through two embedded
   ]);
 
   assert.deepEqual(violations.map(({ name }) => name), ['Jotai', 'runtime store']);
+});
+
+test('exempts the extension SDK for the canvas entry alone', () => {
+  const report = {
+    chunks: [
+      {
+        fileName: 'canvas.js', name: 'canvas', isEntry: true,
+        imports: ['chunks/shared.js'], dynamicImports: [], exports: [],
+        modules: ['/repo/packages/extension-sdk/dist/useCollaborativeEditor.js'],
+      },
+      {
+        fileName: 'editor.js', name: 'editor', isEntry: true,
+        imports: ['chunks/shared.js'], dynamicImports: [], exports: [], modules: [],
+      },
+      {
+        fileName: 'chunks/shared.js', name: 'shared', isEntry: false,
+        imports: [], dynamicImports: [], exports: [], modules: [],
+      },
+    ],
+  };
+  const sdkHits = [
+    '/repo/packages/extension-sdk/dist/useCollaborativeEditor.js',
+    '/repo/packages/extension-sdk/dist/index.js',
+  ];
+  const violations = [
+    { name: 'Electron', hits: ['electron'] },
+    { name: 'extension SDK leakage', hits: sdkHits },
+  ];
+
+  // The canvas-exclusive module is dropped; the one it shares with `editor` is
+  // not, and no other category is touched.
+  assert.deepEqual(
+    applyExtensionSdkExemption(violations, findEntryExclusiveModuleIds(report, ['canvas'])),
+    [
+      { name: 'Electron', hits: ['electron'] },
+      { name: 'extension SDK leakage', hits: ['/repo/packages/extension-sdk/dist/index.js'] },
+    ],
+  );
+
+  // The same module reached from a second entry stops being canvas-exclusive.
+  report.chunks[1].modules.push('/repo/packages/extension-sdk/dist/useCollaborativeEditor.js');
+  assert.deepEqual(
+    applyExtensionSdkExemption(violations, findEntryExclusiveModuleIds(report, ['canvas']))
+      .find(({ name }) => name === 'extension SDK leakage').hits,
+    sdkHits,
+  );
 });
 
 test('keeps editor and docs-ui dependency closures separate', () => {

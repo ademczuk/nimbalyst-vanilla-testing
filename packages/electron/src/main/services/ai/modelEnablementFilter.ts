@@ -24,6 +24,30 @@ export interface FilterableModel {
 }
 
 /**
+ * Providers that are on before the user has touched anything in Settings.
+ *
+ * Only `claude-code` (the SDK-backed Claude Agent) ships enabled — it is the
+ * app's default agent and needs no configuration. Everything else, including
+ * `claude-code-cli`, stays off until explicitly enabled. The CLI provider is
+ * purely a preference for driving the terminal `claude` binary; a Claude
+ * subscription works fine through the default agent, so it does not belong in
+ * the picker for people who never asked for it.
+ */
+const DEFAULT_ENABLED_PROVIDERS: ReadonlySet<string> = new Set(['claude-code']);
+
+/**
+ * Resolve a provider's enabled state, applying the default for an absent
+ * setting. Shared by every "is this provider on?" read so the settings toggle
+ * and the model picker cannot disagree about what "never configured" means.
+ */
+export function resolveProviderEnabled(
+  provider: string,
+  config: { enabled?: boolean } | undefined,
+): boolean {
+  return config?.enabled ?? DEFAULT_ENABLED_PROVIDERS.has(provider);
+}
+
+/**
  * Single gate deciding whether a catalog model reaches the picker. Extracted from
  * the `ai:getModels` handler so the behavior that once silently hid Fable 5 is
  * unit-tested (NIM-1486).

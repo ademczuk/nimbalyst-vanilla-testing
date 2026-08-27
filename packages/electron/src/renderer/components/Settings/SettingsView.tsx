@@ -768,7 +768,7 @@ export function SettingsView({
     };
 
     // Hidden-set (denylist) handlers, parameterized by provider id so the Claude
-    // panel can drive both `claude-code` (SDK) and `claude-code-cli` (subscription)
+    // panel can drive both `claude-code` (SDK) and `claude-code-cli` (terminal CLI)
     // from one place. A model is "visible" when it is NOT in `hiddenModels`.
     const makeVisibilityHandlers = (providerId: string) => ({
       onModelVisibilityToggle: (modelId: string, visible: boolean) => {
@@ -870,7 +870,7 @@ export function SettingsView({
             {...commonProps}
             {...makeVisibilityHandlers('claude-code')}
             cli={{
-              config: providers['claude-code-cli'] || { enabled: true, testStatus: 'idle' },
+              config: providers['claude-code-cli'] || { enabled: false, testStatus: 'idle' },
               availableModels: availableModels['claude-code-cli'] || [],
               loading: loading['claude-code-cli'] || false,
               onToggle: (enabled: boolean) => handleProviderToggle('claude-code-cli', enabled),

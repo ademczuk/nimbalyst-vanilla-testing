@@ -1,23 +1,18 @@
+import { parseEmbedAttrs, serializeEmbedAttrs } from "@nimbalyst/runtime";
 import {
-  parseEmbedAttrs,
-  serializeEmbedAttrs,
-} from '@nimbalyst/runtime';
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  normalize,
-} from 'pathe';
+  NIMBALYST_CANVAS_NAMESPACE,
+  parseCanvasDocument,
+  serializeCanvasDocument,
+  type CanvasDocument,
+} from "@nimbalyst/runtime/canvas";
+import { basename, dirname, isAbsolute, join, normalize } from "pathe";
 
-import { buildSharedDocumentDeepLink } from '../store/atoms/collabDocuments';
+import { buildSharedDocumentDeepLink } from "../store/atoms/collabDocuments";
 import type {
   CollaborativeDocumentTypeCatalog,
   CollaborativeDocumentTypeDescriptor,
-} from './CollaborativeDocumentTypeCatalog';
-import type {
-  CreateCollaborativeDocumentInput,
-} from './collaborativeDocumentCreationOrchestrator';
+} from "./CollaborativeDocumentTypeCatalog";
+import type { CreateCollaborativeDocumentInput } from "./collaborativeDocumentCreationOrchestrator";
 
 export interface SharedEmbeddedDocumentReference {
   documentId: string;
@@ -47,7 +42,7 @@ export interface DiscoverEmbeddedDocumentsInput {
   sourceFilePath: string;
   workspacePath: string;
   embeddableExtensions: readonly string[];
-  catalog: Pick<CollaborativeDocumentTypeCatalog, 'resolveShareability'>;
+  catalog: Pick<CollaborativeDocumentTypeCatalog, "resolveShareability">;
   /**
    * Org the parent document is being shared into. A prior share into a
    * DIFFERENT org must not be reused: the rewritten deep link carries the
@@ -57,11 +52,29 @@ export interface DiscoverEmbeddedDocumentsInput {
    */
   expectedOrgId: string | null;
   fileExists(absolutePath: string): Promise<boolean>;
-  findExisting(absolutePath: string): Promise<SharedEmbeddedDocumentReference | null>;
+  findExisting(
+    absolutePath: string
+  ): Promise<SharedEmbeddedDocumentReference | null>;
 }
 
 export interface RewriteEmbeddedDocumentLinksInput {
   markdown: string;
+  sourceFilePath: string;
+  workspacePath: string;
+  candidates: readonly EmbeddedDocumentCandidate[];
+  sharedReferences: ReadonlyMap<string, SharedEmbeddedDocumentReference>;
+}
+
+export interface DiscoverCanvasEmbeddedDocumentsInput
+  extends Omit<
+    DiscoverEmbeddedDocumentsInput,
+    "markdown" | "embeddableExtensions"
+  > {
+  canvas: string | Uint8Array;
+}
+
+export interface RewriteCanvasEmbeddedDocumentsInput {
+  canvas: string | Uint8Array;
   sourceFilePath: string;
   workspacePath: string;
   candidates: readonly EmbeddedDocumentCandidate[];
@@ -73,10 +86,10 @@ export interface ShareEmbeddedDocumentsInput {
   selectedPaths: ReadonlySet<string>;
   parentFolderId: string | null;
   readSourceContent(
-    candidate: EmbeddedDocumentCandidate,
+    candidate: EmbeddedDocumentCandidate
   ): Promise<string | Uint8Array>;
   createDocument(
-    input: Omit<CreateCollaborativeDocumentInput, 'scope'>,
+    input: Omit<CreateCollaborativeDocumentInput, "scope">
   ): Promise<{ documentId: string; title: string }>;
   generateId(): string;
   resolveOrgId(): Promise<string>;
@@ -111,10 +124,11 @@ function parseBlockLink(line: string): ParsedBlockLink | null {
   return {
     leading: match[1],
     label: match[2],
-    href: rawHref.startsWith('<') && rawHref.endsWith('>')
-      ? rawHref.slice(1, -1)
-      : rawHref,
-    title: match[4] ?? '',
+    href:
+      rawHref.startsWith("<") && rawHref.endsWith(">")
+        ? rawHref.slice(1, -1)
+        : rawHref,
+    title: match[4] ?? "",
     trailing: match[5],
   };
 }
@@ -130,7 +144,7 @@ function parseBlockLink(line: string): ParsedBlockLink | null {
  */
 function forEachBlockLink(
   parts: readonly string[],
-  visit: (link: ParsedBlockLink, index: number) => void,
+  visit: (link: ParsedBlockLink, index: number) => void
 ): void {
   let openFence: string | null = null;
   for (let index = 0; index < parts.length; index += 2) {
@@ -138,7 +152,11 @@ function forEachBlockLink(
     const fence = FENCE_PATTERN.exec(line)?.[1];
     if (openFence) {
       // A closing fence must be at least as long and use the same character.
-      if (fence && fence[0] === openFence[0] && fence.length >= openFence.length) {
+      if (
+        fence &&
+        fence[0] === openFence[0] &&
+        fence.length >= openFence.length
+      ) {
         openFence = null;
       }
       continue;
@@ -154,47 +172,48 @@ function forEachBlockLink(
 
 function normalizeExtension(extension: string): string {
   const lower = extension.trim().toLowerCase();
-  return lower.startsWith('.') ? lower : `.${lower}`;
+  return lower.startsWith(".") ? lower : `.${lower}`;
 }
 
 function matchingEmbeddableExtension(
   href: string,
-  extensions: readonly string[],
+  extensions: readonly string[]
 ): string | null {
-  const pathPart = href.split('?')[0].split('#')[0].toLowerCase();
-  return extensions
-    .map(normalizeExtension)
-    .sort((left, right) => right.length - left.length)
-    .find(extension => pathPart.endsWith(extension))
-    ?? null;
+  const pathPart = href.split("?")[0].split("#")[0].toLowerCase();
+  return (
+    extensions
+      .map(normalizeExtension)
+      .sort((left, right) => right.length - left.length)
+      .find((extension) => pathPart.endsWith(extension)) ?? null
+  );
 }
 
 export function resolveEmbeddedDocumentPath(
   href: string,
   sourceFilePath: string,
-  workspacePath: string,
+  workspacePath: string
 ): string | null {
   if (!href) return null;
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !/^file:/i.test(href)) {
     return null;
   }
 
-  const withoutQuery = href.split('?')[0].split('#')[0];
-  let decoded = withoutQuery.replace(/^file:\/\//i, '');
+  const withoutQuery = href.split("?")[0].split("#")[0];
+  let decoded = withoutQuery.replace(/^file:\/\//i, "");
   try {
     decoded = decodeURIComponent(decoded);
   } catch {
     return null;
   }
   if (isAbsolute(decoded)) return normalize(decoded);
-  if (decoded.startsWith('./') || decoded.startsWith('../')) {
+  if (decoded.startsWith("./") || decoded.startsWith("../")) {
     return normalize(join(dirname(sourceFilePath), decoded));
   }
   return normalize(join(workspacePath, decoded));
 }
 
 export async function discoverEmbeddedDocuments(
-  input: DiscoverEmbeddedDocumentsInput,
+  input: DiscoverEmbeddedDocumentsInput
 ): Promise<EmbeddedDocumentCandidate[]> {
   const candidates = new Map<string, EmbeddedDocumentCandidate>();
   const parts = input.markdown.split(/(\r?\n)/);
@@ -202,17 +221,21 @@ export async function discoverEmbeddedDocuments(
   // Collect first (the walk is synchronous), then resolve. Occurrence counts
   // have to be complete before the async work so a repeated embed is only
   // probed and shared once.
-  const sites: { link: ParsedBlockLink; fileExtension: string; absolutePath: string }[] = [];
-  forEachBlockLink(parts, link => {
+  const sites: {
+    link: ParsedBlockLink;
+    fileExtension: string;
+    absolutePath: string;
+  }[] = [];
+  forEachBlockLink(parts, (link) => {
     const fileExtension = matchingEmbeddableExtension(
       link.href,
-      input.embeddableExtensions,
+      input.embeddableExtensions
     );
     if (!fileExtension) return;
     const absolutePath = resolveEmbeddedDocumentPath(
       link.href,
       input.sourceFilePath,
-      input.workspacePath,
+      input.workspacePath
     );
     if (!absolutePath) return;
     sites.push({ link, fileExtension, absolutePath });
@@ -232,20 +255,72 @@ export async function discoverEmbeddedDocuments(
     // distinction goes here, not into a new descriptor field.
     const shareability = input.catalog.resolveShareability(fileName);
     if (
-      shareability.state !== 'ready'
-      || shareability.descriptor.editor.kind !== 'extension'
+      shareability.state !== "ready" ||
+      shareability.descriptor.editor.kind !== "extension"
     ) {
       continue;
     }
     const binding = await input.findExisting(absolutePath);
-    const alreadyShared = binding && binding.orgId === input.expectedOrgId
-      ? binding
-      : null;
+    const alreadyShared =
+      binding && binding.orgId === input.expectedOrgId ? binding : null;
     candidates.set(absolutePath, {
       absolutePath,
       sourceHref: link.href,
       fileName,
       fileExtension,
+      descriptor: shareability.descriptor,
+      occurrences: 1,
+      ...(alreadyShared ? { alreadyShared } : {}),
+    });
+  }
+
+  return [...candidates.values()];
+}
+
+/** Discover shareable `file` cards through the same candidate path as embeds. */
+export async function discoverCanvasEmbeddedDocuments(
+  input: DiscoverCanvasEmbeddedDocumentsInput
+): Promise<EmbeddedDocumentCandidate[]> {
+  const document = parseCanvasDocument(input.canvas);
+  const candidates = new Map<string, EmbeddedDocumentCandidate>();
+
+  for (const node of document.nodes ?? []) {
+    const reference = node[NIMBALYST_CANVAS_NAMESPACE]?.reference;
+    const sourceHref =
+      reference?.kind === "file"
+        ? reference.path
+        : node.type === "file" && typeof node.file === "string"
+        ? node.file
+        : null;
+    if (!sourceHref) continue;
+    const absolutePath = resolveEmbeddedDocumentPath(
+      sourceHref,
+      input.sourceFilePath,
+      input.workspacePath
+    );
+    if (!absolutePath) continue;
+    const existing = candidates.get(absolutePath);
+    if (existing) {
+      existing.occurrences += 1;
+      continue;
+    }
+    if (!(await input.fileExists(absolutePath))) continue;
+    const fileName = basename(absolutePath);
+    const shareability = input.catalog.resolveShareability(fileName);
+    if (
+      shareability.state !== "ready" ||
+      shareability.descriptor.editor.kind !== "extension"
+    ) {
+      continue;
+    }
+    const binding = await input.findExisting(absolutePath);
+    const alreadyShared =
+      binding && binding.orgId === input.expectedOrgId ? binding : null;
+    candidates.set(absolutePath, {
+      absolutePath,
+      sourceHref,
+      fileName,
+      fileExtension: shareability.descriptor.defaultExtension,
       descriptor: shareability.descriptor,
       occurrences: 1,
       ...(alreadyShared ? { alreadyShared } : {}),
@@ -263,10 +338,10 @@ function withEmbedType(title: string, fileExtension: string): string {
 }
 
 export function rewriteEmbeddedDocumentLinks(
-  input: RewriteEmbeddedDocumentLinksInput,
+  input: RewriteEmbeddedDocumentLinksInput
 ): string {
   const candidatesByPath = new Map(
-    input.candidates.map(candidate => [candidate.absolutePath, candidate]),
+    input.candidates.map((candidate) => [candidate.absolutePath, candidate])
   );
   const parts = input.markdown.split(/(\r?\n)/);
 
@@ -274,7 +349,7 @@ export function rewriteEmbeddedDocumentLinks(
     const absolutePath = resolveEmbeddedDocumentPath(
       link.href,
       input.sourceFilePath,
-      input.workspacePath,
+      input.workspacePath
     );
     if (!absolutePath) return;
     const candidate = candidatesByPath.get(absolutePath);
@@ -283,17 +358,74 @@ export function rewriteEmbeddedDocumentLinks(
 
     const deepLink = buildSharedDocumentDeepLink(
       reference.documentId,
-      reference.orgId,
+      reference.orgId
     );
     const title = withEmbedType(link.title, candidate.fileExtension);
-    parts[index] = `${link.leading}[${link.label}](${deepLink} "${title}")${link.trailing}`;
+    parts[
+      index
+    ] = `${link.leading}[${link.label}](${deepLink} "${title}")${link.trailing}`;
   });
 
-  return parts.join('');
+  return parts.join("");
+}
+
+/** Add `sharedAs` without replacing the local file reference. */
+export function rewriteCanvasEmbeddedDocuments(
+  input: RewriteCanvasEmbeddedDocumentsInput
+): string {
+  const document = parseCanvasDocument(input.canvas);
+  const candidatesByPath = new Map(
+    input.candidates.map((candidate) => [candidate.absolutePath, candidate])
+  );
+  const nodes = (document.nodes ?? []).map((node) => {
+    const extension = node[NIMBALYST_CANVAS_NAMESPACE] ?? {};
+    const reference = extension.reference;
+    const sourceHref =
+      reference?.kind === "file"
+        ? reference.path
+        : node.type === "file" && typeof node.file === "string"
+        ? node.file
+        : null;
+    if (!sourceHref) return node;
+    const absolutePath = resolveEmbeddedDocumentPath(
+      sourceHref,
+      input.sourceFilePath,
+      input.workspacePath
+    );
+    if (!absolutePath || !candidatesByPath.has(absolutePath)) return node;
+    const shared = input.sharedReferences.get(absolutePath);
+    if (!shared) return node;
+    const fileReference =
+      reference?.kind === "file"
+        ? reference
+        : { kind: "file" as const, path: sourceHref };
+    return {
+      ...node,
+      [NIMBALYST_CANVAS_NAMESPACE]: {
+        ...extension,
+        reference: {
+          ...fileReference,
+          sharedAs: {
+            uri: canvasDocumentUri(shared.orgId, shared.documentId),
+          },
+        },
+      },
+    };
+  });
+  return serializeCanvasDocument({ ...document, nodes } as CanvasDocument);
+}
+
+function canvasDocumentUri(
+  orgId: string,
+  documentId: string
+): `nimbalyst://doc/${string}/${string}` {
+  return `nimbalyst://doc/${encodeURIComponent(orgId)}/${encodeURIComponent(
+    documentId
+  )}`;
 }
 
 export async function shareEmbeddedDocuments(
-  input: ShareEmbeddedDocumentsInput,
+  input: ShareEmbeddedDocumentsInput
 ): Promise<ShareEmbeddedDocumentsResult> {
   const sharedReferences = new Map<string, SharedEmbeddedDocumentReference>();
   const createdDocumentIds: string[] = [];
@@ -326,8 +458,8 @@ export async function shareEmbeddedDocuments(
         operationId: documentId,
         documentId,
         openAfterCreate: false,
-        analyticsSource: 'embedded_document',
-        analyticsActorType: 'user',
+        analyticsSource: "embedded_document",
+        analyticsActorType: "user",
       });
       createdDocumentIds.push(document.documentId);
       sharedReferences.set(candidate.absolutePath, {

@@ -16,6 +16,7 @@ import {
   collabCommentControllerRegistry,
   CollabCommentControllerError,
 } from '@nimbalyst/runtime/editor';
+import { canvasWorkingSetRegistry } from '@nimbalyst/runtime/canvas/canvasPresence';
 import { store } from '@nimbalyst/runtime/store';
 import type { CollabScope } from '@nimbalyst/collab-client/core';
 import { DocumentModelRegistry } from '../services/document-model/DocumentModelRegistry';
@@ -807,6 +808,77 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
           headlessAcquisition?.release();
         }
     };
+    /**
+     * A session declaring or releasing the cards it is editing on a canvas.
+     *
+     * The claim is recorded whether or not the board is open: a session should
+     * not have to wait for a human to be looking at the right tab, and the
+     * registry publishes into awareness the moment a board mounts on that key.
+     * `published` reports which of the two happened rather than pretending both
+     * are the same thing.
+     *
+     * Nothing here consults or enforces anything. A claim is an attention
+     * declaration; it never gates an edit by this session or anyone else.
+     */
+    if (window.electronAPI.onMcpCanvasWorkingSet) {
+      cleanupFns.push(
+        window.electronAPI.onMcpCanvasWorkingSet((data) => {
+          try {
+            if (!data.agent?.sessionId || !data.agent?.sessionName) {
+              throw new Error(
+                'The main process did not provide a verified agent session identity.',
+              );
+            }
+            if (data.mode === 'declare') {
+              canvasWorkingSetRegistry.apply({
+                type: 'declare',
+                declaration: {
+                  sessionId: data.agent.sessionId,
+                  sessionName: data.agent.sessionName,
+                  boardKey: data.board,
+                  nodeIds: data.nodeIds ?? [],
+                },
+              });
+            } else {
+              canvasWorkingSetRegistry.apply({
+                type: 'release',
+                sessionId: data.agent.sessionId,
+                boardKey: data.board,
+                ...(data.nodeIds === undefined
+                  ? {}
+                  : { nodeIds: data.nodeIds }),
+              });
+            }
+            window.electronAPI.sendMcpCanvasWorkingSetResult(
+              data.resultChannel,
+              {
+                success: true,
+                published: canvasWorkingSetRegistry.hasSubscribers(data.board),
+                nodeIds: [
+                  ...(canvasWorkingSetRegistry
+                    .getBoard(data.board)
+                    .find(
+                      (agent) => agent.sessionId === data.agent.sessionId,
+                    )?.nodeIds ?? []),
+                ],
+              },
+            );
+          } catch (error) {
+            window.electronAPI.sendMcpCanvasWorkingSetResult(
+              data.resultChannel,
+              {
+                success: false,
+                code: 'CANVAS_WORKING_SET_FAILED',
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : 'Unknown canvas working-set error',
+              },
+            );
+          }
+        }),
+      );
+    }
     if (window.electronAPI.onMcpReadCollabDocComments) {
       cleanupFns.push(
         window.electronAPI.onMcpReadCollabDocComments((data) => {

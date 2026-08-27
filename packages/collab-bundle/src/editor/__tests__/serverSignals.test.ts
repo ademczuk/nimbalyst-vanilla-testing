@@ -30,6 +30,37 @@ describe('document room server signals', () => {
     });
   });
 
+  it('reads the write verdict the sync response carries', () => {
+    // The server resolves access on every docSyncRequest, so this is the one
+    // authoritative answer that arrives without the client writing first.
+    expect(parseDocumentServerSignal(JSON.stringify({
+      type: 'docSyncResponse',
+      updates: [],
+      hasMore: false,
+      cursor: 0,
+      canWrite: true,
+    }))).toEqual({ type: 'access-verdict', canWrite: true });
+
+    expect(parseDocumentServerSignal(JSON.stringify({
+      type: 'docSyncResponse',
+      updates: [],
+      hasMore: false,
+      cursor: 0,
+      canWrite: false,
+    }))).toEqual({ type: 'access-verdict', canWrite: false });
+  });
+
+  it('ignores a sync response from a server that predates the write verdict', () => {
+    // Older servers omit the field entirely. Reporting a verdict here would
+    // invent one, so the client is left to fall back to its host answer.
+    expect(parseDocumentServerSignal(JSON.stringify({
+      type: 'docSyncResponse',
+      updates: [],
+      hasMore: false,
+      cursor: 0,
+    }))).toBeNull();
+  });
+
   it('distinguishes terminal authorization closes from ordinary disconnects', () => {
     expect(classifyDocumentClose(4002, 'Removed from team')).toEqual({
       reason: 'removed-from-org',
