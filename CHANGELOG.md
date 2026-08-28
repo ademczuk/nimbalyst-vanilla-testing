@@ -10,26 +10,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
-- An AI session can now build a Project Canvas board for you from a description, placing cards that reference real workspace files and shared documents instead of you dragging each one onto the board.
-- Author step-based technical animations in `.anim.json` files with a live stage, boundary-scrubbable timeline, retiming, playback, and agent-aware part selection. Frames can show real product UI rather than boxes and arrows, built from reusable HTML partials you keep beside your animations and drawn under a palette the document itself names, so the stage and every export agree. Export as MP4 for posting or GIF for anywhere that cannot play video.
-- A feedback request now previews the mockups it is about, not only the ones bound to individual options, both for the recipient answering it and for the author reading the results.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.75.4] - 2026-08-28
+
+
+### Added
+<!-- New features go here -->
+- Author step-based technical animations in `.anim.json` files, with a live stage, scrubbable timeline, retiming, frames that draw real product UI under a palette the document owns, and MP4 or GIF export.
+- An AI session can now build a Project Canvas board for you from a description, placing cards that reference real workspace files and shared documents.
+- Animation and Project Canvas are now installable from the Extensions marketplace.
+- A feedback request now previews the mockups it is about, not only the ones bound to individual options, for both the recipient and the author reading results.
 - The author of a feedback request can open the session that composed it from the request's results.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Project Canvas gains two-finger pan, Cmd+wheel zoom, click to select and double-click to activate, card resizing, and cards for existing files and shared documents.
 - A feedback request now shows where its mockups will be published before you send, and puts them in a Feedback requests folder without opening a share dialog for each one.
-- Tips in a new session's empty panel now rotate, so you work through the set over time instead of meeting the same card every launch and never seeing the rest.
+- Tips in a new session's empty panel now rotate, so you work through the set over time instead of meeting the same card every launch.
 
 ### Fixed
 <!-- Bug fixes go here -->
-- Pressing Cmd+F while the find bar is already open now returns focus to the search field, instead of closing the bar and leaving your next keystrokes editing the document.
-- iOS: tapping a notification now opens the session it was about, including on iPad and when the session has not finished syncing to the device yet.
+- Images attached to a Claude Code session reach the model again; since 0.75.1 every one was dropped without warning.
+- Codex web search steps now finish in the transcript instead of sitting unresolved with empty arguments.
+- Pressing Cmd+F while the find bar is already open now returns focus to the search field instead of closing the bar.
+- iOS: tapping a notification now opens the session it was about, including on iPad and before that session has finished syncing to the device.
 - A session no longer keeps showing "waiting for your response" once you have typed a new instruction instead of answering the question it asked.
-- Images attached to a Claude Code session reach the model again; since 0.75.1 every one was dropped without warning, so the model answered as though it had never seen the picture. If an attachment genuinely cannot be delivered, the model is now told so it can say so.
-- A mockup already shared with your team now reaches the recipient of a feedback request as the shared document, rather than as a file path from the sender's machine that arrived as a label with nothing behind it.
+- A mockup already shared with your team now reaches the recipient of a feedback request as the shared document, not a file path from the sender's machine.
 - Sending a feedback request now happens once: the card stays sent when you scroll away and back, and pressing send again no longer creates a second request.
-- A document link pasted into a team message or a shared document now becomes the document it names, showing its title and type, instead of staying a raw URL. Links sent before this stay as text; paste them again to convert them.
-- Working out which organization your projects belong to no longer runs a git command for every project in your recent list each time it is checked, which could block the app for a second or more once that list grew long.
+- A document link pasted into a team message or a shared document now becomes the document it names; links sent before this stay as text until you paste them again.
+- Working out which organization your projects belong to no longer runs a git command per project each time it is checked, which could block the app for a second or more.
 - A screenshot the AI takes with an explicit light or dark theme now shows an extension's editor working, instead of an error state where the extension could not reach its own tools.
 
 ### Removed
