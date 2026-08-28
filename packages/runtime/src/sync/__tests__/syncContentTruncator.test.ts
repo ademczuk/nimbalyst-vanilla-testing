@@ -182,6 +182,55 @@ describe('truncateContentForSync', () => {
     expect(parsed.params.item.arguments).toEqual({ command: 'info execute-sql' });
   });
 
+  describe('headless CLI agents (Grok Build, Cursor Agent)', () => {
+    // `syncContentTruncator` carries a standing "keep in sync with the parser"
+    // contract: a record type HeadlessAgentRawParser learns to render must be
+    // added to the allowlist, or mobile silently shows less than the desktop.
+    const RENDERED_BY_PARSER = ['item.completed', 'tool_call', 'tool_call_update', 'result'];
+    const DROPPED_BY_PARSER = ['thought', 'text', 'available_commands', 'usage', 'thinking'];
+
+    it('syncs exactly the record types the parser renders', () => {
+      for (const source of ['grok-build', 'cursor-agent']) {
+        for (const eventType of RENDERED_BY_PARSER) {
+          expect(shouldSyncMessageForSessionRoom(source, { eventType })).toBe(true);
+        }
+        for (const eventType of DROPPED_BY_PARSER) {
+          expect(shouldSyncMessageForSessionRoom(source, { eventType })).toBe(false);
+        }
+      }
+    });
+
+    it('syncs rows with no eventType, which are the user\'s own prompts', () => {
+      expect(shouldSyncMessageForSessionRoom('grok-build', {})).toBe(true);
+      expect(shouldSyncMessageForSessionRoom('cursor-agent', undefined)).toBe(true);
+    });
+
+    it('drops hidden rows', () => {
+      expect(
+        shouldSyncMessageForSessionRoom('cursor-agent', { eventType: 'tool_call' }, undefined, true),
+      ).toBe(false);
+    });
+  });
+
+  describe('gemini (antigravity)', () => {
+    // The same parity contract, but Gemini's answer is "all of them". Its raw
+    // log is not a vendor event stream — the host writes exactly three row
+    // kinds and `GeminiAntigravityRawParser` renders every one, so any filter
+    // added here would take something off mobile that desktop shows. Rows
+    // written while Gemini shipped as an extension carry the older source and
+    // must keep syncing too.
+    const SOURCES = ['antigravity-gemini-agent', 'gemini-antigravity/antigravity-server'];
+
+    it('syncs every row kind, on both the built-in and the legacy source', () => {
+      for (const source of SOURCES) {
+        for (const role of ['user', 'assistant', 'tool']) {
+          expect(shouldSyncMessageForSessionRoom(source, { role })).toBe(true);
+        }
+        expect(shouldSyncMessageForSessionRoom(source, undefined)).toBe(true);
+      }
+    });
+  });
+
   it('skips transient Codex app-server delta events from session-room sync', () => {
     expect(
       shouldSyncMessageForSessionRoom('openai-codex', {

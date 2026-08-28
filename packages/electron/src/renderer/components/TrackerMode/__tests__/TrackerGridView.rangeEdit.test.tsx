@@ -527,61 +527,6 @@ describe('TrackerGridView column layout', () => {
   });
 });
 
-describe('TrackerGridView double-click', () => {
-  beforeAll(() => loadBuiltinTrackers());
-
-  beforeEach(() => {
-    getFocused.mockClear();
-    gridProps.current = null;
-    gridListeners.clear();
-  });
-
-  /** RevoGrid renders its own cells; stand in for one on the focused row. */
-  function doubleClickCell(): void {
-    const cell = document.createElement('div');
-    cell.setAttribute('data-rgrow', '0');
-    screen.getByTestId('mock-revogrid').appendChild(cell);
-    fireEvent.doubleClick(cell);
-  }
-
-  function renderGrid(onOpenDocument: () => void) {
-    render(
-      <TrackerGridView
-        filterType="bug"
-        overrideItems={[record()]}
-        columnConfig={{
-          visibleColumns: ['key', 'title', 'status'],
-          columnWidths: {},
-        }}
-        onOpenDocument={onOpenDocument}
-      />,
-    );
-  }
-
-  it('leaves an editable cell to RevoGrid instead of opening the item', async () => {
-    const onOpenDocument = vi.fn();
-    renderGrid(onOpenDocument);
-
-    doubleClickCell();
-
-    await waitFor(() => expect(getFocused).toHaveBeenCalled());
-    expect(onOpenDocument).not.toHaveBeenCalled();
-  });
-
-  it('opens the item from a readonly cell', async () => {
-    const onOpenDocument = vi.fn();
-    renderGrid(onOpenDocument);
-    getFocused.mockResolvedValueOnce({
-      cell: { x: 0, y: 0 },
-      column: { prop: 'key' },
-      rowType: 'rgRow',
-    });
-
-    doubleClickCell();
-
-    await waitFor(() => expect(onOpenDocument).toHaveBeenCalledWith('bug-1'));
-  });
-});
 
 describe('TrackerGridView keyboard contract', () => {
   beforeAll(() => loadBuiltinTrackers());
@@ -665,7 +610,7 @@ describe('TrackerGridView keyboard contract', () => {
     expect(onDetailClose).toHaveBeenCalledTimes(1);
   });
 
-  it('opens details when mouse focus lands on a row after keyboard navigation', () => {
+  it('leaves the detail panel closed when a click lands on a row', () => {
     const onItemSelect = vi.fn();
     render(
       <TrackerGridView
@@ -676,13 +621,14 @@ describe('TrackerGridView keyboard contract', () => {
     );
 
     const grid = screen.getByTestId('mock-revogrid');
-    fireEvent.keyDown(grid, { key: 'ArrowDown', code: 'ArrowDown' });
     fireEvent.pointerDown(grid);
     act(() => {
       dispatchGridEvent('afterfocus', { rowIndex: 0 });
     });
 
-    expect(onItemSelect).toHaveBeenCalledWith('bug-1');
+    // Selecting a cell is not a request to open the row -- that is the Key
+    // cell's job. Before this, any click dragged the panel along with it.
+    expect(onItemSelect).not.toHaveBeenCalled();
   });
 });
 

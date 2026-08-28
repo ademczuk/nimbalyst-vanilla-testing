@@ -49,6 +49,31 @@ describe('AI model picker keyboard controls', () => {
     expect(isOpenModelPickerShortcut({ key: 'm', metaKey: true, ctrlKey: false, shiftKey: false })).toBe(false);
   });
 
+  it('preloads the catalog before the picker opens', async () => {
+    const aiGetModels = vi.fn().mockResolvedValue({
+      success: true,
+      grouped: {
+        claude: [{ id: 'claude:haiku', name: 'Haiku', provider: 'claude' }],
+      },
+    });
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: { aiGetModels },
+    });
+
+    renderModelSelector(
+      <ModelSelector currentModel="claude:haiku" onModelChange={() => {}} />,
+      true,
+    );
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    await waitFor(() => expect(aiGetModels).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByTestId('model-picker'));
+    expect(await screen.findByRole('button', { name: 'Haiku' })).toBeTruthy();
+    expect(screen.queryByText('Loading models...')).toBeNull();
+  });
+
   it('opens from the input shortcut, then changes models with ArrowDown and Enter', async () => {
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,

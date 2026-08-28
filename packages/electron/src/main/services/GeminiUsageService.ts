@@ -2,34 +2,30 @@
  * GeminiUsageService - Tracks Gemini (Antigravity) usage limits
  *
  * This service:
- * - Reads usage/quota from the gemini-antigravity backend module's
- *   getUsageSnapshot() RPC (account credits + per-model quota)
+ * - Reads account credits + per-model quota from the Antigravity language
+ *   server, via `AntigravityUsageMeter`
  * - Implements activity-aware polling (active when using Gemini, sleeps when idle)
  * - Broadcasts usage updates to renderer via IPC
  *
- * Unlike CodexUsageService (which reads CLI session files), the data source
- * here is the privileged extension host. The poll is strictly read-only and
- * NEVER spawns the language server: if the server isn't running yet, the
- * backend's getUsageSnapshot returns { available:false } and we render a muted
- * "--" chip with the reason in the tooltip, exactly like Codex's unavailable
- * branch.
+ * The poll is strictly read-only and NEVER spawns the language server. That
+ * constraint is what shapes the whole file: a background poll that could start
+ * a ~120MB process would make merely *displaying* a usage chip an expensive
+ * side effect. So `currentEndpoint()` is the gate — no live endpoint means a
+ * muted "--" chip with the reason in the tooltip, exactly like Codex's
+ * unavailable branch, and the first real turn brings it to life.
  *
  * Mirrors CodexUsageService 1:1 in structure: same poll cadence, idle sleep,
- * cached snapshot, broadcast pattern. The only differences are the data source
- * (RPC instead of file scan) and the channel name ('gemini-usage:update').
+ * cached snapshot, broadcast pattern. The difference is the data source (a
+ * local RPC instead of a file scan) and the channel name ('gemini-usage:update').
  */
 
 import { BrowserWindow } from 'electron';
 import { logger } from '../utils/logger';
-import { getPrivilegedExtensionHost } from '../extensions/PrivilegedExtensionHost';
-import { windowStates, resolveActiveWorkspacePath } from '../window/windowState';
+import { AntigravityServerManager } from '@nimbalyst/runtime/ai/server/providers/geminiAntigravity/AntigravityServerManager';
+import { AntigravityUsageMeter } from '@nimbalyst/runtime/ai/server/providers/geminiAntigravity/AntigravityUsageMeter';
 
-const GEMINI_EXTENSION_ID = 'gemini-antigravity';
-const GEMINI_BACKEND_MODULE_ID = 'antigravity-server';
-
-// Friendly chip/popover text for the normal pre-first-request state, where
-// the backend module has not started yet. Shown instead of the raw host
-// "[PrivilegedExtensionHost] module not running" string.
+// Friendly chip/popover text for the normal pre-first-request state, where the
+// language server has not been started yet.
 const GEMINI_NOT_STARTED_MESSAGE = 'Gemini usage will appear after your first request.';
 
 export interface GeminiUsageData {
@@ -59,9 +55,8 @@ export interface GeminiUsageData {
 }
 
 /**
- * Shape returned by the backend module's getUsageSnapshot RPC. Kept loose here
- * so the main package doesn't depend on the extension's build output. Mirrors
- * UsageSnapshotResult / AntigravityUsageSnapshot.
+ * Locally-declared mirror of the meter's snapshot shape, kept so the chip's
+ * conversion below reads against an explicit contract.
  */
 interface AntigravityModelQuota {
   model: string;
@@ -183,60 +178,23 @@ class GeminiUsageServiceImpl {
   }
 
   /**
-   * Resolve the active workspace the same way installExtensionAgentBridge does:
-   * focused BrowserWindow -> its workspacePath, falling back to any window with
-   * one open. Returns null if no window has a workspace.
-   */
-  private resolveActiveWorkspace(): string | null {
-    const focused = BrowserWindow.getFocusedWindow();
-    if (focused) {
-      const state = windowStates.get(focused.id);
-      const path = resolveActiveWorkspacePath(state);
-      if (path) return path;
-    }
-    for (const state of windowStates.values()) {
-      const path = resolveActiveWorkspacePath(state);
-      if (path) return path;
-    }
-    return null;
-  }
-
-  /**
-   * Ask the gemini-antigravity backend module for a usage snapshot. Never
-   * throws and never spawns: any failure (module not running, no workspace,
-   * server not started, rpc error) resolves to an unavailable result so the
-   * caller renders the muted chip.
+   * Ask the language server for a usage snapshot. Never throws and never
+   * spawns: with no live endpoint this resolves to an unavailable result and
+   * the caller renders the muted chip.
    */
   private async fetchSnapshot(): Promise<GeminiUsageSnapshotResult> {
-    const workspacePath = this.resolveActiveWorkspace();
-    if (!workspacePath) {
-      return { available: false, notStarted: true, error: 'Open a workspace to see Gemini usage.' };
+    const server = AntigravityServerManager.shared();
+    if (server.currentEndpoint() === null) {
+      return { available: false, notStarted: true, error: GEMINI_NOT_STARTED_MESSAGE };
     }
-
     try {
-      const result = await getPrivilegedExtensionHost().request<GeminiUsageSnapshotResult>({
-        extensionId: GEMINI_EXTENSION_ID,
-        moduleId: GEMINI_BACKEND_MODULE_ID,
-        workspacePath,
-        method: 'getUsageSnapshot',
-        params: {},
-        requiredPermission: null,
-      });
-      if (!result || typeof result !== 'object') {
-        return { available: false, error: 'Gemini usage snapshot unavailable' };
-      }
-      return result;
+      const snapshot = await new AntigravityUsageMeter(server).getSnapshot();
+      return { available: true, snapshot };
     } catch (error) {
-      // The backend module starts on first use, so "module not running" and
-      // similar pre-start states are the normal idle case, not an error. Map
-      // them to a friendly notStarted state so the chip never surfaces the raw
-      // "[PrivilegedExtensionHost] module not running" host string. Genuine RPC
-      // errors still surface as an error.
-      const raw = error instanceof Error ? error.message : '';
-      const idle = raw === '' || /module not running|not started|server not started/i.test(raw);
-      return idle
-        ? { available: false, notStarted: true, error: GEMINI_NOT_STARTED_MESSAGE }
-        : { available: false, error: raw };
+      return {
+        available: false,
+        error: error instanceof Error ? error.message : 'Unknown error reading Gemini usage',
+      };
     }
   }
 

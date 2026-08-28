@@ -1,5 +1,4 @@
 import { getCollabContentAdapter } from '@nimbalyst/collab-adapters';
-import { parseCollabUri } from '@nimbalyst/collab-protocol';
 import {
   collabCommentAnchorAdapterRegistry,
   createRepositoryCollabCommentController,
@@ -23,17 +22,13 @@ import type {
 } from '@nimbalyst/runtime/editor/commenting/types';
 import { applyUpdateV2, Doc, encodeStateAsUpdateV2 } from 'yjs';
 
-import {
-  getSharedDocumentsForScopeKey,
-  getTeamSyncProviderForScopeKey,
-} from '../store/atoms/collabDocuments';
 import { teamMemberDisplayName } from '../utils/teamMemberDisplayName';
-import { collaborativeEmbedProviderCache } from './CollaborativeEmbedProviderCache';
-import { getCollaborativeDocumentTypeCatalog } from './CollaborativeDocumentTypeCatalog';
+import {
+  acquireHeadlessCollabDocument,
+  HeadlessCollabDocumentError,
+} from './HeadlessCollabDocument';
 import { notifyDocumentCommentRecipients } from './documentCommentNotifier';
 
-const HYDRATION_TIMEOUT_MS = 10_000;
-const FLUSH_TIMEOUT_MS = 5_000;
 const NO_COMMENT_CAPABILITIES = Object.freeze({
   read: false,
   comment: false,
@@ -79,18 +74,18 @@ function createCodecAnchorReadSnapshot(
   };
 }
 
-async function waitUntil(
-  predicate: () => boolean,
-  timeoutMs: number,
-  message: string,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() >= deadline) {
-      throw new CollabCommentControllerError('SYNC_TIMEOUT', message);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
+/**
+ * The acquisition layer speaks a document-level error vocabulary; the comment
+ * tools have their own wire contract (`code` on the IPC result). Translate at
+ * this seam so the codes agents see do not change just because the underlying
+ * acquisition became shared.
+ */
+function asCommentError(error: unknown): unknown {
+  if (!(error instanceof HeadlessCollabDocumentError)) return error;
+  if (error.code === 'ROOM_UNREACHABLE' || error.code === 'FLUSH_TIMEOUT') {
+    return new CollabCommentControllerError('SYNC_TIMEOUT', error.message);
   }
+  return error;
 }
 
 export interface HeadlessCollabCommentAcquisition {
@@ -109,54 +104,29 @@ export async function acquireHeadlessCollabCommentController(
   documentUri: string,
   workspacePath: string,
 ): Promise<HeadlessCollabCommentAcquisition> {
-  const { orgId, documentId } = parseCollabUri(documentUri);
-  const document = getSharedDocumentsForScopeKey(workspacePath).find(
-    (candidate) => candidate.documentId === documentId,
-  );
-  if (!document) {
-    throw new Error(
-      `The shared document ${documentId} is not available in this workspace.`,
+  let acquisition: Awaited<ReturnType<typeof acquireHeadlessCollabDocument>>;
+  try {
+    acquisition = await acquireHeadlessCollabDocument(
+      documentUri,
+      workspacePath,
     );
+  } catch (error) {
+    throw asCommentError(error);
   }
-
-  const catalog = getCollaborativeDocumentTypeCatalog();
-  const resolution = catalog.resolveMetadata(
-    document.documentType,
-    document.fileExtension,
-    document.editorId,
-  );
-  if (resolution.state !== 'ready') throw new Error(resolution.reason);
-  const descriptor = resolution.descriptor;
-  const acquisition = await collaborativeEmbedProviderCache.acquire({
-    workspacePath,
-    orgId,
-    documentId,
-    title: document.title,
-    documentType: document.documentType,
-    metadata: {
-      metadataVersion: 2,
-      fileExtension: document.fileExtension ?? descriptor.defaultExtension,
-      editorId: document.editorId ?? catalog.editorIdForDescriptor(descriptor),
-    },
-  });
+  const document = acquisition.document;
+  const documentId = document.documentId;
 
   let repository: YDocCommentRepository | undefined;
   let unregisterCodecAnchors: (() => void) | undefined;
   try {
-    await waitUntil(
-      () => acquisition.resource.syncProvider.isSynced(),
-      HYDRATION_TIMEOUT_MS,
-      'Timed out while hydrating collaborative document comments.',
-    );
-
-    const yDoc = acquisition.resource.syncProvider.getYDoc();
+    const yDoc = acquisition.yDoc;
     repository = new YDocCommentRepository(yDoc);
-    const config = acquisition.resource.config;
+    const config = acquisition.config;
     const currentUser = {
       id: config.teamMemberId,
       name: config.userName || config.userEmail || config.teamMemberId,
     };
-    const teamProvider = getTeamSyncProviderForScopeKey(workspacePath);
+    const teamProvider = acquisition.getTeamProvider();
     const getMembers = () =>
       (teamProvider?.getTeamState()?.members ?? [])
         .filter((member) => member.userId !== currentUser.id)
@@ -279,7 +249,7 @@ export async function acquireHeadlessCollabCommentController(
         documentUri,
         getCapabilities: () => capabilities,
         getMembers,
-        isHydrated: () => acquisition.resource.syncProvider.isSynced(),
+        isHydrated: () => acquisition.syncProvider.isSynced(),
         isVisible: () => false,
         beforeMutation: async () => {
           await refreshCapabilities();
@@ -291,14 +261,11 @@ export async function acquireHeadlessCollabCommentController(
     return {
       controller,
       async flush() {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        await waitUntil(
-          () =>
-            acquisition.resource.replica.getOutboxState() === 'clean' &&
-            acquisition.resource.syncProvider.getStatus() === 'connected',
-          FLUSH_TIMEOUT_MS,
-          'Timed out while flushing the collaborative comment mutation.',
-        );
+        try {
+          await acquisition.flush();
+        } catch (error) {
+          throw asCommentError(error);
+        }
       },
       release() {
         if (released) return;

@@ -195,21 +195,75 @@ interface InstallOptions {
   localInstall?: boolean;
 }
 
-type CLITool = 'claude-code' | 'openai-codex' | 'opencode' | 'copilot-cli';
+type CLITool =
+  | 'claude-code'
+  | 'openai-codex'
+  | 'opencode'
+  | 'copilot-cli'
+  | 'grok-build'
+  | 'cursor-agent';
 
-// CLI commands and their npm packages
-const CLI_PACKAGES: Record<CLITool, string> = {
-  'claude-code': '@anthropic-ai/claude-agent-sdk',  // Claude Agent SDK (renamed from claude-code)
-  'openai-codex': '@openai/codex',                   // OpenAI Codex package (actual on npm!)
-  'opencode': 'opencode-ai',                           // OpenCode open source agent (npm: opencode-ai, binary: opencode)
-  'copilot-cli': '@github/copilot',                       // GitHub Copilot CLI (npm: @github/copilot, binary: copilot)
+/**
+ * How a CLI gets onto the machine.
+ *
+ * `'npm'` tools are ones Nimbalyst installs, upgrades and uninstalls itself.
+ * `'script'` tools ship only as a vendor install script; Nimbalyst does not
+ * pipe a remote script to a shell, so the strategy is display-only — the
+ * settings panel shows `command` and links `docsUrl`, and install/upgrade/
+ * uninstall refuse. Detection is deliberately independent of all this: a tool
+ * we cannot install is still a tool we must find.
+ */
+type CLIInstallStrategy =
+  | { kind: 'npm'; package: string }
+  | { kind: 'script'; command: string; docsUrl: string };
+
+const CLI_INSTALL_STRATEGIES: Record<CLITool, CLIInstallStrategy> = {
+  'claude-code': { kind: 'npm', package: '@anthropic-ai/claude-agent-sdk' },  // renamed from claude-code
+  'openai-codex': { kind: 'npm', package: '@openai/codex' },
+  'opencode': { kind: 'npm', package: 'opencode-ai' },      // npm: opencode-ai, binary: opencode
+  'copilot-cli': { kind: 'npm', package: '@github/copilot' },  // npm: @github/copilot, binary: copilot
+  'grok-build': {
+    kind: 'script',
+    command: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+    docsUrl: 'https://docs.x.ai/build/cli/headless-scripting',
+  },
+  'cursor-agent': {
+    kind: 'script',
+    command: 'curl -fsSL https://cursor.com/install | bash',
+    docsUrl: 'https://cursor.com/docs/cli/using',
+  },
 };
 
+function npmPackageFor(tool: CLITool): string {
+  const strategy = CLI_INSTALL_STRATEGIES[tool];
+  if (strategy.kind !== 'npm') {
+    throw new Error(
+      `${tool} is not an npm package. Install it with: ${strategy.command}`
+    );
+  }
+  return strategy.package;
+}
+
 const CLI_COMMANDS: Record<CLITool, string> = {
-  'claude-code': 'claude',     // The actual command once installed
-  'openai-codex': 'codex',     // The actual command once installed
-  'opencode': 'opencode',      // The actual command once installed
-  'copilot-cli': 'copilot',    // The actual command once installed
+  'claude-code': 'claude',        // The actual command once installed
+  'openai-codex': 'codex',
+  'opencode': 'opencode',
+  'copilot-cli': 'copilot',
+  'grok-build': 'grok',
+  'cursor-agent': 'cursor-agent',  // NOT `agent`: both vendors symlink that name
+};
+
+/**
+ * Where a script-installed CLI lands, beyond whatever is on the enhanced PATH.
+ *
+ * GUI-launched Electron does not inherit a login shell, so `~/.local/bin` and
+ * friends are frequently absent from PATH even when the tool is installed and
+ * working in the user's terminal. Probing the known locations directly is what
+ * makes detection independent of install.
+ */
+const CLI_EXTRA_INSTALL_LOCATIONS: Partial<Record<CLITool, readonly string[]>> = {
+  'grok-build': ['.grok/bin/grok', '.local/bin/grok'],
+  'cursor-agent': ['.local/bin/cursor-agent'],
 };
 
 export class CLIManager {
@@ -223,6 +277,12 @@ export class CLIManager {
   private setupIPCHandlers() {
     safeHandle('cli:checkInstallation', async (_event, tool: CLITool) => {
       return this.checkInstallation(tool);
+    });
+
+    // Lets a settings panel render the vendor's install command for a tool
+    // Nimbalyst cannot install itself, instead of offering a button that fails.
+    safeHandle('cli:getInstallStrategy', async (_event, tool: CLITool) => {
+      return CLI_INSTALL_STRATEGIES[tool] ?? null;
     });
 
     safeHandle('cli:install', async (_event, tool: CLITool, options: InstallOptions) => {
@@ -481,6 +541,32 @@ export class CLIManager {
     return Array.from(candidates);
   }
 
+  /**
+   * Candidates for a CLI that Nimbalyst does not install: the enhanced PATH
+   * first, then the vendor's known install locations, then the bare command as
+   * a last resort (shell resolution may still find it).
+   */
+  private getScriptInstalledExecutableCandidates(
+    tool: CLITool,
+    enhancedPath: string
+  ): string[] {
+    const command = CLI_COMMANDS[tool];
+    const candidates = new Set<string>();
+
+    const fromPath = process.platform === 'win32'
+      ? findExecutableInWindowsPath([`${command}.cmd`, `${command}.exe`], enhancedPath) || undefined
+      : findExecutableInPathEntries([command], enhancedPath);
+    if (fromPath) candidates.add(fromPath);
+
+    for (const relativePath of CLI_EXTRA_INSTALL_LOCATIONS[tool] ?? []) {
+      const absolute = path.join(os.homedir(), ...relativePath.split('/'));
+      if (fsSync.existsSync(absolute)) candidates.add(absolute);
+    }
+
+    candidates.add(command);
+    return Array.from(candidates);
+  }
+
   private async checkVersionedExecutableInstallation(
     tool: CLITool,
     executableCandidates: string[],
@@ -644,6 +730,16 @@ export class CLIManager {
       );
     }
 
+    // Script-installed tools: probe known locations directly, because a
+    // GUI-launched Electron often has no `~/.local/bin` on PATH.
+    if (CLI_INSTALL_STRATEGIES[tool].kind === 'script') {
+      return this.checkVersionedExecutableInstallation(
+        tool,
+        this.getScriptInstalledExecutableCandidates(tool, this.getEnhancedPath()),
+        this.getEnhancedPath()
+      );
+    }
+
     // Default check for other tools
     return new Promise((resolve) => {
       const checkProcess = spawn(command, ['--version'], {
@@ -697,7 +793,7 @@ export class CLIManager {
       throw new Error(npmCheck.error || 'npm is not available');
     }
 
-    const packageName = CLI_PACKAGES[tool];
+    const packageName = npmPackageFor(tool);
     const isLocal = options.localInstall;
 
     // Check if already installing
@@ -837,7 +933,7 @@ export class CLIManager {
       throw new Error(npmCheck.error || 'npm is not available');
     }
 
-    const packageName = CLI_PACKAGES[tool];
+    const packageName = npmPackageFor(tool);
 
     return new Promise((resolve, reject) => {
       try {
@@ -902,7 +998,11 @@ export class CLIManager {
   }
 
   private async getLatestVersion(tool: CLITool): Promise<string | null> {
-    const packageName = CLI_PACKAGES[tool];
+    // Script-installed tools have their own updaters and no registry to query;
+    // "no known latest" is the honest answer rather than a thrown error in the
+    // middle of a detection pass.
+    if (CLI_INSTALL_STRATEGIES[tool].kind !== 'npm') return null;
+    const packageName = npmPackageFor(tool);
 
     try {
       const { stdout } = await execAsync(`npm view ${packageName} version`);
@@ -939,7 +1039,7 @@ export class CLIManager {
       throw new Error(npmCheck.error || 'npm is not available');
     }
 
-    const packageName = CLI_PACKAGES[tool];
+    const packageName = npmPackageFor(tool);
 
     return new Promise((resolve, reject) => {
       try {

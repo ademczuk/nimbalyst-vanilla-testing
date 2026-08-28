@@ -127,6 +127,16 @@ export const SETTINGS_REGISTRY = {
     { store: 'ai-settings', path: 'providerSettings.copilot-cli' },
     { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
   ),
+  'ai.provider.grok-build': setting(
+    ProviderConfigSchema,
+    { store: 'ai-settings', path: 'providerSettings.grok-build' },
+    { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
+  ),
+  'ai.provider.cursor-agent': setting(
+    ProviderConfigSchema,
+    { store: 'ai-settings', path: 'providerSettings.cursor-agent' },
+    { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
+  ),
   'ai.provider.lmstudio': setting(
     ProviderConfigSchema,
     { store: 'ai-settings', path: 'providerSettings.lmstudio' },

@@ -312,7 +312,7 @@ export async function handleAskUserQuestion(
   // Guarding it meant neither the sidebar nor the menu bar knew, and the tray
   // panel filed those sessions under "Running".
   if (sessionId) {
-    void setSessionPendingPrompt(sessionId, true);
+    void setSessionPendingPrompt(sessionId, true, "decision");
   }
   if (isCliSession && sessionId) {
     for (const w of BrowserWindow.getAllWindows()) {
@@ -1569,7 +1569,7 @@ export async function handleRequestUserInput(
     });
     // Persist pending-prompt bit + push to mobile so the sidebar indicator
     // survives renderer reloads and reaches other devices.
-    void setSessionPendingPrompt(sessionId, true);
+    void setSessionPendingPrompt(sessionId, true, "decision");
   }
 
   // NIM-806: do NOT persist a synthetic nimbalyst_tool_use here (same reasoning

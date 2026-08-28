@@ -110,6 +110,28 @@ export function getSharedFoldersForScope(scope: CollabScope) {
   return getSharedFoldersForScopeKey(scope.scopeKey);
 }
 
+/**
+ * The `documentType` of a shared document, addressed by id alone.
+ *
+ * Callers that describe the active document to an agent hold a `collab://` URI
+ * and nothing else -- the URI carries no type, and `TabData` does not either.
+ * Document ids are globally unique, and a window only ever mounts its own
+ * hosts, so sweeping the mounted scopes resolves the type without making every
+ * caller thread a workspace path down to itself.
+ *
+ * Returns undefined when the shared index has not loaded the document yet;
+ * callers must fall back rather than guess a type.
+ */
+export function findSharedDocumentTypeById(documentId: string): string | undefined {
+  for (const scopeKey of hostsByScope.keys()) {
+    const match = getSharedDocumentsForScopeKey(scopeKey).find(
+      (candidate) => candidate.documentId === documentId,
+    );
+    if (match?.documentType) return match.documentType;
+  }
+  return undefined;
+}
+
 export async function resolveDesktopCollabScope(scopeKey: string): Promise<{
   scope: CollabScope | null;
   retryable: boolean;

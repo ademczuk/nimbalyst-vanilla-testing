@@ -19,6 +19,40 @@ export function isCollabUri(path: string): boolean {
   return path.startsWith(COLLAB_PREFIX);
 }
 
+const COLLAB_FILE_TYPE_PREFIX = 'collab-';
+
+/**
+ * The AI-facing `fileType` tag for a shared document of `documentType`.
+ *
+ * Agent prompts branch on this to say "reach this through readCollabDoc /
+ * applyCollabDocEdit, not Read/Edit". The document's own type is carried in the
+ * suffix so the prompt can also say WHAT it is -- a shared mockup and a shared
+ * markdown note take the same tools but are not the same document.
+ */
+export function collabFileTypeFor(documentType: string | undefined): string {
+  return `${COLLAB_FILE_TYPE_PREFIX}${documentType || 'document'}`;
+}
+
+/**
+ * Whether a `fileType` denotes a shared collaborative document of any type.
+ *
+ * Prefer this over comparing against `'collab-markdown'`: that literal silently
+ * excluded every custom-editor document type, which is how shared mockups ended
+ * up described to agents as markdown.
+ */
+export function isCollabDocumentFileType(fileType: string | null | undefined): boolean {
+  return typeof fileType === 'string' && fileType.startsWith(COLLAB_FILE_TYPE_PREFIX);
+}
+
+/** The document type carried in a `collab-*` fileType tag, if any. */
+export function collabDocumentTypeFromFileType(
+  fileType: string | null | undefined,
+): string | undefined {
+  if (!isCollabDocumentFileType(fileType)) return undefined;
+  const documentType = fileType!.slice(COLLAB_FILE_TYPE_PREFIX.length);
+  return documentType === 'document' ? undefined : documentType;
+}
+
 /**
  * Parse a collab:// URI into its component parts.
  * Throws if the URI doesn't match the expected format.

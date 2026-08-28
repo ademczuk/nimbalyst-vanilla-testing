@@ -12,6 +12,9 @@ import { OpenAICodexACPProvider } from './providers/OpenAICodexACPProvider';
 import { LMStudioProvider } from './providers/LMStudioProvider';
 import { OpenCodeProvider } from './providers/OpenCodeProvider';
 import { CopilotCLIProvider } from './providers/CopilotCLIProvider';
+import { GrokBuildProvider } from './providers/GrokBuildProvider';
+import { CursorAgentProvider } from './providers/CursorAgentProvider';
+import { GeminiAntigravityProvider } from './providers/GeminiAntigravityProvider';
 import { ExtensionAgentProvider } from './providers/ExtensionAgentProvider';
 import { ProviderConfig, AIProviderType, assertExhaustiveProvider } from './types';
 
@@ -81,6 +84,15 @@ export class ProviderFactory {
         break;
       case 'copilot-cli':
         provider = new CopilotCLIProvider();
+        break;
+      case 'grok-build':
+        provider = new GrokBuildProvider();
+        break;
+      case 'cursor-agent':
+        provider = new CursorAgentProvider();
+        break;
+      case 'antigravity-gemini-agent':
+        provider = new GeminiAntigravityProvider();
         break;
       default:
         assertExhaustiveProvider(type);

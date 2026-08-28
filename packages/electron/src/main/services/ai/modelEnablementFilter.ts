@@ -1,4 +1,5 @@
 import { isClaudeCodeFamily } from '@nimbalyst/runtime/ai/server/types';
+import { isHeadlessAgentAvailable } from './headlessAgentAvailability';
 
 export interface ProviderEnablement {
   enabled: boolean;
@@ -36,6 +37,24 @@ export interface FilterableModel {
 const DEFAULT_ENABLED_PROVIDERS: ReadonlySet<string> = new Set(['claude-code']);
 
 /**
+ * Providers whose default is decided by the machine rather than by a constant:
+ * on when their CLI is installed and signed in, off otherwise.
+ *
+ * This is a *default*, never a write. The `??` below means an explicit toggle
+ * always wins, so detection can never override a user who turned the provider
+ * off — and because nothing is persisted, there is no first-boot decision to
+ * get stuck on. See `headlessAgentAvailability.ts`.
+ */
+const DETECTED_DEFAULT_PROVIDERS: ReadonlySet<string> = new Set([
+  'grok-build',
+  'cursor-agent',
+  // Gemini detects on the presence of the Antigravity app rather than on a
+  // sign-in probe; `headlessAgentAvailability.ts` explains why sign-in cannot
+  // be asked for cheaply. The `??` above still means an explicit toggle wins.
+  'antigravity-gemini-agent',
+]);
+
+/**
  * Resolve a provider's enabled state, applying the default for an absent
  * setting. Shared by every "is this provider on?" read so the settings toggle
  * and the model picker cannot disagree about what "never configured" means.
@@ -44,7 +63,9 @@ export function resolveProviderEnabled(
   provider: string,
   config: { enabled?: boolean } | undefined,
 ): boolean {
-  return config?.enabled ?? DEFAULT_ENABLED_PROVIDERS.has(provider);
+  if (config?.enabled !== undefined) return config.enabled;
+  if (DETECTED_DEFAULT_PROVIDERS.has(provider)) return isHeadlessAgentAvailable(provider);
+  return DEFAULT_ENABLED_PROVIDERS.has(provider);
 }
 
 /**

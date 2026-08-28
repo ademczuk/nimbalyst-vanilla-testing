@@ -1963,10 +1963,9 @@ export async function handleTrackerCreate(
 
     // Route the description through the canonical body path so it shows up
     // in the editor when the item is opened. The initial INSERT above sets
-    // `content` for backward compatibility, but for shared trackers the
-    // metadata-sync ack (`applyRemoteItem`) clobbers it to NULL because the
-    // wire payload carries no body field. Without this block, `body_version`
-    // stays at 0, `tracker_body_cache` is never populated, and the live
+    // `content` for backward compatibility, but that column alone is not
+    // enough: without this block `body_version` stays at 0,
+    // `tracker_body_cache` is never populated, and the live
     // DocumentRoom Y.Doc is never seeded -- so the collaborative editor
     // mounts empty. This mirrors `ElectronDocumentService.updateTrackerItemContent`
     // inline so we do not depend on `documentServices` having an entry for

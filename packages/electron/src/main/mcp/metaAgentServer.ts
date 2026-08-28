@@ -149,7 +149,7 @@ export function setMetaAgentToolFns(fns: MetaAgentToolFns): void {
 
 /**
  * OpenAI-shaped tool definition. Mirrors the chat-completions function-calling
- * format that extension-agent tool loops (e.g. the gemini-antigravity
+ * format that host-supplied tool loops (e.g. the Gemini provider's
  * ToolLoopProtocol) consume. Built-in providers ignore this — they discover the
  * same tools over the SSE MCP server instead.
  */
@@ -443,7 +443,7 @@ export const META_AGENT_TOOL_DEFS: Array<{
  * SSE MCP server and discover the tools via ListTools. The two paths share
  * `META_AGENT_TOOL_DEFS` so descriptions stay in sync.
  */
-// Extension-agent meta-agents (e.g. gemini-antigravity) receive their meta-agent
+// Tool-loop meta-agents (e.g. Gemini) receive their meta-agent
 // tools through this OpenAI-shaped list. Built-in providers (claude-code,
 // openai-codex) instead discover tools over the SSE MCP server and are gated by
 // BaseAgentProvider.META_AGENT_ALLOWED_TOOLS, which deliberately OMITS

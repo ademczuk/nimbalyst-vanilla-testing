@@ -18,6 +18,7 @@ import {
   ChatAttachment,
 } from '../types';
 import { AgentCapabilities, BUILTIN_AGENT_CAPABILITIES } from '../agentCapabilities';
+import type { FileChangeFidelity } from '../providerFileTracking';
 import { CodexSDKProtocol } from '../protocols/CodexSDKProtocol';
 import { CodexAppServerProtocol, type CodexAppServerHostBindings } from '../protocols/CodexAppServerProtocol';
 import { AgentProtocol, ProtocolEvent, ProtocolSession } from '../protocols/ProtocolInterface';
@@ -407,6 +408,15 @@ export class OpenAICodexProvider extends BaseAgentProvider {
 
   getTransport(): CodexTransport {
     return this.transport;
+  }
+
+  /**
+   * The app-server emits `fileChange` items carrying path, kind and a unified
+   * diff per change. The legacy SDK transport emits none, so it can only offer
+   * the paths named in tool arguments.
+   */
+  getFileChangeFidelity(): FileChangeFidelity {
+    return this.transport === 'sdk' ? 'tool-args' : 'structured';
   }
 
   public static setTrustChecker(checker: TrustChecker | null): void {

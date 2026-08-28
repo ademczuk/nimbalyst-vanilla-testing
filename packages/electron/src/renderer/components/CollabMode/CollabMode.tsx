@@ -55,7 +55,7 @@ import {
   reconcileSharedDocumentDisplayName,
 } from './collabTree';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
-import type { SerializableDocumentContext } from '../../hooks/useDocumentContext';
+import { collabFileType, type SerializableDocumentContext } from '../../hooks/useDocumentContext';
 import { getTextSelection } from '../UnifiedAI/TextSelectionIndicator';
 import { getActiveEditorContextItems } from '../../stores/editorContextStore';
 import { categorizeTeamAnalyticsError, toStableAnalyticsCategory } from '../../../shared/analytics/teamAnalytics';
@@ -274,7 +274,7 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
 
     return {
       filePath: activeTab.filePath,
-      fileType: 'collab-markdown',
+      fileType: collabFileType(activeTab.filePath),
       content,
       textSelection,
       textSelectionTimestamp: textSelection?.timestamp,
@@ -312,7 +312,7 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
     window.electronAPI.updateMcpDocumentState({
       content: '',
       filePath: activeTab.filePath,
-      fileType: 'collab-markdown',
+      fileType: collabFileType(activeTab.filePath),
       workspacePath: scope.scopeKey,
       cursorPosition: undefined,
       selection: undefined,

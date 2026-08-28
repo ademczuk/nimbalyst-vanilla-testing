@@ -18,6 +18,7 @@
  */
 
 import type { Awareness } from 'y-protocols/awareness';
+import { pickCursorColor } from './collabCursorColor';
 import type { DocumentSyncStatus } from '@nimbalyst/runtime/sync';
 import type { DocumentSyncProvider } from '@nimbalyst/runtime/sync';
 import type {
@@ -270,16 +271,6 @@ export function notifyCollabStatus(
 // ---------------------------------------------------------------------------
 // Collab-enabled EditorHost factory
 // ---------------------------------------------------------------------------
-
-function pickCursorColor(seed: string): string {
-  const colors = [
-    '#E05555', '#2BA89A', '#3A8FD6', '#D97706',
-    '#9B59B6', '#E06B8F', '#3B82F6', '#16A34A',
-  ];
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
-  return colors[Math.abs(h) % colors.length];
-}
 
 export interface CollabExtensionHostArgs {
   filePath: string;

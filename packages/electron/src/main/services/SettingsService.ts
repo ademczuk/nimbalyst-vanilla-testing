@@ -40,7 +40,10 @@ import { logger } from '../utils/logger';
  * outlive the user's actual entitlements). Kept here as a local constant so
  * SettingsService doesn't have to import runtime utilities.
  */
-const DYNAMIC_MODEL_PROVIDERS = new Set(['openai-codex', 'copilot-cli']);
+// Catalogs discovered from the CLI at runtime rather than curated in
+// modelConstants -- `grok models` and `cursor-agent --list-models` both reflect
+// the signed-in account, so a static list would be wrong for most users.
+const DYNAMIC_MODEL_PROVIDERS = new Set(['openai-codex', 'copilot-cli', 'grok-build', 'cursor-agent']);
 
 /**
  * Strip fields that must never reach disk from a provider config:

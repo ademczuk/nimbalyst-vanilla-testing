@@ -104,6 +104,10 @@ vi.mock('../../utils/appPaths', () => ({
 vi.mock('../../utils/store', () => ({
   isShowTrayIcon: vi.fn(() => false), // skip createTray for simplicity
   setShowTrayIcon: setShowTrayIconMock,
+  // The strip is a rendered bitmap needing a real BrowserWindow; these tests
+  // exercise the icon/menu path, so keep it off.
+  isShowTrayStrip: vi.fn(() => false),
+  setShowTrayStrip: vi.fn(),
   getSessionSyncConfig: vi.fn(() => ({})),
   setSessionSyncConfig: vi.fn(),
   getTheme: vi.fn(() => 'dark'),

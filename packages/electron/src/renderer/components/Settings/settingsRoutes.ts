@@ -14,6 +14,9 @@ export type ApplicationSettingsCategory =
   | 'openai-codex'
   | 'opencode'
   | 'copilot-cli'
+  | 'grok-build'
+  | 'cursor-agent'
+  | 'antigravity-gemini-agent'
   | 'lmstudio'
   | 'marketplace'
   | 'installed-extensions'
@@ -143,6 +146,9 @@ const builtinSettingsRouteDefinitions: readonly Omit<BuiltinSettingsRoute, 'sour
   { id: 'openai-codex', scope: 'application', group: 'Agent Providers', label: 'OpenAI Codex', icon: 'smart_toy' },
   { id: 'opencode', scope: 'application', group: 'Agent Providers', label: 'OpenCode', icon: 'terminal', isAlpha: true },
   { id: 'copilot-cli', scope: 'application', group: 'Agent Providers', label: 'GitHub Copilot', icon: 'terminal', isAlpha: true },
+  { id: 'grok-build', scope: 'application', group: 'Agent Providers', label: 'Grok Build', icon: 'terminal', isAlpha: true },
+  { id: 'cursor-agent', scope: 'application', group: 'Agent Providers', label: 'Cursor Agent', icon: 'terminal', isAlpha: true },
+  { id: 'antigravity-gemini-agent', scope: 'application', group: 'Agent Providers', label: 'Gemini', icon: 'smart_toy', isAlpha: true },
   { id: 'claude', scope: 'application', group: 'Chat Providers', label: 'Claude Chat', icon: 'chat', isAvailable: directChatProvidersVisible },
   { id: 'openai', scope: 'application', group: 'Chat Providers', label: 'OpenAI', icon: 'chat', isAvailable: directChatProvidersVisible },
   { id: 'lmstudio', scope: 'application', group: 'Chat Providers', label: 'LM Studio', icon: 'memory', isAvailable: directChatProvidersVisible },

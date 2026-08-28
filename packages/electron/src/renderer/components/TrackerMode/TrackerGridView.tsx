@@ -74,6 +74,7 @@ import {
   ROW_ACTIONS,
   ROW_ITEM_ID,
   TrackerFilterValueMenu,
+  useGridKeyOriginGuard,
   type RelationshipCandidate,
   type TrackerFilterField,
 } from '@nimbalyst/collab-client/trackers-ui';
@@ -297,7 +298,6 @@ export function TrackerGridView({
   } = rows;
   const gridRef = useRef<HTMLRevoGridElement | null>(null);
   const gridCanvasRef = useRef<HTMLDivElement | null>(null);
-  const focusOriginRef = useRef<'keyboard' | null>(null);
 
   // Row index -> record, kept in a ref so the edit handler never reads a stale
   // list after a re-render triggered by the write it just made.
@@ -400,6 +400,9 @@ export function TrackerGridView({
         sortingEnabled,
         favorites,
         rowActions: true,
+        keyLink: onItemSelect
+          ? { onOpenDetail: onItemSelect, onOpenDocument: onOpenDocument }
+          : undefined,
         resolveRelationshipLabel: relationshipLabel,
       }),
       buildGridActionsColumn(),
@@ -407,7 +410,7 @@ export function TrackerGridView({
     [
       visibleColumnDefs, schemaType, effectiveColumnConfig.columnWidths,
       isRowEditable, relationshipCandidates, filteredColumnIds, onColumnFiltersChange,
-      sortingEnabled, favorites, relationshipLabel,
+      sortingEnabled, favorites, onItemSelect, onOpenDocument, relationshipLabel,
     ],
   );
   const gridSorting = useMemo<SortingConfig | undefined>(() => {
@@ -585,40 +588,6 @@ export function TrackerGridView({
     void runUndoable(`Edit ${columnLabel}`, () => commitRow(single.rowIndex, { [prop]: single.val }));
   }, [commitRow, handleItemsUpdate, prepareRow, runUndoable, visibleColumnDefs]);
 
-  /**
-   * Double-click edits an editable cell and opens the row's item as a document
-   * otherwise. RevoGrid's own double-click handler already opened the inline
-   * editor by the time this runs, so opening the document over an editable cell
-   * would immediately throw the edit away. RevoGrid renders its own cells, so
-   * the row comes from the same `data-rgrow` attribute the context menu
-   * resolves against rather than a React row handler.
-   */
-  const handleGridDoubleClick = useCallback(async (
-    event: ReactMouseEvent<HTMLDivElement>,
-  ): Promise<void> => {
-    if (!onOpenDocument) return;
-    const cell = (event.target as HTMLElement | null)?.closest?.('[data-rgrow]');
-    const rowAttr = cell?.getAttribute('data-rgrow');
-    if (rowAttr == null) return;
-    const rowIndex = Number(rowAttr);
-    if (!Number.isFinite(rowIndex)) return;
-    const item = await resolveGridRowItem(rowIndex);
-    if (!item) return;
-
-    // The pointer down that started this double-click already focused the cell,
-    // so the focused column is the one under the cursor.
-    const focused = await gridRef.current?.getFocused?.();
-    const prop = focused?.column?.prop;
-    if (
-      focused?.cell?.y === rowIndex
-      && prop != null
-      && resolveEditableField(item, String(prop))
-    ) {
-      return;
-    }
-    onOpenDocument(item.id);
-  }, [onOpenDocument, resolveEditableField, resolveGridRowItem]);
-
   const openFocusedItem = useCallback(async (): Promise<void> => {
     const focused = await gridRef.current?.getFocused();
     const rowIndex = focused?.cell.y;
@@ -651,6 +620,10 @@ export function TrackerGridView({
     errorNotificationService.showInfo(title, body, { duration: 2500 });
   }, [redo, undo]);
 
+  // RevoGrid's document-level keydown listener acts on keys typed anywhere in the
+  // app while a cell is selected. Decline the ones that did not start in here.
+  useGridKeyOriginGuard(gridCanvasRef);
+
   const handleGridKeyDownCapture = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     const key = event.key;
     const path = event.nativeEvent.composedPath();
@@ -662,12 +635,8 @@ export function TrackerGridView({
         || target.classList.contains('tracker-grid-editor-checkbox')
       ));
 
-    // RevoGrid owns editor keystrokes. Remember the keyboard origin so the
-    // focus change after Enter/Tab does not accidentally open the detail panel.
-    if (isEditing) {
-      if (key === 'Enter' || key === 'Tab') focusOriginRef.current = 'keyboard';
-      return;
-    }
+    // RevoGrid owns editor keystrokes.
+    if (isEditing) return;
 
     // Outside a cell editor Cmd/Ctrl+Z belongs to the grid's own history. The
     // app menu's `Edit > Undo` role does not swallow the keydown, so this runs.
@@ -675,17 +644,6 @@ export function TrackerGridView({
       event.preventDefault();
       event.stopPropagation();
       void replayUndoEntry(event.shiftKey ? 'redo' : 'undo');
-      return;
-    }
-
-    if (
-      key === 'ArrowUp'
-      || key === 'ArrowDown'
-      || key === 'ArrowLeft'
-      || key === 'ArrowRight'
-      || key === 'Tab'
-    ) {
-      focusOriginRef.current = 'keyboard';
       return;
     }
 
@@ -714,21 +672,19 @@ export function TrackerGridView({
     event: RevoGridCustomEvent<FocusAfterRenderEvent>,
   ) => {
     const rowIndex = event.detail?.rowIndex;
-    const keyboardFocused = focusOriginRef.current === 'keyboard';
-    focusOriginRef.current = null;
     if (typeof rowIndex !== 'number') return;
-    // A mouse focus opens details as before. Keyboard focus only changes the
-    // row while browsing; once details are open, it keeps the panel in sync.
-    if (onItemSelect && (!keyboardFocused || selectedItemId)) {
-      if (groupBy === 'none') {
-        const item = sortedItemsRef.current[rowIndex];
-        if (item) onItemSelect(item.id);
-        return;
-      }
-      void resolveGridRowItem(rowIndex).then(item => {
-        if (item) onItemSelect(item.id);
-      });
+    // Moving the selection never *opens* the detail pane -- that is the Key
+    // cell's job. It only follows the selection once the pane is already open,
+    // so arrowing down the grid reads as browsing the open item.
+    if (!onItemSelect || !selectedItemId) return;
+    if (groupBy === 'none') {
+      const item = sortedItemsRef.current[rowIndex];
+      if (item) onItemSelect(item.id);
+      return;
     }
+    void resolveGridRowItem(rowIndex).then(item => {
+      if (item) onItemSelect(item.id);
+    });
   }, [groupBy, onItemSelect, resolveGridRowItem, selectedItemId]);
 
   const handleBeforeSorting = useCallback((
@@ -892,10 +848,6 @@ export function TrackerGridView({
         className="tracker-grid-canvas relative min-h-0 flex-1 outline-none"
         onKeyDownCapture={handleGridKeyDownCapture}
         onContextMenu={(event) => { void handleGridContextMenu(event); }}
-        onDoubleClick={(event) => { void handleGridDoubleClick(event); }}
-        onPointerDownCapture={() => {
-          focusOriginRef.current = null;
-        }}
       >
         {sortedItems.length === 0 && !columnFiltersActive ? (
           <div className="tracker-grid-empty flex h-full flex-col items-center justify-center gap-2 text-sm text-nim-muted" data-testid="tracker-grid-empty">

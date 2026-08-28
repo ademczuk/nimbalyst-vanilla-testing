@@ -1,6 +1,6 @@
 /**
  * History shape the extension agent backend's tool loop seeds from each turn.
- * Mirrors the gemini-antigravity BackendHistoryMessage so the host can hand the
+ * Mirrors a backend module's BackendHistoryMessage so the host can hand the
  * backend its prior conversation.
  */
 export interface BackendHistoryMessage {

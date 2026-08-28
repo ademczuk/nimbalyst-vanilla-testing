@@ -1,10 +1,10 @@
 /**
  * Ambient type shim for the slice of @nimbalyst/runtime that this extension
  * imports. The host injects the real implementation at runtime, exactly like
- * the electronAPI shim in the gemini-antigravity extension and the globals
+ * the electronAPI shim other extensions declare and the globals
  * shim in mockuplm.
  *
- * PRE-EXISTING ISSUE (not introduced by the gemini-antigravity branch):
+ * PRE-EXISTING ISSUE:
  * TranscriptMathHost.tsx imports two functions from the package root
  * @nimbalyst/runtime. With moduleResolution bundler, tsc resolves that
  * specifier through the runtime package "exports" field, which points types

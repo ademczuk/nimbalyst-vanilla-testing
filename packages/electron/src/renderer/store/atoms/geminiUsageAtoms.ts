@@ -1,7 +1,7 @@
 /**
  * Atoms for Gemini (Antigravity) usage tracking
  *
- * These atoms store usage data parsed from the gemini-antigravity backend
+ * These atoms store usage data read from the Antigravity language server
  * module's getUsageSnapshot RPC, including a most-constrained model quota
  * (primary ring) and the next-most-constrained (secondary ring). Degrades to a
  * muted "--" state when the language server is not running.

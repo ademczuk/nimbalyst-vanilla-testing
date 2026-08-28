@@ -63,7 +63,9 @@ export interface TypeColumnConfig {
 /** Columns that exist independent of schema field definitions. All derived, so none are editable. */
 const STRUCTURAL_COLUMNS: TrackerColumnDef[] = [
   { id: 'type', label: 'Type', width: 64, minWidth: 64, sortable: true, render: 'type-icon', defaultVisible: true, builtin: true, editable: false, edit: 'readonly' },
-  { id: 'key', label: 'Key', width: 90, sortable: true, render: 'text', defaultVisible: true, sortKey: 'issueKey', builtin: true, editable: false, edit: 'readonly' },
+  // Wide enough for a five-digit key at the grid's 12px, since the key is the
+  // row's open affordance and a truncated one cannot be read or aimed at.
+  { id: 'key', label: 'Key', width: 110, minWidth: 90, sortable: true, render: 'text', defaultVisible: true, sortKey: 'issueKey', builtin: true, editable: false, edit: 'readonly' },
   { id: 'updated', label: 'Updated', width: 100, sortable: true, render: 'date', defaultVisible: true, sortKey: 'lastIndexed', builtin: true, editable: false, edit: 'readonly' },
   { id: 'viewed', label: 'Viewed', width: 100, sortable: true, render: 'date', defaultVisible: false, builtin: true, editable: false, edit: 'readonly' },
   { id: 'createdBy', label: 'Created by', width: 140, minWidth: 100, sortable: true, render: 'avatar', defaultVisible: false, builtin: true, editable: false, edit: 'readonly' },

@@ -10,12 +10,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- The macOS menu bar shows your session fleet at a glance, and names a session for a few seconds whenever it starts, finishes, blocks or fails.
+- Animations can show a spinning indicator for a running or loading state.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- An animation plays inline in the agent transcript when an agent creates or edits it, as a click-to-activate stage rather than a plain file row.
+- In the tracker table the Key cell is the open button: click it for the detail pane, or its expand icon to open the document. Clicking any other cell just selects it, and double-click always means edit.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- The session model picker loads ahead of opening and uses cached results instead of blocking on provider discovery.
+- Typing in a dialog while the tracker table is open no longer edits the selected cell.
+- A tracker item's body is no longer cleared when the item's metadata syncs with your team.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.75.5] - 2026-08-28
+
+
+### Added
+<!-- New features go here -->
+- Grok Build and Cursor Agent as coding agents, each with settings, model picker, edited-file tracking and diff review.
+- AI sessions can read and edit a shared document without it being open in a tab, including mockups, drawings and data models.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Gemini is a built-in coding agent rather than an extension, with edited-file tracking and a model list from your account.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Reopening a Gemini session shows the tool calls it made instead of only the conversation.
+- "Accept all" no longer refuses an AI edit by claiming the file changed on disk.
+- Documents with a scalar status key in frontmatter render the frontmatter card instead of falling back to the raw text editor (#1392).
 
 ### Removed
 <!-- Removed features go here -->

@@ -517,13 +517,13 @@ function createSharedMcpServer(
     try {
       switch (toolName) {
         case "applyDiff":
-          return handleApplyDiff(args);
+          return handleApplyDiff(args, sessionId, workspacePath);
 
         case "applyCollabDocEdit":
-          return handleApplyCollabDocEdit(args);
+          return handleApplyCollabDocEdit(args, sessionId, workspacePath);
 
         case "readCollabDoc":
-          return handleReadCollabDoc(args);
+          return handleReadCollabDoc(args, workspacePath);
 
         case "readCollabDocComments":
           return handleReadCollabDocComments(args, workspacePath);

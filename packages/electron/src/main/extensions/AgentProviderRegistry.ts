@@ -39,6 +39,13 @@ import type {
   AiAgentProviderContribution,
   ExtensionManifest,
 } from '@nimbalyst/extension-sdk';
+import { AI_PROVIDER_TYPES } from '@nimbalyst/runtime/ai/server/types';
+
+const BUILTIN_PROVIDER_IDS: ReadonlySet<string> = new Set<string>(AI_PROVIDER_TYPES);
+
+function isBuiltinProviderId(contributionId: string): boolean {
+  return BUILTIN_PROVIDER_IDS.has(contributionId);
+}
 
 export type AgentProviderStatus =
   | 'registered'
@@ -83,6 +90,24 @@ class AgentProviderRegistryImpl {
    * shouldn't tear down a running provider.
    */
   register(entry: Omit<AgentProviderEntry, 'status'> & { status?: AgentProviderStatus }): void {
+    // A contribution may not claim an id the app already owns. `session.provider`
+    // is a flat string, and every "is this an extension agent?" check resolves
+    // it through this registry -- so a colliding contribution does not merely
+    // shadow the built-in provider in the picker, it takes over the built-in's
+    // sessions, auth path and file tracking.
+    //
+    // This is not hypothetical: `antigravity-gemini-agent` shipped as an
+    // extension contribution before it became a built-in provider, and an
+    // install that still carries a copy of that extension would otherwise
+    // re-register the id and quietly undo the move. Built-in wins; the stale
+    // contribution is dropped.
+    if (isBuiltinProviderId(entry.contributionId)) {
+      console.warn(
+        `[AgentProviderRegistry] ${entry.extensionId} contributes "${entry.contributionId}", `
+        + 'which is a built-in provider id. Ignoring the contribution; the built-in provider is used.',
+      );
+      return;
+    }
     const key = makeKey(entry.extensionId, entry.contributionId);
     const existing = this.entries.get(key);
     const status: AgentProviderStatus = entry.status ?? existing?.status ?? 'registered';

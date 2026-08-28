@@ -3,7 +3,12 @@ import type { TabData } from '../contexts/TabsContext';
 import { getTextSelection } from '../components/UnifiedAI/TextSelectionIndicator';
 import type { MockupSelection, EditorContextItem } from '@nimbalyst/runtime';
 import { getActiveEditorContextItems } from '../stores/editorContextStore';
-import { isCollabUri } from '@nimbalyst/collab-protocol';
+import {
+  collabFileTypeFor,
+  isCollabUri,
+  parseCollabUri,
+} from '@nimbalyst/collab-protocol';
+import { findSharedDocumentTypeById } from '../store/atoms/collabDocuments';
 
 export interface DocumentContext {
   filePath: string;
@@ -54,15 +59,38 @@ interface UseDocumentContextProps {
 }
 
 /**
+ * The `collab-*` tag for a shared document URI.
+ *
+ * Falls back to the type-less tag when the shared index has not loaded the
+ * document yet: the tools the tag selects work for every type, so an unresolved
+ * type costs the prompt a detail, not the ability to reach the document.
+ */
+export function collabFileType(filePath: string): string {
+  try {
+    return collabFileTypeFor(
+      findSharedDocumentTypeById(parseCollabUri(filePath).documentId),
+    );
+  } catch {
+    return collabFileTypeFor(undefined);
+  }
+}
+
+/**
  * Detect file type from file path for AI context
  */
 export function detectFileType(filePath: string): string {
   if (!filePath) return 'unknown';
 
-  // Collaborative shared documents (collab:// URIs) are always markdown,
-  // but we tag them distinctly so the AI knows they live in Yjs and must be
-  // edited via applyCollabDocEdit / applyDiff (not Edit/Write).
-  if (isCollabUri(filePath)) return 'collab-markdown';
+  // Collaborative shared documents (collab:// URIs) are tagged distinctly so
+  // the AI knows they live in Yjs and must be edited via applyCollabDocEdit /
+  // applyDiff (not Edit/Write).
+  //
+  // The suffix is the document's real type, NOT always markdown: a shared
+  // mockup, canvas, or data model is reached through the same tools but is not
+  // markdown, and calling it `collab-markdown` taught readers (and agents) the
+  // opposite. Markdown still resolves to `collab-markdown`, so the historical
+  // value is unchanged for the case it was actually describing.
+  if (isCollabUri(filePath)) return collabFileType(filePath);
 
   const lowerPath = filePath.toLowerCase();
 

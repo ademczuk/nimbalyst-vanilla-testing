@@ -65,6 +65,7 @@ import { loadTrackerTeamMembers } from '../TrackerMode/useTrackerTeamMembers';
 import { assertFileSaveSucceeded, getSaveFailureMessage, resolveSaveFailureType, type FileSaveResult } from '../../utils/fileSaveResult';
 import { resolveSaveAttempt } from './resolveSaveAttempt';
 import { reloadFromDisk, type ReloadOutcome } from './reloadFromDisk';
+import { resolveDiffResolutionSave } from './resolveDiffResolutionSave';
 
 /** Normalize a file path for comparison: backslashes to forward slashes, strip trailing slashes. */
 function normalizePathForCompare(p: string): string {
@@ -1253,19 +1254,78 @@ export const TabEditor: React.FC<TabEditorProps> = ({
    *
    * Returns true when the bytes reached disk.
    */
-  const saveDiffResolutionToDisk = useCallback(async (content: string): Promise<boolean> => {
-    const expected = documentModel?.getDiffState()?.newContent ?? lastSavedContentRef.current;
-    const result = await window.electronAPI.saveFile(content, filePath, expected, 'manual');
-    if (result?.conflict) {
+  const saveDiffResolutionToDisk = useCallback(async (
+    content: string,
+    clearDiffState?: () => void,
+  ): Promise<boolean> => {
+    const outcome = await resolveDiffResolutionSave(content, {
+      readDiffBaseline: () => documentModel?.getDiffState()?.newContent,
+      fallbackBaseline: lastSavedContentRef.current,
+      clearDiffState,
+      saveFile: (toWrite, lastKnown) =>
+        window.electronAPI.saveFile(toWrite, filePath, lastKnown, 'manual'),
+    });
+
+    if (outcome.kind === 'conflict') {
       logger.ui.warn(
         `[TabEditor] Diff resolution refused for ${fileName}: disk changed since the diff was computed`,
       );
-      setAutosaveConflictDiskContent(typeof result.diskContent === 'string' ? result.diskContent : '');
+      setAutosaveConflictDiskContent(outcome.diskContent);
       return false;
     }
-    assertManualSaveSucceeded(result);
+    if (outcome.kind === 'failed') {
+      assertManualSaveSucceeded(outcome.result);
+      return false;
+    }
     return true;
-  }, [filePath, fileName, documentModel]);
+  }, [filePath, fileName, documentModel, assertManualSaveSucceeded]);
+
+  /**
+   * Decide whether an autosave may proceed while an AI edit tag is pending.
+   *
+   * Between `$approveDiffs` removing the diff nodes and `CLEAR_DIFF_TAG_COMMAND`
+   * arriving there is a window -- a 100ms timer plus several IPC round-trips --
+   * where the tab looks like an ordinary dirty buffer but disk holds the
+   * agent's write and `lastSavedContentRef` still holds the pre-AI content. An
+   * autosave landing there is refused as a conflict and raises the banner on a
+   * change the user just accepted (#1408). Same shape when the user resolves
+   * every diff by hand instead.
+   *
+   * So: never race a resolution that is already in flight, and when this is the
+   * thing that ends diff mode, adopt the agent's content as the baseline before
+   * dropping the diff state that names it.
+   */
+  const settleDiffBeforeAutosave = useCallback((): 'proceed' | 'skip' => {
+    if (isClearingDiffTagRef.current) return 'skip';
+
+    const pending = pendingAIEditTagRef.current;
+    if (!pending) return 'proceed';
+
+    const editor = editorRef.current;
+    if (!editor || typeof editor.getEditorState !== 'function') return 'proceed';
+
+    const hasDiffs = editor.getEditorState().read(() => $hasDiffNodes(editor));
+    if (hasDiffs) return 'skip';
+
+    const diskBaseline = documentModel?.getDiffState()?.newContent;
+    if (typeof diskBaseline === 'string') {
+      lastSavedContentRef.current = diskBaseline;
+      documentModel?.setLastPersistedContent(diskBaseline);
+    }
+
+    logger.ui.info(`[TabEditor] No diffs remaining, clearing pending tag: ${fileName}`);
+    window.electronAPI.invoke('history:update-tag-status', pending.filePath, pending.tagId, 'reviewed');
+    setPendingAIEditTag(null);
+    // Exclude self from the diffResolved fan-out -- siblings still need to
+    // exit diff mode, but we already did our local cleanup.
+    documentModel?.clearDiffState(documentModelHandleRef.current?.id, true);
+    return 'proceed';
+  }, [documentModel, fileName]);
+
+  const settleDiffBeforeAutosaveRef = useRef(settleDiffBeforeAutosave);
+  useEffect(() => {
+    settleDiffBeforeAutosaveRef.current = settleDiffBeforeAutosave;
+  }, [settleDiffBeforeAutosave]);
 
   // Latest saveWithHistory accessible from the stable EditorHost adapter (which
   // is memoized on filePath/fileName and would otherwise capture a stale closure).
@@ -1400,20 +1460,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
         // If in diff mode, check if all diffs have been manually resolved.
         // (User may have deleted all diff content via select-all + backspace.)
         // If no diff nodes remain, clear the pending tag so autosave can proceed.
-        if (pendingAIEditTagRef.current && editorRef.current && typeof editorRef.current.getEditorState === 'function') {
-          const hasDiffs = editorRef.current.getEditorState().read(() => {
-            return $hasDiffNodes(editorRef.current!);
-          });
-          if (hasDiffs) return; // Still has diffs, skip autosave
-          // All diffs resolved manually -- clear tag and fall through to save
-          logger.ui.info(`[TabEditor] No diffs remaining, clearing pending tag: ${fileName}`);
-          const { tagId, filePath: tagFilePath } = pendingAIEditTagRef.current;
-          window.electronAPI.invoke('history:update-tag-status', tagFilePath, tagId, 'reviewed');
-          setPendingAIEditTag(null);
-          // Exclude self from the diffResolved fan-out -- siblings still
-          // need to exit diff mode, but we already did our local cleanup.
-          documentModel?.clearDiffState(documentModelHandleRef.current?.id, true);
-        }
+        if (settleDiffBeforeAutosaveRef.current() === 'skip') return;
 
         const currentContent = getContentFnRef.current();
         logger.ui.info(`[TabEditor] DocumentModel autosave: ${fileName}`);
@@ -1944,9 +1991,12 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             newBaseline: rejectedContent,
           });
 
-          // Update our state
+          // Update our state. The model's baseline has to move with the local
+          // one -- leaving it on the pre-AI content makes the next external
+          // change look like a divergence the model has to hold the line on.
           contentRef.current = approvedContent;
           lastSavedContentRef.current = approvedContent;
+          documentModel?.setLastPersistedContent(approvedContent);
         }
       } catch (error) {
         logger.ui.error('[TabEditor] Failed to create incremental-approval tag:', error);
@@ -1973,10 +2023,15 @@ export const TabEditor: React.FC<TabEditorProps> = ({
         // Clear the pending tag reference immediately so file watcher won't re-enter diff mode
         setPendingAIEditTag(null);
 
-        // Clear DocumentModel's diff state AND fan out to sibling attachments
-        // so they dismiss their own diff UI. Without excluding our own editor
-        // id we'd recurse via the onDiffResolved callback we just registered.
-        documentModel?.clearDiffState(documentModelHandleRef.current?.id, true);
+        // Clearing DocumentModel's diff state fans out to sibling attachments so
+        // they dismiss their own diff UI (excluding our own editor id, or we'd
+        // recurse via the onDiffResolved callback we just registered) -- but it
+        // also destroys the conflict baseline for the write below, so it has to
+        // happen *inside* saveDiffResolutionToDisk, after the baseline is read.
+        // Clearing it here first is what made every accept-all look like a disk
+        // conflict (#1408).
+        const clearModelDiffState = () =>
+          documentModel?.clearDiffState(documentModelHandleRef.current?.id, true);
 
         // Now save current editor state to disk
         if (editorRef.current) {
@@ -1987,7 +2042,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             });
 
             // Save to disk
-            if (!(await saveDiffResolutionToDisk(currentContent))) return;
+            if (!(await saveDiffResolutionToDisk(currentContent, clearModelDiffState))) return;
 
             // Update DocumentModel's echo-suppression baseline
             documentModel?.setLastPersistedContent(currentContent);
@@ -2010,6 +2065,10 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             contentRef.current = currentContent;
             initialContentRef.current = currentContent;
             lastSavedContentRef.current = currentContent;
+          } else {
+            // No editor to serialize, so there is no write to hang the clear
+            // off -- siblings still have to leave diff mode.
+            clearModelDiffState();
           }
 
           // Reload editor to exit diff mode and show clean final state
@@ -2564,14 +2623,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
           // disk holds the AI-written content and lastSavedContentRef holds the
           // pre-AI baseline -- Layer D would flag every autosave as a conflict
           // and interfere with the APPROVE_DIFF_COMMAND -> CLEAR_DIFF_TAG_COMMAND
-          // chain. Mirror the same guard TabEditor's own onSaveRequested handler
-          // applies (line ~990) so built-in editors honor diff mode too.
-          if (pendingAIEditTagRef.current && editorRef.current && typeof editorRef.current.getEditorState === 'function') {
-            const hasDiffs = editorRef.current.getEditorState().read(() => {
-              return $hasDiffNodes(editorRef.current!);
-            });
-            if (hasDiffs) return;
-          }
+          // chain. Same guard TabEditor's own onSaveRequested handler applies,
+          // so built-in editors honor diff mode too.
+          if (settleDiffBeforeAutosaveRef.current() === 'skip') return;
           await saveWithHistoryRef.current(content, 'auto', false);
           return;
         }

@@ -347,6 +347,25 @@ html, body {
   88%  { opacity: 1; }
   100% { offset-distance: 100%; opacity: 0; }
 }
+
+/*
+ * A spinner for html parts: a ring with one lit arc, rotating. This is the
+ * stage's only self-driven rotation -- the rotational counterpart to the edge
+ * packet -- for a running/loading state that has to read as live rather than as
+ * a static glyph. Colour is currentColor, so the badge hosting it sets the hue,
+ * and the recorder captures it exactly as it captures a packet.
+ */
+@keyframes anim-spin {
+  to { transform: rotate(360deg); }
+}
+.anim-spin {
+  display: inline-block;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  animation: anim-spin 0.8s linear infinite;
+}
 .anim-edge-arrow path {
   fill: none;
   stroke: var(--anim-border);
@@ -493,7 +512,8 @@ html, body {
   transition: none !important;
 }
 
-.anim-no-animation .anim-edge-packet {
+.anim-no-animation .anim-edge-packet,
+.anim-no-animation .anim-spin {
   animation: none !important;
 }
 
@@ -509,6 +529,11 @@ html, body {
   .anim-edge-packet {
     animation: none !important;
     opacity: 0 !important;
+  }
+  /* The spinner stops too, but stays visible -- the ring still reads as a
+     running badge; it just stops turning. */
+  .anim-spin {
+    animation: none !important;
   }
 }
 `;

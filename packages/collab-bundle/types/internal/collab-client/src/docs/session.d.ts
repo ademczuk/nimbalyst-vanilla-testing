@@ -30,6 +30,20 @@ export declare const activeCollabScopeAtom: WritableAtom<CollabScope | null, [Co
 export declare const allSharedDocumentsAtom: ListAtom<SharedDocument>;
 export declare const sharedDocumentsAtom: WritableAtom<SharedDocument[], [ListUpdate<SharedDocument>], void>;
 export declare const trashedSharedDocumentsAtom: Atom<SharedDocument[]>;
+/**
+ * The readable documents of one scope, whether or not it is the active one.
+ *
+ * `sharedDocumentsAtom` answers for the scope the window is *browsing*, which
+ * a window that never mounts a Shared Docs surface never sets -- the
+ * organization window is exactly that, so the active list is permanently empty
+ * there. A window that holds a scope key of its own and needs the list for
+ * something other than browsing it, such as resolving a document reference
+ * inside a message, addresses the scope directly through this.
+ *
+ * Reactive, unlike `getSharedDocumentsForScopeKey`, so a document shared after
+ * a reference was rendered still reaches the reference.
+ */
+export declare const sharedDocumentsForScopeAtom: import("jotai-family").AtomFamily<string, Atom<SharedDocument[]>>;
 export declare const sharedFoldersAtom: ListAtom<SharedFolder>;
 export declare const teamSyncStatusAtom: WritableAtom<CollabDocsUIStatus, [CollabDocsUIStatus], void>;
 export declare const workspaceHasTeamAtom: WritableAtom<boolean, [boolean], void>;

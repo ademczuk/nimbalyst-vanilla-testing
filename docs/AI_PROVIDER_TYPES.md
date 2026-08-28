@@ -20,6 +20,8 @@ These providers currently register through `packages/runtime/src/ai/server/Provi
 | `openai-codex-acp` | **OpenAI Codex (ACP)**. Hidden behind the experimental ACP toggle in the OpenAI Codex settings panel. | ACP over stdio via `CodexACPProtocol`. | Same auth story as Codex; optional API key. | Reuses Codex model catalog. | Experimental peer provider with native file-edit hooks and better diff attribution. |
 | `opencode` | **OpenCode**. Alpha settings panel. | OpenCode local server + SDK (`OpenCodeSDKProtocol`) over HTTP/SSE. | OpenCode's own config/auth model. | Preset model list plus user-configured providers/models from `opencode.json`. | Best fit when we want an open-source multi-model agent surface. |
 | `copilot-cli` | **GitHub Copilot**. Alpha settings panel. | ACP over stdio via `copilot --acp --stdio` and `CopilotACPProtocol`. | Existing Copilot CLI login. | Minimal fixed catalog (`copilot-cli:default`). | No separate API key flow; relies on CLI auth. |
+| `grok-build` | **Grok Build**. Alpha settings panel. | Headless NDJSON per turn: `grok -p … --output-format streaming-json` via `GrokBuildProtocol`. | `grok login` only. | Discovered from `grok models`, which works without auth. | Deliberately **not** on `grok agent stdio` (ACP): the headless surface carries `rawInput`/`rawOutput` and `{type:'diff', path, oldText, newText}` blocks that plain ACP drops. File-change fidelity is `'tool-args'` — Grok has no delete or move tool, so removals go through `run_terminal_command` and the watcher must stay on. |
+| `cursor-agent` | **Cursor Agent**. Alpha settings panel. | Headless NDJSON per turn: `cursor-agent --resume <chatId> -p … --output-format stream-json` via `CursorAgentProtocol`. | `cursor-agent login` only. | Discovered from `cursor-agent --list-models` (reflects the account's entitlements). | The only built-in provider besides Codex app-server with `'structured'` file-change fidelity: `editToolCall` results carry `beforeFullFileContent`/`afterFullFileContent` plus a unified diff, and `deleteToolCall` reports removals with `prevContent`. Headless `--print` grants write and shell for the whole turn with no per-tool approval to intercept, so the turn is gated up front on workspace trust. |
 
 ### Chat providers
 
@@ -101,6 +103,7 @@ Current provider-to-parser mapping is:
 - `openai-codex-acp` -> `CodexACPRawParser`
 - `opencode` -> `OpenCodeRawParser`
 - `copilot-cli` -> `CopilotRawParser`
+- `grok-build` / `cursor-agent` -> `HeadlessAgentRawParser` (re-uses the protocol adapters' own `mapGrokRecord` / `mapCursorRecord` rather than re-decoding the wire shapes a second time)
 
 If a new provider emits a new raw event shape, it needs a parser and parser registration. If it deliberately reuses an existing shape, document that and route it to the existing parser explicitly.
 
@@ -253,7 +256,7 @@ Existing wiring for this already exists in `packages/electron/src/main/index.ts`
 
 Current CLI-backed agents fall into three auth patterns:
 
-- provider CLI login only: `copilot-cli`
+- provider CLI login only: `copilot-cli`, `grok-build`, `cursor-agent`
 - CLI login with optional API key override: `openai-codex`
 - provider-owned config/auth file: `opencode`
 
@@ -279,6 +282,19 @@ Use these as starting points depending on the integration style:
 - **ACP / stdio CLI agent**: `packages/runtime/src/ai/server/providers/OpenAICodexACPProvider.ts`
 - **Open-source server-backed agent**: `packages/runtime/src/ai/server/providers/OpenCodeProvider.ts`
 - **Minimal CLI-auth ACP agent**: `packages/runtime/src/ai/server/providers/CopilotCLIProvider.ts`
+- **Headless per-turn NDJSON CLI agent**: `packages/runtime/src/ai/server/providers/HeadlessCliAgentProvider.ts` with `protocols/headless/HeadlessNdjsonProcess.ts`. Subclass the provider and write only a protocol adapter that maps the CLI's records onto `ProtocolEvent`s — see `GrokBuildProvider` / `CursorAgentProvider`, which are ~120 lines each.
+
+### Choosing a transport
+
+**Pick the surface that reports file edits as structured data, not the one that shares the most code.** ACP is tempting because four providers could share a client, but ACP has no authoritative file-change item: every ACP provider here is stuck on watcher-inferred attribution. Both `grok-build` and `cursor-agent` were measured across every surface their CLI offers before choosing, and both landed off ACP for exactly this reason.
+
+Declare what you found in `packages/runtime/src/ai/server/providerFileTracking.ts`:
+
+- `'structured'` — an authoritative change item with path plus diff or old/new text, with deletes and moves distinguishable. Earns `attributionMode: 'disabled'`; the filesystem watcher must not attribute on top of it.
+- `'tool-args'` — edits arrive as tool calls naming the path before the write. Good enough for a pre-edit baseline; the watcher still runs.
+- `'none'` — nothing usable; the watcher is the only source.
+
+The settings panel states this to the user (`HeadlessCliProviderPanel`), because "file tracking" means materially different things at each level and a user should not have to guess which one they have.
 
 ## Provider Switching Rules
 

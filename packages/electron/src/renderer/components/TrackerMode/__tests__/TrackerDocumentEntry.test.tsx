@@ -84,20 +84,18 @@ describe('document-view entry gestures', () => {
     (window as any).electronAPI = { documentService: { updateTrackerItem: vi.fn() } };
   });
 
-  it('opens the document on a row double-click', async () => {
+  /**
+   * Double-click now means "edit this cell" and nothing else. It used to open
+   * the document over a read-only cell, which made the gesture mean two
+   * different things depending on which column the pointer happened to land in.
+   * The document is reached from the Key cell's expand icon instead -- covered
+   * in `trackerGridColumns.test.ts`, where the cell template can be exercised.
+   */
+  it('no longer opens the document on a double-click', async () => {
     const onOpenDocument = vi.fn();
     renderGrid({ onOpenDocument });
 
     fireEvent.doubleClick(screen.getByTestId('mock-row-1'));
-
-    await waitFor(() => expect(onOpenDocument).toHaveBeenCalledWith('bug-2'));
-  });
-
-  it('ignores a double-click that is not over a row', async () => {
-    const onOpenDocument = vi.fn();
-    renderGrid({ onOpenDocument });
-
-    fireEvent.doubleClick(screen.getByTestId('mock-revogrid'));
 
     await Promise.resolve();
     expect(onOpenDocument).not.toHaveBeenCalled();

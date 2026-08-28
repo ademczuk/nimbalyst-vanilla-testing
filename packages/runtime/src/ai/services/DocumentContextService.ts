@@ -9,6 +9,10 @@
  */
 
 import { hashContent, computeDiff } from '../../utils/documentDiff';
+import {
+  collabDocumentTypeFromFileType,
+  isCollabDocumentFileType,
+} from '@nimbalyst/collab-protocol';
 import type { AIProviderType } from '../server/types';
 
 import type {
@@ -381,7 +385,7 @@ export class DocumentContextService implements IDocumentContextService {
       && !state.sentEditingInstructions
       && !isNonEditableContext(documentContext.fileType)
     ) {
-      additions.editingInstructions = documentContext.fileType === 'collab-markdown'
+      additions.editingInstructions = isCollabDocumentFileType(documentContext.fileType)
         ? this.getCollabEditingInstructions()
         : this.getEditingInstructions();
       // Mark that we've sent editing instructions for this session
@@ -442,9 +446,15 @@ export class DocumentContextService implements IDocumentContextService {
       // agent must call readCollabDoc to see content and applyCollabDocEdit to
       // change it. We deliberately do NOT inline document content here — that
       // would balloon every prompt with the full document on every turn.
-      if (context.fileType === 'collab-markdown') {
+      if (isCollabDocumentFileType(context.fileType)) {
+        const collabDocumentType = collabDocumentTypeFromFileType(context.fileType);
         prompt += `<COLLAB_DOCUMENT_NOTE>\n`;
         prompt += `This is a shared collaborative document synced in realtime over Yjs. Other users may be editing it concurrently — prefer small, scoped edits over sweeping rewrites.\n`;
+        // Without this the agent assumes markdown and edits a mockup's HTML or
+        // a data model's schema as if it were prose.
+        if (collabDocumentType && collabDocumentType !== 'markdown') {
+          prompt += `Its document type is '${collabDocumentType}' — NOT markdown. readCollabDoc returns its serialized file form, and applyCollabDocEdit expects replacements against exactly that text.\n`;
+        }
         prompt += `To READ this document, call the readCollabDoc tool with this collab:// URI. The filesystem Read tool will not work for collab:// URIs.\n`;
         prompt += `To MODIFY this document, call applyCollabDocEdit (or applyDiff) with this collab:// URI. Filesystem tools like Edit/Write will not propagate via Yjs and will not reach other collaborators.\n`;
         prompt += `To READ inline comment threads, call readCollabDocComments. To answer one, call replyToCollabDocComment with the thread id and, when known, the specific replyToCommentId. To create a new anchored inline comment, call createCollabDocComment with exact text plus enough prefix/suffix context to identify one location.\n`;
@@ -542,7 +552,7 @@ export class DocumentContextService implements IDocumentContextService {
       // readCollabDoc fallback).
       // For filesystem files: original behavior (claude-code has Read tool;
       // chat providers get content inline).
-      const isCollab = context.fileType === 'collab-markdown';
+      const isCollab = isCollabDocumentFileType(context.fileType);
       const isClaudeCodeCollab = isCollab && providerType === 'claude-code';
       if (!isPullRequest && !isGithubIssue) {
         if (transition === 'modified' && context.documentDiff && !isClaudeCodeCollab) {

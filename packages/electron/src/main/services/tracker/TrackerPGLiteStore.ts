@@ -342,6 +342,14 @@ export class TrackerPGLiteStore implements TrackerPersistence {
     // gets the engine-provided defaults but an existing inline item keeps
     // its provenance.
     //
+    // `content` needs the same treatment for a stronger reason: the body has
+    // no wire representation at all. The metadata envelope carries only a
+    // `bodyVersion` pointer -- the body itself lives in the separate
+    // `tracker-content/<itemId>` DocumentRoom -- so `payloadToRecord` always
+    // yields `content: undefined`. Writing the column from a remote payload
+    // could therefore only ever write NULL over the user's body: with the
+    // room connected, every ordinary metadata sync silently emptied the item.
+    //
     // Issue-number conflict resolution: two clients that each had locally
     // assigned NIM-{N} before the new tracker room arbitrated them can
     // legitimately ship items with the same `(workspace, issue_number)`
@@ -400,7 +408,7 @@ export class TrackerPGLiteStore implements TrackerPersistence {
         archived = EXCLUDED.archived,
         source = COALESCE(tracker_items.source, EXCLUDED.source),
         source_ref = COALESCE(tracker_items.source_ref, EXCLUDED.source_ref),
-        content = EXCLUDED.content,
+        content = COALESCE(EXCLUDED.content, tracker_items.content),
         updated = EXCLUDED.updated,
         last_indexed = NOW()`,
       [

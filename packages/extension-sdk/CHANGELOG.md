@@ -8,6 +8,7 @@ The SDK is versioned independently of the Nimbalyst app. Each release declares i
 
 | SDK version | Minimum Nimbalyst app version |
 | --- | --- |
+| 0.6.0 | 0.75.5 |
 | 0.5.0 | 0.70.0 |
 | 0.4.0 | 0.70.0 |
 | 0.3.0 | 0.70.0 |
@@ -18,6 +19,20 @@ The SDK is versioned independently of the Nimbalyst app. Each release declares i
 | 0.1.0 | 0.58.5 |
 
 ## [Unreleased]
+
+## [0.6.0]
+
+Requires Nimbalyst 0.75.5 for extension-neutral collaborative comments, manifest-declared collaboration document types, viewport handoff, and headless agent editing through a document codec.
+
+### Added
+
+- `CollaborationCommentsService`, `CommentAnchor`, and codec-level `commentAnchors` let collaborative editors mount the platform comment experience and resolve structured anchors both live and headlessly.
+- `host.registerViewport()` and `EditorViewport` let an editor expose proportional scroll position to hosts that carry the reader's place between related documents; `createReadOnlyHost()` can receive those registrations.
+- `contributions.customEditors[].collaboration.documentType` lets a host identify a collaborative document type from the manifest before its extension bundle and codec are loaded.
+
+### Changed
+
+- `CollabCodec` documents file-form fallback for headless agent edits when no structured patch pair exists, while recommending structured edits for minimal concurrent deltas.
 
 ## [0.5.0]
 

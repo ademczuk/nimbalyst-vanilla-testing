@@ -117,6 +117,10 @@ const nodeOnly = [
   // string handling over a `getData` stub and needs no DOM.
   'packages/electron/src/renderer/components/EmbedFrame/__tests__/canvasDropSource.test.ts',
   'packages/electron/src/renderer/components/EmbedFrame/__tests__/resolveCollaborativeEmbedRequest.test.ts',
+  // Headless collab acquisition is Y.Doc + codec plumbing with the room
+  // boundary stubbed; it never mounts an editor, which is the whole point.
+  'packages/electron/src/renderer/services/__tests__/HeadlessCollabDocument.test.ts',
+  'packages/electron/src/renderer/services/__tests__/codecOnlyHeadlessEdit.test.ts',
 ];
 
 // The node project's `include` and the jsdom project's `exclude` must describe

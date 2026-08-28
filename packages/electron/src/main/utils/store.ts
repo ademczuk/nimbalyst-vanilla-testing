@@ -272,6 +272,10 @@ interface AppStoreSchema {
   spellcheckLanguages?: string[];
   // System tray icon
   showTrayIcon?: boolean;
+  // macOS menu bar fleet-status strip, independent of the icon itself.
+  // A wide item is a real risk of overflowing under the notch on a laptop, so
+  // it can be turned off without losing the tray icon and its panel.
+  showTrayStrip?: boolean;
   // Advanced: V8 heap memory limit in MB (default: 4096 = 4GB)
   // Increase if you experience OOM crashes with large sessions
   maxHeapSizeMB?: number;
@@ -1427,7 +1431,7 @@ export function getAIProviderOverrides(workspacePath: string): AIProviderOverrid
  * `apiKeys`). Separate from the `app-settings` store exported as `store`.
  */
 let _aiSettingsStore: Store<Record<string, unknown>> | null = null;
-function getAiSettingsStore(): Store<Record<string, unknown>> {
+export function getAiSettingsStore(): Store<Record<string, unknown>> {
   if (!_aiSettingsStore) {
     _aiSettingsStore = new Store<Record<string, unknown>>({ name: 'ai-settings' });
   }
@@ -1693,6 +1697,14 @@ export function isShowTrayIcon(): boolean {
 
 export function setShowTrayIcon(show: boolean): void {
   getAppStore().set('showTrayIcon', show);
+}
+
+export function isShowTrayStrip(): boolean {
+  return getAppStore().get('showTrayStrip', true);
+}
+
+export function setShowTrayStrip(show: boolean): void {
+  getAppStore().set('showTrayStrip', show);
 }
 
 // Completion Sound Settings

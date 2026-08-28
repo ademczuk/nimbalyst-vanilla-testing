@@ -1,85 +1,61 @@
-# August 21st 2026 Release
+# August 28th, 2026 Release
 
+Cumulative release notes covering everything since v0.74.4.
 
 ### New Features
 
-- Desktop notifications carry their own icon, so a finished agent, a question, an approval request, and a teammate's message are distinguishable at a glance.
-- Expand the active tab to fill the window from View > Toggle Expanded Tab or with Shift+Escape, in any view mode.
-- The tracker sidebar collapses and reopens like every other mode's — the Tracker icon, Cmd+T, or the title-bar control.
-- Trackers hide closed work by default, with an Open / All / Closed switch on every view, Won't Do and Duplicate statuses, and Owner and Due Date across the All view.
-- Tracker items that have not been shared yet get a number of their own, like PROJ.12, so you can refer to one before it is published.
-- Spreadsheets gain date-time, time, checkbox, link, and tracker columns, cell styling, accounting and scientific number formats, and date arithmetic in formulas.
-- Shared spreadsheets, mockups, and Excalidraw diagrams open and edit in the web console, with live presence between the desktop app and the browser.
-- Ask a teammate for structured feedback: your agent drafts the question, it lands in their inbox with the artifacts it is about, and anyone can answer in a browser.
-- A file link that names a line opens the file scrolled to that line instead of the top.
-- Entities and relationships a teammate has selected in a shared data model show their name and color.
+- **Project Canvas** — an infinite canvas where every card is a real, live editor (markdown, mockup, spreadsheet, drawing, mindmap), not a screenshot. Drag files or shared documents onto the board, add sticky notes, frames and arrows, and work with team comments, presence and agent activity. It saves as an open `.canvas` file that reviews as a diff, works in the desktop app and the web console, and an AI session can build a board for you from a description.
+- **Animation editor** — author step-based technical animations in `.anim.json` files, with a live stage, scrubbable timeline, retiming, frames that draw real product UI, and MP4 or GIF export.
+- **Trackers in the web console** — work your team's shared trackers in list, table, board, timeline and tag board views, with search, filtering, grouping, column choice, inline editing, comments and drag-and-drop, converging live with the desktop app.
+- **Organization invitations from the web console** — invite people, see who has not accepted, and resend or revoke a pending invitation.
+- **Design feedback requests** — compare mockups inside a request: preview every option, open one full size, and vote without leaving the request.
+- **Comment on a spot in a shared mockup.** Pins sync live, keep their place when an AI regenerates the mockup, and agents can read and reply.
+- Right-click a tracker item to jump to the AI sessions working on it, or launch a new session or worktree for it.
+- Browse and triage GitHub issues beside pull requests, keeping your investigation status and notes local until you adopt an issue as a tracker item.
+- Commit with AI can stage individual hunks, so parallel sessions editing the same file each commit only their own lines.
+- OpenCode sessions gain slash commands, Compact, agent roles, and a live model picker for the models you are signed in for.
+- Creating an automation can set where its output goes, what the file is called, and whether it starts enabled.
+- A session that orchestrates other sessions can interrupt one to deliver an instruction immediately.
 
 ### Improvements
 
-- Fewer and now-adjustable database backups, reduced storage retention of command output, and an option to discard old tool output.
-- Improved performance of personal mobile document sync.
-- Codex no longer offers slash commands it cannot run, and Compact is hidden for agents that cannot compact.
-- Mockup project files can no longer be shared to a team, since their screens do not yet sync between people.
+- Mockups and data models embedded in a document render as the live editor instead of a saved screenshot; existing embeds convert on open.
+- Mockup project files open as a read-only preview with a "Convert to canvas" action, writing a new `.canvas` file beside the untouched original.
+- Editing many tracker rows at once — pasting a range, or changing status or priority across a selection — applies as a single update instead of one per row.
+- Quick open finds a tracker by issue key or number and puts it at the top.
+- AI sessions take less disk: Nimbalyst stops recording progress counters and duplicate screenshots it never displays, and clearing old tool output now prunes existing sessions too.
+- The Claude Code CLI provider is off unless you turn it on; the Claude Agent, now marked recommended, already runs on your Claude subscription.
+- Calc Sheets mix narrative Markdown with calculations without treating prose as a formula error, and recognize `ln`.
+- Tips in a new session's empty panel rotate, so you work through the set over time.
+- Find (Cmd+F) in Tracker Mode jumps to the search box.
+- Codex sessions run on the 0.149.1 Codex release.
 
 ### Fixed
 
-**Interface**
-
-- An unresponsive renderer no longer wedges the main process behind a dialog you cannot see. (#807, contributed by @co-cy)
-- A full-screen window has a visible way out again: an exit button in the title bar, and on macOS the window buttons reappear at the top of the screen.
-- Selecting text in the transcript no longer breaks as new content streams in, and long transcripts no longer slow down matching tool calls against unbounded history. (#1217, #1144, contributed by @forcewalkerneo and @Yogitmeister)
-- An active session content search is no longer replaced by title-only results. (#1136, contributed by @Yogitmeister)
-- Relative times in the session list keep updating on idle sessions. (#1200, contributed by @forcewalkerneo)
-- The spellchecker follows your OS locale, with a setting to override it. (#1256, contributed by @forcewalkerneo)
-- Text in the git Output tab is selectable.
-
-**Agents**
-
-- Questions, plan approvals, and commit proposals remain answerable after the agent moves on, and typed input in an agent prompt widget no longer disappears when the prompt changes underneath it. (#1218, contributed by @forcewalkerneo)
-- A Claude Code CLI session no longer hangs when the CLI asks you to confirm a model switch, and a session leaves Thinking when a turn ends with a shell task still running. (#1246, contributed by @hajee)
-- A resumed CLI session no longer replays a synthesized user message, and the CLI's prompt-suggestion fork is no longer read as session activity. (#1272, contributed by @tlee-nymbl)
-- The effort level you select applies to Claude Code CLI sessions instead of being ignored. (#996, contributed by @Derazien)
-- MCP servers configured for a specific project in Claude Code load on Windows instead of being silently ignored. (#1317, contributed by @Derazien)
-- Codex file edits show a red/green diff again, Codex sessions show context usage, Compact works, and your skills reach Codex.
-- A Codex session that cannot resume says so instead of starting over with an empty history while still showing the old conversation, and a Codex tool server that fails to start shows as failed instead of the agent quietly losing its tools.
-- Starting an agent after moving, renaming, or deleting the project folder names the missing folder instead of reporting a broken agent binary.
-- Opening an extension panel while an agent session is running no longer takes the whole window down.
-- Completed background sessions remain unread until you view them.
-
-**Your data**
-
-- A momentary database startup failure no longer empties your sessions and history: Nimbalyst retries before setting the database aside, and never sets an existing database aside without confirmation.
-- When the database will not start, Nimbalyst now lists the backups it holds and can reveal them, instead of telling you to delete your database folder.
-- Unsafe storage migrations stop before copying lost data, and a new install stays on the faster storage engine instead of being switched back after its first launch.
-- Interrupted saves no longer empty files, while explicit saves can still clear them.
-
-**Collaboration**
-
-- A shared document that can no longer display collaborators' changes now says so, instead of continuing to report itself as synced.
-- Collaborators in a shared spreadsheet, diagram, or mockup come back after a network blip instead of the list emptying and staying empty, and avatars no longer flicker on every character you type.
-- Opening a shared document whose editor you do not have names the extension you need and offers to install it. Shared mockup files now have a source pane, so their content can be edited collaboratively.
-- The results column in a shared calc sheet no longer goes blank until you type again.
-- Team messages, mentions, and notifications arrive when the app finishes starting before you are signed in, and the organization inbox is no longer empty in that case.
-- Typing @ in a document comment finds people again when the team list arrives late, and now matches on either a person's name or their email address.
-- Push notifications reach the phone you walked away from, and a session blocked on your answer or one that errored reaches you at your computer too.
-- A project that belongs to no organization now offers to add it to one you pick, or to a new one, instead of suggesting a single organization at random.
-- Feedback requests validate attached artifacts before publishing and keep artifact links in their originating team project.
-- The inbox's organization filter no longer opens onto an empty menu when there is nothing to narrow by.
-
-**Trackers**
-
-- Trackers load after organization initialization and reliably show or allocate local item numbers; an item shows its number as soon as it is created, instead of staying blank until the list is refreshed.
-- A milestone or release reports the progress it really has: type-specific closing statuses count, abandoned items no longer hold it below 100%, in-review is not done.
-- Closing an item from a commit message sets a status that item's type actually offers.
-- Milestones, goals, and collections read as their own name in lanes, headers, chips, and columns instead of a raw id or a stale name.
-- Date, link, and people chips carry their field name, so an item with two dates or several links no longer needs a hover to tell them apart.
-- Picking a grouping or ordering in the tracker's Display Settings works instead of closing the panel without changing anything.
-- Tracker items keep their owner in a shared workspace.
-
-**Spreadsheets**
-
-- Cutting spreadsheet cells can be undone, and undoing a deleted range restores those cells instead of overwriting the first one.
-- A spreadsheet edit that fails to save stays marked unsaved instead of looking saved while the file on disk was unchanged.
-
-
-
+- Reduced freezes during startup, while an AI session edits files, or while opening shared documents, switching projects, saving files, loading sessions, or resizing panes.
+- Images attached to a Claude Code session reach the model again; since 0.75.1 every one was dropped without warning.
+- Claude sessions on Windows no longer crash at start; if the agent process does die, Nimbalyst says why and retries once.
+- Updated bundled dependencies to pick up published security fixes, including ones affecting the auto-updater and extension installation.
+- Tracker items stuck on their way to your team now sync, including in projects you aren't focused on.
+- Offline team-tracker edits, including archives and deletes, reach the team as soon as you reconnect.
+- Shared trackers and team documents connect within moments of launch instead of taking up to half a minute.
+- Saved views shared with your team no longer go missing from the tracker sidebar on startup.
+- "Accept all" no longer refuses an AI edit by claiming the file changed on disk.
+- On a large database, improved backup handling.
+- Discarding old tool output reclaims the gigabytes it previously reported as nothing, and says how much of the database its estimate sampled.
+- A tracker board with thousands of items draws only the cards on screen.
+- Hiding a model in Settings now takes effect in the session model picker for OpenCode, Codex and Copilot. OpenCode models you discover show up in the picker and stay in Settings, per project.
+- Reopening a Gemini session shows the tool calls it made instead of only the conversation.
+- Codex web search steps finish in the transcript instead of sitting unresolved.
+- Sending a queued prompt while a background sub-agent is running no longer leaves the session stuck on "Thinking...".
+- A session no longer keeps showing "waiting for your response" once you have typed a new instruction instead of answering.
+- Code in the AI transcript no longer picks up stray backslashes before dollar signs, so a shell command you copy out of it still runs.
+- Creating a published item while disconnected says the issue key is pending instead of claiming the workspace has no team.
+- Documents with a scalar status key in frontmatter render the frontmatter card instead of falling back to the raw text editor (#1392).
+- A disabled automation no longer keeps running on its schedule, automations write to the output file name you configured, and a hand-edited schedule Nimbalyst didn't expect no longer stops the automation for good.
+- An automation no longer overwrites a report the agent wrote itself.
+- Settings can now edit a built-in tracker type you have already customized.
+- A tracker type shows the same color and icon everywhere it appears.
+- The Set Status menu on a tracker card scrolls, and offers only statuses the selected items can hold.
+- The context-usage indicator hides itself for agents that cannot report usage, instead of sitting at 0%.
+- A background shell command killed when its turn ends is reported as killed, with how long it ran.

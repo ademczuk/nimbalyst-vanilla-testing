@@ -141,7 +141,7 @@ export interface ToolCall {
 
 /**
  * OpenAI function-calling shaped tool definition threaded to extension-agent
- * providers so their tool loops (e.g. gemini-antigravity) can present the host's
+ * providers so their tool loops (e.g. Gemini) can present the host's
  * meta-agent tools as JSON in the model prompt. Built-in providers ignore this
  * — they discover the same tools over an SSE MCP server instead. Optional and
  * additive everywhere it appears so no built-in provider path is affected.
@@ -190,7 +190,7 @@ export interface Message {
  * Add new providers here -- the type, runtime array, and exhaustiveness
  * checks all derive from this one definition.
  */
-export const AI_PROVIDER_TYPES = ['claude', 'claude-code', 'claude-code-cli', 'openai', 'openai-codex', 'openai-codex-acp', 'lmstudio', 'opencode', 'copilot-cli'] as const;
+export const AI_PROVIDER_TYPES = ['claude', 'claude-code', 'claude-code-cli', 'openai', 'openai-codex', 'openai-codex-acp', 'lmstudio', 'opencode', 'copilot-cli', 'grok-build', 'cursor-agent', 'antigravity-gemini-agent'] as const;
 
 export type AIProviderType = typeof AI_PROVIDER_TYPES[number];
 
@@ -209,8 +209,34 @@ export function assertExhaustiveProvider(provider: never): never {
   throw new Error(`Unhandled provider: ${provider}`);
 }
 
-export function isAgentProvider(provider: string | null | undefined): provider is 'claude-code' | 'claude-code-cli' | 'openai-codex' | 'openai-codex-acp' | 'opencode' | 'copilot-cli' {
-  return provider === 'claude-code' || provider === 'claude-code-cli' || provider === 'openai-codex' || provider === 'openai-codex-acp' || provider === 'opencode' || provider === 'copilot-cli';
+export type AgentProviderType =
+  | 'claude-code'
+  | 'claude-code-cli'
+  | 'openai-codex'
+  | 'openai-codex-acp'
+  | 'opencode'
+  | 'copilot-cli'
+  | 'grok-build'
+  | 'cursor-agent'
+  // Keeps its original contribution id from the years it shipped as an
+  // extension: the id is persisted on every existing Gemini session row, and
+  // re-keying it would orphan that history for a cosmetic gain.
+  | 'antigravity-gemini-agent';
+
+const AGENT_PROVIDER_TYPES: ReadonlySet<string> = new Set<AgentProviderType>([
+  'claude-code',
+  'claude-code-cli',
+  'openai-codex',
+  'openai-codex-acp',
+  'opencode',
+  'copilot-cli',
+  'grok-build',
+  'cursor-agent',
+  'antigravity-gemini-agent',
+]);
+
+export function isAgentProvider(provider: string | null | undefined): provider is AgentProviderType {
+  return !!provider && AGENT_PROVIDER_TYPES.has(provider);
 }
 
 /**

@@ -154,6 +154,21 @@ export interface PerMessageTruncationStats {
   largestBlockElidedBytes: number;
 }
 
+/**
+ * Record types the headless-agent parser turns into canonical events.
+ *
+ * `thought` and `text` are deliberately absent: both are per-token deltas that
+ * the parser drops in favour of the turn-final `item.completed`.
+ */
+export const HEADLESS_AGENT_SYNCED_EVENT_TYPES = new Set([
+  'item.completed',
+  // Grok
+  'tool_call',
+  'tool_call_update',
+  // Cursor -- its records carry the same `type` discriminator
+  'result',
+]);
+
 export function shouldSyncMessageForSessionRoom(
   source: string,
   metadata?: Record<string, unknown> | null,
@@ -199,6 +214,22 @@ export function shouldSyncMessageForSessionRoom(
       }
     }
     return true;
+  }
+
+  // Grok Build and Cursor Agent persist every NDJSON record their CLI emits.
+  // HeadlessAgentRawParser renders only the turn-final `item.completed`, the
+  // tool_call / tool_call_update (Grok) or tool_call started/completed
+  // (Cursor) rows, and errors. Text and reasoning deltas are dropped by design
+  // -- the full response arrives self-contained on item.completed -- and Grok
+  // emits one `thought` row per word, so syncing them would be pure waste.
+  //
+  // Keep this in sync with `HeadlessAgentRawParser`: a record type the parser
+  // learns to render must be added here, or mobile silently shows less than
+  // the desktop does. `headlessAgentSyncParity.test.ts` is the gate.
+  if (source.startsWith('grok-build') || source.startsWith('cursor-agent')) {
+    const eventType = typeof metadata?.eventType === 'string' ? metadata.eventType : '';
+    if (!eventType) return true;
+    return HEADLESS_AGENT_SYNCED_EVENT_TYPES.has(eventType);
   }
 
   if (source.startsWith('opencode')) {
@@ -285,6 +316,10 @@ export function shouldSyncMessageForSessionRoom(
     return true;
   }
 
+  // Everything else, including Gemini. Gemini has no branch on purpose: it
+  // writes three row kinds (prompt, answer, tool) and its parser renders all
+  // three, so a filter here could only take something off mobile that desktop
+  // shows. `syncContentTruncator.test.ts` pins that.
   return true;
 }
 

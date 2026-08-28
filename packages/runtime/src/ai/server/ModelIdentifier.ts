@@ -31,10 +31,10 @@ export class ModelIdentifier {
   }
 
   /**
-   * Provider ids contributed by installed extensions (e.g.
-   * "antigravity-gemini-agent"). These are not part of the static
-   * AI_PROVIDER_TYPES union but are valid at runtime once an extension
-   * registers them. Populated per-process: main from the AgentProviderRegistry
+   * Provider ids contributed by installed extensions. These are not part of
+   * the static AI_PROVIDER_TYPES union but are valid at runtime once an
+   * extension registers them. (`antigravity-gemini-agent` used to be the
+   * example here; it is a built-in provider now and needs no registration.) Populated per-process: main from the AgentProviderRegistry
    * at extension load, renderer from agent-providers:list at app init. Without
    * this, tryParse() returns null for an extension model id and provider
    * derivation falls back to claude-code.

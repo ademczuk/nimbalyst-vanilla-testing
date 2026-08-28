@@ -23,6 +23,7 @@ import { AISessionsRepository } from '@nimbalyst/runtime';
 import { getSyncProvider } from '../SyncManager';
 import { requestMobilePush } from './mobilePushRequest';
 import { TrayManager } from '../../tray/TrayManager';
+import type { PromptKind } from '../../tray/fleetSnapshot';
 import { logger } from '../../utils/logger';
 
 /**
@@ -47,9 +48,18 @@ export function resetPendingPromptTracking(): void {
   sessionsWithPendingPrompt.clear();
 }
 
+/**
+ * `kind` is what the prompt is asking for: `approval` for a tool permission or
+ * commit proposal (a tap), `decision` for a question, a plan, or a structured
+ * input (thinking required). The menu bar strip colours its dot by it -- a
+ * session title does not tell you whether responding costs three seconds or ten
+ * minutes, and this does. Every callsite knows which it is opening; the default
+ * exists only for the clear path, where it is unused.
+ */
 export async function setSessionPendingPrompt(
   sessionId: string,
   hasPendingPrompt: boolean,
+  kind: PromptKind = 'approval',
 ): Promise<void> {
   if (!sessionId) return;
 
@@ -60,7 +70,7 @@ export async function setSessionPendingPrompt(
   // Before the awaits: the tray is in-memory, so a slow or failed row update
   // must not leave the menu bar showing a blocked session as merely running.
   if (hasPendingPrompt) {
-    TrayManager.getInstance().onPromptCreated(sessionId);
+    TrayManager.getInstance().onPromptCreated(sessionId, kind);
   } else {
     TrayManager.getInstance().onPromptResolved(sessionId);
   }

@@ -83,11 +83,19 @@ describe('tray notification is part of persisting the bit', () => {
     trayManager.onPromptResolved.mockReset();
   });
 
-  it('tells the tray a prompt opened', async () => {
+  it('tells the tray a prompt opened, and what kind it is', async () => {
+    await setSessionPendingPrompt('s1', true, 'decision');
+
+    // The kind is what colours the menu bar strip's dot -- a tap versus
+    // thinking required -- so it has to survive the trip.
+    expect(trayManager.onPromptCreated).toHaveBeenCalledWith('s1', 'decision');
+    expect(trayManager.onPromptResolved).not.toHaveBeenCalled();
+  });
+
+  it('treats an unlabelled prompt as an approval', async () => {
     await setSessionPendingPrompt('s1', true);
 
-    expect(trayManager.onPromptCreated).toHaveBeenCalledWith('s1');
-    expect(trayManager.onPromptResolved).not.toHaveBeenCalled();
+    expect(trayManager.onPromptCreated).toHaveBeenCalledWith('s1', 'approval');
   });
 
   it('tells the tray a prompt resolved', async () => {
@@ -104,7 +112,7 @@ describe('tray notification is part of persisting the bit', () => {
 
     await setSessionPendingPrompt('s1', true);
 
-    expect(trayManager.onPromptCreated).toHaveBeenCalledWith('s1');
+    expect(trayManager.onPromptCreated).toHaveBeenCalledWith('s1', 'approval');
   });
 });
 

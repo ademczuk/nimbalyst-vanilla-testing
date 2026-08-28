@@ -280,6 +280,35 @@ function extractCodexOutput(parsed: unknown, content: string): ExtractedSearchab
   return { searchableText: null, messageKind: 'meta' };
 }
 
+/**
+ * Gemini's own source id. Rows written while it shipped as an extension carry
+ * `gemini-antigravity/antigravity-server` instead; those predate the search
+ * index caring about it and are handled by the generic path, which is correct
+ * for their text rows.
+ */
+const GEMINI_SOURCE = 'antigravity-gemini-agent';
+
+/**
+ * Gemini writes two output shapes, distinguished by `metadata.role` rather than
+ * by a type tag inside the content: plain assistant text, and a
+ * `{name,args,result}` tool row.
+ *
+ * The tool row must NOT be indexed. Its body is a whole file's contents for a
+ * write, or a directory listing for a read; indexing that would let a search
+ * for any word in the repository match every Gemini session that ever read it.
+ */
+function extractGeminiOutput(
+  content: string,
+  metadata?: Record<string, unknown> | null,
+): ExtractedSearchable {
+  if (metadata?.role === 'tool') {
+    return { searchableText: null, messageKind: 'tool' };
+  }
+  const trimmed = content.trim();
+  if (trimmed.length === 0) return { searchableText: null, messageKind: 'meta' };
+  return { searchableText: nonEmpty(content), messageKind: 'assistant' };
+}
+
 function extractGenericOutput(content: string): ExtractedSearchable {
   // Chat providers (claude, openai, lmstudio) write one row per semantic block.
   // The content is typically the assistant text directly (not provider-JSON).
@@ -322,6 +351,35 @@ function extractGenericInput(content: string, metadata?: Record<string, unknown>
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * Agent providers whose *input* rows are the plain prompt text plus metadata,
+ * rather than the JSON envelope a chat provider writes.
+ */
+const AGENT_SOURCES = new Set([
+  'claude-code',
+  'openai-codex',
+  'openai-codex-acp',
+  'opencode',
+  'copilot-cli',
+  'grok-build',
+  'cursor-agent',
+  'antigravity-gemini-agent',
+]);
+
+/**
+ * Agent providers whose turn-final assistant row uses the Codex
+ * `item.completed` envelope. A provider missing from here falls through to the
+ * generic extractor, and its sessions become unsearchable by their replies.
+ */
+const CODEX_SHAPED_OUTPUT_SOURCES = new Set([
+  'openai-codex',
+  'openai-codex-acp',
+  'opencode',
+  'copilot-cli',
+  'grok-build',
+  'cursor-agent',
+]);
+
 export function extractSearchable(input: ExtractorInput): ExtractedSearchable {
   if (input.hidden) {
     return { searchableText: null, messageKind: 'meta' };
@@ -332,7 +390,7 @@ export function extractSearchable(input: ExtractorInput): ExtractedSearchable {
   // Treat all "agent provider" output payloads through their SDK-shaped extractors;
   // chat providers write plainer rows and use the generic extractor.
   if (direction === 'input') {
-    if (source === 'claude-code' || source === 'openai-codex' || source === 'openai-codex-acp' || source === 'opencode' || source === 'copilot-cli') {
+    if (AGENT_SOURCES.has(source)) {
       const parsed = safeJsonParse(content);
       const result = extractClaudeCodeInput(parsed, content, metadata);
       return { searchableText: capLen(result.searchableText), messageKind: result.messageKind };
@@ -342,12 +400,16 @@ export function extractSearchable(input: ExtractorInput): ExtractedSearchable {
   }
 
   // direction === 'output'
+  if (source === GEMINI_SOURCE) {
+    const result = extractGeminiOutput(content, metadata);
+    return { searchableText: capLen(result.searchableText), messageKind: result.messageKind };
+  }
   if (source === 'claude-code') {
     const parsed = safeJsonParse(content);
     const result = extractClaudeCodeOutput(parsed, content);
     return { searchableText: capLen(result.searchableText), messageKind: result.messageKind };
   }
-  if (source === 'openai-codex' || source === 'openai-codex-acp' || source === 'opencode' || source === 'copilot-cli') {
+  if (CODEX_SHAPED_OUTPUT_SOURCES.has(source)) {
     const parsed = safeJsonParse(content);
     const result = extractCodexOutput(parsed, content);
     return { searchableText: capLen(result.searchableText), messageKind: result.messageKind };

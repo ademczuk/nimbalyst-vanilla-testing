@@ -55,3 +55,21 @@ export function resolveExtensionAgentRef(provider: string): ExtensionAgentRef | 
   if (!entry) return null;
   return { extensionId: entry.extensionId, contributionId: entry.contributionId };
 }
+
+/**
+ * True for providers whose tools the HOST supplies as JSON schemas and executes
+ * itself, rather than the agent discovering them over an MCP server.
+ *
+ * `claude-code` and `openai-codex` reach Nimbalyst's tools through the SSE MCP
+ * server, so the host threads them nothing. A tool-loop provider has no MCP
+ * client at all: its "tool call" is JSON the model was asked to emit, and it
+ * only knows about a tool if the host renders that tool's schema into the
+ * prompt. Forget to include one of these providers here and it does not fail —
+ * it quietly becomes a chat bot with no file access.
+ *
+ * `antigravity-gemini-agent` is built in; every other member is an extension
+ * contribution, resolved through the registry.
+ */
+export function usesHostSuppliedToolLoop(provider: string): boolean {
+  return provider === 'antigravity-gemini-agent' || isExtensionAgentProvider(provider);
+}

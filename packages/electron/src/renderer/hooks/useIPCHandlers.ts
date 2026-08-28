@@ -49,6 +49,8 @@ import {
 import { openEditorFind } from '../components/TabEditor/editorFindCommand';
 import { dispatchTrackerFocusSearch } from '@nimbalyst/collab-client/trackers-ui';
 import { acquireHeadlessCollabCommentController } from '../services/HeadlessCollabCommentController';
+import { HeadlessCollabDocumentError } from '../services/HeadlessCollabDocument';
+import { applyAgentDiff, readCollabDocForAgent } from '../services/agentDocumentAccess';
 import {
   trackDocumentAction,
   trackFolderCreated,
@@ -558,7 +560,7 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
 
     // MCP Server handlers
     if (window.electronAPI.onMcpApplyDiff) {
-      cleanupFns.push(window.electronAPI.onMcpApplyDiff(async ({ replacements, resultChannel, targetFilePath }) => {
+      cleanupFns.push(window.electronAPI.onMcpApplyDiff(async ({ replacements, resultChannel, targetFilePath, workspacePath: routedWorkspacePath, agent }) => {
         try {
           // SAFETY: Require explicit targetFilePath - no fallbacks allowed
           if (!targetFilePath) {
@@ -572,66 +574,26 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
             return;
           }
 
-          const filePath = targetFilePath;
-
-          // Validate target: filesystem markdown files OR shared collab docs.
-          const isCollab = isCollabUri(filePath);
-          if (!isCollab && !filePath.endsWith('.md')) {
-            console.error('[MCP] applyDiff can only modify markdown files or collab docs:', filePath);
-            if (window.electronAPI.sendMcpApplyDiffResult) {
-              window.electronAPI.sendMcpApplyDiffResult(resultChannel, {
-                success: false,
-                error: `applyDiff can only modify markdown files (.md) or collaborative documents (collab:// URIs). Attempted to modify: ${filePath}`
-              });
-            }
-            return;
-          }
-
-          // If the file isn't registered (not open), open it in the background.
-          // Collaborative docs cannot be opened in the background here — they
-          // require an active CollaborativeTabEditor backed by a Y.Doc.
-          if (!editorRegistry.has(filePath)) {
-            if (isCollab) {
-              if (window.electronAPI.sendMcpApplyDiffResult) {
-                window.electronAPI.sendMcpApplyDiffResult(resultChannel, {
-                  success: false,
-                  error: `Cannot edit collab document ${filePath}: no editor is currently mounted for it. Open the document in collab mode first.`
-                });
-              }
-              return;
-            }
-            // Read the file content
-            const result = await window.electronAPI.readFileContent(filePath);
-            const fileContent = result?.success ? result.content : '';
-
-            // Open the file using editorRegistry's file opener
-            await editorRegistry.openFileInBackground(filePath, fileContent);
-          }
-
-          // Use the editor registry to apply replacements to the target file
-          // Pass the resultChannel as a unique ID so the event can be correlated
-          const result = await editorRegistry.applyReplacements(filePath, replacements, resultChannel);
-
-          // Ensure result is defined and has the expected shape
-          const finalResult = result || { success: false, error: 'No result returned from diff application' };
+          const finalResult = await applyAgentDiff(targetFilePath, replacements, {
+            workspacePath: routedWorkspacePath ?? propsRef.current.workspacePath,
+            ...(agent ? { agent } : {}),
+            // The mounted editor reports completion via an async event; the
+            // result channel is what correlates it back to this request.
+            requestId: resultChannel,
+          });
 
           if (window.electronAPI.sendMcpApplyDiffResult) {
-            // Make sure we have all required properties and no undefined values
-            const resultToSend = {
+            // IPC can't carry undefined values, so only include what we have.
+            const resultToSend: { success: boolean; error?: string; code?: string } = {
               success: finalResult.success ?? false
             };
-            // Only add error if it exists (IPC can't handle undefined values)
-            if (finalResult.error) {
-              (resultToSend as any).error = finalResult.error;
-            }
+            if (finalResult.error) resultToSend.error = finalResult.error;
+            if (finalResult.code) resultToSend.code = finalResult.code;
             window.electronAPI.sendMcpApplyDiffResult(resultChannel, resultToSend);
           }
 
-          // Show error in UI if the diff failed
           if (!finalResult.success) {
             console.error('Diff application failed:', finalResult.error);
-            // You could also show a toast or notification here
-            // For now, we'll just make sure it's visible in the console
           }
         } catch (error) {
           console.error('MCP applyDiff error:', error);
@@ -652,7 +614,7 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
     }
 
     if (window.electronAPI.onMcpReadCollabDoc) {
-      cleanupFns.push(window.electronAPI.onMcpReadCollabDoc(async ({ targetFilePath, resultChannel }) => {
+      cleanupFns.push(window.electronAPI.onMcpReadCollabDoc(async ({ targetFilePath, resultChannel, workspacePath: routedWorkspacePath }) => {
         try {
           if (!targetFilePath || !isCollabUri(targetFilePath)) {
             window.electronAPI.sendMcpReadCollabDocResult(resultChannel, {
@@ -662,15 +624,12 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
             return;
           }
 
-          if (!editorRegistry.has(targetFilePath)) {
-            window.electronAPI.sendMcpReadCollabDocResult(resultChannel, {
-              success: false,
-              error: `No editor mounted for ${targetFilePath}. Open the document in collab mode first.`,
-            });
-            return;
-          }
-
-          const content = editorRegistry.getContent(targetFilePath);
+          // Reachable whether or not anyone has it open -- a shared document
+          // lives on the server, not in a tab (NIM-3754).
+          const { content } = await readCollabDocForAgent(
+            targetFilePath,
+            routedWorkspacePath ?? propsRef.current.workspacePath,
+          );
           window.electronAPI.sendMcpReadCollabDocResult(resultChannel, {
             success: true,
             content,
@@ -678,6 +637,9 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
         } catch (error) {
           window.electronAPI.sendMcpReadCollabDocResult(resultChannel, {
             success: false,
+            ...(error instanceof HeadlessCollabDocumentError
+              ? { code: error.code }
+              : {}),
             error: error instanceof Error ? error.message : 'Unknown error reading collab doc',
           });
         }

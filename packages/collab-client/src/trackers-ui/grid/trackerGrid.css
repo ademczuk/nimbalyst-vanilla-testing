@@ -240,6 +240,86 @@
   opacity: 1;
 }
 
+/* Key cell: the row's open affordance. */
+.tracker-grid-cell-key {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.tracker-grid-cell-key-link {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: var(--nim-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tracker-grid-cell-key-link:hover,
+.tracker-grid-cell-key-link:focus-visible {
+  color: var(--nim-primary-hover, var(--nim-primary));
+  outline: none;
+}
+
+/* Keyless row: the icon is the link, so it reads as an affordance, not a hint. */
+.tracker-grid-cell-key-link.is-icon-only {
+  display: inline-flex;
+  align-items: center;
+  color: var(--nim-text-faint);
+  text-decoration: none;
+}
+
+.tracker-grid-cell-key-link.is-icon-only:hover,
+.tracker-grid-cell-key-link.is-icon-only:focus-visible {
+  color: var(--nim-text);
+}
+
+/*
+ * Out of flow on purpose. As a flex sibling its 14px plus the gap came out of
+ * the key's width even while invisible, which was enough to ellipsize the
+ * number itself at the default column width -- the one thing this cell exists
+ * to show. Overlaying the trailing edge gives the number the whole cell.
+ */
+.tracker-grid-cell-key-open {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--nim-text-faint);
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.tracker-grid-view .rgRow:hover .tracker-grid-cell-key-open,
+.tracker-grid-cell-key-open:hover,
+.tracker-grid-cell-key-open:focus-visible {
+  opacity: 1;
+}
+
+.tracker-grid-cell-key-open:hover {
+  color: var(--nim-text);
+}
+
+.tracker-grid-cell-key-open-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
 /* Editors */
 .tracker-grid-editor-input,
 .tracker-grid-editor-select {

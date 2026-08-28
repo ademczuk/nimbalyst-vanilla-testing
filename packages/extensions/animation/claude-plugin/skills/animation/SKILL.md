@@ -153,6 +153,20 @@ Two things to know:
 
 Writing `data-part` by hand is fine for two or three regions. Past that, the markup is worth compiling from a component -- see the compiler below.
 
+### The spinner utility (`anim-spin`)
+
+The stage ships one rotating primitive for `html` parts. Give any element `class="anim-spin"` and it becomes a lit ring turning at ~0.8s -- a running or loading indicator that reads as *live* rather than a static glyph. It is the rotational counterpart to the edge packet, and the only self-driven rotation the format has.
+
+```html
+<span class="anim-spin" style="width:8px;height:8px"></span>
+```
+
+- **Colour is `currentColor`,** so whatever wraps it sets the hue -- drop it inside a blue "running" pill and the ring is blue, no extra styling.
+- **It spins on its own, across every step.** You do not drive it from `set`; it is a CSS animation, not a state. To make it stop, hide the part or sub-part it lives in on the step the work finishes (put it in its own `anim-subpart` if only the spinner should disappear).
+- **It freezes but stays visible** while the playhead is scrubbed and under `prefers-reduced-motion`, and both recorders capture it exactly as they capture packets -- so it survives `export_html` and `export_gif`.
+
+Reach for it wherever the real UI shows a spinner: an agent session mid-run, a build in progress, a request in flight. It is the honest way to show "this is working right now" without faking motion the format cannot do.
+
 ### Building a kit for your project
 
 Nothing product-specific ships with this extension, and that is deliberate: the markup worth reusing is always *your* product, so anything bundled here could only ever be somebody else's app.
@@ -276,7 +290,7 @@ Unknown keys are preserved and written after the known ones in sorted order, so 
 Design around these; they are not bugs to work around.
 
 - **No text changes.** No part's `label`, `text`, `subtitle`, or `rows` can differ between steps. A counter that ticks `36 -> 24 -> 12` is impossible. Show quantity with shapes going `hidden`, and write static captions that stay true for the whole run (`"CLAIMED IN ORDER"`, not `"16 REMAINING"`).
-- **No movement.** `x`/`y` are fixed. Parts appear, disappear, and change colour; they do not travel. The only continuous motion in the format is edge packets.
+- **No movement.** `x`/`y` are fixed. Parts appear, disappear, and change colour; they do not travel. The only continuous motion in the format is edge packets and the `anim-spin` spinner (see sub-parts). Nothing else rotates, slides, or eases.
 - **No font sizes.** Labels are 12px, node titles 13px, rows and subtitles 11px.
 - **No z-index.** Alphabetical ids, as above.
 - **No per-step easing or delay.** One transition duration (320ms) for everything.
@@ -344,6 +358,23 @@ All four renderers -- the editor preview, `export_html`, both recorders -- use t
 Keep GIFs small: `fps` 8-12 is plenty for this kind of diagram, and `maxWidth` 720 is usually enough. Both file size and recording memory scale with the square of the width.
 
 There is **no video export**. If someone wants MP4, say so rather than implying the GIF is a substitute.
+
+### Showing it live inside Nimbalyst
+
+To *present* a finished animation to someone inside Nimbalyst you do not export at all. A `.anim.json` has a registered custom editor, so a link to it alone on its own paragraph in a **markdown document** upgrades into the live, playing embed:
+
+```
+[Session kanban](/abs/path/board.anim.json "width=1040 height=585")
+```
+
+That is the right way to hand over an *existing* animation -- it is live and full-fidelity, where a screenshot is frozen and (for an animation) misleading. Two things decide whether it works:
+
+- **The link must be the only thing in its paragraph** (no other text, no second link), or it stays a plain link.
+- **A prose link only upgrades in the document (Lexical) editor.** A link pasted into AI **transcript / chat prose does not upgrade** -- put it in an actual `.md` document and open it. Absolute paths work; the file may be anywhere on disk.
+
+**When you author the `.anim.json` yourself, you do not need the link at all.** This editor sets `supportsTranscriptEmbed` in its manifest, so the moment your `Write`/`Edit` creates or changes a `.anim.json`, the transcript renders it inline in the tool card as a live, click-to-activate stage. That is the meta payoff -- the agent writes the scene and it plays right there in the session. (This is a per-editor opt-in; editors that don't set the flag show a plain file row.)
+
+`capture_editor_screenshot` is for *your* iteration in the workflow above (checking coordinates), not for presenting the finished piece -- present that with the inline embed.
 
 ### Why frames cannot be stamped
 

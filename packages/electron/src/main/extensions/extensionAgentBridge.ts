@@ -91,7 +91,6 @@ import {
   getPrivilegedExtensionHost,
   type ModuleHandle,
 } from './PrivilegedExtensionHost';
-import { geminiUsageService } from '../services/GeminiUsageService';
 import { toBackendHistory } from './extensionAgentHistory';
 
 // ---------------------------------------------------------------------------
@@ -423,15 +422,7 @@ const bridge: ExtensionAgentBridge = {
 
       stream.onChunk(push);
       stream.done.then(
-        () => {
-          finish(null);
-          // A turn finished, so the Antigravity language server is up: wake the
-          // Gemini usage poller to replace the muted "module not running" chip
-          // with real quota. Fire-and-forget; never blocks the turn.
-          if (entry.extensionId === 'gemini-antigravity') {
-            void geminiUsageService.recordActivity();
-          }
-        },
+        () => finish(null),
         (err) => finish(err instanceof Error ? err : new Error(String(err)))
       );
 

@@ -28,7 +28,7 @@ export {
 export type {DiffStateType} from './DiffState';
 
 // Main API - the primary entry point
-export {applyMarkdownDiff, applyMarkdownReplace} from './diffUtils';
+export {applyMarkdownDiff, applyMarkdownReplace, applyTextReplacementsToString} from './diffUtils';
 export type {TextReplacement} from './diffUtils';
 
 // Testing utilities - these should eventually be moved to a separate test package

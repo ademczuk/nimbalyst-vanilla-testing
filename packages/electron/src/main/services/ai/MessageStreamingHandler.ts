@@ -25,6 +25,7 @@ import {
   type SessionManager,
 } from '@nimbalyst/runtime/ai/server';
 import {
+  type AIModel,
   type Message,
   type AIProviderType,
   type SessionData,
@@ -47,25 +48,37 @@ import {
 } from '@nimbalyst/runtime/types/MCPServerConfig';
 import { toolRegistry } from './tools';
 import type { DriveReason } from './QueueDriveService';
-import { resolveExtensionAgentRef } from './providerResolution';
+import { resolveExtensionAgentRef, usesHostSuppliedToolLoop } from './providerResolution';
 import { getAgentProviderRegistry } from '../../extensions/AgentProviderRegistry';
 
 /**
- * Resolve the human-readable model name (e.g. "Gemini 3.5 Flash (High)") for an
- * extension agent provider, so the system prompt can tell the model its real
- * name instead of the raw internal id. Returns undefined for built-in providers.
+ * Resolve the human-readable model name (e.g. "Gemini 3.5 Flash (High)") for a
+ * tool-loop agent provider, so the system prompt can tell the model its real
+ * name instead of the raw internal id.
+ *
+ * Two sources because there are two kinds of tool-loop provider: an extension
+ * declares its models in its manifest, while a built-in one publishes them
+ * through `ModelRegistry`. Returns undefined for anything else — an
+ * MCP-discovering provider builds its own prompt.
  */
-function resolveExtensionModelDisplayName(
+function resolveToolLoopModelDisplayName(
   provider: string,
   model: string | null | undefined,
 ): string | undefined {
   if (!model) return undefined;
   try {
     const entry = getAgentProviderRegistry().findByContributionId(provider);
-    const match = entry?.contribution.models?.find(
-      (m) => m.id === model || m.id.endsWith(`:${model}`),
-    );
-    return match?.name;
+    if (entry) {
+      const match = entry.contribution.models?.find(
+        (m) => m.id === model || m.id.endsWith(`:${model}`),
+      );
+      return match?.name;
+    }
+    // Built-in: read the cached catalog only. A network/subprocess fetch here
+    // would sit on the hot path of every turn just to prettify a prompt line;
+    // an unpopulated cache degrades to the raw id, which is cosmetic.
+    const cached = ModelRegistry.getCachedModels(provider as AIProviderType);
+    return cached?.find((m: AIModel) => m.id === model || m.id.endsWith(`:${model}`))?.name;
   } catch {
     return undefined;
   }
@@ -86,6 +99,7 @@ function resolveOpenCodeAgentRole(session: { provider?: string; metadata?: unkno
 }
 
 import { extractFilePath } from './tools/extractFilePath';
+import { geminiUsageService } from '../GeminiUsageService';
 import { SoundNotificationService } from '../SoundNotificationService';
 import { notificationService } from '../NotificationService';
 import { composeNotificationTitle } from '../../../shared/notificationTitle';
@@ -101,6 +115,7 @@ import { addGitignoreBypass } from '../../file/WorkspaceEventBus';
 import { getSyncProvider, isDesktopTrulyAway } from '../SyncManager';
 import { requestMobilePush } from './mobilePushRequest';
 import { setSessionPendingPrompt } from './pendingPromptPersistence';
+import type { PromptKind } from '../../tray/fleetSnapshot';
 import { getAgentWorkflowService } from '../AgentWorkflowService';
 import { getMetaAgentOpenAITools } from '../../mcp/metaAgentServer';
 import { getDevAgentOpenAITools, resolveDevToolScope } from '../../mcp/devAgentTools';
@@ -139,19 +154,44 @@ import type Store from 'electron-store';
 import type { AIService } from './AIService';
 import type { HooklessAgentFileWatcher } from './HooklessAgentFileWatcher';
 import type { WorkspaceFileAttributionMode } from '../WorkspaceFileAttributionPolicy';
+import {
+  attributionModeForFileChangeFidelity,
+  fileChangeFidelityForProviderType,
+  isProviderEditTool,
+  type FileChangeFidelity,
+} from '@nimbalyst/runtime/ai/server/providerFileTracking';
 
+/**
+ * Ask the provider how well it reports its own file changes, and derive the
+ * watcher's attribution mode from that.
+ *
+ * A live instance is authoritative because fidelity can depend on the active
+ * transport. When there is none yet — the policy is set before the provider is
+ * constructed — fall back to the provider type's declaration, with one
+ * exception noted below.
+ */
 function resolveWorkspaceFileAttributionMode(
   providerName: string,
   provider: AIProvider | null | undefined,
 ): WorkspaceFileAttributionMode {
-  if (providerName !== 'openai-codex') return 'fuzzy';
-
-  const codexProvider = provider as (AIProvider & {
-    getTransport?: () => 'sdk' | 'app-server';
+  const liveProvider = provider as (AIProvider & {
+    getFileChangeFidelity?: () => FileChangeFidelity;
   }) | null | undefined;
-  const activeTransport = codexProvider?.getTransport?.();
-  const configuredTransport = getAppSetting<{ transport?: 'sdk' | 'app-server' }>('openaiCodex')?.transport;
-  return (activeTransport ?? configuredTransport) === 'sdk' ? 'fuzzy' : 'disabled';
+  const live = liveProvider?.getFileChangeFidelity?.();
+  if (live) return attributionModeForFileChangeFidelity(live);
+
+  // Codex is the only provider whose fidelity is a user-selected setting: the
+  // legacy SDK transport has no `fileChange` item. Without a live instance to
+  // ask, read the setting rather than crediting it with the app-server's
+  // structured changes.
+  if (
+    providerName === 'openai-codex'
+    && getAppSetting<{ transport?: 'sdk' | 'app-server' }>('openaiCodex')?.transport === 'sdk'
+  ) {
+    return 'fuzzy';
+  }
+
+  return attributionModeForFileChangeFidelity(fileChangeFidelityForProviderType(providerName));
 }
 
 export type SendMessageHandler = (
@@ -904,15 +944,20 @@ export class MessageStreamingHandler {
     // for why we persist locally: the in-memory atom can desync from reality
     // if a resolve event is missed (renderer reload, HMR, late delivery),
     // and the only recovery is rehydrating from the DB on next list refresh.
-    const syncPendingPrompt = (sessionId: string, hasPendingPrompt: boolean) => {
-      void setSessionPendingPrompt(sessionId, hasPendingPrompt);
+    // `kind` colours the menu bar strip's dot: a tap versus thinking required.
+    const syncPendingPrompt = (
+      sessionId: string,
+      hasPendingPrompt: boolean,
+      kind: PromptKind = 'approval',
+    ) => {
+      void setSessionPendingPrompt(sessionId, hasPendingPrompt, kind);
     };
 
     // Listen for ExitPlanMode confirmation requests and forward to renderer
     const onExitPlanModeConfirm = async (data: { requestId: string; sessionId: string; planSummary: string; timestamp: number }) => {
       logger.main.info('[AIService] ExitPlanMode confirmation requested:', data.requestId);
       safeSend(event, 'ai:exitPlanModeConfirm', { ...data, workspacePath: effectiveWorkspacePath });
-      syncPendingPrompt(data.sessionId, true);
+      syncPendingPrompt(data.sessionId, true, 'decision');
 
       // Update session status so all windows show the pending indicator
       getSessionStateManager().updateActivity({
@@ -964,7 +1009,7 @@ export class MessageStreamingHandler {
     const onAskUserQuestion = async (data: { questionId: string; sessionId: string; questions: any[]; timestamp: number }) => {
       // logger.main.info('[AIService] AskUserQuestion requested:', data.questionId);
       safeSend(event, 'ai:askUserQuestion', { ...data, workspacePath: effectiveWorkspacePath });
-      syncPendingPrompt(data.sessionId, true);
+      syncPendingPrompt(data.sessionId, true, 'decision');
 
       // Update session status to waiting_for_input so all windows show the pending indicator
       getSessionStateManager().updateActivity({
@@ -1466,58 +1511,52 @@ export class MessageStreamingHandler {
         }
       }
 
-      // Meta-agent tools for extension-agent providers (e.g. gemini-antigravity).
-      // Built-in providers (claude-code, openai-codex) discover these same tools
-      // over the SSE MCP server instead, so we ONLY thread JSON tool defs for the
-      // extension-agent branch. Gated on the meta-agent server being up plus a
-      // session + workspace, mirroring McpConfigService parity for built-ins.
-      // `undefined` for built-in providers, so their sendMessage call shape is
-      // unchanged.
-      // resolveExtensionAgentRef is recomputed here (the earlier binding from
-      // the provider-creation block is out of scope); it's a cheap pure lookup.
-      const isExtensionAgentSession = !!resolveExtensionAgentRef(session.provider);
-      // Only a meta-agent extension session may receive spawn tools. A standard
+      // Tools for providers whose tool loop the host feeds (Gemini, and any
+      // extension agent). MCP-discovering providers (claude-code, openai-codex)
+      // find these same tools over the SSE MCP server, so they are threaded
+      // nothing and their sendMessage call shape is unchanged. Gated on the
+      // meta-agent server being up plus a session + workspace, mirroring
+      // McpConfigService parity.
+      const isToolLoopSession = usesHostSuppliedToolLoop(session.provider);
+      // Only a meta-agent session may receive spawn tools. A standard
       // child session (created agentRole='standard' by MetaAgentService) must
       // NOT get spawn tools, otherwise it can spawn grandchildren and trigger
       // exponential recursion. This mirrors claude-code/openai-codex, where only
       // a button-created meta-agent gets the spawn tools over the SSE MCP server
       // and its standard children cannot spawn. Gate tools and persona on the
       // SAME condition so they stay in lockstep.
-      const isMetaAgentExtensionSession =
-        isExtensionAgentSession && session.agentRole === 'meta-agent';
-      // A standard (non-meta-agent) extension session gets the read-only dev
-      // toolset (read_file / list_files / search_files) so the model can
-      // investigate the workspace through the SAME simulated tool loop. This
-      // mirrors built-in providers: a standard session has file tools, only a
-      // meta-agent session has orchestration tools. The dev tools dispatch over
-      // the broker's `devToolExecutor` (gated workspace-files), not the
-      // meta-agent SSE MCP server, so they need no MetaAgentService port.
-      const isStandardExtensionSession =
-        isExtensionAgentSession && session.agentRole !== 'meta-agent';
-      const extensionAgentTools =
-        isMetaAgentExtensionSession &&
+      const isMetaAgentToolLoopSession =
+        isToolLoopSession && session.agentRole === 'meta-agent';
+      // A standard (non-meta-agent) session gets the workspace dev toolset so
+      // the model can investigate and edit through the SAME simulated tool
+      // loop. This mirrors the MCP-discovering providers: a standard session
+      // has file tools, only a meta-agent session has orchestration tools.
+      // These dispatch host-side and need no MetaAgentService port.
+      const isStandardToolLoopSession =
+        isToolLoopSession && session.agentRole !== 'meta-agent';
+      const toolLoopTools =
+        isMetaAgentToolLoopSession &&
         MetaAgentService.getInstance().getPort() !== null &&
         session.id &&
         effectiveWorkspacePath
           ? getMetaAgentOpenAITools()
-          : isStandardExtensionSession && session.id && effectiveWorkspacePath
+          : isStandardToolLoopSession && session.id && effectiveWorkspacePath
             ? getDevAgentOpenAITools(
                 resolveDevToolScope((session.metadata as Record<string, unknown> | undefined)?.toolScope),
               )
             : undefined;
 
-      // Meta-agent persona for extension-agent providers (e.g. gemini-antigravity).
-      // Built-in providers (claude-code, openai-codex) build this same persona
-      // internally over their SDK system prompt; extension agents have no
-      // equivalent, so without this they receive ONLY tool schemas and reply as
-      // a generic chat assistant ("how would you like to proceed?") instead of
-      // proactively setting session meta, surveying worktrees/sessions, and
-      // spawning child sessions. We reuse the SAME buildMetaAgentSystemPrompt
-      // source the built-in providers use (no duplicated persona text), and gate
-      // it strictly on agentRole === 'meta-agent' so a normal gemini chat session
-      // is unaffected. 'codex' tool-reference style renders plain tool names,
-      // matching how the extension's tool loop presents tools in its JSON
-      // envelope (no `mcp__` SDK prefix).
+      // Meta-agent persona for tool-loop providers. The MCP-discovering
+      // providers build this same persona internally over their SDK system
+      // prompt; a tool-loop provider has no equivalent, so without this it
+      // receives ONLY tool schemas and replies as a generic chat assistant
+      // ("how would you like to proceed?") instead of proactively setting
+      // session meta, surveying worktrees/sessions, and spawning child
+      // sessions. We reuse the SAME buildMetaAgentSystemPrompt source (no
+      // duplicated persona text), gated strictly on agentRole === 'meta-agent'
+      // so a normal Gemini chat session is unaffected. 'codex' tool-reference
+      // style renders plain tool names, matching how a tool loop presents tools
+      // in its JSON envelope (no `mcp__` SDK prefix).
       // Workflow preset for the meta-agent persona. Read from session metadata
       // (validated) with a 'default' fallback, mirroring how effortLevel is read
       // above. Behavior is byte-identical until something writes
@@ -1528,22 +1567,22 @@ export class MessageStreamingHandler {
         rawWorkflowPreset === 'research' || rawWorkflowPreset === 'implement-review-test'
           ? rawWorkflowPreset
           : 'default';
-      const extensionAgentSystemPrompt =
-        isMetaAgentExtensionSession
+      const toolLoopSystemPrompt =
+        isMetaAgentToolLoopSession
           ? buildMetaAgentSystemPrompt('codex', extensionWorkflowPreset, {
               provider: session.provider,
               model: session.model ?? undefined,
-              modelDisplayName: resolveExtensionModelDisplayName(session.provider, session.model),
+              modelDisplayName: resolveToolLoopModelDisplayName(session.provider, session.model),
             })
-          : isStandardExtensionSession && session.id && effectiveWorkspacePath
+          : isStandardToolLoopSession && session.id && effectiveWorkspacePath
             ? buildDevAgentSystemPrompt({
                 provider: session.provider,
                 model: session.model ?? undefined,
-                modelDisplayName: resolveExtensionModelDisplayName(session.provider, session.model),
+                modelDisplayName: resolveToolLoopModelDisplayName(session.provider, session.model),
               })
             : undefined;
 
-      for await (const chunk of provider.sendMessage(messageToSend, contextWithSession, session.id, sessionMessages, effectiveWorkspacePath, attachments, extensionAgentTools, extensionAgentSystemPrompt)) {
+      for await (const chunk of provider.sendMessage(messageToSend, contextWithSession, session.id, sessionMessages, effectiveWorkspacePath, attachments, toolLoopTools, toolLoopSystemPrompt)) {
         if (!chunk) continue;
         chunkCount++;
 
@@ -1881,18 +1920,17 @@ export class MessageStreamingHandler {
                     window  // Pass window to enable file watcher attachment for edited files
                   );
 
-                  // Create pre-edit tags for OpenCode file-editing tools.
-                  // OpenCode emits tool_call with status='running' BEFORE the file is modified,
-                  // so we can snapshot the current disk content as the before-state.
-                  // Tool names: edit, write, create (with filePath in arguments)
-                  // Codex ACP emits the same shape via writeTextFile pre-edit hooks plus
-                  // session/tool_call events for Edit/Write tools. The tool name list is
-                  // kept separate per provider to avoid cross-talk if vocabularies diverge.
-                  const OPENCODE_EDIT_TOOLS = ['edit', 'write', 'create'];
-                  const CODEX_ACP_EDIT_TOOLS = ['Edit', 'Write', 'ApplyPatch', 'edit', 'write', 'apply_patch'];
-                  const isOpenCodeEdit = OPENCODE_EDIT_TOOLS.includes(trackToolName) && session.provider === 'opencode';
-                  const isCodexAcpEdit = CODEX_ACP_EDIT_TOOLS.includes(trackToolName) && session.provider === 'openai-codex-acp';
-                  if (isOpenCodeEdit || isCodexAcpEdit) {
+                  // Create pre-edit tags for providers whose file-editing tools
+                  // are announced before the write lands. OpenCode emits
+                  // tool_call with status='running' BEFORE the file is
+                  // modified, so we can snapshot the current disk content as
+                  // the before-state; Codex ACP emits the same shape via
+                  // writeTextFile pre-edit hooks plus session/tool_call events.
+                  // Tool vocabularies are per-provider (see
+                  // PROVIDER_EDIT_TOOL_NAMES) so they cannot cross-talk.
+                  const isProviderEdit = isProviderEditTool(session.provider, trackToolName);
+                  const isCodexAcpEdit = isProviderEdit && session.provider === 'openai-codex-acp';
+                  if (isProviderEdit) {
                     const editFilePath = extractFilePath(trackArgs);
                     const watcherEntry = this.svc.hooklessWatcher.getEntry(session.id);
                     // Only create the pre-edit tag for paths inside the workspace —
@@ -2255,23 +2293,22 @@ export class MessageStreamingHandler {
               isCodexAuthRequired: chunk.isCodexAuthRequired || false,
             });
 
-            // An in-band 'error' chunk from an extension agent (the gemini
-            // backend's only failure-settle path) does NOT throw, so the outer
-            // catch never runs and the session would never move off 'running'.
-            // Without a terminal transition no session:error fires, a spawned
-            // child stays 'running' forever and a meta-agent waits on it
-            // indefinitely while it holds a spawn-cap slot. Settle it here,
-            // mirroring the outer catch. Scoped to extension agents; built-in
-            // providers throw or settle via their SDK terminal handling.
-            // Only DIRECT (non-queued) extension-agent sessions need settling
-            // here. A queued meta-agent child is already settled by the
-            // queued-prompt chain (onChainSettled -> endSession); adding our own
-            // terminal transition on top would emit a second, contradictory
-            // notification to the parent. A direct gemini chat that errors
-            // in-band has no other settle path (its only failure signal is this
-            // non-throwing error chunk), so without this it stays 'running'.
+            // An in-band 'error' chunk from a tool-loop agent (Gemini's only
+            // failure-settle path) does NOT throw, so the outer catch never runs
+            // and the session would never move off 'running'. Without a terminal
+            // transition no session:error fires, a spawned child stays 'running'
+            // forever and a meta-agent waits on it indefinitely while it holds a
+            // spawn-cap slot. Settle it here, mirroring the outer catch. Scoped
+            // to tool-loop agents; MCP-discovering providers throw or settle via
+            // their SDK terminal handling.
+            // Only DIRECT (non-queued) sessions need settling here. A queued
+            // meta-agent child is already settled by the queued-prompt chain
+            // (onChainSettled -> endSession); adding our own terminal transition
+            // on top would emit a second, contradictory notification to the
+            // parent. A direct Gemini chat that errors in-band has no other
+            // settle path, so without this it stays 'running'.
             if (
-              isExtensionAgentSession
+              isToolLoopSession
               && session?.id
               && !this.svc.sessionsProcessingQueue.has(session.id)
             ) {
@@ -2281,7 +2318,7 @@ export class MessageStreamingHandler {
                 await this.svc.hooklessWatcher.stopForSession(session.id);
                 settledOnErrorChunk = true;
               } catch (settleErr) {
-                logger.main.error('[AIService] Failed to settle extension-agent error chunk:', settleErr);
+                logger.main.error('[AIService] Failed to settle tool-loop agent error chunk:', settleErr);
               }
             }
             break;
@@ -2868,6 +2905,16 @@ export class MessageStreamingHandler {
 
             break;
         }
+      }
+
+      // A Gemini turn ran, so the Antigravity language server is up. Wake the
+      // usage poller, which deliberately never starts the server itself and so
+      // otherwise shows a muted chip forever. Fire-and-forget: a usage refresh
+      // must never delay or fail a turn.
+      if (session?.provider === 'antigravity-gemini-agent') {
+        void geminiUsageService.recordActivity().catch(() => {
+          /* usage display only */
+        });
       }
 
       // A built-in provider can yield an in-band 'error' chunk and then return

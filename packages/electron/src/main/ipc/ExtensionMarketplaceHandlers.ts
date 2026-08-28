@@ -17,6 +17,7 @@ import * as crypto from 'crypto';
 import { spawn } from 'child_process';
 import AdmZip from 'adm-zip';
 import { BrowserWindow, net } from 'electron';
+import { AI_PROVIDER_TYPES } from '@nimbalyst/runtime/ai/server/types';
 import { logger } from '../utils/logger';
 import { safeHandle } from '../utils/ipcRegistry';
 import { getUserExtensionsDirectory, initializeExtensionFileTypes } from './ExtensionHandlers';
@@ -731,7 +732,16 @@ async function uninstallExtension(extensionId: string): Promise<InstallResult> {
       ];
       contributedAiProviderIds = collected
         .map((p) => p?.id)
-        .filter((id): id is string => typeof id === 'string' && id.length > 0);
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+        // Never prune a BUILT-IN provider's settings, whatever a manifest
+        // claims. `antigravity-gemini-agent` is the live case: it shipped as an
+        // extension contribution before becoming a built-in provider, so
+        // uninstalling a leftover copy of that extension would otherwise delete
+        // the built-in provider's enabled/models entry and silently reset a
+        // user's choice. The registry refuses to register such a contribution
+        // in the first place (see AgentProviderRegistry.register); this is the
+        // same rule on the teardown side.
+        .filter((id) => !(AI_PROVIDER_TYPES as readonly string[]).includes(id));
     } catch (err) {
       logger.main.warn(
         `[ExtMarketplace] Could not read manifest for ${extensionId} ` +

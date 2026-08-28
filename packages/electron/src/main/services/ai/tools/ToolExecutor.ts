@@ -10,6 +10,8 @@ import { logger } from '../../../utils/logger';
 import { sessionFileTracker } from '../../SessionFileTracker';
 import { addGitignoreBypass } from '../../../file/WorkspaceEventBus';
 import { extractFilePath } from './extractFilePath';
+import { isCollabUri } from '@nimbalyst/collab-protocol';
+import { resolveAgentIdentity } from '../../../mcp/tools/editorToolHandlers';
 import {AnalyticsService} from "../../analytics/AnalyticsService.ts";
 
 const LOG_PREVIEW_LENGTH = 400;
@@ -66,6 +68,18 @@ export class ToolExecutor extends EventEmitter {
       logger.ai.warn('[ToolExecutor] applyDiff called without replacements');
     }
 
+    // Presence is a courtesy to other collaborators, not a precondition for the
+    // edit, so an unresolvable session identity must not fail the write. Same
+    // rule as the MCP applyDiff handler.
+    let agent: { sessionId: string; sessionName: string } | undefined;
+    if (args.targetFilePath && isCollabUri(args.targetFilePath) && this.sessionId) {
+      try {
+        agent = await resolveAgentIdentity(this.sessionId, this.workspaceId);
+      } catch {
+        agent = undefined;
+      }
+    }
+
     return new Promise((resolve, reject) => {
       // Set up timeout
       const timeout = setTimeout(() => {
@@ -91,7 +105,11 @@ export class ToolExecutor extends EventEmitter {
       this.webContents.send('ai:applyDiff', {
         replacements: args.replacements,
         resultChannel,
-        targetFilePath: args.targetFilePath
+        targetFilePath: args.targetFilePath,
+        // Needed to reach a shared document the user does not have open; the
+        // renderer cannot join the room without knowing the workspace.
+        workspacePath: this.workspaceId,
+        ...(agent ? { agent } : {})
       });
     });
   }

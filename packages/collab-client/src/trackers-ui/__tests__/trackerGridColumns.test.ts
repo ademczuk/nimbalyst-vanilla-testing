@@ -224,6 +224,67 @@ describe('buildGridColumns', () => {
     expect(event.clientY).toBe(36);
   });
 
+  /**
+   * The Key cell is the only open affordance in the grid, so both of its
+   * gestures have to survive: without them a row can only be reached by
+   * keyboard or through the context menu.
+   */
+  describe('key cell as the open affordance', () => {
+    const h = (tag: string, props: Record<string, unknown>, children: unknown) => ({
+      tag,
+      props,
+      children,
+    });
+
+    const keyCell = (keyLink: Parameters<typeof buildGridColumns>[1]['keyLink'], key = 'GCS-1') => {
+      registerType();
+      const [column] = buildGridColumns(columnsFor(['key']), {
+        trackerType: gridType,
+        isRowEditable: () => true,
+        keyLink,
+      });
+      return (column.cellTemplate as any)(h, {
+        model: { key, [ROW_ITEM_ID]: 'gcs_1' },
+      });
+    };
+
+    it('opens the detail from the key and the document from the expand icon', () => {
+      const onOpenDetail = vi.fn();
+      const onOpenDocument = vi.fn();
+      const cell = keyCell({ onOpenDetail, onOpenDocument });
+      const [link, expand] = cell.children;
+      const mouseEvent = () => ({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
+
+      expect(link.children).toBe('GCS-1');
+      link.props.onClick(mouseEvent());
+      expect(onOpenDetail).toHaveBeenCalledWith('gcs_1');
+
+      // Focusing the cell under the icon would move the selection out from
+      // under the click, so the icon swallows pointerdown.
+      const pointer = mouseEvent();
+      expand.props.onPointerDown(pointer);
+      expect(pointer.preventDefault).toHaveBeenCalled();
+      expand.props.onClick(mouseEvent());
+      expect(onOpenDocument).toHaveBeenCalledWith('gcs_1');
+    });
+
+    it('omits the expand icon where there is no document surface', () => {
+      const cell = keyCell({ onOpenDetail: vi.fn() });
+      expect(cell.children).toHaveLength(1);
+    });
+
+    it('falls back to the icon as the link when the row has no key', () => {
+      const onOpenDetail = vi.fn();
+      const cell = keyCell({ onOpenDetail, onOpenDocument: vi.fn() }, '');
+      const [link] = cell.children;
+
+      // Without this the cell is blank and the row cannot be opened by pointer
+      // at all -- imported and frontmatter-projected items may never get a key.
+      expect(link.props.class).toContain('is-icon-only');
+      link.props.onClick({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
+      expect(onOpenDetail).toHaveBeenCalledWith('gcs_1');
+    });
+  });
 });
 
 describe('buildGridColumns cellCompare', () => {

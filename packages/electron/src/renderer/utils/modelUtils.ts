@@ -181,6 +181,9 @@ export function getProviderDisplayName(provider: string): string {
     case 'openai': return 'OpenAI';
     case 'lmstudio': return 'LMStudio';
     case 'copilot-cli': return 'GitHub Copilot';
+    case 'grok-build': return 'Grok Build';
+    case 'cursor-agent': return 'Cursor Agent';
+    case 'antigravity-gemini-agent': return 'Gemini';
     default: return provider;
   }
 }

@@ -2,7 +2,7 @@ import { detectStreamingIntent, parseStreamingChunk, StreamingEditRequest } from
 import { logger } from '../utils/logger';
 import type { DocumentContext, Message, SessionData } from '@nimbalyst/runtime/ai/server/types';
 import { editorRegistry } from '@nimbalyst/runtime/ai/EditorRegistry';
-import { isCollabUri } from '@nimbalyst/collab-protocol';
+import { applyAgentDiff } from './agentDocumentAccess';
 
 const LOG_PREVIEW_LENGTH = 400;
 
@@ -244,7 +244,7 @@ class AIApi {
     });
 
     // Listen for new AI applyDiff events
-    window.electronAPI.onAIApplyDiff(async (data: { replacements: any[], resultChannel: string, targetFilePath?: string }) => {
+    window.electronAPI.onAIApplyDiff(async (data: { replacements: any[], resultChannel: string, targetFilePath?: string, workspacePath?: string, agent?: { sessionId: string; sessionName: string } }) => {
       try {
         const replacementCount = Array.isArray(data?.replacements) ? data.replacements.length : undefined;
         const payloadPreview = previewForLog(JSON.stringify(data));
@@ -272,38 +272,10 @@ class AIApi {
           return;
         }
 
-        // Validate target: filesystem markdown files OR shared collab docs.
-        const isCollab = isCollabUri(targetFilePath);
-        if (!isCollab && !targetFilePath.endsWith('.md')) {
-          window.electronAPI.sendMcpApplyDiffResult(data.resultChannel, {
-            success: false,
-            error: `applyDiff can only modify markdown files (.md) or collaborative documents (collab:// URIs). Attempted to modify: ${targetFilePath}`
-          });
-          return;
-        }
-
-        // If the file isn't registered (not open), open it in the background.
-        // Collaborative docs cannot be opened in the background here — they
-        // live in Yjs and require an active CollaborativeTabEditor mount.
-        if (!editorRegistry.has(targetFilePath)) {
-          if (isCollab) {
-            window.electronAPI.sendMcpApplyDiffResult(data.resultChannel, {
-              success: false,
-              error: `Cannot edit collab document ${targetFilePath}: no editor is currently mounted for it. Open the document in collab mode first.`
-            });
-            return;
-          }
-          logger.api.info('File not open, opening in background:', targetFilePath);
-
-          // Read the file content
-          const result = await window.electronAPI.readFileContent(targetFilePath);
-          const fileContent = result?.success ? result.content : '';
-
-          // Open the file using editorRegistry's file opener
-          await editorRegistry.openFileInBackground(targetFilePath, fileContent);
-        }
-
-        const result = await editorRegistry.applyReplacements(targetFilePath, data.replacements);
+        const result = await applyAgentDiff(targetFilePath, data.replacements, {
+          workspacePath: data.workspacePath,
+          ...(data.agent ? { agent: data.agent } : {}),
+        });
         logger.api.info('Renderer applyDiff result', result);
         // Send result back through the result channel
         window.electronAPI.sendMcpApplyDiffResult(data.resultChannel, result);

@@ -250,6 +250,7 @@ export { useDiffCommands, APPLY_MARKDOWN_REPLACE_COMMAND, LiveNodeKeyState } fro
 // Diff utilities (now from local plugin)
 export {
   applyMarkdownReplace,
+  applyTextReplacementsToString,
   $approveDiffs,
   $rejectDiffs,
   $hasDiffNodes,

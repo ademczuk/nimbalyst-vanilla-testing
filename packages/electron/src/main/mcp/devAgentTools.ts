@@ -1,7 +1,7 @@
 /**
- * Read-only developer tools for extension-agent sessions (e.g. gemini-antigravity).
+ * Workspace developer tools for tool-loop agent sessions (e.g. Gemini).
  *
- * A standard (non-meta-agent) extension session is given these tools so the
+ * A standard (non-meta-agent) tool-loop session is given these tools so the
  * model can investigate the workspace - read files, list directories, grep -
  * through the same simulated JSON tool-call loop the meta-agent path uses. The
  * read tools and write_file are gated on the minimal workspace-files permission;
@@ -20,7 +20,7 @@
  * by ElectronFileSystemService's SafePathValidator, and reads are size-capped.
  */
 
-import { realpath, writeFile, mkdir } from 'fs/promises';
+import { realpath, readFile, writeFile, mkdir } from 'fs/promises';
 import { resolve as resolvePath, sep as pathSep, dirname } from 'path';
 import type { MetaAgentOpenAITool } from './metaAgentServer';
 import { getFileSystemService } from '../window/serviceRegistry';
@@ -275,10 +275,31 @@ async function resolveWritePath(
  * per-workspace registry, falling back to a freshly constructed service bound
  * to the same root (the constructor wires the SafePathValidator jail).
  */
+/**
+ * A write this dispatch actually performed, reported to callers that track file
+ * changes.
+ *
+ * `beforeContent` is read immediately before the write, inside the same call —
+ * nothing runs in between, so it is a stricter baseline than a filesystem
+ * watcher or a snapshot cache can offer. `null` means the file did not exist.
+ */
+export interface DevAgentFileWrite {
+  absPath: string;
+  beforeContent: string | null;
+  afterContent: string;
+}
+
 export async function dispatchDevAgentTool(
   name: string,
   workspaceRoot: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  /**
+   * Optional, additive: invoked once per successful `write_file`. Existing
+   * callers (the extension broker, the meta-agent surface) pass nothing and
+   * behave exactly as before — the pre-read only happens when someone asks for
+   * it, so this cannot slow down or change a path that does not use it.
+   */
+  onFileWrite?: (change: DevAgentFileWrite) => void
 ): Promise<string> {
   const svc = getFileSystemService(workspaceRoot) ?? new ElectronFileSystemService(workspaceRoot);
 
@@ -352,12 +373,22 @@ export async function dispatchDevAgentTool(
       }
       const resolved = await resolveWritePath(workspaceRoot, filePath);
       if ('error' in resolved) return resolved.error;
+      // Read the prior contents in the same breath as the write. This is the
+      // pre-edit baseline the diff view renders against; taken here, nothing
+      // can have changed the file between the read and the overwrite. An
+      // unreadable path (missing, or binary) yields null, which the caller
+      // reports as a create rather than an empty update.
+      let beforeContent: string | null = null;
+      if (onFileWrite) {
+        beforeContent = await readFile(resolved.absPath, 'utf8').catch(() => null);
+      }
       try {
         await mkdir(dirname(resolved.absPath), { recursive: true });
         await writeFile(resolved.absPath, content, 'utf8');
       } catch (err) {
         return `Error writing ${filePath}: ${err instanceof Error ? err.message : String(err)}`;
       }
+      onFileWrite?.({ absPath: resolved.absPath, beforeContent, afterContent: content });
       const lineCount = content.split('\n').length;
       return `Wrote ${filePath} (${byteLen} bytes, ${lineCount} line(s)).`;
     }

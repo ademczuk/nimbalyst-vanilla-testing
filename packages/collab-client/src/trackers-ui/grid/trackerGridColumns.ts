@@ -223,13 +223,105 @@ function contextMenuNode(
   );
 }
 
+/**
+ * The Key cell doubles as the row's open affordance: the key itself opens the
+ * detail pane, and an expand icon appears on row hover to open the row as a
+ * document.
+ *
+ * Key is the one column that is never editable, so it is the only cell that can
+ * carry a gesture without competing with cell editing. That is what lets a plain
+ * click everywhere else mean nothing but "select this cell" -- previously *any*
+ * click opened the detail pane, so the grid could not be browsed without the
+ * panel following the cursor.
+ */
+function keyLinkNode(
+  createElement: HyperFunc<VNode>,
+  text: string,
+  itemId: string,
+  keyLink: KeyLinkOptions,
+): VNode {
+  const swallow = (e: MouseEvent): void => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  const openDetail = (e: MouseEvent): void => {
+    swallow(e);
+    keyLink.onOpenDetail(itemId);
+  };
+
+  // Not every row has a key -- imported and frontmatter-projected items may
+  // never get one -- and a blank cell would leave those rows with nothing to
+  // click. The expand icon stands in for the missing number and carries the
+  // key's gesture, staying visible because there is no text beside it to
+  // suggest the cell is clickable at all.
+  if (!text) {
+    return createElement('span', { class: 'tracker-grid-cell-key' }, [
+      createElement(
+        'button',
+        {
+          type: 'button',
+          class: 'tracker-grid-cell-key-link is-icon-only',
+          title: 'Open details',
+          'aria-label': 'Open details',
+          onClick: openDetail,
+        },
+        createElement(
+          'span',
+          { class: 'material-symbols-outlined tracker-grid-cell-key-open-icon' },
+          'open_in_full',
+        ),
+      ),
+    ]);
+  }
+
+  return createElement('span', { class: 'tracker-grid-cell-key' }, [
+    createElement(
+      'button',
+      {
+        type: 'button',
+        class: 'tracker-grid-cell-key-link',
+        title: 'Open details',
+        onClick: openDetail,
+      },
+      text,
+    ),
+    ...(keyLink.onOpenDocument
+      ? [createElement(
+        'span',
+        {
+          class: 'tracker-grid-cell-key-open',
+          title: 'Open as a document',
+          'aria-label': 'Open as a document',
+          // The grid focuses a cell on pointerdown; keep this a pure action so
+          // the icon does not also move the selection out from under the click.
+          onPointerDown: swallow,
+          onClick: (e: MouseEvent) => {
+            swallow(e);
+            keyLink.onOpenDocument?.(itemId);
+          },
+        },
+        createElement(
+          'span',
+          { class: 'material-symbols-outlined tracker-grid-cell-key-open-icon' },
+          'open_in_full',
+        ),
+      )]
+      : []),
+  ]);
+}
+
+interface CellTemplateOptions {
+  favorites?: FavoritesOptions;
+  rowActions?: boolean;
+  resolveLabel?: TrackerRelationshipLabelResolver;
+  keyLink?: KeyLinkOptions;
+}
+
 /** Colored-badge columns get a pill; everything else renders as plain text. */
 function buildCellTemplate(
   col: TrackerColumnDef,
   trackerType: string,
-  favorites?: FavoritesOptions,
-  rowActions = false,
-  resolveLabel?: TrackerRelationshipLabelResolver,
+  { favorites, rowActions = false, resolveLabel, keyLink }: CellTemplateOptions = {},
 ) {
   return (createElement: HyperFunc<VNode>, props: CellTemplateProp): VNode => {
     const value = props.model?.[col.id];
@@ -252,6 +344,15 @@ function buildCellTemplate(
         textNode(createElement, text),
         ...(rowActions ? [contextMenuNode(createElement, 'title')] : []),
       ]);
+    }
+
+    if (keyLink && col.id === 'key') {
+      return keyLinkNode(
+        createElement,
+        text,
+        String(props.model?.[ROW_ITEM_ID] ?? ''),
+        keyLink,
+      );
     }
 
     if (!text) return textNode(createElement, '');
@@ -293,6 +394,14 @@ export interface FavoritesOptions {
   onToggleFavorite: (itemId: string) => void;
 }
 
+/** Turns the Key cell into the row's open affordance; omit to leave it plain text. */
+export interface KeyLinkOptions {
+  /** Clicking the key opens the row in the detail pane. */
+  onOpenDetail: (itemId: string) => void;
+  /** Hover affordance inside the key cell; omit where documents are unavailable. */
+  onOpenDocument?: (itemId: string) => void;
+}
+
 export interface BuildGridColumnsOptions {
   /** Active tracker type; `'all'` means a mixed-type view. */
   trackerType: string;
@@ -312,6 +421,8 @@ export interface BuildGridColumnsOptions {
   favorites?: FavoritesOptions;
   /** Also renders the overflow trigger inside the title cell. */
   rowActions?: boolean;
+  /** Makes the Key cell the row's open affordance. */
+  keyLink?: KeyLinkOptions;
   /** Names a relationship target from the live record rather than the link snapshot. */
   resolveRelationshipLabel?: TrackerRelationshipLabelResolver;
 }
@@ -392,6 +503,7 @@ export function buildGridColumns(
     sortingEnabled = false,
     favorites,
     rowActions = false,
+    keyLink,
     resolveRelationshipLabel: resolveLabel,
   }: BuildGridColumnsOptions,
 ): ColumnRegular[] {
@@ -430,7 +542,12 @@ export function buildGridColumns(
         }
         return typeof itemId === 'string' ? !isRowEditable(itemId) : true;
       },
-      cellTemplate: buildCellTemplate(col, trackerType, favorites, rowActions, resolveLabel),
+      cellTemplate: buildCellTemplate(col, trackerType, {
+        favorites,
+        rowActions,
+        resolveLabel,
+        keyLink,
+      }),
       ...(onOpenFilter
         ? {
           columnTemplate: buildColumnTemplate(

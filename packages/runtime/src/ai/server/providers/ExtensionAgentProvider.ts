@@ -83,7 +83,7 @@ export interface ExtensionAgentBridge {
      * Optional system-prompt override for this turn. The bridge forwards it
      * to the backend, which prepends it as the baseSystemPrompt ahead of the
      * tool-envelope block. Used to deliver the meta-agent persona to
-     * extension agents (gemini-antigravity) the same way built-in providers
+     * extension agents the same way built-in providers
      * receive it over the SDK system prompt. Additive — absent for normal
      * (non-meta-agent) extension sessions, so their behavior is unchanged.
      */

@@ -23,6 +23,7 @@
  * paths, the readCollabDoc MCP tool for collab:// URIs).
  */
 import type { PromptProvenance } from '@nimbalyst/runtime/ai/server/types';
+import { isCollabDocumentFileType, isCollabUri } from '@nimbalyst/collab-protocol';
 
 export interface ClaudeCliDocumentContext {
   filePath?: string | null;
@@ -80,7 +81,7 @@ export function composeClaudeCliContextPreamble(
       `The user is currently looking at this document: <ACTIVE_DOCUMENT>${filePath}</ACTIVE_DOCUMENT>.`,
       'They are not necessarily asking about it — use your judgement.',
     );
-    const isCollab = context?.fileType === 'collab-markdown' || filePath.startsWith('collab://');
+    const isCollab = isCollabDocumentFileType(context?.fileType) || isCollabUri(filePath);
     parts.push(
       isCollab
         ? 'This is a shared collaborative document: READ it with the readCollabDoc MCP tool and MODIFY it with applyCollabDocEdit — filesystem Read/Edit/Write do not work for collab:// URIs.'

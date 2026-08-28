@@ -24,6 +24,8 @@ import { CodexRawParserDispatcher } from './parsers/CodexRawParserDispatcher';
 import { CodexACPRawParser } from './parsers/CodexACPRawParser';
 import { CopilotRawParser } from './parsers/CopilotRawParser';
 import { OpenCodeRawParser } from './parsers/OpenCodeRawParser';
+import { HeadlessAgentRawParser } from './parsers/HeadlessAgentRawParser';
+import { GeminiAntigravityRawParser } from './parsers/GeminiAntigravityRawParser';
 import { VoiceRawParser } from './parsers/VoiceRawParser';
 import type {
   IRawMessageParser,
@@ -480,6 +482,13 @@ export class TranscriptTransformer {
     if (provider === 'opencode') {
       return new OpenCodeRawParser();
     }
+    if (provider === 'grok-build' || provider === 'cursor-agent') {
+      return new HeadlessAgentRawParser(provider);
+    }
+    if (provider === 'antigravity-gemini-agent') {
+      return new GeminiAntigravityRawParser();
+    }
+
     if (provider === 'openai-realtime') {
       return new VoiceRawParser();
     }

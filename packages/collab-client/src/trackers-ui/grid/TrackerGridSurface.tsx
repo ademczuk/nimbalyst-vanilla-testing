@@ -60,6 +60,7 @@ import {
 import { TrackerSurfaceMessage } from '../primitives/TrackerSurfaceMessage';
 import { buildGridActionsColumn, buildGridColumns } from './trackerGridColumns';
 import { LazyTrackerColumnFilterPopover } from './LazyTrackerColumnFilterPopover';
+import { useGridKeyOriginGuard } from './gridKeyOrigin';
 import './trackerGrid.css';
 
 export interface TrackerGridSurfaceProps {
@@ -166,8 +167,6 @@ export function TrackerGridSurface({
   >(null);
   // 'keyboard' only between the keydown that will move focus and the resulting
   // `afterfocus`; everything else is a pointer.
-  const focusOriginRef = useRef<'keyboard' | null>(null);
-
   const schemaType = trackerType === 'all' ? '' : trackerType;
   const allColumnDefs = useMemo(
     () => resolveColumnsForType(schemaType),
@@ -203,6 +202,9 @@ export function TrackerGridSurface({
         // The favorite star is a personal-lane affordance; a host that has one
         // renders it through its own grid. Not reconstructed here.
         rowActions: false,
+        // No document surface in the browser yet, so the key opens the detail
+        // only -- the expand icon is omitted rather than rendered inert.
+        keyLink: onOpenItem ? { onOpenDetail: onOpenItem } : undefined,
         resolveRelationshipLabel,
       }),
       ...(onRowContextMenu ? [buildGridActionsColumn()] : []),
@@ -214,6 +216,7 @@ export function TrackerGridSurface({
       isRowEditable,
       filteredColumnIds,
       onColumnFiltersChange,
+      onOpenItem,
       resolveRelationshipLabel,
       onRowContextMenu,
     ]
@@ -336,24 +339,21 @@ export function TrackerGridSurface({
   );
 
   /**
-   * A pointer landing on a cell opens that row; the arrow keys do not, until the
-   * detail is already open and browsing should keep it in step.
+   * Moving the selection never opens a row -- the Key cell is the open button.
+   * Focus only follows the selection once the detail is already open, so
+   * arrowing down the grid reads as browsing the open item.
    *
    * This is the gesture desktop's `TrackerGridView` settled on, and the reason
    * it costs inline editing nothing: RevoGrid starts an edit on double-click,
-   * F2, or typing -- never on the single click that focuses the cell. Opening on
-   * focus rather than on double-click leaves the double-click free to mean
-   * "edit this cell", which is what it means in every other table.
+   * F2, or typing, and none of those now compete with opening a row.
    */
   const handleCellFocus = useCallback(
     async (
       event: RevoGridCustomEvent<FocusAfterRenderEvent>
     ): Promise<void> => {
       const rowIndex = event.detail?.rowIndex;
-      const keyboardFocused = focusOriginRef.current === 'keyboard';
-      focusOriginRef.current = null;
       if (!onOpenItem || typeof rowIndex !== 'number') return;
-      if (keyboardFocused && !selectedItemId) return;
+      if (!selectedItemId) return;
       const item = await resolveGridRecord(rowIndex);
       if (item) onOpenItem(item.id);
     },
@@ -429,6 +429,10 @@ export function TrackerGridSurface({
     [onRowContextMenu, resolveGridRecord]
   );
 
+  // RevoGrid's document-level keydown listener acts on keys typed anywhere in the
+  // app while a cell is selected. Decline the ones that did not start in here.
+  useGridKeyOriginGuard(gridCanvasRef);
+
   const handleKeyDownCapture = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (!onOpenItem) return;
@@ -443,24 +447,8 @@ export function TrackerGridSurface({
               target.classList.contains('tracker-grid-editor-checkbox'))
         );
 
-      // RevoGrid owns editor keystrokes. Remember the keyboard origin so the focus
-      // change that ends the edit does not read as a request to open the row.
-      if (isEditing) {
-        if (key === 'Enter' || key === 'Tab')
-          focusOriginRef.current = 'keyboard';
-        return;
-      }
-
-      if (
-        key === 'ArrowUp' ||
-        key === 'ArrowDown' ||
-        key === 'ArrowLeft' ||
-        key === 'ArrowRight' ||
-        key === 'Tab'
-      ) {
-        focusOriginRef.current = 'keyboard';
-        return;
-      }
+      // RevoGrid owns editor keystrokes.
+      if (isEditing) return;
 
       if (key === 'Enter' || key === 'F2') {
         event.preventDefault();
@@ -552,9 +540,6 @@ export function TrackerGridSurface({
         onKeyDownCapture={handleKeyDownCapture}
         onContextMenu={(event) => {
           void handleContextMenu(event);
-        }}
-        onPointerDownCapture={() => {
-          focusOriginRef.current = null;
         }}
       >
         {rows.length === 0 && !columnFiltersActive ? (

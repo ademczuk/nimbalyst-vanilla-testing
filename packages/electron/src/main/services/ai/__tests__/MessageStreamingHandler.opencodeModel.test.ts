@@ -71,6 +71,8 @@ vi.mock("../tools", () => ({
 
 vi.mock("../providerResolution", () => ({
   resolveExtensionAgentRef: vi.fn(() => null),
+  // OpenCode discovers its tools over MCP, so it is not a tool-loop provider.
+  usesHostSuppliedToolLoop: vi.fn(() => false),
 }));
 
 vi.mock("../../../extensions/AgentProviderRegistry", () => ({

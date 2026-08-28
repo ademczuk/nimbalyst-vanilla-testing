@@ -442,7 +442,7 @@ If any step surfaces issues, repeat the loop until resolved.
 }
 
 /**
- * System prompt for a STANDARD extension-agent session (e.g. gemini-antigravity)
+ * System prompt for a STANDARD tool-loop agent session (e.g. Gemini)
  * that holds the read-only dev toolset (read_file / list_files / search_files).
  *
  * Role/persona text ONLY. The simulated tool-call envelope mechanics (the

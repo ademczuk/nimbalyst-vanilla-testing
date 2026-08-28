@@ -160,6 +160,7 @@ export {
 export type {
   BuildGridColumnsOptions,
   FavoritesOptions,
+  KeyLinkOptions,
 } from './grid/trackerGridColumns';
 export {
   commitOnNavigationKeys,
@@ -170,6 +171,7 @@ export type {
   RelationshipCandidate,
   TrackerEditorContext,
 } from './grid/trackerGridEditors';
+export { keydownOriginatedInGrid, useGridKeyOriginGuard } from './grid/gridKeyOrigin';
 export { LazyTrackerColumnFilterPopover as TrackerColumnFilterPopover } from './grid/LazyTrackerColumnFilterPopover';
 export type { TrackerColumnFilterPopoverProps } from './grid/TrackerColumnFilterPopover';
 export { TrackerGridSurface } from './grid/TrackerGridSurface';

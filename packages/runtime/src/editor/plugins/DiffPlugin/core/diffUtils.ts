@@ -454,6 +454,23 @@ function normalizeWhitespace(text: string): string {
   return normalized.trimEnd() + trailingNewlines;
 }
 
+/**
+ * Apply text replacements to a string, exact match first and whitespace-
+ * normalized match second, throwing a TEXT_REPLACEMENT_ERROR when neither
+ * lands.
+ *
+ * Also used by headless writes to codec-only shared documents (mockups,
+ * diagrams, sheets), which have no Lexical tree to reconcile into and so edit
+ * their serialized form directly. Sharing this function is the point: an
+ * agent's `oldText` matches by the same rules wherever it is applied.
+ */
+export function applyTextReplacementsToString(
+  originalText: string,
+  replacements: TextReplacement[],
+): string {
+  return _applyMarkdownEdits(originalText, replacements);
+}
+
 function _applyMarkdownEdits(
   originalMarkdown: string,
   replacements: TextReplacement[],
@@ -566,11 +583,29 @@ function _applyMarkdownEdits(
  * This is an alternative to applyMarkdownDiff that takes direct text replacements
  * instead of unified diff strings
  */
+export interface ApplyMarkdownReplaceOptions {
+  /**
+   * Fail instead of falling back to a structural guess when a replacement's
+   * `oldText` does not match.
+   *
+   * The fallback below reconstructs a target markdown from the replacement --
+   * for a list-shaped one it locates the FIRST list in the document and
+   * replaces that. On screen that is survivable: a human watches the wrong list
+   * get rewritten and hits undo. Applied headlessly to a shared document nobody
+   * has open, the same guess deletes content, is acknowledged by the server for
+   * every collaborator, and returns SUCCESS to the agent that asked for it.
+   *
+   * Callers with no human in the loop set this. See `headlessMarkdownEdit`.
+   */
+  exactTextMatchRequired?: boolean;
+}
+
 export function applyMarkdownReplace(
   editor: LexicalEditor,
   originalMarkdown: string,
   replacements: TextReplacement[],
   transformers: Transformer[],
+  options: ApplyMarkdownReplaceOptions = {},
 ): void {
   // console.log('[applyMarkdownReplace] CALLED with', replacements.length, 'replacements');
   const normalizedReplacements = replacements.map((replacement) => {
@@ -610,6 +645,12 @@ export function applyMarkdownReplace(
     // This is normal for structural changes like tables and lists
     console.log('[applyMarkdownReplace] Text replacement FAILED:', error);
     textReplacementError = error as Error;
+
+    // No human is watching this edit land, so a guess cannot be reviewed or
+    // undone. Fail with the real reason instead.
+    if (options.exactTextMatchRequired) {
+      throw textReplacementError;
+    }
 
     // Build the new markdown by applying replacements in a best-effort manner
     // For now, we'll use the first replacement's newText as a hint

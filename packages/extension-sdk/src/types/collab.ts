@@ -125,8 +125,23 @@ export interface CollabCodec<TStructured = unknown> {
   toStructured?(yDoc: Doc): TStructured;
 
   /** Optional: write structured edits back. Paired with
-   *  `toStructured`. AI-write surface is gated on the presence of
-   *  both this and `toStructured`. */
+   *  `toStructured`. The PREFERRED AI-write surface: implementing
+   *  both lets an agent edit this document type structurally.
+   *
+   *  It is NOT a gate. When an adapter does not implement the pair,
+   *  an agent edit falls back to `exportToFile` -> text replacement
+   *  -> `applyFromFile`, so every adapter is AI-writable whether or
+   *  not it opted in. Two consequences an adapter author must know:
+   *
+   *   - `applyFromFile` is called with agent-authored content, not
+   *     just on-disk content, so it must be safe to call on a
+   *     populated Y.Doc (it already must be) AND must be able to
+   *     consume its own `exportToFile` output unchanged. That
+   *     round-trip is asserted for every registered adapter in
+   *     `codecOnlyHeadlessEdit.test.ts`.
+   *   - The fallback rewrites the whole document, so a concurrent
+   *     human edit can interleave. Implement the structured pair to
+   *     get minimal deltas instead. */
   applyStructuredPatch?(yDoc: Doc, patch: unknown): void;
 
   /** Optional snapshot-isolated resolver for structured comment anchors. */

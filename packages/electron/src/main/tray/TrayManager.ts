@@ -15,7 +15,14 @@ import type { SessionStateEvent } from '@nimbalyst/runtime/ai/server/types/Sessi
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
 import { findWindowByWorkspace } from '../window/WindowManager';
 import { getPackageRoot } from '../utils/appPaths';
-import { isShowTrayIcon, setShowTrayIcon, getSessionSyncConfig, setSessionSyncConfig } from '../utils/store';
+import {
+  isShowTrayIcon,
+  setShowTrayIcon,
+  isShowTrayStrip,
+  setShowTrayStrip,
+  getSessionSyncConfig,
+  setSessionSyncConfig,
+} from '../utils/store';
 import { logger } from '../utils/logger';
 import { isPreventingSleep, getSleepPreventionMode } from '../services/PowerSaveService';
 import { updateSleepPrevention, resolvePreventSleepMode, getSyncProvider } from '../services/SyncManager';
@@ -27,32 +34,15 @@ import {
   toggleTrayPanelWindow,
 } from '../window/TrayPanelWindow';
 import type { TrayPanelFeed, TrayPanelSession } from '../../shared/traySessions';
+import { deriveFleetSnapshot, type FleetSnapshot, type PromptKind, type TraySessionInfo } from './fleetSnapshot';
+import { StripStateMachine, stripViewKey, type StripView } from './stripStateMachine';
+import { TrayStripRenderer } from './TrayStripRenderer';
+
+export type { TraySessionInfo, PromptKind } from './fleetSnapshot';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type TrayIconState = 'idle' | 'running' | 'attention' | 'error';
-
-interface TraySessionInfo {
-  sessionId: string;
-  title: string;
-  workspacePath: string;
-  status: 'running' | 'idle' | 'error' | 'completed';
-  isStreaming: boolean;
-  hasPendingPrompt: boolean;
-  hasUnread: boolean;
-  /** Timestamp when session completed, used for lingering display */
-  completedAt?: number;
-  /** Provider id (`claude-code`, `openai-codex`, …) for the panel's avatar tile. */
-  provider?: string;
-  /** Provider-qualified model id; the panel strips the prefix for display. */
-  model?: string;
-  /** Last activity, so the panel can show a relative time like the in-app popover. */
-  updatedAt?: number;
-  /** Kanban phase. `complete` sessions are hidden, matching the in-app popover. */
-  phase?: string;
-  /** Archived sessions are hidden, matching the in-app popover. */
-  isArchived?: boolean;
-}
 
 // ─── Database interface (same as SessionStateManager) ───────────────────────
 
@@ -72,6 +62,11 @@ interface TrayUnreadClearPayload {
 
 const MENU_REBUILD_DEBOUNCE_MS = 300;
 const COMPLETED_LINGER_MS = 60_000; // Keep completed sessions visible for 1 minute
+/**
+ * The strip's age is rounded to minutes, so it only needs redrawing that often.
+ * A ticking second counter would be 60x the captures to say the same thing.
+ */
+const STRIP_AGE_TICK_MS = 60_000;
 
 /**
  * Project windows only.
@@ -186,6 +181,26 @@ export class TrayManager {
   private database: DatabaseWorker | null = null;
   private themeListener: (() => void) | null = null;
 
+  // ─── Menu bar strip ───────────────────────────────────────────────────
+  private stripMachine = new StripStateMachine();
+  private stripRenderer: TrayStripRenderer | null = null;
+  private stripHoldTimer: NodeJS.Timeout | null = null;
+  private stripAgeTimer: NodeJS.Timeout | null = null;
+  private lastStripKey: string | null = null;
+  /** Session the strip is currently naming; clicking the strip goes straight to it. */
+  private namedSessionId: { sessionId: string; workspacePath: string } | null = null;
+  /** Monotonic, so a renderer can drop a snapshot that arrives out of order. */
+  private snapshotRevision = 0;
+  /**
+   * Newest activity anywhere, surviving cache eviction.
+   *
+   * Completed sessions leave the cache after a minute, so the cache cannot
+   * answer "how long has it been quiet" -- which is the one thing the quiet
+   * strip has to say. Seeded from the database at startup so a fresh launch
+   * reports a real age instead of claiming everything just happened.
+   */
+  private lastFleetActivityAt: number | null = null;
+
   private constructor() {}
 
   static getInstance(): TrayManager {
@@ -298,12 +313,24 @@ export class TrayManager {
       this.tray.destroy();
       this.tray = null;
     }
+    this.teardownStrip();
     closeTrayPanelWindow();
   }
 
-  /** Open the tray panel anchored to the icon, or dismiss it if already open. */
+  /**
+   * Open the tray panel anchored to the icon, or dismiss it if already open.
+   *
+   * While the strip is naming a session, clicking it goes to that session --
+   * the name is on screen precisely because that session just asked for
+   * something, so the click has an obvious target and the panel is a detour.
+   */
   private toggleSessionsPanel(): void {
     if (!this.tray) return;
+    const named = this.namedSessionId;
+    if (named?.workspacePath) {
+      this.handleSessionClick(named.sessionId, named.workspacePath);
+      return;
+    }
     toggleTrayPanelWindow(this.tray.getBounds(), () => this.buildPanelFeed());
   }
 
@@ -336,6 +363,8 @@ export class TrayManager {
     }
     this.lingerTimers.clear();
 
+    this.teardownStrip();
+
     if (this.tray) {
       this.tray.destroy();
       this.tray = null;
@@ -353,11 +382,22 @@ export class TrayManager {
    * Mark a session as having a pending interactive prompt (blocked on user input).
    * Called from AIService when askUserQuestion, toolPermission, exitPlanMode,
    * or gitCommitProposal events fire.
+   *
+   * `kind` separates "a tap" from "thinking required", which is what colours the
+   * strip's dot -- a session title does not tell you whether responding costs
+   * three seconds or ten minutes. It defaults to `approval` because that is what
+   * an unlabelled prompt overwhelmingly is (tool permissions).
    */
-  onPromptCreated(sessionId: string): void {
+  onPromptCreated(sessionId: string, kind: PromptKind = 'approval'): void {
+    this.lastFleetActivityAt = Date.now();
     const session = this.sessionCache.get(sessionId);
     if (session) {
+      // Only a transition *into* waiting stamps the clock. A session that is
+      // already blocked keeps its original timestamp, so the strip's age means
+      // "how long has this been waiting" and the name is not re-shown.
+      if (!session.hasPendingPrompt) session.wantingSince = Date.now();
       session.hasPendingPrompt = true;
+      session.promptKind = kind;
       this.scheduleMenuRebuild();
     }
   }
@@ -366,9 +406,12 @@ export class TrayManager {
    * Clear the pending prompt flag when the user responds.
    */
   onPromptResolved(sessionId: string): void {
+    this.lastFleetActivityAt = Date.now();
     const session = this.sessionCache.get(sessionId);
     if (session) {
       session.hasPendingPrompt = false;
+      session.promptKind = undefined;
+      if (session.status !== 'error') session.wantingSince = undefined;
       this.scheduleMenuRebuild();
     }
   }
@@ -414,6 +457,21 @@ export class TrayManager {
           session = await this.fetchSessionMetadata(event.sessionId);
           this.sessionCache.set(event.sessionId, session);
         }
+        // A restart clears a previous failure, so it must also clear the clock
+        // that failure started -- otherwise the strip ages a session that is
+        // running again. A pending prompt keeps its own stamp.
+        if (session.status === 'error' && !session.hasPendingPrompt) {
+          session.wantingSince = undefined;
+        }
+        // Stamp only the transition *into* running. `session:streaming` fires
+        // repeatedly for the same run, and re-stamping would make the strip
+        // announce a working session over and over instead of once as it starts.
+        if (session.status !== 'running' || session.startedAt === undefined) {
+          session.startedAt = Date.now();
+          // A new run is not the old run's completion; leaving this set would
+          // keep the finished session eligible to be named a second time.
+          session.completedAt = undefined;
+        }
         session.status = 'running';
         session.isStreaming = event.type === 'session:streaming';
         // Clear any linger timer if session restarts
@@ -427,6 +485,8 @@ export class TrayManager {
           session.status = 'completed';
           session.isStreaming = false;
           session.hasPendingPrompt = false; // Session done -- can't be blocked
+          session.promptKind = undefined;
+          session.wantingSince = undefined;
           session.completedAt = Date.now();
 
           // Check if app is backgrounded -- if so, mark as unread. The tray
@@ -446,6 +506,9 @@ export class TrayManager {
       case 'session:error': {
         const session = this.sessionCache.get(event.sessionId);
         if (session) {
+          // Failing is a transition into wanting something, and gets named like
+          // one -- a failure you never see is worse than one that interrupts.
+          if (session.status !== 'error') session.wantingSince = Date.now();
           session.status = 'error';
           session.isStreaming = false;
         }
@@ -462,6 +525,9 @@ export class TrayManager {
       case 'session:waiting': {
         const session = this.sessionCache.get(event.sessionId);
         if (session) {
+          if (session.status === 'error' && !session.hasPendingPrompt) {
+            session.wantingSince = undefined;
+          }
           session.status = 'running';
           session.isStreaming = false;
         }
@@ -479,6 +545,7 @@ export class TrayManager {
     // as the session starts moving.
     const touched = this.sessionCache.get(event.sessionId);
     if (touched) touched.updatedAt = Date.now();
+    this.lastFleetActivityAt = Date.now();
 
     this.scheduleMenuRebuild();
   }
@@ -671,6 +738,17 @@ export class TrayManager {
         ],
       });
     }
+    // `Hide Menu Bar Icon` takes everything away; a user may want the icon
+    // without a wide strip, which on a laptop is the difference between the
+    // item fitting and vanishing under the notch.
+    if (process.platform === 'darwin') {
+      menuItems.push({
+        label: 'Show Fleet Status',
+        type: 'checkbox',
+        checked: isShowTrayStrip(),
+        click: () => this.setStripVisible(!isShowTrayStrip()),
+      });
+    }
     menuItems.push({
       label: 'Hide Menu Bar Icon',
       click: () => this.setVisible(false),
@@ -692,6 +770,15 @@ export class TrayManager {
   private updateIcon(): void {
     if (!this.tray) return;
 
+    if (this.isStripEnabled()) {
+      // The strip replaces both the icon and the title: it is one image that
+      // already carries the glyph, the state colours and the counts.
+      void this.updateStrip();
+      return;
+    }
+
+    this.teardownStrip();
+
     const state = this.computeIconState();
     const icon = this.getIconForState(state);
     this.tray.setImage(icon);
@@ -711,6 +798,108 @@ export class TrayManager {
         this.tray.setTitle('');
       }
     }
+  }
+
+  // ─── Menu bar strip ────────────────────────────────────────────────────
+
+  /**
+   * The strip is a rendered bitmap on the macOS status bar. Windows and Linux
+   * keep the template icon plus the flat `NSMenu` session list -- they have no
+   * equivalent surface, and `setTitle` is darwin-only anyway.
+   */
+  private isStripEnabled(): boolean {
+    return process.platform === 'darwin' && isShowTrayStrip();
+  }
+
+  /** The current cross-workspace fleet snapshot, with a fresh revision. */
+  buildFleetSnapshot(): FleetSnapshot {
+    this.snapshotRevision += 1;
+    return deriveFleetSnapshot(this.sessionCache.values(), this.snapshotRevision, {
+      ...(this.lastFleetActivityAt !== null ? { lastActivityAt: this.lastFleetActivityAt } : {}),
+    });
+  }
+
+  private async updateStrip(): Promise<void> {
+    const view = this.stripMachine.update(this.buildFleetSnapshot(), Date.now());
+    this.scheduleStripTimers();
+    await this.paintStrip(view);
+  }
+
+  /**
+   * Redraw against the last snapshot at the current time.
+   *
+   * The two things that change without a session event: a name hold expiring,
+   * and the age rolling over a minute.
+   */
+  private async tickStrip(): Promise<void> {
+    if (!this.tray || !this.isStripEnabled()) return;
+    const view = this.stripMachine.tick(Date.now());
+    this.scheduleStripTimers();
+    await this.paintStrip(view);
+  }
+
+  private async paintStrip(view: StripView): Promise<void> {
+    this.namedSessionId = view.mode === 'named'
+      ? { sessionId: view.sessionId, workspacePath: view.workspacePath }
+      : null;
+
+    const key = stripViewKey(view);
+    if (key === this.lastStripKey) return;
+
+    if (!this.stripRenderer) this.stripRenderer = new TrayStripRenderer();
+    const image = await this.stripRenderer.render(view);
+    // The tray can be gone by the time the render lands.
+    if (!image || !this.tray || this.tray.isDestroyed?.()) return;
+
+    this.lastStripKey = key;
+    this.tray.setImage(image);
+    // The strip carries its own counts, so the title would be a second copy.
+    if (process.platform === 'darwin') this.tray.setTitle('');
+  }
+
+  private scheduleStripTimers(): void {
+    if (this.stripHoldTimer) {
+      clearTimeout(this.stripHoldTimer);
+      this.stripHoldTimer = null;
+    }
+    const holdEndsAt = this.stripMachine.holdEndsAt();
+    if (holdEndsAt !== null) {
+      this.stripHoldTimer = setTimeout(
+        () => {
+          this.stripHoldTimer = null;
+          void this.tickStrip();
+        },
+        Math.max(0, holdEndsAt - Date.now()) + 1,
+      );
+    }
+
+    if (!this.stripAgeTimer) {
+      this.stripAgeTimer = setInterval(() => void this.tickStrip(), STRIP_AGE_TICK_MS);
+      // Nothing in the menu bar is worth keeping the event loop alive for.
+      this.stripAgeTimer.unref?.();
+    }
+  }
+
+  private teardownStrip(): void {
+    if (this.stripHoldTimer) {
+      clearTimeout(this.stripHoldTimer);
+      this.stripHoldTimer = null;
+    }
+    if (this.stripAgeTimer) {
+      clearInterval(this.stripAgeTimer);
+      this.stripAgeTimer = null;
+    }
+    this.stripRenderer?.destroy();
+    this.stripRenderer = null;
+    this.lastStripKey = null;
+    this.namedSessionId = null;
+  }
+
+  /** Show or hide the menu bar strip, independently of the tray icon itself. */
+  setStripVisible(visible: boolean): void {
+    setShowTrayStrip(visible);
+    this.lastStripKey = null;
+    this.updateIcon();
   }
 
   private computeIconState(): TrayIconState {
@@ -1033,6 +1222,20 @@ export class TrayManager {
       }
     } catch (error) {
       logger.main.error('[TrayManager] Failed to seed unread sessions from database:', error);
+    }
+
+    // The quiet strip reports how long it has been quiet, and "since this app
+    // launched" is not that. One aggregate read gives it an honest starting point.
+    try {
+      const { rows } = await this.database.query<{ last_activity: unknown }>(
+        `SELECT MAX(updated_at) AS last_activity FROM ai_sessions WHERE is_archived = false`,
+      );
+      const seeded = rows[0]?.last_activity;
+      if (seeded !== null && seeded !== undefined) {
+        this.lastFleetActivityAt = toMillis(seeded);
+      }
+    } catch (error) {
+      logger.main.error('[TrayManager] Failed to seed last fleet activity from database:', error);
     }
   }
 

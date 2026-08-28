@@ -135,6 +135,8 @@ export const MCP_PROVIDER_IDS = {
   CLAUDE_AGENT: 'claude-agent',
   CODEX: 'codex',
   COPILOT: 'copilot',
+  GROK: 'grok',
+  CURSOR: 'cursor',
 } as const;
 
 export type MCPProviderId = typeof MCP_PROVIDER_IDS[keyof typeof MCP_PROVIDER_IDS];
@@ -143,6 +145,8 @@ export const ALL_MCP_PROVIDER_IDS: MCPProviderId[] = [
   MCP_PROVIDER_IDS.CLAUDE_AGENT,
   MCP_PROVIDER_IDS.CODEX,
   MCP_PROVIDER_IDS.COPILOT,
+  MCP_PROVIDER_IDS.GROK,
+  MCP_PROVIDER_IDS.CURSOR,
 ];
 
 /**

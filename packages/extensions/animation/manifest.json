@@ -51,7 +51,9 @@
       {
         "displayName": "Animation Editor",
         "filePatterns": ["*.anim.json"],
-        "component": "AnimationEditor"
+        "component": "AnimationEditor",
+        "supportsTranscriptEmbed": true,
+        "transcriptEmbedHeight": 420
       }
     ],
     "newFileMenu": [

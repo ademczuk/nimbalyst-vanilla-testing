@@ -50,6 +50,20 @@ const CUSTOM_ICONS: Record<string, (size: number, className: string) => React.Re
     </svg>
   ),
 
+  // Grok Build (xAI) -- the xAI slash mark
+  'grok-build': (size, className) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <path d="M6.9 15.6L16.3 2h3.4l-9.4 13.6H6.9zM4 22l3.6-5.2h3.4L7.4 22H4zm10.7 0V10.8l3-4.3V22h-3z"/>
+    </svg>
+  ),
+
+  // Cursor Agent -- the Cursor cube
+  'cursor-agent': (size, className) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <path d="M12 1.5L21.5 7v10L12 22.5 2.5 17V7L12 1.5zm0 2.31L4.5 8.15v7.7L12 20.19l7.5-4.34v-7.7L12 3.81zm0 2.31l5.5 3.18v6.4L12 18.88l-5.5-3.18v-6.4L12 6.12z"/>
+    </svg>
+  ),
+
   // LMStudio logo
   'lmstudio': (size, className) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" fillRule="evenodd" className={className}>

@@ -491,6 +491,12 @@ export const DEFAULT_MODELS = {
   lmstudio: 'lmstudio:local-model',
   opencode: 'opencode:anthropic/claude-sonnet-4-5',
   'copilot-cli': 'copilot-cli:default',
+  // Both catalogs are discovered from the CLI (`grok models`,
+  // `cursor-agent --list-models`) rather than curated here — a hand-maintained
+  // list is what hid newly released models in NIM-1486. These are only the
+  // fallbacks used when the CLI cannot be reached.
+  'grok-build': 'grok-build:grok-4.6',
+  'cursor-agent': 'cursor-agent:auto',
 };
 
 /**

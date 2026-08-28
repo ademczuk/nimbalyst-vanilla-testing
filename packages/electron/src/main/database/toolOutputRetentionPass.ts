@@ -50,7 +50,7 @@ const ESTIMATE_SAMPLE_ROWS = 2000;
  * Only these providers have a tombstone shape. Others are left alone rather
  * than guessed at.
  */
-const ELIGIBLE_SOURCE_PREFIXES = ['claude-code', 'openai-codex', 'copilot-cli'];
+const ELIGIBLE_SOURCE_PREFIXES = ['claude-code', 'openai-codex', 'copilot-cli', 'grok-build', 'cursor-agent'];
 
 export interface RetentionProgress {
   scanned: number;
