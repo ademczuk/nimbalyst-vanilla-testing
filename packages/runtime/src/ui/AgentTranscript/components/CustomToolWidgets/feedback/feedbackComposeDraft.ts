@@ -49,6 +49,41 @@ export interface FeedbackComposeSubject {
   shared: boolean;
 }
 
+/**
+ * The team-files folder every file subject in this request gets published into.
+ *
+ * One destination per request, not one per subject: the author is sending a set
+ * of artifacts to be looked at together, and splitting them across folders is a
+ * question nobody has asked for.
+ *
+ * `pendingFolder` is a folder the author named but that does not exist yet. It
+ * is deliberately NOT created when they name it -- the host creates it in its
+ * publish pass, right before the first document that needs it -- because
+ * abandoning a send must leave the team exactly as it was. The share dialog
+ * creates folders eagerly and can strand an empty one; this path does not.
+ */
+export interface FeedbackComposeDestination {
+  /** null is the team-files root. */
+  folderId: string | null;
+  /** Display path for the collapsed line. Empty string reads as the root. */
+  path: string;
+  pendingFolder?: { name: string; parentFolderId: string | null };
+}
+
+/**
+ * Where an unchosen destination lands.
+ *
+ * Not `lastSharedFolderId`. That value is a recency memory of an unrelated
+ * action -- share one spec into `Product/` and the next three mockups an agent
+ * asks about follow it there, which nobody decided. A request the author did not
+ * place goes somewhere named after what it is.
+ *
+ * Resolving this name to a folder id needs the team's folder index, which lives
+ * in the host, so the draft carries `undefined` and the host resolves it at
+ * publish time. That also keeps the collapsed line paintable with no round trip.
+ */
+export const FEEDBACK_DEFAULT_DESTINATION_NAME = 'Feedback requests';
+
 /** Who counts as "enough answers to wake the session". */
 export type FeedbackComposeQuorumMode = 'first' | 'all';
 
@@ -71,6 +106,12 @@ export interface FeedbackComposeDraft {
    * subject the author was not shown.
    */
   publishConfirmedSourceIds: string[];
+  /**
+   * Where file subjects get published. Absent means the author never opened the
+   * picker, which is the common case and resolves to
+   * `FEEDBACK_DEFAULT_DESTINATION_NAME` in the host.
+   */
+  destination?: FeedbackComposeDestination;
   /**
    * Tier 1 shows delivery settings as one collapsed line; this reveals them in
    * place. It is presentation only -- expanding does NOT promote the tier, and
@@ -294,6 +335,42 @@ export function unsharedSubjects(draft: FeedbackComposeDraft): FeedbackComposeSu
   return draft.subjects.filter((subject) => !subject.shared);
 }
 
+/**
+ * The subjects a destination actually applies to.
+ *
+ * A tracker is published by flipping its own visibility bit and never lands in
+ * a folder, so a request whose only unshared subject is a tracker must not be
+ * shown a destination -- it would name a place nothing goes.
+ */
+export function destinationSubjects(draft: FeedbackComposeDraft): FeedbackComposeSubject[] {
+  return unsharedSubjects(draft).filter((subject) => subject.ref.kind === 'file');
+}
+
+export function setDestination(
+  draft: FeedbackComposeDraft,
+  destination: FeedbackComposeDestination,
+): FeedbackComposeDraft {
+  return { ...draft, destination };
+}
+
+/**
+ * What the collapsed line calls the destination.
+ *
+ * Absent is the unchosen default, not the root: those are different states and
+ * conflating them would tell the author their mockups land at the top of team
+ * files when they do not.
+ */
+export function describeDestination(destination?: FeedbackComposeDestination): string {
+  if (!destination) return FEEDBACK_DEFAULT_DESTINATION_NAME;
+  if (destination.pendingFolder) {
+    const { name, parentFolderId } = destination.pendingFolder;
+    return parentFolderId && destination.path ? `${destination.path} / ${name}` : name;
+  }
+  // A persisted folder id can outlive the folder itself; the host reports that
+  // as a root selection rather than a name nobody can find.
+  return destination.path ? destination.path.split('/').join(' / ') : 'Team files';
+}
+
 export type FeedbackComposeBlockedReason =
   | 'noRecipients'
   | 'noAsks'
@@ -360,6 +437,11 @@ export interface FeedbackComposeSendPayload {
   deadline?: number;
   /** Subjects the author confirmed publishing; empty when nothing needs it. */
   publishSubjectRefs: ResourceRef[];
+  /**
+   * Where those subjects land. Absent hands the host the default, which is what
+   * it resolves when the author never opened the picker.
+   */
+  destination?: FeedbackComposeDestination;
 }
 
 export function requiredRecipientCount(draft: FeedbackComposeDraft): number {
@@ -386,6 +468,12 @@ export function feedbackComposeSendPayload(
     quorum: { requiredRecipientCount: requiredRecipientCount(draft) },
     deadline: draft.deadline,
     publishSubjectRefs,
+    // Only when something is actually being published. A request that publishes
+    // nothing has no destination, and sending one would have the host resolve
+    // (and possibly create) a folder for zero documents.
+    ...(publishSubjectRefs.length > 0 && draft.destination
+      ? { destination: draft.destination }
+      : {}),
   };
 }
 

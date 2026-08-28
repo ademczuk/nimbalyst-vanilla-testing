@@ -137,6 +137,23 @@ export const trashedSharedDocumentsAtom = atom((get) =>
     .filter((document) => document.trashedAt != null)
     .sort((left, right) => (right.trashedAt ?? 0) - (left.trashedAt ?? 0)),
 );
+
+/**
+ * The readable documents of one scope, whether or not it is the active one.
+ *
+ * `sharedDocumentsAtom` answers for the scope the window is *browsing*, which
+ * a window that never mounts a Shared Docs surface never sets -- the
+ * organization window is exactly that, so the active list is permanently empty
+ * there. A window that holds a scope key of its own and needs the list for
+ * something other than browsing it, such as resolving a document reference
+ * inside a message, addresses the scope directly through this.
+ *
+ * Reactive, unlike `getSharedDocumentsForScopeKey`, so a document shared after
+ * a reference was rendered still reaches the reference.
+ */
+export const sharedDocumentsForScopeAtom = atomFamily((scopeKey: string) =>
+  atom((get) => get(documentsByScope(scopeKey)).filter((document) => document.trashedAt == null)),
+);
 export const sharedFoldersAtom = activeListAtom(foldersByScope);
 export const teamSyncStatusAtom = atom<CollabDocsUIStatus, [CollabDocsUIStatus], void>(
   (get) => {

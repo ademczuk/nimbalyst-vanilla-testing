@@ -332,22 +332,46 @@ export function isInteractivePromptTool(toolName: string): boolean {
   return !!match && INTERACTIVE_PROMPT_TOOLS.has(match[1]);
 }
 
+/**
+ * Whether any interactive prompt in this transcript is still answerable.
+ *
+ * "No result yet" is not sufficient on its own. Typing a new prompt while a
+ * prompt widget is up aborts the turn, and the abort leaves the tool_use
+ * permanently unmatched -- no tool_result is ever written for it. Deriving
+ * pending purely from the missing result pinned the amber "waiting for your
+ * response" indicator on sessions that were actively running, because the
+ * derivation re-runs from message history on every transcript mount and kept
+ * rediscovering the dead prompt. (#871 fixed the same symptom on the persisted
+ * `hasPendingPrompt` bit; this is the message-derived twin.)
+ *
+ * A `user_message` after the prompt is the abandonment signal: the user chose
+ * to type instead of answering, so the prompt can never be resolved. Nothing
+ * else is treated as abandonment -- notably not `turn_ended`, because a prompt
+ * backgrounded at the harness's 120s tool timeout outlives its turn and stays
+ * answerable (see #1341 and `isStrandedPromptAck` in TranscriptProjector).
+ */
+export function hasUnansweredInteractivePrompt(
+  messages: Array<{ type?: string; interactivePrompt?: { status?: string }; toolCall?: { toolName?: string; result?: unknown } }>
+): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    // Everything before the last user message was superseded by it.
+    if (msg.type === 'user_message') return false;
+    // Interactive prompts projected from canonical events
+    if (msg.type === 'interactive_prompt' && msg.interactivePrompt?.status === 'pending') return true;
+    // Interactive tools stored as tool_calls (from TranscriptTransformer)
+    if (msg.toolCall?.toolName && isInteractivePromptTool(msg.toolCall.toolName) && !msg.toolCall.result) return true;
+  }
+  return false;
+}
+
 export const refreshPendingPromptsAtom = atom(
   null,
   (get, set, sessionId: string) => {
     // Pending prompts are now rendered from canonical transcript events via widgets.
     // Update the unified pending interactive prompt state from session messages.
     const messages = get(sessionMessagesAtom(sessionId));
-    const hasPendingPrompt = messages.some(
-      msg => {
-        // Interactive prompts projected from canonical events
-        if (msg.type === 'interactive_prompt' && msg.interactivePrompt?.status === 'pending') return true;
-        // Interactive tools stored as tool_calls (from TranscriptTransformer)
-        if (msg.toolCall?.toolName && isInteractivePromptTool(msg.toolCall.toolName) && !msg.toolCall.result) return true;
-        return false;
-      }
-    );
-    set(sessionHasPendingInteractivePromptAtom(sessionId), hasPendingPrompt);
+    set(sessionHasPendingInteractivePromptAtom(sessionId), hasUnansweredInteractivePrompt(messages));
   }
 );
 
@@ -1506,6 +1530,9 @@ export const convertToWorkstreamAtom = atom(
           },
         },
         workspaceId: workspacePath,
+        // The app manufactures this root to hold sessions the user already
+        // made; nobody asked for a new session, so it must not read as one.
+        launchSource: 'workstream_convert',
       });
 
       if (!createResult.success || !createResult.id) {

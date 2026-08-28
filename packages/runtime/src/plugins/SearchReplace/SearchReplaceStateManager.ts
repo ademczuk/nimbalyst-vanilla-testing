@@ -7,6 +7,12 @@
 
 export interface SearchReplaceState {
   isOpen: boolean;
+  /**
+   * Bumped every time the Find command is issued. The bar focuses its input on
+   * a change to this, not on `isOpen`, so a second Find on an already-open bar
+   * still pulls focus back out of the document (#1388).
+   */
+  focusNonce: number;
   searchString: string;
   replaceString: string;
   caseInsensitive: boolean;
@@ -27,6 +33,7 @@ class SearchReplaceStateManagerClass {
   private getDefaultState(): SearchReplaceState {
     return {
       isOpen: false,
+      focusNonce: 0,
       searchString: '',
       replaceString: '',
       caseInsensitive: true,
@@ -87,15 +94,21 @@ class SearchReplaceStateManagerClass {
   }
 
   /**
-   * Toggle the search/replace bar for a tab
+   * Handle the Find command (Cmd+F) for a tab.
+   *
+   * Find is not a toggle. Every editor the user has ever used opens the bar on
+   * the first Find and refocuses the already-open field on the next one -- it
+   * never closes the bar and never hands focus back to the document, because
+   * doing so turns the following keystrokes into unintended edits (#1388).
+   * Escape is what closes the bar.
    */
-  toggle(tabId: string): void {
+  openAndFocus(tabId: string): void {
     if (!tabId) {
       throw new Error('tabId is required');
     }
 
     const currentState = this.getState(tabId);
-    this.updateState(tabId, { isOpen: !currentState.isOpen });
+    this.updateState(tabId, { isOpen: true, focusNonce: currentState.focusNonce + 1 });
   }
 
   /**

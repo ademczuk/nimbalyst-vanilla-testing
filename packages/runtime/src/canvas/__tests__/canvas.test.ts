@@ -1,5 +1,7 @@
 // @vitest-environment node
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 
@@ -13,6 +15,8 @@ import {
   type CanvasDocument,
 } from '../CanvasDocument';
 import { canvasCollabCodec } from '../canvasCollabCodec';
+import { canvasCardKind, canvasNodeReference } from '../canvasFlowMapping';
+import { CANVAS_SNAP_GRID } from '../canvasSnapping';
 import {
   convertMockupProjectToCanvas,
   type MockupProjectCanvasSource,
@@ -402,5 +406,64 @@ describe('Project Canvas format and codec', () => {
       y: 0,
       zoom: 1,
     });
+  });
+});
+
+/**
+ * The canvas authoring skill ships a hand-written board to AI sessions, and a
+ * format change would rot it silently -- the skill is prose, so nothing else
+ * ever executes what it teaches. Running its worked example through the real
+ * parser is what keeps "what we tell agents to write" and "what we accept"
+ * from drifting apart.
+ */
+describe('canvas authoring skill', () => {
+  const SKILL_PATH = join(
+    __dirname,
+    '../../../../extensions/canvas/claude-plugin/skills/canvas/SKILL.md'
+  );
+
+  const blocks = [
+    ...readFileSync(SKILL_PATH, 'utf-8').matchAll(/```json\n([\s\S]*?)```/g),
+  ].map((match) => match[1]);
+
+  it('every documented snippet is valid JSON', () => {
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const block of blocks) expect(() => JSON.parse(block)).not.toThrow();
+  });
+
+  it('the worked example is a board the editor would accept', () => {
+    const worked = blocks.find((block) => block.includes('"frame-flow"'));
+    expect(worked).toBeDefined();
+    const document = parseCanvasDocument(worked as string);
+
+    const ids = new Set((document.nodes ?? []).map((node) => node.id));
+    for (const edge of document.edges ?? []) {
+      expect(ids.has(edge.fromNode)).toBe(true);
+      expect(ids.has(edge.toNode)).toBe(true);
+    }
+
+    // Each card draws as the kind the skill's table claims it does.
+    expect(
+      Object.fromEntries(
+        (document.nodes ?? []).map((node) => [node.id, canvasCardKind(node)])
+      )
+    ).toEqual({
+      'frame-flow': 'group',
+      signup: 'reference',
+      verify: 'reference',
+      'first-doc': 'reference',
+      'note-question': 'sticky',
+    });
+
+    for (const node of document.nodes ?? []) {
+      // On the grid the skill tells authors to use, so opening the board and
+      // nudging a card does not immediately shift the whole layout.
+      for (const value of [node.x, node.y, node.width, node.height]) {
+        expect(Math.abs(value % CANVAS_SNAP_GRID)).toBe(0);
+      }
+      // A file card's spec field and its reference must name one path.
+      const reference = canvasNodeReference(node);
+      if (reference?.kind === 'file') expect(node.file).toBe(reference.path);
+    }
   });
 });

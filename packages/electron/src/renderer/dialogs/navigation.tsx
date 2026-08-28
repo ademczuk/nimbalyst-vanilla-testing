@@ -10,6 +10,10 @@ import React from 'react';
 import { registerDialog } from '../contexts/DialogContext';
 import type { DialogConfig } from '../contexts/DialogContext.types';
 import { UnifiedQuickOpen, type UnifiedQuickOpenTab } from '../components/UnifiedQuickOpen';
+import {
+  CanvasCardPickerDialog,
+  type CanvasCardPickerData,
+} from '../components/EmbedFrame/CanvasCardPickerDialog';
 import { DIALOG_IDS } from './registry';
 
 export interface UnifiedQuickOpenData {
@@ -55,11 +59,44 @@ function UnifiedQuickOpenWrapper({
   );
 }
 
+/**
+ * The canvas picker resolves rather than navigates, so its `onPick` has to fire
+ * on *both* exits. Closing without a choice must answer `null` and not leave
+ * `pickCanvasCardReference`'s promise pending forever, which would wedge the
+ * board's "Doc" button for the rest of the session.
+ */
+function CanvasCardPickerWrapper({
+  isOpen,
+  onClose,
+  data,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  data: CanvasCardPickerData;
+}) {
+  return (
+    <CanvasCardPickerDialog
+      isOpen={isOpen}
+      onClose={() => {
+        data.onPick(null);
+        onClose();
+      }}
+      data={data}
+    />
+  );
+}
+
 export function registerNavigationDialogs() {
   registerDialog<UnifiedQuickOpenData>({
     id: DIALOG_IDS.UNIFIED_QUICK_OPEN,
     group: 'navigation',
     component: UnifiedQuickOpenWrapper as DialogConfig<UnifiedQuickOpenData>['component'],
+    priority: 100,
+  });
+  registerDialog<CanvasCardPickerData>({
+    id: DIALOG_IDS.CANVAS_CARD_PICKER,
+    group: 'navigation',
+    component: CanvasCardPickerWrapper as DialogConfig<CanvasCardPickerData>['component'],
     priority: 100,
   });
 }

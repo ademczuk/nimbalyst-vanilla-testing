@@ -164,9 +164,10 @@ export function usePullRequestPanel({
 
   const handleStartReviewSession = useCallback(async () => {
     if (!selectedPr || !remote) return;
-    const sessionId = await dispatchCreateNewSession(
-      buildReviewContributionDraft(remote, selectedPr.number),
-    );
+    const sessionId = await dispatchCreateNewSession({
+      initialDraft: buildReviewContributionDraft(remote, selectedPr.number),
+      launchSource: 'pull_request_panel',
+    });
     if (!sessionId) return;
     linkSessionToPrTrackers(sessionId, selectedPr.number);
     chatRef.current?.openSession(sessionId);

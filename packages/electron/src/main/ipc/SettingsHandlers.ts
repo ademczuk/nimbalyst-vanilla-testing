@@ -699,6 +699,12 @@ export function registerSettingsHandlers() {
     });
 
     safeHandle('developer-mode:set', async (_event, enabled: boolean) => {
+        // Logged because this write was previously silent, which left no way to
+        // tell a spurious flip back to Standard Mode from a deliberate one.
+        const before = isDeveloperMode();
+        if (before !== enabled) {
+            logger.main.info(`[SettingsHandlers] developer-mode:set ${before} -> ${enabled}`);
+        }
         setDeveloperMode(enabled);
     });
 

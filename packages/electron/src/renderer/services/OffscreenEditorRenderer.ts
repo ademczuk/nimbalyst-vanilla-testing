@@ -17,6 +17,7 @@ import type { EditorHost } from '@nimbalyst/runtime';
 import { getExtensionLoader, getBaseThemeColors, hasExtensionEditorAPI, getExtensionEditorAPI, type ExtendedThemeColors } from '@nimbalyst/runtime';
 import { waitForEditorRegistration } from './waitForEditorRegistration';
 import { assertFileSaveSucceeded } from '../utils/fileSaveResult';
+import { createProjectFileSystemHost } from './projectFileSystemHost';
 // Note: Window globals for mockup annotations are declared in @nimbalyst/runtime
 
 /**
@@ -362,6 +363,21 @@ class OffscreenEditorRendererImpl {
       setEditorContext(): void {
         // No editor context for offscreen editors
       },
+
+      /*
+       * Sibling-file reads, the same surface a visible tab gets.
+       *
+       * Without this an editor whose document references files next to it --
+       * an animation's `htmlFile` partials, a mockup's assets -- renders those
+       * regions as nothing here while looking correct in a tab, so a screenshot
+       * taken to check the work quietly disagrees with the work. Nothing about
+       * the offscreen path made `fs` impossible; it was simply never wired.
+       */
+      fs: createProjectFileSystemHost({
+        // Nothing on screen to refresh: this host exists to render once.
+        onAfterWrite: async () => {},
+      }),
+
       setEditorContextItems(): void {
         // No editor context for offscreen editors
       },

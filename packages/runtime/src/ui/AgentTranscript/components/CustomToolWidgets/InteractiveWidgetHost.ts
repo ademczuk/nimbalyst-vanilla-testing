@@ -39,8 +39,11 @@ export interface RequestUserInputResponse {
 // Feedback Request Types
 // ============================================================
 
-import type { FeedbackComposeSendPayload } from './feedback/feedbackComposeDraft';
-export type { FeedbackComposeSendPayload };
+import type {
+  FeedbackComposeDestination,
+  FeedbackComposeSendPayload,
+} from './feedback/feedbackComposeDraft';
+export type { FeedbackComposeDestination, FeedbackComposeSendPayload };
 
 /**
  * Declared with protocol types rather than imported from `collab-client`,
@@ -178,6 +181,24 @@ export interface InteractiveWidgetHost {
    * AskUserQuestion path acquiring a transport dependency by proximity.
    */
   feedbackRequestSend?(payload: FeedbackComposeSendPayload): Promise<FeedbackRequestSendResult>;
+
+  /**
+   * Ask the author which team-files folder this request's subjects land in.
+   *
+   * Resolves null when the picker is dismissed, which leaves the draft's
+   * destination exactly as it was -- dismissing a picker is not a choice.
+   *
+   * Optional like the rest of this section. Without it the compose surface
+   * still names the destination it will use; it just has no way to change it,
+   * and publishing falls back to asking per subject at send time. The folder
+   * index lives in the Electron renderer and has no mobile counterpart, which
+   * is why this is a host method and not a tree rendered in this package.
+   */
+  pickFeedbackDestination?(current: {
+    folderId: string | null;
+    /** How many subjects are being placed, so the picker can say so. */
+    subjectCount: number;
+  }): Promise<FeedbackComposeDestination | null>;
 
   /**
    * Paint one artifact bound to an ask entry, so the author can see what they

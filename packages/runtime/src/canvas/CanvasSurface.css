@@ -402,13 +402,59 @@
   opacity: 0;
 }
 
+/*
+ * Resize affordances, sized in *screen* pixels rather than canvas ones.
+ *
+ * They live inside React Flow's scaled viewport, so its 5px default handle is
+ * 2.5 device pixels at 50% zoom and 1 at 20% -- a target nobody can hit, on a
+ * surface whose whole point is that you work zoomed out. Every length below is
+ * divided by the live zoom (written to `--nim-canvas-resize-scale` by the
+ * surface's `onMove`), so a handle is the same physical size wherever the board
+ * happens to be.
+ *
+ * The `::before` pads are the actual grab area and are deliberately much larger
+ * than the dot and the line they sit on: a 1px edge is not a pointer target,
+ * and a corner you have to be precise about is the difference between "the card
+ * resizes" and "the card moved instead".
+ */
+.canvas-surface {
+  --nim-canvas-resize-scale: 1;
+}
+
+/* A drag from the file or document tree is over the board. */
+.canvas-surface--drop-target::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  border: 2px dashed var(--nim-primary);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--nim-primary) 6%, transparent);
+}
+
 .canvas-card__resize-line {
   border-color: var(--nim-primary);
 }
 
+.canvas-card__resize-line::before {
+  content: '';
+  position: absolute;
+  inset: calc(-5px * var(--nim-canvas-resize-scale));
+}
+
 .canvas-card__resize-handle {
+  width: calc(9px * var(--nim-canvas-resize-scale));
+  height: calc(9px * var(--nim-canvas-resize-scale));
   background: var(--nim-primary);
-  border: 1px solid var(--nim-bg);
+  border: calc(1px * var(--nim-canvas-resize-scale)) solid var(--nim-bg);
+  border-radius: calc(2px * var(--nim-canvas-resize-scale));
+}
+
+.canvas-card__resize-handle::before {
+  content: '';
+  position: absolute;
+  inset: calc(-7px * var(--nim-canvas-resize-scale));
 }
 
 .canvas-card-toolbar {

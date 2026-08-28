@@ -1181,7 +1181,7 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
       if (hasEditorFind(monacoWrapper)) {
         monacoWrapper.openFind();
       } else if (isLexicalSearchEditor(lexicalEditorRef.current)) {
-        SearchReplaceStateManager.toggle(filePath);
+        SearchReplaceStateManager.openAndFocus(filePath);
       }
     });
   }, [filePath]);

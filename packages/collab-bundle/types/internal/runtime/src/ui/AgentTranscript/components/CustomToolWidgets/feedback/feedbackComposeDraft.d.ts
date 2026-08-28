@@ -34,6 +34,42 @@ export interface FeedbackComposeSubject {
     /** True when the subject is already visible to the recipients' team. */
     shared: boolean;
 }
+/**
+ * The team-files folder every file subject in this request gets published into.
+ *
+ * One destination per request, not one per subject: the author is sending a set
+ * of artifacts to be looked at together, and splitting them across folders is a
+ * question nobody has asked for.
+ *
+ * `pendingFolder` is a folder the author named but that does not exist yet. It
+ * is deliberately NOT created when they name it -- the host creates it in its
+ * publish pass, right before the first document that needs it -- because
+ * abandoning a send must leave the team exactly as it was. The share dialog
+ * creates folders eagerly and can strand an empty one; this path does not.
+ */
+export interface FeedbackComposeDestination {
+    /** null is the team-files root. */
+    folderId: string | null;
+    /** Display path for the collapsed line. Empty string reads as the root. */
+    path: string;
+    pendingFolder?: {
+        name: string;
+        parentFolderId: string | null;
+    };
+}
+/**
+ * Where an unchosen destination lands.
+ *
+ * Not `lastSharedFolderId`. That value is a recency memory of an unrelated
+ * action -- share one spec into `Product/` and the next three mockups an agent
+ * asks about follow it there, which nobody decided. A request the author did not
+ * place goes somewhere named after what it is.
+ *
+ * Resolving this name to a folder id needs the team's folder index, which lives
+ * in the host, so the draft carries `undefined` and the host resolves it at
+ * publish time. That also keeps the collapsed line paintable with no round trip.
+ */
+export declare const FEEDBACK_DEFAULT_DESTINATION_NAME = "Feedback requests";
 /** Who counts as "enough answers to wake the session". */
 export type FeedbackComposeQuorumMode = 'first' | 'all';
 export interface FeedbackComposeDraft {
@@ -55,6 +91,12 @@ export interface FeedbackComposeDraft {
      * subject the author was not shown.
      */
     publishConfirmedSourceIds: string[];
+    /**
+     * Where file subjects get published. Absent means the author never opened the
+     * picker, which is the common case and resolves to
+     * `FEEDBACK_DEFAULT_DESTINATION_NAME` in the host.
+     */
+    destination?: FeedbackComposeDestination;
     /**
      * Tier 1 shows delivery settings as one collapsed line; this reveals them in
      * place. It is presentation only -- expanding does NOT promote the tier, and
@@ -95,6 +137,23 @@ export declare function removeSubject(draft: FeedbackComposeDraft, sourceId: str
  */
 export declare function confirmPublish(draft: FeedbackComposeDraft): FeedbackComposeDraft;
 export declare function unsharedSubjects(draft: FeedbackComposeDraft): FeedbackComposeSubject[];
+/**
+ * The subjects a destination actually applies to.
+ *
+ * A tracker is published by flipping its own visibility bit and never lands in
+ * a folder, so a request whose only unshared subject is a tracker must not be
+ * shown a destination -- it would name a place nothing goes.
+ */
+export declare function destinationSubjects(draft: FeedbackComposeDraft): FeedbackComposeSubject[];
+export declare function setDestination(draft: FeedbackComposeDraft, destination: FeedbackComposeDestination): FeedbackComposeDraft;
+/**
+ * What the collapsed line calls the destination.
+ *
+ * Absent is the unchosen default, not the root: those are different states and
+ * conflating them would tell the author their mockups land at the top of team
+ * files when they do not.
+ */
+export declare function describeDestination(destination?: FeedbackComposeDestination): string;
 export type FeedbackComposeBlockedReason = 'noRecipients' | 'noAsks' | 'unassignedAsk' | 'unassignedRecipient';
 export type FeedbackComposeSubmitPlan = {
     kind: 'blocked';
@@ -132,6 +191,11 @@ export interface FeedbackComposeSendPayload {
     deadline?: number;
     /** Subjects the author confirmed publishing; empty when nothing needs it. */
     publishSubjectRefs: ResourceRef[];
+    /**
+     * Where those subjects land. Absent hands the host the default, which is what
+     * it resolves when the author never opened the picker.
+     */
+    destination?: FeedbackComposeDestination;
 }
 export declare function requiredRecipientCount(draft: FeedbackComposeDraft): number;
 export declare function feedbackComposeSendPayload(draft: FeedbackComposeDraft, publishSubjectRefs: ResourceRef[]): FeedbackComposeSendPayload;

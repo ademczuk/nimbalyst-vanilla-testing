@@ -16,9 +16,15 @@ import { join } from 'path';
 import { logger } from '../utils/logger';
 import { getPreloadPath } from '../utils/appPaths';
 import { findWindowByWorkspace } from '../window/WindowManager';
+import {
+  registerCaptureWindowMount,
+  unregisterCaptureWindowMount,
+  clearCaptureWindowMounts,
+} from '../window/captureWindowWorkspace';
 
 interface OffscreenEditorEntry {
   filePath: string;
+  workspacePath: string;
   mountedAt: Date;
   lastUsed: Date;
   refCount: number;
@@ -74,7 +80,9 @@ export class OffscreenEditorManager {
       },
     });
 
+    const captureWebContentsId = this.captureWindow.webContents.id;
     this.captureWindow.on('closed', () => {
+      clearCaptureWindowMounts(captureWebContentsId);
       this.captureWindow = null;
       this.captureWindowReady = false;
     });
@@ -121,6 +129,11 @@ export class OffscreenEditorManager {
       existing.refCount++;
       existing.lastUsed = new Date();
 
+      // Re-publish so this file is the capture window's most recent mount again.
+      if (this.captureWindow && !this.captureWindow.isDestroyed()) {
+        registerCaptureWindowMount(this.captureWindow.webContents.id, filePath, existing.workspacePath);
+      }
+
       // Cancel pending unmount timer
       if (existing.unmountTimer) {
         clearTimeout(existing.unmountTimer);
@@ -144,6 +157,7 @@ export class OffscreenEditorManager {
     // Create entry before sending IPC (renderer will report when ready)
     const entry: OffscreenEditorEntry = {
       filePath,
+      workspacePath,
       mountedAt: new Date(),
       lastUsed: new Date(),
       refCount: 1,
@@ -151,6 +165,11 @@ export class OffscreenEditorManager {
     };
 
     this.editors.set(filePath, entry);
+
+    // The capture window is not a WindowManager window, so it has no active
+    // project. Publish the mount's workspace so main-process handlers can still
+    // resolve one for requests the mounted editor makes (extension backend tools).
+    registerCaptureWindowMount(captureWin.webContents.id, filePath, workspacePath);
 
     // Send IPC to capture window renderer to mount
     try {
@@ -167,6 +186,7 @@ export class OffscreenEditorManager {
     } catch (error) {
       // Clean up on failure
       this.editors.delete(filePath);
+      unregisterCaptureWindowMount(captureWin.webContents.id, filePath);
       throw error;
     }
   }
@@ -347,6 +367,7 @@ export class OffscreenEditorManager {
     // Send unmount to the capture window where offscreen editors live
     if (this.captureWindow && !this.captureWindow.isDestroyed()) {
       this.captureWindow.webContents.send('offscreen-editor:unmount', { filePath });
+      unregisterCaptureWindowMount(this.captureWindow.webContents.id, filePath);
     }
 
     this.editors.delete(filePath);
@@ -410,6 +431,7 @@ export class OffscreenEditorManager {
 
     // Close the hidden capture window
     if (this.captureWindow && !this.captureWindow.isDestroyed()) {
+      clearCaptureWindowMounts(this.captureWindow.webContents.id);
       this.captureWindow.close();
       this.captureWindow = null;
     }

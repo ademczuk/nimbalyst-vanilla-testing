@@ -341,6 +341,7 @@ export const SessionLaunchPopup: React.FC<SessionLaunchPopupProps> = ({ workspac
           model: selectedModel,
           mode: launchMode,
           selectSession: false,
+          launchSource: 'launch_popup',
           metadata: {
             effortLevel,
             thinkingMode,

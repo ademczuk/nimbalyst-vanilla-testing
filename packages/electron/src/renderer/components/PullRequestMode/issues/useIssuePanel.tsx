@@ -181,9 +181,10 @@ export function useIssuePanel({
 
   const handleStartInvestigationSession = useCallback(async () => {
     if (!selectedIssue || !remote) return;
-    const sessionId = await dispatchCreateNewSession(
-      buildInvestigateDraft(remote, selectedIssue.number),
-    );
+    const sessionId = await dispatchCreateNewSession({
+      initialDraft: buildInvestigateDraft(remote, selectedIssue.number),
+      launchSource: 'issue_panel',
+    });
     if (!sessionId) return;
     await linkSessionToIssueTrackers(sessionId, selectedIssue);
     chatRef.current?.openSession(sessionId);

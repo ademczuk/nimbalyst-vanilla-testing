@@ -15,6 +15,8 @@ A concise reference of all features in the product. Keep this up to date as feat
 - **Browser** (`.html`, `.htm`, `.browser.json`) -- native Chromium `WebContentsView` (not an iframe, so frame-blocking sites load), URL bar / back-forward / reload, workspace-scoped `nim-preview://` local preview, source-mode toggle, and agentic control AI tools (navigate, click, type, evaluate, scroll, get_page_info, screenshot) over editor-backed or agent-owned headless sessions
 - **Image generation project editor** (`.imgproj`) -- multi-variant AI image generation with iterative refinement
 - **Astro editor** (`.astro`) -- schema-aware frontmatter form header
+- **Animation editor** (`.anim.json`) -- step-based animated explainer diagrams with a scrubbable timeline, drag-to-retime step boundaries, click-a-part-to-chat selection, and HTML/GIF/MP4 export
+- **Project Canvas** (`.canvas`) -- infinite JSON Canvas board whose cards mount the real editor for the file or shared document they reference, with frames, stickies, labeled edges, and zoom-driven card mounting
 - **Image viewer** (`.png`, `.jpg`, `.gif`, `.svg`, `.webp`, `.bmp`, `.ico`)
 
 ### Cross-Editor Features
@@ -334,6 +336,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 
 ### Built-in Extensions
 
+- Animation — step-based animated explainer diagrams, with an authoring skill and an `/animate` command
 - Automations
 - Astro Editor
 - CSV Spreadsheet
@@ -348,6 +351,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Nimbalyst Memory — local project-knowledge brain (hybrid search + facts) for the voice and coding agents
 - PDF Viewer
 - Planning
+- Project Canvas — authoring skill for `.canvas` boards; the editor itself is built in
 - Project Graph — navigable whole-project graph of plans, trackers, sessions, commits, and files, with a horizontally scrollable **Timeline mode** (phase-colored lifecycle bars per item; collapse items into per-tag activity lanes)
 - SQLite Browser
 

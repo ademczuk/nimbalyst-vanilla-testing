@@ -2,6 +2,7 @@ import log from 'electron-log/main';
 import Store from 'electron-store';
 import { app, ipcMain } from 'electron';
 import { formatLogArgs } from './formatLogArgs';
+import { createConsoleStallGuard } from './consoleStallGuard';
 
 // Initialize electron-log for IPC communication with renderer.
 // electron-log registers an IPC handler for '__ELECTRON_LOG__' when initialize() is called.
@@ -284,6 +285,34 @@ function configureLogger() {
   // Clean, readable format
   log.transports.console.format = '[{h}:{i}:{s}] {scope}: {text}';
   log.transports.file.format = '[{y}-{m}-{d} {h}:{i}:{s}.{ms}] {scope}: {text}';
+
+  installConsoleStallGuard();
+}
+
+/**
+ * Every terminal-bound write shares one guard, because they share one TTY.
+ * See `consoleStallGuard.ts` for why a log line can block the main thread.
+ *
+ * Deliberately NOT applied to `log.transports.file` -- the file transport is
+ * what makes dropping a terminal line lossless.
+ */
+const terminalGuard = createConsoleStallGuard({
+  writeNotice: (text) => process.stderr.write(`${text}\n`),
+});
+
+export function getConsoleStallStats() {
+  return terminalGuard.stats();
+}
+
+/** Wraps electron-log's console transport so its writes cannot block unbounded. */
+let consoleTransportGuarded = false;
+function installConsoleStallGuard(): void {
+  if (consoleTransportGuarded) return;
+  consoleTransportGuarded = true;
+  const originalWriteFn = log.transports.console.writeFn;
+  log.transports.console.writeFn = (payload) => {
+    terminalGuard.run(() => originalWriteFn(payload));
+  };
 }
 
 // Create a scoped logger for a component
@@ -432,30 +461,33 @@ export function overrideConsole() {
     debug: console.debug.bind(console)
   };
 
-  // Override console methods to log to both file and original console (stdout)
+  // Override console methods to log to both file and original console (stdout).
+  // The re-emission goes through the shared terminal guard: it is a synchronous
+  // TTY write in dev, and an unguarded one has blocked the main thread for
+  // 12.6s. See `consoleStallGuard.ts`.
   console.log = (...args: any[]) => {
     logger.main.info(formatLogArgs(args));
-    originalConsole.log(...args); // Also log to stdout
+    terminalGuard.run(() => originalConsole.log(...args)); // Also log to stdout
   };
 
   console.error = (...args: any[]) => {
     logger.main.error(formatLogArgs(args));
-    originalConsole.error(...args); // Also log to stderr
+    terminalGuard.run(() => originalConsole.error(...args)); // Also log to stderr
   };
 
   console.warn = (...args: any[]) => {
     logger.main.warn(formatLogArgs(args));
-    originalConsole.warn(...args); // Also log to stderr
+    terminalGuard.run(() => originalConsole.warn(...args)); // Also log to stderr
   };
 
   console.info = (...args: any[]) => {
     logger.main.info(formatLogArgs(args));
-    originalConsole.info(...args); // Also log to stdout
+    terminalGuard.run(() => originalConsole.info(...args)); // Also log to stdout
   };
 
   console.debug = (...args: any[]) => {
     logger.main.debug(formatLogArgs(args));
-    originalConsole.debug(...args); // Also log to stdout
+    terminalGuard.run(() => originalConsole.debug(...args)); // Also log to stdout
   };
 
   return originalConsole;

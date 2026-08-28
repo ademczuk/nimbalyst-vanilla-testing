@@ -36,6 +36,10 @@ import {
   getSharedDocumentRenameParts,
   resolveSharedDocumentTypePresentation,
 } from './documentPresentation';
+import {
+  COLLAB_DOCUMENT_DRAG_TYPE,
+  type CollabDocumentDragPayload,
+} from './documentDrag';
 
 // ---------------------------------------------------------------------------
 // TeamSync status indicator -- shown in the header subtitle slot
@@ -989,8 +993,23 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
           onContextMenu={(event) => handleContextMenu(event, node)}
           draggable
           onDragStart={(event) => {
-            event.dataTransfer.effectAllowed = 'move';
+            // `copyMove`, not `move`: the folder drop targets below still ask
+            // for `move` explicitly, while a surface that only *references* a
+            // document (a project canvas) asks for `copy` and would otherwise
+            // have its drop refused outright.
+            event.dataTransfer.effectAllowed = 'copyMove';
             event.dataTransfer.setData('text/plain', node.document.documentId);
+            // A second, self-describing payload for anything outside this tree.
+            // `text/plain` alone is a bare id: no org to address it in, and no
+            // title, so a card built from it would be labelled with a UUID.
+            event.dataTransfer.setData(
+              COLLAB_DOCUMENT_DRAG_TYPE,
+              JSON.stringify({
+                orgId: scope.orgId,
+                documentId: node.document.documentId,
+                title: node.name,
+              } satisfies CollabDocumentDragPayload),
+            );
             setDraggedDocument({
               documentId: node.document.documentId,
               sourcePath: node.path,

@@ -8,7 +8,9 @@
 import type { TipDefinition } from '../types';
 import { actionPromptsTip } from './action-prompts';
 import { agentDiagramTip } from './agent-diagram';
+import { animationDiscoverTip } from './animation-discover';
 import { autoCommitTip } from './auto-commit';
+import { canvasDiscoverTip } from './canvas-discover';
 import { claudeMdTip } from './claude-md';
 import { contentSearchTip } from './content-search';
 import { datamodelDiscoverTip } from './datamodel-discover';
@@ -51,6 +53,8 @@ export const tips: TipDefinition[] = [
   mockupDiscoverTip,
   datamodelDiscoverTip,
   spreadsheetDiscoverTip,
+  animationDiscoverTip,
+  canvasDiscoverTip,
   // Sharing
   teamsMultiplayerTip,
   sessionSharedTip,

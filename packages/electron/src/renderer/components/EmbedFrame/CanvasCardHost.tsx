@@ -56,6 +56,8 @@ import { store } from "@nimbalyst/runtime/store";
 import { parseCanvasDocumentReference } from "./canvasDocumentReference";
 
 import { customEditorRegistry } from "../CustomEditors/registry";
+import { NimbalystMarkdownEditor } from "../editors/NimbalystMarkdownEditor";
+import { isMarkdownFile } from "../../utils/fileUtils";
 import { fileChangedOnDiskAtomFamily } from "../../store/atoms/fileWatch";
 import { useTheme } from "../../hooks/useTheme";
 import { createEmbeddedFileHost } from "./createEmbeddedFileHost";
@@ -105,6 +107,17 @@ const CanvasFileCard: React.FC<CanvasCardRenderProps> = ({
       absolutePath
         ? customEditorRegistry.findRegistrationForFile(absolutePath)
         : undefined,
+    [absolutePath]
+  );
+  /*
+   * Markdown is the app's own editor, not an extension's, so it is absent from
+   * `customEditorRegistry` and a `.md` card used to render "No installed
+   * extension renders notes.md" -- on the single most common file type in a
+   * Nimbalyst workspace. It takes the same `EditorHost` every registration's
+   * component takes, so the only thing missing was the branch.
+   */
+  const isMarkdown = useMemo(
+    () => Boolean(absolutePath) && isMarkdownFile(absolutePath as string),
     [absolutePath]
   );
 
@@ -256,7 +269,7 @@ const CanvasFileCard: React.FC<CanvasCardRenderProps> = ({
       />
     );
   }
-  if (!registration) {
+  if (!registration && !isMarkdown) {
     return (
       <CardNotice
         title={label || basename(absolutePath)}
@@ -267,7 +280,9 @@ const CanvasFileCard: React.FC<CanvasCardRenderProps> = ({
   }
   if (!host) return null;
 
-  const EditorComponent = registration.component;
+  // A registered extension wins over the markdown fallback, so an extension
+  // that claims `.md` still gets it.
+  const EditorComponent = registration?.component ?? NimbalystMarkdownEditor;
   return (
     <div className="canvas-card-host">
       <EditorComponent host={host} />
@@ -341,6 +356,10 @@ const CanvasDocCard: React.FC<CanvasCardRenderProps> = ({
       sharedFileExtension,
       sharedEditorId,
       fallbackTitle: label,
+      // The canvas mounts Lexical itself, so a shared *markdown* document is a
+      // card like any other. `EmbedFrame` leaves this unset: it is already
+      // inside a Lexical editor.
+      allowLexical: true,
     });
     return resolved.status === "ready"
       ? { ready: resolved }
@@ -375,10 +394,27 @@ const CanvasDocCard: React.FC<CanvasCardRenderProps> = ({
     );
   }
   if (pinnedRevisionId !== null && parsed) {
-    const { registration, request } = resolution.ready;
+    const { editor, request } = resolution.ready;
+    /*
+     * A pinned revision is rendered from a detached snapshot Y.Doc by the
+     * registration's own component. Markdown has no registration, and a
+     * snapshot renderer for it does not exist yet -- so say that, rather than
+     * silently falling through to the live room. The card is already styled as
+     * historical and labelled "v3"; showing today's document under that
+     * chrome is a card that convincingly asserts something false.
+     */
+    if (editor.kind !== "extension") {
+      return (
+        <CardNotice
+          title={label || uri}
+          detail={uri}
+          note="Pinned revisions are not available for markdown cards yet."
+        />
+      );
+    }
     return (
       <CanvasRevisionCard
-        registration={registration}
+        registration={editor.registration}
         title={request.title}
         request={{
           workspacePath: request.workspacePath,
@@ -405,12 +441,12 @@ const CanvasDocCard: React.FC<CanvasCardRenderProps> = ({
       </div>
     );
   }
-  const { registration, request } = resolution.ready;
+  const { editor, request } = resolution.ready;
 
   return (
     <div className="canvas-card-host" data-canvas-room-connection="active">
       <CollaborativeEmbedEditor
-        registration={registration}
+        editor={editor}
         request={request}
         readOnly={detail !== "hot"}
         onConnectionReleased={roomLease.acknowledgeConnectionReleased}

@@ -53,6 +53,17 @@ public final class NotificationManager: NSObject, ObservableObject {
         checkAndReregister()
     }
 
+    /// Claim the notification-center delegate before the app finishes launching.
+    ///
+    /// iOS only delivers the tap that launched the app if the delegate is set
+    /// during `didFinishLaunchingWithOptions`. Relying on this singleton being
+    /// created lazily by the first view that observes it puts delegate
+    /// assignment after scene setup, where the launch response is dropped and a
+    /// notification tap does nothing at all. Call this from the app delegate.
+    public static func registerAsNotificationCenterDelegate() {
+        _ = NotificationManager.shared
+    }
+
     /// If push permission was previously granted, re-register for remote notifications
     /// so we get a fresh APNs token on every launch (tokens can rotate).
     private func checkAndReregister() {

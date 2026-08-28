@@ -5,6 +5,7 @@ import type { SessionMeta } from '@nimbalyst/runtime';
 import {
   agentBubbleStateAtom,
   agentSessionAttentionAtom,
+  hasUnansweredInteractivePrompt,
   sessionHasPendingInteractivePromptAtom,
   sessionListWorkspaceAtom,
   sessionProcessingAtom,
@@ -119,5 +120,49 @@ describe('agentSessionAttentionAtom', () => {
     expect(groups.unread.map((item) => item.id)).toEqual(['done-unread']);
     expect(groups.awaitingInput.map((item) => item.id)).toEqual(['done-awaiting']);
     expect(groups.running).toEqual([]);
+  });
+});
+
+describe('hasUnansweredInteractivePrompt', () => {
+  const prompt = (result?: string) => ({
+    type: 'tool_call',
+    toolCall: { toolName: 'mcp__nimbalyst__AskUserQuestion', ...(result ? { result } : {}) },
+  });
+  const userMessage = { type: 'user_message', text: 'what about X?' };
+
+  it('is pending while an interactive tool call has no result', () => {
+    expect(hasUnansweredInteractivePrompt([userMessage, prompt()])).toBe(true);
+  });
+
+  it('is not pending once the tool call has a result', () => {
+    expect(hasUnansweredInteractivePrompt([userMessage, prompt('{"answers":{}}')])).toBe(false);
+  });
+
+  // Typing instead of answering aborts the turn, so the tool_use never gets a
+  // tool_result. Without this, the session showed "waiting for your response"
+  // forever -- including while a later turn was actively running.
+  it('is not pending when the user typed a new prompt instead of answering', () => {
+    const messages = [
+      userMessage,
+      prompt(),
+      { type: 'user_message', text: 'never mind, do this instead' },
+      { type: 'assistant_message', text: 'on it' },
+    ];
+    expect(hasUnansweredInteractivePrompt(messages)).toBe(false);
+  });
+
+  it('is pending for a prompt raised after the abandoned one', () => {
+    const messages = [prompt(), userMessage, { type: 'assistant_message', text: 'on it' }, prompt()];
+    expect(hasUnansweredInteractivePrompt(messages)).toBe(true);
+  });
+
+  it('is pending for a canonical interactive_prompt event with pending status', () => {
+    expect(
+      hasUnansweredInteractivePrompt([userMessage, { type: 'interactive_prompt', interactivePrompt: { status: 'pending' } }]),
+    ).toBe(true);
+  });
+
+  it('ignores non-interactive tool calls that are still running', () => {
+    expect(hasUnansweredInteractivePrompt([userMessage, { type: 'tool_call', toolCall: { toolName: 'Bash' } }])).toBe(false);
   });
 });

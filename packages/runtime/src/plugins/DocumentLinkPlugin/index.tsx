@@ -10,6 +10,8 @@ import {
   TextNode,
   $createTextNode,
   isDOMNode,
+  COMMAND_PRIORITY_HIGH,
+  PASTE_COMMAND,
   type LexicalEditor,
   type RangeSelection,
 } from 'lexical';
@@ -23,7 +25,11 @@ import { MaterialSymbol } from "../../ui";
 import { $createEmbeddedFileNode } from '../../editor/plugins/EmbedPlugin/EmbeddedFileNode';
 import { isEmbeddableUrl } from '../../editor/plugins/EmbedPlugin/embeddableExtensions';
 import { useDocumentPath } from '../../DocumentPathContext';
-import { resolveDocumentLinkLookupPath, isCollabReferenceHref } from './documentLinkPaths';
+import {
+  resolveDocumentLinkLookupPath,
+  isCollabReferenceHref,
+  parseCollabReferenceDocumentId,
+} from './documentLinkPaths';
 import { isWorkspaceFileHref } from '../../editor/utils/workspaceLinkNavigation';
 import {
   dispatchAppActionHref,
@@ -62,6 +68,113 @@ export interface CollabReferenceSource {
   listOptions(): CollabReferenceOption[];
   /** Open a shared document from its reference target (deep link / collab URI). */
   openReference(target: string): void;
+}
+
+/**
+ * Insert a shared-document reference at the selection.
+ *
+ * Shared by the `@` typeahead and by pasting a copied link, so the two produce
+ * the same node rather than two things that merely look alike. A shared
+ * document whose type an extension can render inline gets the same block embed
+ * a local file of that type would. The deep link has no extension, so the embed
+ * rule is driven by the host-supplied `embedType`, which is also recorded on
+ * the node so the hint survives export to markdown and the Y.Doc round trip
+ * (NIM-2473).
+ */
+function $insertCollabReference(
+  selection: RangeSelection,
+  doc: ReferenceDoc,
+  collabTarget: string,
+): void {
+  if (isEmbeddableUrl(collabTarget, doc.collabEmbedType)) {
+    $insertEmbedBlock(selection, {
+      src: collabTarget,
+      label: doc.name,
+      attrs: doc.collabEmbedType ? { embedType: doc.collabEmbedType } : {},
+    });
+    return;
+  }
+
+  const collabNode = $createDocumentReferenceNode(doc.id, doc.name, collabTarget);
+  selection.insertNodes([collabNode]);
+  const trailingSpace = $createTextNode(' ');
+  collabNode.insertAfter(trailingSpace);
+  trailingSpace.select();
+}
+
+/**
+ * A pasted shared-document link becomes the reference it names.
+ *
+ * Until this existed the `@` typeahead was the only thing that ever created a
+ * `DocumentReferenceNode`, so copying a document's link and pasting it left
+ * inert text -- the one gesture a reader is most likely to try (NIM-3585).
+ *
+ * Only an exact plain-text paste is intercepted. Pasting a sentence that
+ * happens to contain a link keeps the browser's normal text behavior, matching
+ * how the message composer treats the same gesture.
+ *
+ * A link whose document this reader cannot see falls through to plain text
+ * rather than minting a node with a guessed label. The label is baked into the
+ * node and exported into markdown, so a wrong one outlives the paste; text is
+ * the honest result when the title is genuinely unknown.
+ */
+function CollabReferencePastePlugin({
+  collabReferenceSource,
+}: {
+  collabReferenceSource: CollabReferenceSource;
+}): null {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(
+    () =>
+      editor.registerCommand(
+        PASTE_COMMAND,
+        (event: ClipboardEvent) => {
+          const clipboardData = event.clipboardData;
+          if (!clipboardData || clipboardData.files.length > 0) return false;
+
+          const value = clipboardData.getData('text/plain').trim();
+          if (!isCollabReferenceHref(value)) return false;
+
+          const documentId = parseCollabReferenceDocumentId(value);
+          if (!documentId) return false;
+
+          // Read the source at paste time rather than the typeahead's cached
+          // list: `listOptions` is a synchronous read of live atoms, and the
+          // cached list is only populated once a typeahead has been opened.
+          const options = collabReferenceSource.listOptions();
+          // Match on the target first -- it is the exact string the source
+          // handed out. The id is the fallback for a link copied before the
+          // target's query string changed shape.
+          const known = options.find((option) => option.target === value)
+            ?? options.find((option) => option.documentId === documentId);
+          if (!known) return false;
+
+          event.preventDefault();
+          editor.update(() => {
+            const selection = $getSelection();
+            if (!$isRangeSelection(selection)) return;
+            $insertCollabReference(
+              selection,
+              {
+                id: known.documentId,
+                name: known.title,
+                path: known.folderPath ?? '',
+                collabTarget: known.target,
+                folderPath: known.folderPath,
+                collabEmbedType: known.embedType,
+              },
+              known.target,
+            );
+          });
+          return true;
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+    [editor, collabReferenceSource],
+  );
+
+  return null;
 }
 
 /** Internal unified shape feeding the typeahead option list + selection. */
@@ -505,29 +618,7 @@ export function DocumentLinkPlugin({
 
       // Collaborative reference: the target is a shared-doc deep link.
       if (doc.collabTarget) {
-        // A shared document whose type an extension can render inline gets the
-        // same block embed a local file of that type would. The deep link has
-        // no extension, so the embed rule is driven by the host-supplied
-        // `embedType`, which is also recorded on the node so the hint survives
-        // export to markdown and the Y.Doc round trip (NIM-2473).
-        if (isEmbeddableUrl(doc.collabTarget, doc.collabEmbedType)) {
-          $insertEmbedBlock(selection, {
-            src: doc.collabTarget,
-            label: doc.name,
-            attrs: doc.collabEmbedType ? { embedType: doc.collabEmbedType } : {},
-          });
-          return;
-        }
-
-        const collabNode = $createDocumentReferenceNode(
-          doc.id,
-          doc.name,
-          doc.collabTarget
-        );
-        selection.insertNodes([collabNode]);
-        const trailingSpace = $createTextNode(' ');
-        collabNode.insertAfter(trailingSpace);
-        trailingSpace.select();
+        $insertCollabReference(selection, doc, doc.collabTarget);
         return;
       }
 
@@ -562,22 +653,27 @@ export function DocumentLinkPlugin({
   }, [editor, documents]);
 
   return (
-    <TypeaheadMenuPlugin
-      options={options}
-      triggerFn={resolvedTriggerFn}
-      onQueryChange={handleQueryChange}
-      onSelectOption={handleSelectOption}
-      anchorElem={anchorElem}
-      minWidth={350}
-      maxWidth={500}
-      maxHeight={400}
-      onOpen={() => {
-        menuOpenRef.current = true;
-        loadDocuments();
-      }}
-      onClose={() => {
-        menuOpenRef.current = false;
-      }}
-    />
+    <>
+      {collabReferenceSource && (
+        <CollabReferencePastePlugin collabReferenceSource={collabReferenceSource} />
+      )}
+      <TypeaheadMenuPlugin
+        options={options}
+        triggerFn={resolvedTriggerFn}
+        onQueryChange={handleQueryChange}
+        onSelectOption={handleSelectOption}
+        anchorElem={anchorElem}
+        minWidth={350}
+        maxWidth={500}
+        maxHeight={400}
+        onOpen={() => {
+          menuOpenRef.current = true;
+          loadDocuments();
+        }}
+        onClose={() => {
+          menuOpenRef.current = false;
+        }}
+      />
+    </>
   );
 }

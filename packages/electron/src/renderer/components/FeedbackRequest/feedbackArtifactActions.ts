@@ -18,8 +18,8 @@
  * every host call site uses.
  */
 
-import { useMemo } from 'react';
-import { useAtomValue } from 'jotai';
+import { useCallback, useMemo } from 'react';
+import { useAtomValue, useSetAtom } from 'jotai';
 import type { FeedbackArtifact } from '@nimbalyst/collab-protocol';
 import type { CollabScope } from '@nimbalyst/collab-client/core';
 import type {
@@ -29,7 +29,10 @@ import type {
 import { trackerItemsMapAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 
-import { selectedWorkstreamAtom } from '../../store/atoms/sessions';
+import {
+  selectedWorkstreamAtom,
+  setActiveSessionInWorkstreamAtom,
+} from '../../store/atoms/sessions';
 import { activeCollabScopeAtom } from '../../store/atoms/collabDocuments';
 import { openSharedDocumentInTab } from '../../utils/openSharedDocumentInTab';
 
@@ -111,6 +114,29 @@ export function resolveFeedbackArtifactAction(
       }));
     },
   };
+}
+
+/**
+ * Opens the session that composed a request, or nothing.
+ *
+ * Returns undefined rather than a no-op callback when there is no workstream to
+ * open into: the surfaces gate their affordance on the callback's presence, so
+ * a returned stub would render a control that silently does nothing -- the
+ * failure `unavailableReason` exists to prevent one layer up.
+ */
+export function useFeedbackAuthorSessionOpener(
+  workspacePath: string | undefined,
+): ((sessionId: string) => void) | undefined {
+  const selection = useAtomValue(selectedWorkstreamAtom(workspacePath ?? ''));
+  const setActiveSession = useSetAtom(setActiveSessionInWorkstreamAtom);
+  const workstreamId = workspacePath ? selection?.id ?? null : null;
+
+  const open = useCallback((sessionId: string) => {
+    if (!workstreamId) return;
+    setActiveSession({ workstreamId, sessionId });
+  }, [workstreamId, setActiveSession]);
+
+  return workstreamId ? open : undefined;
 }
 
 /**

@@ -1,0 +1,733 @@
+{
+  "version": 1,
+  "stage": {
+    "width": 1200,
+    "height": 640,
+    "fps": 25
+  },
+  "parts": {
+    "eApprove": {
+      "type": "edge",
+      "from": "sReview",
+      "to": "sMerge",
+      "packets": 2
+    },
+    "eBrief": {
+      "type": "edge",
+      "from": "plan",
+      "to": "sDesign",
+      "text": "brief",
+      "packets": 2
+    },
+    "eClaim": {
+      "type": "edge",
+      "from": "queue",
+      "to": "sImplUi",
+      "text": "claim",
+      "packets": 3
+    },
+    "eDiffA": {
+      "type": "edge",
+      "from": "sImplApi",
+      "to": "sReview",
+      "packets": 3
+    },
+    "eDiffB": {
+      "type": "edge",
+      "from": "sImplUi",
+      "to": "sTest",
+      "packets": 3
+    },
+    "eDispatch": {
+      "type": "edge",
+      "from": "plan",
+      "to": "queue",
+      "packets": 3
+    },
+    "eGreen": {
+      "type": "edge",
+      "from": "sTest",
+      "to": "sMerge",
+      "packets": 2
+    },
+    "eTasks": {
+      "type": "edge",
+      "from": "sDesign",
+      "to": "sImplApi",
+      "packets": 3
+    },
+    "gridHeading": {
+      "type": "label",
+      "x": 1144,
+      "y": 122,
+      "text": "6 SESSIONS  /  2 WORKTREES",
+      "align": "end",
+      "caps": true
+    },
+    "leftHeading": {
+      "type": "label",
+      "x": 56,
+      "y": 122,
+      "text": "ORCHESTRATION",
+      "caps": true
+    },
+    "plan": {
+      "type": "node",
+      "label": "Meta-agent",
+      "x": 56,
+      "y": 146,
+      "w": 250,
+      "h": 176,
+      "subtitle": "PLAN / DISPATCH / GATE",
+      "rows": [
+        {
+          "key": "branch",
+          "value": "feat/search"
+        },
+        {
+          "key": "sessions",
+          "value": "6"
+        },
+        {
+          "key": "policy",
+          "value": "review all"
+        }
+      ]
+    },
+    "queue": {
+      "type": "node",
+      "label": "Task queue",
+      "x": 56,
+      "y": 366,
+      "w": 250,
+      "h": 176,
+      "subtitle": "UNCLAIMED WORK"
+    },
+    "queueFoot": {
+      "type": "label",
+      "x": 89,
+      "y": 528,
+      "text": "CLAIMED IN ORDER",
+      "caps": true
+    },
+    "queueTask01": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 89,
+      "y": 438,
+      "w": 40,
+      "h": 18
+    },
+    "queueTask02": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 137,
+      "y": 438,
+      "w": 40,
+      "h": 18
+    },
+    "queueTask03": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 185,
+      "y": 438,
+      "w": 40,
+      "h": 18
+    },
+    "queueTask04": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 233,
+      "y": 438,
+      "w": 40,
+      "h": 18
+    },
+    "queueTask05": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 89,
+      "y": 462,
+      "w": 40,
+      "h": 18
+    },
+    "queueTask06": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 137,
+      "y": 462,
+      "w": 40,
+      "h": 18
+    },
+    "queueTask07": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 185,
+      "y": 462,
+      "w": 40,
+      "h": 18
+    },
+    "queueTask08": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 233,
+      "y": 462,
+      "w": 40,
+      "h": 18
+    },
+    "queueTask09": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 89,
+      "y": 486,
+      "w": 40,
+      "h": 18
+    },
+    "queueTask10": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 137,
+      "y": 486,
+      "w": 40,
+      "h": 18
+    },
+    "queueTask11": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 185,
+      "y": 486,
+      "w": 40,
+      "h": 18
+    },
+    "queueTask12": {
+      "type": "shape",
+      "tone": "muted",
+      "state": "active",
+      "x": 233,
+      "y": 486,
+      "w": 40,
+      "h": 18
+    },
+    "railHeading": {
+      "type": "label",
+      "x": 56,
+      "y": 596,
+      "text": "PIPELINE",
+      "caps": true
+    },
+    "sDesign": {
+      "type": "node",
+      "label": "Design",
+      "x": 376,
+      "y": 146,
+      "w": 228,
+      "h": 176,
+      "subtitle": "OPUS 5 / READ ONLY",
+      "rows": [
+        {
+          "key": "reads",
+          "value": "12 files"
+        },
+        {
+          "key": "writes",
+          "value": "plan.md"
+        },
+        {
+          "key": "emits",
+          "value": "12 tasks"
+        }
+      ]
+    },
+    "sImplApi": {
+      "type": "node",
+      "label": "Implement",
+      "x": 646,
+      "y": 146,
+      "w": 228,
+      "h": 176,
+      "subtitle": "SONNET 5 / WORKTREE A",
+      "rows": [
+        {
+          "key": "scope",
+          "value": "search index"
+        },
+        {
+          "key": "edits",
+          "value": "4 files"
+        },
+        {
+          "key": "tests",
+          "value": "unit"
+        }
+      ]
+    },
+    "sImplUi": {
+      "type": "node",
+      "label": "Implement",
+      "x": 376,
+      "y": 366,
+      "w": 228,
+      "h": 176,
+      "subtitle": "SONNET 5 / WORKTREE B",
+      "rows": [
+        {
+          "key": "scope",
+          "value": "results pane"
+        },
+        {
+          "key": "edits",
+          "value": "6 files"
+        },
+        {
+          "key": "tests",
+          "value": "unit"
+        }
+      ]
+    },
+    "sMerge": {
+      "type": "node",
+      "label": "Merge gate",
+      "x": 916,
+      "y": 366,
+      "w": 228,
+      "h": 176,
+      "subtitle": "META-AGENT / GATE",
+      "rows": [
+        {
+          "key": "typecheck",
+          "value": "required"
+        },
+        {
+          "key": "test:prepush",
+          "value": "required"
+        },
+        {
+          "key": "branch",
+          "value": "feat/search"
+        }
+      ]
+    },
+    "sReview": {
+      "type": "node",
+      "label": "Review",
+      "x": 916,
+      "y": 146,
+      "w": 228,
+      "h": 176,
+      "subtitle": "OPUS 5 / READ ONLY",
+      "rows": [
+        {
+          "key": "diff",
+          "value": "+412 / -87"
+        },
+        {
+          "key": "lens",
+          "value": "correctness"
+        },
+        {
+          "key": "findings",
+          "value": "2"
+        }
+      ]
+    },
+    "sTest": {
+      "type": "node",
+      "label": "Test",
+      "x": 646,
+      "y": 366,
+      "w": 228,
+      "h": 176,
+      "subtitle": "HAIKU 4.5 / WORKTREE B",
+      "rows": [
+        {
+          "key": "suite",
+          "value": "test:prepush"
+        },
+        {
+          "key": "cases",
+          "value": "318"
+        },
+        {
+          "key": "runtime",
+          "value": "94 s"
+        }
+      ]
+    },
+    "statImpl": {
+      "type": "label",
+      "x": 556,
+      "y": 596,
+      "text": "IMPLEMENT",
+      "caps": true
+    },
+    "statMerge": {
+      "type": "label",
+      "x": 1144,
+      "y": 596,
+      "text": "MERGE",
+      "align": "end",
+      "caps": true
+    },
+    "statPlan": {
+      "type": "label",
+      "x": 376,
+      "y": 596,
+      "text": "PLAN",
+      "caps": true
+    },
+    "statReview": {
+      "type": "label",
+      "x": 940,
+      "y": 596,
+      "text": "REVIEW",
+      "caps": true
+    },
+    "statTest": {
+      "type": "label",
+      "x": 760,
+      "y": 596,
+      "text": "TEST",
+      "caps": true
+    },
+    "titleMain": {
+      "type": "label",
+      "x": 56,
+      "y": 48,
+      "text": "NIMBALYST META-AGENT",
+      "caps": true
+    },
+    "titleSub": {
+      "type": "label",
+      "x": 56,
+      "y": 74,
+      "text": "ONE PLAN  /  MANY SESSIONS  /  ONE REVIEWED BRANCH",
+      "caps": true
+    }
+  },
+  "steps": [
+    {
+      "id": "hold",
+      "duration": 900,
+      "caption": "The meta-agent holds the branch and the plan.",
+      "set": {
+        "plan": {
+          "state": "active",
+          "tone": "accent"
+        },
+        "statPlan": {
+          "state": "active",
+          "tone": "accent"
+        },
+        "titleMain": {
+          "state": "active",
+          "tone": "accent"
+        }
+      }
+    },
+    {
+      "id": "design",
+      "duration": 1000,
+      "caption": "A read-only design session reads the code and returns a task list.",
+      "set": {
+        "eBrief": {
+          "state": "flowing",
+          "tone": "accent"
+        },
+        "sDesign": {
+          "state": "active",
+          "tone": "accent"
+        }
+      }
+    },
+    {
+      "id": "enqueue",
+      "duration": 900,
+      "caption": "Twelve tasks land in the queue, unclaimed.",
+      "set": {
+        "eBrief": {
+          "state": "idle"
+        },
+        "eDispatch": {
+          "state": "flowing",
+          "tone": "accent"
+        },
+        "queue": {
+          "state": "active",
+          "tone": "accent"
+        },
+        "queueTask01": {
+          "tone": "accent"
+        },
+        "queueTask02": {
+          "tone": "accent"
+        },
+        "queueTask03": {
+          "tone": "accent"
+        },
+        "queueTask04": {
+          "tone": "accent"
+        },
+        "queueTask05": {
+          "tone": "accent"
+        },
+        "queueTask06": {
+          "tone": "accent"
+        },
+        "queueTask07": {
+          "tone": "accent"
+        },
+        "queueTask08": {
+          "tone": "accent"
+        },
+        "queueTask09": {
+          "tone": "accent"
+        },
+        "queueTask10": {
+          "tone": "accent"
+        },
+        "queueTask11": {
+          "tone": "accent"
+        },
+        "queueTask12": {
+          "tone": "accent"
+        },
+        "sDesign": {
+          "state": "active",
+          "tone": "success"
+        }
+      }
+    },
+    {
+      "id": "claim",
+      "duration": 1000,
+      "caption": "Two implement sessions claim work into separate worktrees.",
+      "set": {
+        "eClaim": {
+          "state": "flowing",
+          "tone": "accent"
+        },
+        "eDispatch": {
+          "state": "idle"
+        },
+        "eTasks": {
+          "state": "flowing",
+          "tone": "accent"
+        },
+        "queueTask09": {
+          "state": "hidden"
+        },
+        "queueTask10": {
+          "state": "hidden"
+        },
+        "queueTask11": {
+          "state": "hidden"
+        },
+        "queueTask12": {
+          "state": "hidden"
+        },
+        "sImplApi": {
+          "state": "active",
+          "tone": "accent"
+        },
+        "sImplUi": {
+          "state": "active",
+          "tone": "accent"
+        },
+        "statImpl": {
+          "state": "active",
+          "tone": "accent"
+        }
+      }
+    },
+    {
+      "id": "test",
+      "duration": 1100,
+      "caption": "The UI diff goes straight to a test session in the same worktree.",
+      "set": {
+        "eDiffB": {
+          "state": "flowing",
+          "tone": "data"
+        },
+        "queueTask05": {
+          "state": "hidden"
+        },
+        "queueTask06": {
+          "state": "hidden"
+        },
+        "queueTask07": {
+          "state": "hidden"
+        },
+        "queueTask08": {
+          "state": "hidden"
+        },
+        "sTest": {
+          "state": "active",
+          "tone": "data"
+        },
+        "statTest": {
+          "state": "active",
+          "tone": "data"
+        }
+      }
+    },
+    {
+      "id": "review",
+      "duration": 1100,
+      "caption": "The API diff goes to a review session that can only read.",
+      "set": {
+        "eDiffA": {
+          "state": "flowing",
+          "tone": "warning"
+        },
+        "sReview": {
+          "state": "active",
+          "tone": "warning"
+        },
+        "statReview": {
+          "state": "active",
+          "tone": "warning"
+        }
+      }
+    },
+    {
+      "id": "findings",
+      "duration": 1000,
+      "caption": "Review sends two findings back; that session reopens instead of merging.",
+      "set": {
+        "eDiffA": {
+          "state": "returning",
+          "tone": "error"
+        },
+        "sImplApi": {
+          "state": "waiting",
+          "tone": "warning"
+        },
+        "sReview": {
+          "state": "active",
+          "tone": "error"
+        }
+      }
+    },
+    {
+      "id": "fix",
+      "duration": 900,
+      "caption": "The findings are applied and the diff goes back up.",
+      "set": {
+        "eDiffA": {
+          "state": "flowing",
+          "tone": "accent"
+        },
+        "queue": {
+          "state": "active",
+          "tone": "muted"
+        },
+        "queueTask01": {
+          "state": "hidden"
+        },
+        "queueTask02": {
+          "state": "hidden"
+        },
+        "queueTask03": {
+          "state": "hidden"
+        },
+        "queueTask04": {
+          "state": "hidden"
+        },
+        "sImplApi": {
+          "state": "active",
+          "tone": "accent"
+        },
+        "sReview": {
+          "state": "active",
+          "tone": "warning"
+        }
+      }
+    },
+    {
+      "id": "green",
+      "duration": 900,
+      "caption": "Tests come back green and review approves.",
+      "set": {
+        "eApprove": {
+          "state": "flowing",
+          "tone": "success"
+        },
+        "eDiffA": {
+          "state": "idle"
+        },
+        "eGreen": {
+          "state": "flowing",
+          "tone": "success"
+        },
+        "sMerge": {
+          "state": "active",
+          "tone": "accent"
+        },
+        "sReview": {
+          "state": "active",
+          "tone": "success"
+        },
+        "sTest": {
+          "state": "active",
+          "tone": "success"
+        }
+      }
+    },
+    {
+      "id": "merge",
+      "duration": 1200,
+      "caption": "Both lanes clear the gate and land on one branch.",
+      "set": {
+        "eApprove": {
+          "state": "idle"
+        },
+        "eClaim": {
+          "state": "idle"
+        },
+        "eDiffB": {
+          "state": "idle"
+        },
+        "eGreen": {
+          "state": "idle"
+        },
+        "eTasks": {
+          "state": "idle"
+        },
+        "plan": {
+          "state": "active",
+          "tone": "success"
+        },
+        "sImplApi": {
+          "state": "active",
+          "tone": "success"
+        },
+        "sImplUi": {
+          "state": "active",
+          "tone": "success"
+        },
+        "sMerge": {
+          "state": "active",
+          "tone": "success"
+        },
+        "statMerge": {
+          "state": "active",
+          "tone": "success"
+        },
+        "titleMain": {
+          "state": "active",
+          "tone": "success"
+        }
+      }
+    }
+  ]
+}

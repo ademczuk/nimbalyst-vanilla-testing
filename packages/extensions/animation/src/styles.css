@@ -1,0 +1,306 @@
+/*
+ * Editor chrome. The stage's own styles live in `render/stageCss.ts` because
+ * they ship inside the iframe (and eventually inside the exported file); this
+ * file styles only what surrounds it.
+ */
+
+.anim-editor {
+  display: grid;
+  grid-template-rows: 40px 1fr auto;
+  height: 100%;
+  min-height: 0;
+  background: var(--nim-bg);
+  color: var(--nim-text);
+  font-size: 13px;
+}
+
+.anim-editor-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nim-text-faint);
+}
+
+/* ---- toolbar ------------------------------------------------------------ */
+.anim-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  background: var(--nim-bg-secondary);
+  border-bottom: 1px solid var(--nim-border);
+}
+
+.anim-filename {
+  font-family: var(--nim-font-mono, ui-monospace, 'SF Mono', Monaco, monospace);
+  font-size: 12.5px;
+  color: var(--nim-text-muted);
+}
+
+.anim-toolbar-spacer { flex: 1; }
+
+.anim-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: help;
+}
+.anim-badge-error { background: rgba(239, 68, 68, 0.2); color: var(--nim-error); }
+.anim-badge-warning { background: rgba(251, 191, 36, 0.2); color: var(--nim-warning); }
+.anim-badge-success { background: rgba(74, 222, 128, 0.2); color: var(--nim-success); }
+
+/* ---- stage -------------------------------------------------------------- */
+.anim-stage-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px 20px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.anim-stage-holder {
+  position: relative;
+  width: 100%;
+  max-width: 1120px;
+  max-height: 100%;
+  min-height: 0;
+  display: flex;
+}
+
+.anim-stage-frame {
+  display: block;
+  width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--nim-border);
+  background: var(--nim-bg-secondary);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.anim-sep { color: var(--nim-border); }
+
+/* ---- timeline ----------------------------------------------------------- */
+.anim-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 16px 12px;
+  background: var(--nim-bg-secondary);
+  border-top: 1px solid var(--nim-border);
+}
+
+.anim-transport {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.anim-transport-buttons { display: flex; align-items: center; gap: 2px; }
+
+.anim-tbtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nim-text-muted);
+  cursor: pointer;
+}
+
+.anim-tbtn:hover { background: var(--nim-bg-hover, rgba(255, 255, 255, 0.05)); }
+.anim-tbtn svg { width: 13px; height: 13px; }
+.anim-tbtn-play { background: var(--nim-bg-tertiary); color: var(--nim-text); }
+.anim-tbtn-on { background: var(--nim-bg-selected, rgba(96, 165, 250, 0.15)); color: var(--nim-primary); }
+
+.anim-time-readout {
+  font-family: var(--nim-font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  color: var(--nim-text);
+}
+
+.anim-time-total { color: var(--nim-text-disabled, #666); font-size: 11px; }
+
+.anim-transport-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--nim-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--nim-text-faint);
+}
+
+.anim-transport-spacer { flex: 1; }
+
+.anim-current-step {
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: var(--nim-bg-selected, rgba(96, 165, 250, 0.15));
+  font-family: var(--nim-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--nim-primary);
+}
+
+.anim-current-step-empty {
+  background: transparent;
+  color: var(--nim-text-disabled, #666);
+}
+
+.anim-track { position: relative; }
+
+.anim-ruler { position: relative; height: 13px; cursor: pointer; }
+
+.anim-tick { position: absolute; top: 0; bottom: 0; }
+.anim-tick i {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  display: block;
+  width: 1px;
+  height: 4px;
+  background: var(--nim-border);
+}
+.anim-tick span {
+  position: absolute;
+  bottom: 5px;
+  left: 3px;
+  font-family: var(--nim-font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  color: var(--nim-text-disabled, #666);
+}
+
+.anim-steps-row {
+  position: relative;
+  display: flex;
+  height: 34px;
+  margin-top: 2px;
+}
+
+.anim-step {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 100%;
+  padding: 0 9px;
+  border: 1px solid var(--nim-border);
+  background: var(--nim-bg-tertiary);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.anim-step + .anim-step { margin-left: -1px; }
+.anim-step:first-child { border-radius: 4px 0 0 4px; }
+.anim-step:last-child { border-radius: 0 4px 4px 0; }
+
+.anim-step-active {
+  background: rgba(96, 165, 250, 0.14);
+  border-color: rgba(96, 165, 250, 0.55);
+}
+
+.anim-step-name {
+  font-family: var(--nim-font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--nim-text);
+  white-space: nowrap;
+}
+
+.anim-step-active .anim-step-name { color: var(--nim-primary); }
+
+.anim-step-dur {
+  font-family: var(--nim-font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--nim-text-disabled, #666);
+  white-space: nowrap;
+}
+
+.anim-step-tones { display: flex; gap: 3px; margin-left: auto; }
+
+.anim-tone-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--nim-text-faint); }
+.anim-tone-accent { background: var(--nim-primary); }
+.anim-tone-data { background: var(--nim-purple); }
+.anim-tone-success { background: var(--nim-success); }
+.anim-tone-warning { background: var(--nim-warning); }
+.anim-tone-error { background: var(--nim-error); }
+.anim-tone-muted { background: var(--nim-text-disabled, #666); }
+
+.anim-boundary {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  margin-left: -5px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.anim-boundary-readonly {
+  cursor: default;
+}
+
+.anim-grip {
+  width: 3px;
+  height: 20px;
+  border-radius: 2px;
+  background: var(--nim-primary);
+  opacity: 0;
+}
+
+.anim-boundary:not(.anim-boundary-readonly):hover .anim-grip,
+.anim-boundary-active .anim-grip { opacity: 1; }
+
+.anim-boundary-tip {
+  position: absolute;
+  top: -17px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 6px;
+  border: 1px solid var(--nim-primary);
+  border-radius: 3px;
+  background: var(--nim-bg-active);
+  font-family: var(--nim-font-mono, ui-monospace, monospace);
+  font-size: 9.5px;
+  color: var(--nim-text);
+  white-space: nowrap;
+}
+
+.anim-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
+  width: 1px;
+  background: var(--nim-warning);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.anim-playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -4px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 6px solid var(--nim-warning);
+}
+
+/* Widen the playhead's grab target without widening the line. */
+.anim-playhead::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 11px;
+}

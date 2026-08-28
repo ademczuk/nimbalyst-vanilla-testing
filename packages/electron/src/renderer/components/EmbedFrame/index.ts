@@ -32,6 +32,8 @@ import { CanvasCardHost } from './CanvasCardHost';
 import { canvasCardCommentCounts } from './canvasCardCommentCounts';
 import { canvasCardRevisions } from './canvasCardRevisions';
 import { dispatchCanvasAgentThread } from './canvasAgentDispatch';
+import { pickCanvasCardReference } from './pickCanvasCardReference';
+import { canvasDropSource } from './canvasDropSource';
 
 export { EmbedFrame } from './EmbedFrame';
 export { createEmbeddedFileHost } from './createEmbeddedFileHost';
@@ -60,6 +62,13 @@ export function registerEmbedFrame(): void {
     dispatchAgentThread: (request) => {
       void dispatchCanvasAgentThread(request);
     },
+    // "Put an existing document on the board." Desktop offers both workspace
+    // files and shared documents; the browser console has no filesystem and
+    // fills this slot with its own, doc-only picker.
+    pickCardReference: pickCanvasCardReference,
+    // Drag a file out of the workspace tree, or a document out of the shared
+    // tree, straight onto the board.
+    dropSource: canvasDropSource,
   });
   syncEmbeddableExtensions();
   customEditorRegistry.onChange(syncEmbeddableExtensions);

@@ -96,7 +96,7 @@ export const FeedbackOptionArtifactPreview: React.FC<{
             )}
           >
             <CollaborativeEmbedEditor
-              registration={resolution.registration}
+              editor={resolution.editor}
               request={resolution.request}
             />
           </React.Suspense>

@@ -402,13 +402,17 @@ export const EmbedFrame: React.FC<EmbedFrameProps> = (props) => {
       hintedExtension: attrs.embedType,
       fallbackTitle: label,
     });
-    return resolution.status === 'ready'
-      ? {
-          displayName: resolution.displayName,
-          registration: resolution.registration,
-          request: resolution.request,
-        }
-      : { error: resolution.error };
+    if (resolution.status !== 'ready') return { error: resolution.error };
+    // Unreachable without `allowLexical`, which this caller deliberately does
+    // not pass: an in-document embed is already inside a Lexical editor.
+    if (resolution.editor.kind !== 'extension') {
+      return { error: 'Only collaborative custom-editor documents can be embedded.' };
+    }
+    return {
+      displayName: resolution.displayName,
+      registration: resolution.editor.registration,
+      request: resolution.request,
+    };
   }, [
     activeWorkspacePath,
     attrs.embedType,
@@ -753,7 +757,7 @@ export const EmbedFrame: React.FC<EmbedFrameProps> = (props) => {
                 fallback={<div className="embed-frame__loading">Loading shared embed...</div>}
               >
                 <CollaborativeEmbedEditor
-                  registration={registration}
+                  editor={{ kind: 'extension', registration }}
                   request={request}
                 />
               </React.Suspense>

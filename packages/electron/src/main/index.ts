@@ -140,6 +140,7 @@ import { registerSemanticSearchHandlers } from './ipc/SemanticSearchHandlers';
 import { SemanticCatalogService } from './services/SemanticCatalogService';
 import { registerShareHandlers } from './ipc/ShareHandlers';
 import { MCPConfigService } from './services/MCPConfigService';
+import { compressImage, shouldCompress } from './services/ImageCompressor';
 import { setMcpConfigServiceGetter } from './mcpConfigServiceRef';
 import { ClaudeCliLauncherConfig } from './services/ai/claudeCliLauncherSingleton';
 import { registerDatabaseBrowserHandlers } from './ipc/DatabaseBrowserHandlers';
@@ -2650,7 +2651,12 @@ app.whenReady().then(async () => {
     // Inject image compressor
     // Compresses images to fit within Claude API 5MB base64 limit
     ClaudeCodeProvider.setImageCompressor(async (buffer, mimeType, options) => {
-      const { compressImage } = await import('./services/ImageCompressor');
+      // A small or animated image gains nothing from a re-encode, so decoding it
+      // only creates a way to fail. Skipping keeps those attachments off Jimp
+      // entirely. #1389
+      if (!shouldCompress(buffer, mimeType)) {
+        return { buffer, mimeType, wasCompressed: false };
+      }
       const result = await compressImage(buffer, mimeType, options);
       return {
         buffer: result.buffer,

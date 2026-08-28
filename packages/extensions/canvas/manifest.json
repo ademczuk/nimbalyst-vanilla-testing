@@ -1,0 +1,41 @@
+{
+  "id": "com.nimbalyst.canvas",
+  "name": "Project Canvas",
+  "version": "1.0.0",
+  "description": "Authoring guidance for Project Canvas boards",
+  "author": "Nimbalyst",
+  "apiVersion": "1.0.0",
+  "marketplace": {
+    "categories": ["diagrams", "ai-tools"],
+    "tags": ["canvas", "board", "diagram", "json-canvas", "layout", "whiteboard"],
+    "icon": "dashboard",
+    "featured": true,
+    "tagline": "An infinite board whose cards are live editors on your real files",
+    "longDescription": "Project Canvas is an infinite board where a card is not a screenshot of a file but the file's actual editor, mounted live. A mockup card renders the mockup, a spreadsheet card renders the grid, a markdown card renders the document. Arrange screens, plans, data, and notes spatially and wire them with edges. The editor ships inside Nimbalyst; this extension adds the authoring guidance an AI session needs to build a board for you from a description.",
+    "highlights": [
+      "Cards mount the real editor for the file they point at, not a preview",
+      "Ask an agent for a board and get one laid out on the grid, wired with edges",
+      "JSON Canvas 1.0 on disk, so a board written by another tool round-trips"
+    ],
+    "fileTypes": [".canvas"],
+    "screenshots": [
+      {
+        "alt": "Project Canvas board with live markdown, mockup, mindmap, and spreadsheet cards wired together inside a frame",
+        "src": "screenshots/com.nimbalyst.canvas-0-dark.png",
+        "srcLight": "screenshots/com.nimbalyst.canvas-0-light.png"
+      }
+    ]
+  },
+  "permissions": {
+    "filesystem": true,
+    "ai": true
+  },
+  "contributions": {
+    "claudePlugin": {
+      "path": "claude-plugin",
+      "displayName": "Project Canvas",
+      "description": "How to author .canvas boards",
+      "enabledByDefault": true
+    }
+  }
+}

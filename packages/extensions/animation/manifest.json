@@ -1,0 +1,69 @@
+{
+  "id": "com.nimbalyst.animation",
+  "name": "Animation",
+  "version": "1.1.0",
+  "description": "Author step-based animations for technical explainer diagrams",
+  "author": "Nimbalyst",
+  "main": "dist/index.mjs",
+  "styles": "dist/style.css",
+  "apiVersion": "1.0.0",
+  "permissions": {
+    "filesystem": true
+  },
+  "marketplace": {
+    "categories": ["diagrams"],
+    "tags": ["animation", "diagram", "explainer", "timeline", "svg", "motion"],
+    "icon": "animation",
+    "featured": true,
+    "changelog": "1.1.0: Frames can show real product UI: an html part draws markup you write inline or keep in a file beside the animation, regions inside it animate on their own, and the document names the palette it renders under so the stage and every export match.",
+    "tagline": "Animate technical diagrams step by step",
+    "longDescription": "Build animated explainer diagrams from a named scene and an ordered list of steps. Scrub the timeline, drag a step boundary to retime it, click any part of the scene to put it in chat context, and let an agent make the edits.",
+    "highlights": [
+      "Steps and states rather than a keyframe dope sheet",
+      "Click any part to hand it to the agent with its state and time",
+      "Plain JSON on disk, so any agent can edit it without special tools"
+    ],
+    "fileTypes": [".anim.json"],
+    "screenshots": [
+      {
+        "alt": "Animation editor showing a cache-aside read path, with the step strip and timeline below the stage",
+        "src": "screenshots/com.nimbalyst.animation-0-dark.png",
+        "srcLight": "screenshots/com.nimbalyst.animation-0-light.png",
+        "fileToOpen": "samples/demo.anim.json"
+      }
+    ]
+  },
+  "contributions": {
+    "aiTools": ["animation.export_html", "animation.export_gif", "animation.export_mp4"],
+    "claudePlugin": {
+      "path": "claude-plugin",
+      "displayName": "Animation",
+      "description": "Authoring guidance for step-based animated explainer diagrams",
+      "enabledByDefault": true,
+      "commands": [
+        {
+          "name": "animate",
+          "description": "Create an animated explainer diagram"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "displayName": "Animation Editor",
+        "filePatterns": ["*.anim.json"],
+        "component": "AnimationEditor"
+      }
+    ],
+    "newFileMenu": [
+      {
+        "extension": ".anim.json",
+        "displayName": "Animation",
+        "icon": "animation",
+        "defaultContent": "{\n  \"version\": 1,\n  \"stage\": {\n    \"width\": 1080,\n    \"height\": 470,\n    \"fps\": 25\n  },\n  \"parts\": {\n    \"box\": {\n      \"type\": \"node\",\n      \"label\": \"First part\",\n      \"x\": 420,\n      \"y\": 180,\n      \"w\": 240,\n      \"h\": 110\n    }\n  },\n  \"steps\": [\n    {\n      \"id\": \"start\",\n      \"duration\": 800,\n      \"caption\": \"The scene begins.\",\n      \"set\": {\n        \"box\": {\n          \"state\": \"idle\"\n        }\n      }\n    },\n    {\n      \"id\": \"highlight\",\n      \"duration\": 1000,\n      \"caption\": \"The part becomes active.\",\n      \"set\": {\n        \"box\": {\n          \"state\": \"active\",\n          \"tone\": \"accent\"\n        }\n      }\n    }\n  ]\n}\n"
+      }
+    ],
+    "fileIcons": {
+      "*.anim.json": "animation"
+    }
+  }
+}

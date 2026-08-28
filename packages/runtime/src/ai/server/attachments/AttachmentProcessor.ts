@@ -181,11 +181,21 @@ export class AttachmentProcessor {
     let imageData = await fs.promises.readFile(attachment.filepath);
     let mimeType = attachment.mimeType || 'image/png';
 
-    // Compress if compressor is available
+    // Compress if compressor is available. Compression is an optimization, not
+    // a precondition -- sending the original bytes beats failing the whole
+    // attachment, which is how a bundling regression made pasted images vanish
+    // without a word. #1389
     if (this.imageCompressor) {
-      const compressed = await this.imageCompressor(imageData, mimeType);
-      imageData = Buffer.from(compressed.buffer);
-      mimeType = compressed.mimeType;
+      try {
+        const compressed = await this.imageCompressor(imageData, mimeType);
+        imageData = Buffer.from(compressed.buffer);
+        mimeType = compressed.mimeType;
+      } catch (error) {
+        console.warn(
+          '[AttachmentProcessor] Image compression failed, sending original bytes:',
+          error
+        );
+      }
     }
 
     const base64Data = imageData.toString('base64');

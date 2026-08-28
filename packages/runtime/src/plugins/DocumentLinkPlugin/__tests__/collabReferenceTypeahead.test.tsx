@@ -16,6 +16,8 @@ import {
   $createParagraphNode,
   $createTextNode,
   $getRoot,
+  $isElementNode,
+  PASTE_COMMAND,
   type LexicalEditor,
 } from 'lexical';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -173,5 +175,137 @@ describe('collab `@` reference insertion', () => {
       expect(nodes.some($isDocumentReferenceNode)).toBe(true);
       expect($getRoot().getChildren().some($isEmbeddedFileNode)).toBe(false);
     });
+  });
+});
+
+/**
+ * Pasting a copied shared-doc link (NIM-3585).
+ *
+ * The typeahead was the only producer of a `DocumentReferenceNode`, so the
+ * gesture a reader is most likely to try -- copy a document's link, paste it --
+ * left inert text.
+ */
+describe('collab reference paste', () => {
+  const SPEC_TARGET = 'nimbalyst://doc/spec-1?orgId=team-1';
+
+  function sourceWithSpec(): CollabReferenceSource {
+    return {
+      listOptions: () => [
+        {
+          documentId: 'spec-1',
+          title: 'Product spec',
+          target: SPEC_TARGET,
+          embedType: '.md',
+        },
+      ],
+      openReference: () => {},
+    };
+  }
+
+  /**
+   * Put the caret in a live paragraph, then run a plain-text paste through the
+   * command Lexical would dispatch for one.
+   *
+   * The command rather than a DOM `paste` event: this harness mounts no
+   * `ContentEditable`, so the editor has no root element to receive one, and
+   * attaching one would drag the whole rich-text plugin set into a test about
+   * a single handler. Returns whether a handler claimed the paste.
+   */
+  async function pasteInto(
+    harness: ReturnType<typeof renderTypeahead>,
+    text: string,
+  ): Promise<boolean> {
+    await act(async () => {
+      harness.editor.update(
+        () => {
+          const paragraph = $createParagraphNode();
+          const node = $createTextNode('');
+          paragraph.append(node);
+          $getRoot().clear().append(paragraph);
+          node.select();
+        },
+        { discrete: true },
+      );
+    });
+
+    const event = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(event, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? text : ''),
+      },
+    });
+
+    let handled = false;
+    await act(async () => {
+      handled = harness.editor.dispatchCommand(PASTE_COMMAND, event);
+    });
+    return handled;
+  }
+
+  it('turns a pasted shared-doc link into the same reference the typeahead makes', async () => {
+    const harness = renderTypeahead(sourceWithSpec());
+
+    expect(await pasteInto(harness, SPEC_TARGET)).toBe(true);
+
+    harness.editor.getEditorState().read(() => {
+      const reference = $getRoot()
+        .getChildren()
+        .flatMap((child) => ($isElementNode(child) ? child.getChildren() : []))
+        .find($isDocumentReferenceNode);
+      expect($isDocumentReferenceNode(reference)).toBe(true);
+      if (!$isDocumentReferenceNode(reference)) return;
+      expect(reference.getPath()).toBe(SPEC_TARGET);
+      expect(reference.getTextContent()).toContain('Product spec');
+    });
+  });
+
+  it('embeds a pasted link to an embeddable shared doc, as the typeahead does', async () => {
+    setEmbeddableExtensions(['.mockup.html']);
+    const harness = renderTypeahead({
+      listOptions: () => [
+        {
+          documentId: 'mockup-1',
+          title: 'unified-quick-open.mockup.html',
+          target: ORG_TARGET,
+          embedType: '.mockup.html',
+        },
+      ],
+      openReference: () => {},
+    });
+
+    expect(await pasteInto(harness, ORG_TARGET)).toBe(true);
+
+    harness.editor.getEditorState().read(() => {
+      const embed = $getRoot().getChildren().find($isEmbeddedFileNode);
+      expect($isEmbeddedFileNode(embed)).toBe(true);
+      if (!$isEmbeddedFileNode(embed)) return;
+      expect(embed.getAttrs()).toEqual({ embedType: '.mockup.html' });
+    });
+  });
+
+  /**
+   * The label is baked into the node and exported to markdown, so a guessed one
+   * outlives the paste. Text is the honest result for a document this reader
+   * cannot see.
+   */
+  it('leaves a link to an unknown document as text rather than guessing a title', async () => {
+    const harness = renderTypeahead(sourceWithSpec());
+
+    expect(await pasteInto(harness, 'nimbalyst://doc/not-shared-with-me?orgId=team-1')).toBe(false);
+
+    harness.editor.getEditorState().read(() => {
+      expect($getRoot().getChildren().some($isEmbeddedFileNode)).toBe(false);
+      const references = $getRoot()
+        .getChildren()
+        .flatMap((child) => ($isElementNode(child) ? child.getChildren() : []))
+        .filter($isDocumentReferenceNode);
+      expect(references).toHaveLength(0);
+    });
+  });
+
+  it('ignores a paste that is not a shared-doc link', async () => {
+    const harness = renderTypeahead(sourceWithSpec());
+    expect(await pasteInto(harness, 'https://example.com/spec-1')).toBe(false);
   });
 });

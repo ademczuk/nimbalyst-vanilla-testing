@@ -112,7 +112,22 @@ export const FeedbackLocalArtifactPreview: React.FC<{
     host?.setTheme(theme);
   }, [host, theme]);
 
-  if (!registration || content.status === 'failed') {
+  if (content.status === 'failed') {
+    /*
+     * The common way to get here is a request from someone else: a `file` ref
+     * names a path on the machine that composed it, so a recipient reads a path
+     * that is not theirs. Saying so beats a blank panel that reads as a preview
+     * which failed to load for no stated reason.
+     */
+    return (
+      <FeedbackOptionPlaceholderPreview
+        label={optionLabel}
+        artifactLabel={label}
+        note="This file is not on this machine, so there is nothing to preview."
+      />
+    );
+  }
+  if (!registration) {
     return (
       <FeedbackOptionPlaceholderPreview label={optionLabel} artifactLabel={label} />
     );

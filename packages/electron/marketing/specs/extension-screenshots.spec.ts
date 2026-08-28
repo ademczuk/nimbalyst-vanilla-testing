@@ -11,6 +11,10 @@
  *
  * Run:
  *   cd packages/electron && npm run marketing:screenshots:grep -- "extension-"
+ *
+ * Set EXT_SCREENSHOT_IDS to a comma-separated list of extension ids to capture
+ * only those. Without it every extension is recaptured, which rewrites PNGs for
+ * extensions the current change has nothing to do with.
  */
 
 import { test } from '@playwright/test';
@@ -59,6 +63,10 @@ async function discoverExtensions(): Promise<ExtensionInfo[]> {
   const entries = await fs.readdir(extensionsRoot, { withFileTypes: true });
   const extensions: ExtensionInfo[] = [];
 
+  const only = process.env.EXT_SCREENSHOT_IDS?.split(',')
+    .map(id => id.trim())
+    .filter(Boolean);
+
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
 
@@ -66,6 +74,8 @@ async function discoverExtensions(): Promise<ExtensionInfo[]> {
     try {
       const raw = await fs.readFile(manifestPath, 'utf-8');
       const manifest: ExtensionManifest = JSON.parse(raw);
+
+      if (only && !only.includes(manifest.id)) continue;
 
       if (manifest.marketplace?.screenshots && manifest.marketplace.screenshots.length > 0) {
         extensions.push({

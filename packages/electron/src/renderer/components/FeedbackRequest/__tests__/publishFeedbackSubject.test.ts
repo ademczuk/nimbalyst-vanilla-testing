@@ -103,3 +103,123 @@ describe('publishFeedbackSubject', () => {
     expect(outcome.success).toBe(false);
   });
 });
+
+describe('publishFeedbackSubject — destination', () => {
+  const FILE_REF = {
+    orgId: ORG_ID,
+    kind: 'file' as const,
+    sourceId: 'mockups/direction-a.mockup.html',
+  };
+  const DESTINATION = { folderId: 'f-feedback', folderPath: 'Feedback requests' };
+
+  function stubUnsharedFile(): void {
+    stubElectronAPI({
+      documentSync: { findLocalOriginLink: vi.fn().mockResolvedValue({ success: true, binding: null }) },
+    });
+  }
+
+  it('asks the share flow to skip its dialog when the destination answers everything', async () => {
+    stubUnsharedFile();
+    shareFlow.askShareToTeam.mockResolvedValue({
+      status: 'answered',
+      answers: { folderId: 'f-feedback', folderPath: 'Feedback requests' },
+    });
+    shareFlow.shareFileToTeam.mockResolvedValue({
+      status: 'shared',
+      orgId: ORG_ID,
+      documentId: 'doc-new',
+    });
+
+    const outcome = await publishFeedbackSubject(FILE_REF, {
+      workspacePath: '/tmp/workspace',
+      destination: DESTINATION,
+    });
+
+    expect(shareFlow.askShareToTeam).toHaveBeenCalledWith(
+      expect.objectContaining({ fileName: 'direction-a.mockup.html' }),
+      { destination: DESTINATION, skipWhenFullyAnswered: true },
+    );
+    expect(outcome).toEqual({
+      success: true,
+      ref: { orgId: ORG_ID, kind: 'document', sourceId: 'doc-new' },
+    });
+    // One request, one write of the workspace default -- the compose host does
+    // it once after the batch instead.
+    expect(shareFlow.shareFileToTeam).toHaveBeenCalledWith(
+      expect.objectContaining({ persistLastSharedFolder: false, openAfterCreate: false }),
+    );
+  });
+
+  it('keeps the folder the author picked in the dialog over the request-level one', async () => {
+    stubUnsharedFile();
+    // What a dialog looks like when the author moved it somewhere else.
+    shareFlow.askShareToTeam.mockResolvedValue({
+      status: 'answered',
+      answers: { folderId: 'f-elsewhere', folderPath: 'Product/Specs' },
+    });
+    shareFlow.shareFileToTeam.mockResolvedValue({
+      status: 'shared',
+      orgId: ORG_ID,
+      documentId: 'doc-new',
+    });
+
+    const plan = await prepareFeedbackSubjectPublish(FILE_REF, {
+      workspacePath: '/tmp/workspace',
+      destination: DESTINATION,
+    });
+    expect(plan.status).toBe('ready');
+    if (plan.status !== 'ready') return;
+    // The folder created for the request arrives at run time and must not
+    // overwrite an answer the author gave explicitly.
+    await plan.run({ folderId: 'f-created', folderPath: 'Feedback requests' });
+
+    expect(shareFlow.shareFileToTeam).toHaveBeenCalledWith(
+      expect.objectContaining({
+        answers: expect.objectContaining({ folderId: 'f-elsewhere', folderPath: 'Product/Specs' }),
+      }),
+    );
+  });
+
+  it('publishes into the folder created between the two passes', async () => {
+    stubUnsharedFile();
+    shareFlow.askShareToTeam.mockResolvedValue({
+      status: 'answered',
+      // Preparing saw no folder yet: it did not exist when the picker painted.
+      answers: { folderId: null, folderPath: '' },
+    });
+    shareFlow.shareFileToTeam.mockResolvedValue({
+      status: 'shared',
+      orgId: ORG_ID,
+      documentId: 'doc-new',
+    });
+
+    const plan = await prepareFeedbackSubjectPublish(FILE_REF, {
+      workspacePath: '/tmp/workspace',
+      destination: { folderId: null, folderPath: '' },
+    });
+    expect(plan.status).toBe('ready');
+    if (plan.status !== 'ready') return;
+    await plan.run({ folderId: 'f-created', folderPath: 'Feedback requests' });
+
+    expect(shareFlow.shareFileToTeam).toHaveBeenCalledWith(
+      expect.objectContaining({
+        answers: expect.objectContaining({
+          folderId: 'f-created',
+          folderPath: 'Feedback requests',
+        }),
+      }),
+    );
+  });
+
+  it('still asks per file when no destination was chosen', async () => {
+    stubUnsharedFile();
+    shareFlow.askShareToTeam.mockResolvedValue({ status: 'cancelled' });
+
+    const plan = await prepareFeedbackSubjectPublish(FILE_REF, {
+      workspacePath: '/tmp/workspace',
+    });
+
+    expect(shareFlow.askShareToTeam).toHaveBeenCalledWith(expect.anything(), {});
+    expect(plan.status).toBe('blocked');
+  });
+});

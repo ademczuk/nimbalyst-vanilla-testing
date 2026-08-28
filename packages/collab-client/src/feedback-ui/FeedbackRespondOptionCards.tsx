@@ -82,9 +82,16 @@ const OptionRadio: React.FC<{ selected: boolean }> = ({ selected }) => (
 export const FeedbackOptionPlaceholderPreview: React.FC<{
   label: string;
   artifactLabel?: string;
+  /**
+   * Why there is nothing to show, when the caller knows. "This artifact never
+   * had a preview" and "this artifact has one and it could not be reached" look
+   * identical without it, and only the second is a problem worth reporting.
+   */
+  note?: string;
 }> = ({
   label,
   artifactLabel,
+  note,
 }) => (
   <div
     className="feedback-respond-option-placeholder flex h-full w-full flex-col items-center justify-center gap-1 rounded bg-nim-tertiary text-nim-faint"
@@ -95,6 +102,11 @@ export const FeedbackOptionPlaceholderPreview: React.FC<{
     {artifactLabel && (
       <span className="max-w-full truncate px-2 text-[0.6875rem] text-nim-muted">
         {artifactLabel}
+      </span>
+    )}
+    {note && (
+      <span className="feedback-respond-option-placeholder-note max-w-full px-3 text-center text-[0.6875rem] leading-snug text-nim-faint">
+        {note}
       </span>
     )}
   </div>

@@ -14,7 +14,10 @@ import {
 import {
   applyCanvasNodeChanges,
   canvasCardKind,
+  canvasCardReference,
+  createReferenceCanvasNode,
   toFlowNodes,
+  zoomViewportAtPoint,
 } from '../canvasFlowMapping';
 
 function card(
@@ -216,5 +219,85 @@ describe('canvas <-> React Flow mapping', () => {
     expect(activeOf(toFlowNodes(document, { activeNodeId: 'a' }))).toEqual([
       'a',
     ]);
+  });
+
+  it('anchors a Cmd+wheel zoom under the pointer and clamps to the flow limits', () => {
+    const limits = { minZoom: 0.1, maxZoom: 2 };
+    const viewport = { x: -100, y: -40, zoom: 1 };
+    // The canvas point currently under the pointer. It is the one thing that
+    // must not move; everything else about the viewport may.
+    const point = { x: 300, y: 200 };
+    const canvasUnderPointer = {
+      x: (point.x - viewport.x) / viewport.zoom,
+      y: (point.y - viewport.y) / viewport.zoom,
+    };
+
+    for (const deltaY of [-120, -1, 1, 120]) {
+      const next = zoomViewportAtPoint(viewport, point, { deltaY, deltaMode: 0 }, limits)!;
+      expect(next.zoom).toBeCloseTo(Math.pow(2, -deltaY * 0.002), 10);
+      expect(next.x + canvasUnderPointer.x * next.zoom).toBeCloseTo(point.x, 6);
+      expect(next.y + canvasUnderPointer.y * next.zoom).toBeCloseTo(point.y, 6);
+    }
+
+    // Firefox reports lines rather than pixels; one line must not zoom as far
+    // as one pixel-delta of the same number would.
+    expect(
+      zoomViewportAtPoint(viewport, point, { deltaY: -3, deltaMode: 1 }, limits)!.zoom
+    ).toBeCloseTo(Math.pow(2, 3 * 0.05), 10);
+
+    // Clamped, and a tick that cannot move the scale reports "nothing to do"
+    // rather than a viewport write -- each one drags pan/zoom events behind it.
+    expect(
+      zoomViewportAtPoint({ x: 0, y: 0, zoom: 2 }, point, { deltaY: -500, deltaMode: 0 }, limits)
+    ).toBeNull();
+    expect(
+      zoomViewportAtPoint({ x: 0, y: 0, zoom: 0.1 }, point, { deltaY: 500, deltaMode: 0 }, limits)
+    ).toBeNull();
+    expect(
+      zoomViewportAtPoint({ x: 0, y: 0, zoom: 1.5 }, point, { deltaY: -5000, deltaMode: 0 }, limits)!
+        .zoom
+    ).toBe(2);
+  });
+
+  it('creates reference cards a plain JSON Canvas reader can still make sense of', () => {
+    const document: CanvasDocument = { nodes: [card('a')] };
+
+    const file = createReferenceCanvasNode(
+      document,
+      { kind: 'file', path: 'docs/UI_PATTERNS.md' },
+      { x: 0, y: 0 },
+      'UI patterns'
+    );
+    // The spec fields are for the other tool; `x-nimbalyst` is what we read.
+    expect(file.type).toBe('file');
+    expect(file.file).toBe('docs/UI_PATTERNS.md');
+    expect(canvasCardKind(file)).toBe('reference');
+    expect(canvasCardReference(file)).toEqual({
+      kind: 'file',
+      path: 'docs/UI_PATTERNS.md',
+    });
+    expect(file[NIMBALYST_CANVAS_NAMESPACE]?.label).toBe('UI patterns');
+
+    // A shared document has no spec type of its own, so it rides as a link
+    // carrying its URI rather than as an unresolvable `file`.
+    const shared = createReferenceCanvasNode(
+      document,
+      { kind: 'doc', uri: 'nimbalyst://doc/org-1/doc-1' },
+      { x: 0, y: 0 }
+    );
+    expect(shared.type).toBe('link');
+    expect(shared.url).toBe('nimbalyst://doc/org-1/doc-1');
+    expect(canvasCardKind(shared)).toBe('reference');
+    expect(canvasCardReference(shared)).toEqual({
+      kind: 'doc',
+      uri: 'nimbalyst://doc/org-1/doc-1',
+    });
+    // No label offered means no empty label written into the file.
+    expect(shared[NIMBALYST_CANVAS_NAMESPACE]).not.toHaveProperty('label');
+
+    // Centred on the point, and never colliding with what is already there.
+    expect(file.x).toBe(-file.width / 2);
+    expect(file.y).toBe(-file.height / 2);
+    expect(new Set([file.id, shared.id, 'a']).size).toBe(3);
   });
 });

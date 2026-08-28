@@ -47,6 +47,7 @@ import {
   FeedbackArtifactSubjects,
   type FeedbackArtifactActionResolver,
   type FeedbackSubjectOpener,
+  type FeedbackSubjectPreviewRenderer,
 } from './FeedbackArtifactSubjects';
 import {
   FEEDBACK_RESPOND_BLOCKED_MESSAGES,
@@ -89,6 +90,11 @@ export interface FeedbackRequestRespondProps {
   discussion?: React.ReactNode;
   /** Per-option artifact previews, when the embedding surface has them. */
   renderOptionPreview?: FeedbackOptionPreviewRenderer;
+  /**
+   * Paints what the request is *about*, as distinct from the artifacts bound to
+   * one ask's options. Absent leaves the subject list as text rows.
+   */
+  renderSubjectPreview?: FeedbackSubjectPreviewRenderer;
   /**
    * Paints one artifact full-size for the detail popover. Supplied means expand
    * opens the popover in place; absent means expand opens a tab, as it did
@@ -144,6 +150,7 @@ export const FeedbackRequestRespond: React.FC<FeedbackRequestRespondProps> = ({
   host,
   discussion,
   renderOptionPreview,
+  renderSubjectPreview,
   renderArtifactDetail,
   onOpenSubject,
   resolveArtifactAction,
@@ -287,6 +294,7 @@ export const FeedbackRequestRespond: React.FC<FeedbackRequestRespondProps> = ({
         <FeedbackArtifactSubjects
           subjects={request.subjects}
           onOpen={onOpenSubject}
+          renderPreview={renderSubjectPreview}
           resolveAction={resolveArtifactAction}
         />
 

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { SharedFolder } from '../../../store/atoms/collabDocuments';
-import { buildShareFolderTree } from '../ShareToTeamDialog';
+import { buildShareFolderTree, type ShareFolderNode } from '../shareFolderTree';
 
 function folder(
   folderId: string,
@@ -41,7 +41,10 @@ describe('Share-to-Team first-class folder tree', () => {
       folder('engineering', 'Product'),
       folder('specs', 'Specs'),
     ]);
-    expect(moved.map(node => ({ folderId: node.folderId, path: node.path }))).toEqual([
+    expect(moved.map((node: ShareFolderNode) => ({
+      folderId: node.folderId,
+      path: node.path,
+    }))).toEqual([
       { folderId: 'engineering', path: 'Product' },
       { folderId: 'specs', path: 'Specs' },
     ]);

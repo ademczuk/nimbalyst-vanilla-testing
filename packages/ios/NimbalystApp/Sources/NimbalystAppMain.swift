@@ -7,6 +7,16 @@ import NimbalystNative
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        // Must happen here: iOS delivers the notification tap that launched the
+        // app only to a delegate claimed before launch finishes.
+        NotificationManager.registerAsNotificationCenterDelegate()
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
         NotificationManager.shared.didRegisterForRemoteNotifications(withDeviceToken: deviceToken)

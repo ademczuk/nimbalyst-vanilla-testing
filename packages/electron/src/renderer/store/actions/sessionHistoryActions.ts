@@ -21,6 +21,7 @@
 import { atom } from 'jotai';
 import { atomFamily } from '../debug/atomFamilyRegistry';
 import { resolveProviderFromModel } from '../../utils/modelUtils';
+import type { SessionLaunchSource } from '../../../shared/analytics/sessionLaunch';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
 import {
   store,
@@ -98,6 +99,12 @@ export interface CreateNewSessionOptions {
   title?: string;
   /** Select the new session in Agent mode. Defaults to true for existing callers. */
   selectSession?: boolean;
+  /**
+   * Which surface asked for this session, for `create_ai_session` analytics.
+   * Optional: a caller that omits it is reported as `unknown` rather than being
+   * guessed at, because a wrong attribution is worse than a missing one here.
+   */
+  launchSource?: SessionLaunchSource;
 }
 
 // ============================================================
@@ -422,6 +429,10 @@ export const createNewSessionActionAtom = atom(
           metadata: options.metadata,
         },
         workspaceId: workspacePath,
+        launchSource: options.launchSource,
+        // A boolean, never the draft. The prompt text has no business crossing
+        // into a payload that feeds an analytics emitter.
+        hadPrefilledPrompt: !!options.initialDraft,
       });
 
       if (result.success && result.id) {
@@ -512,6 +523,7 @@ export const createNewWorktreeSessionActionAtom = atom(
           worktreeId: worktree.id,
         },
         workspaceId: workspacePath,
+        launchSource: 'worktree' satisfies SessionLaunchSource,
       });
 
       if (result.success && result.id) {
@@ -586,6 +598,7 @@ export const createWorktreeSessionCoreActionAtom = atom(
         worktreeId: worktree.id,
       },
       workspaceId: workspacePath,
+      launchSource: 'worktree' satisfies SessionLaunchSource,
     });
 
     if (result.success && result.id) {

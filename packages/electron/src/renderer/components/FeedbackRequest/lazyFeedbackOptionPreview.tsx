@@ -20,6 +20,7 @@
 
 import React from 'react';
 import type {
+  FeedbackArtifact,
   FeedbackAskArtifact,
   StructuredInputSingleSelectOption,
 } from '@nimbalyst/collab-protocol';
@@ -27,6 +28,7 @@ import { useAtomValue } from 'jotai';
 import {
   FeedbackOptionPlaceholderPreview,
   ScaledPreviewFrame,
+  feedbackSubjectAsAskArtifact,
   useLivePreviewSlot,
 } from '@nimbalyst/collab-client/feedback-ui';
 
@@ -129,6 +131,29 @@ const LocalArtifactPreviewSlot: React.FC<{
     </div>
   );
 };
+
+/**
+ * The request-level subject painter.
+ *
+ * A subject is a `FeedbackArtifact` with no entry id, so it borrows the option
+ * path by synthesising one. Everything below that seam -- slot budget, scaled
+ * frame, lazy chunk -- is the option renderer's, unchanged: a subject is a
+ * bigger panel showing the same kind of thing, not a different kind of mount.
+ *
+ * The placeholder's `label` is the subject's own name rather than an option's,
+ * because there is no option here to be choosing between.
+ */
+export function renderLazyFeedbackSubjectPreview(
+  subject: FeedbackArtifact,
+  index: number,
+): React.ReactNode {
+  const artifact = feedbackSubjectAsAskArtifact(subject, index);
+  return renderLazyFeedbackOptionPreview(
+    { id: artifact.entryId, label: subject.label },
+    index,
+    artifact,
+  );
+}
 
 /**
  * The compose surface's artifact painter.

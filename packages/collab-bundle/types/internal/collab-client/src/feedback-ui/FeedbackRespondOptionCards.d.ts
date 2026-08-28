@@ -59,5 +59,11 @@ export interface FeedbackRespondOptionCardsProps {
 export declare const FeedbackOptionPlaceholderPreview: React.FC<{
     label: string;
     artifactLabel?: string;
+    /**
+     * Why there is nothing to show, when the caller knows. "This artifact never
+     * had a preview" and "this artifact has one and it could not be reached" look
+     * identical without it, and only the second is a problem worth reporting.
+     */
+    note?: string;
 }>;
 export declare const FeedbackRespondOptionCards: React.FC<FeedbackRespondOptionCardsProps>;

@@ -1443,7 +1443,7 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
   // Trigger find in the active editor. Two strategies based on editor type:
   // - Monaco: dispatch synthetic Cmd+F keydown to its internal textarea, which
   //   Monaco's keybinding system processes to open its built-in find widget.
-  // - Lexical: use SearchReplaceStateManager.toggle() directly (same as Files mode).
+  // - Lexical: use SearchReplaceStateManager.openAndFocus() directly (same as Files mode).
   //   We can't use synthetic keydown because Lexical's SearchReplacePlugin checks
   //   isEditorActive (based on React state), which won't be true synchronously
   //   after focusing the contenteditable.
@@ -1467,8 +1467,8 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
       // Lexical or other editor - use SearchReplaceStateManager
       const activeFilePath = editorTabsRef.current?.getActiveFilePath();
       if (activeFilePath) {
-        console.log('[AgentWorkstreamPanel] triggerEditorFind: toggling SearchReplaceStateManager for', activeFilePath);
-        SearchReplaceStateManager.toggle(activeFilePath);
+        console.log('[AgentWorkstreamPanel] triggerEditorFind: opening SearchReplaceStateManager for', activeFilePath);
+        SearchReplaceStateManager.openAndFocus(activeFilePath);
       } else {
         console.log('[AgentWorkstreamPanel] triggerEditorFind: no active file path');
       }

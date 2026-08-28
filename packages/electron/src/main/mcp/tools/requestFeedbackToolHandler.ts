@@ -559,12 +559,28 @@ function parseInput(args: unknown): RequestFeedbackInput {
   };
 }
 
-function subjectRef(subject: SubjectInput, orgId: string, projectId?: string) {
+/**
+ * `documentId` names the shared document a `file` subject already resolves to,
+ * and supplying it rewrites the ref to point at that document instead of the
+ * author's path.
+ *
+ * This is the only place that rewrite can happen for an already-shared file.
+ * The compose surface publishes just the subjects the draft marks unshared, so
+ * `prepareFileSubject`'s own already-bound rewrite never sees this one -- and a
+ * `file` ref carrying an absolute path is meaningless on the recipient's
+ * machine, which is where the request is read.
+ */
+function subjectRef(
+  subject: SubjectInput,
+  orgId: string,
+  projectId?: string,
+  documentId?: string,
+) {
   const resolvedProjectId = projectId ?? subject.projectId;
   return {
     orgId,
-    kind: subject.kind,
-    sourceId: subject.sourceId,
+    kind: documentId ? ('document' as const) : subject.kind,
+    sourceId: documentId ?? subject.sourceId,
     ...(resolvedProjectId ? { projectId: resolvedProjectId } : {}),
   };
 }
@@ -654,19 +670,25 @@ export async function draftRequestFeedback(
   // unknown and duplicate entry ids invisible to validateFeedbackRequest; the
   // same invalid draft then reached the compose surface and failed only after
   // the author had approved publishing.
-  const asks = input.asks.map((ask) => {
-    const bound = input.askArtifacts.filter((artifact) => artifact.askId === ask.id);
-    if (bound.length === 0) return ask;
-    return {
-      ...ask,
-      artifacts: bound.map((artifact) => ({
-        entryId: artifact.entryId,
-        ref: subjectRef(artifact, org.orgId, org.teamProjectId),
-        label: artifact.label ?? artifact.sourceId,
-        ...(artifact.context ? { context: artifact.context } : {}),
-      })),
-    };
-  });
+  const attachArtifacts = (refFor: (artifact: AskArtifactInput) => ReturnType<typeof subjectRef>) =>
+    input.asks.map((ask) => {
+      const bound = input.askArtifacts.filter((artifact) => artifact.askId === ask.id);
+      if (bound.length === 0) return ask;
+      return {
+        ...ask,
+        artifacts: bound.map((artifact) => ({
+          entryId: artifact.entryId,
+          ref: refFor(artifact),
+          label: artifact.label ?? artifact.sourceId,
+          ...(artifact.context ? { context: artifact.context } : {}),
+        })),
+      };
+    });
+
+  // Sharing has not been read yet -- and must not be, because an unknown entry
+  // id has to fail validation before anyone is asked about a resource. These
+  // refs exist to be validated; the draft below carries the resolved ones.
+  const asks = attachArtifacts((artifact) => subjectRef(artifact, org.orgId, org.teamProjectId));
 
   const validation = validateFeedbackRequest({
     asks,
@@ -744,6 +766,11 @@ export async function draftRequestFeedback(
     }
   }
 
+  const resolvedRef = (subject: SubjectInput) => {
+    const sharing = sharingFor(subject);
+    return subjectRef(subject, sharing.orgId ?? org.orgId, org.teamProjectId, sharing.documentId);
+  };
+
   return {
     status: 'draftReady',
     message:
@@ -751,10 +778,12 @@ export async function draftRequestFeedback(
     draft: {
       orgId: org.orgId,
       recipients,
-      asks,
+      // Option-bound artifacts carry their own copy of the ref, so resolving
+      // only `subjects` would leave every option card pointing at a path.
+      asks: attachArtifacts(resolvedRef),
       assignments,
       subjects: publishable.map((subject) => ({
-        ref: subjectRef(subject, sharingFor(subject).orgId ?? org.orgId, org.teamProjectId),
+        ref: resolvedRef(subject),
         label: subject.label ?? subject.sourceId,
         ...(subject.context ? { context: subject.context } : {}),
         shared: sharingFor(subject).teamVisible,

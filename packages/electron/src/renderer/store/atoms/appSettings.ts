@@ -33,6 +33,25 @@ import {
   GUTTER_ITEM_ORDER_KEY,
 } from '../../components/NavigationGutter/navGutterItems';
 
+// This module cannot survive a hot update. Every `atom(...)` below is created at
+// module scope, but the jotai store that holds their values lives in a different
+// package (`@nimbalyst/runtime/store`) and survives HMR. A re-execution would
+// hand every component brand-new atom identities sitting at their *defaults*
+// while the one-time IPC seeding in `renderer/index.tsx` never re-runs, silently
+// reverting the app to unconfigured settings until the next full reload.
+//
+// Today this is latent rather than live: `renderer/index.tsx` imports this
+// module and is not self-accepting, so propagation already escalates to a full
+// reload. That is an accident of the import graph, not a guarantee -- if this
+// module ever stops being reachable from a non-accepting entry, the failure
+// returns silently. Self-accept and immediately invalidate so the reload is the
+// documented behavior instead.
+if (import.meta.hot) {
+  import.meta.hot.accept(() => {
+    import.meta.hot?.invalidate('appSettings atoms cannot be re-seeded after a hot update');
+  });
+}
+
 // Voice type - all available OpenAI Realtime voices
 export type VoiceId = 'alloy' | 'ash' | 'ballad' | 'coral' | 'echo' | 'sage' | 'shimmer' | 'verse' | 'marin' | 'cedar';
 
@@ -2078,12 +2097,19 @@ export async function initDeveloperFeatureSettings(): Promise<DeveloperFeatureSe
       window.electronAPI.invoke('developer-features:get'),
     ]);
 
+    // A missing/undefined read is indistinguishable from a genuine `false` in
+    // the resulting atom, and the difference is the whole app flipping to
+    // Standard Mode. Say which one happened.
+    if (developerMode === undefined || developerMode === null) {
+      console.warn('[appSettings] developer-mode:get returned no value; defaulting to Standard Mode');
+    }
+
     return {
       developerMode: developerMode ?? false,
       developerFeatures: developerFeatures ?? defaultDeveloperFeatureSettings.developerFeatures,
     };
   } catch (error) {
-    console.error('[appSettings] Failed to load developer feature settings:', error);
+    console.error('[appSettings] Failed to load developer feature settings; defaulting to Standard Mode:', error);
   }
 
   return defaultDeveloperFeatureSettings;

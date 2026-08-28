@@ -142,9 +142,23 @@ The renderer resolves both from the main process rather than re-deriving them fr
 
 ### AI Chat & Sessions
 
+#### Session launch context
+
+`create_ai_session` carries where a session came from. The union lives in `packages/electron/src/shared/analytics/sessionLaunch.ts`; `initiator` is derived from `launchSource` through one exhaustive map rather than passed alongside it, so the two can never disagree.
+
+| `initiator` | `launchSource` values |
+| --- | --- |
+| `app` | `app_startup`, `tab_restore`, `workstream_convert`, `unknown` |
+| `user` | `new_session_button`, `launch_popup`, `session_history`, `tray`, `workspace_welcome`, `starter_prompt`, `slash_command`, `worktree`, `commit_flow`, `issue_panel`, `pull_request_panel`, `canvas`, `mobile`, `cli` |
+| `agent` | `meta_agent`, `workstream_child`, `blitz`, `automation` |
+
+`unknown` maps to `app`, not `user`. An uninstrumented path is far more likely to be one the app took on its own, and under-counting deliberate launches is the honest failure.
+
+**Not yet wired, so they will read zero:** `app_startup`, `tab_restore`, `workspace_welcome`, `starter_prompt`, `slash_command`, `blitz`, `automation`, `mobile`, `cli`. The mobile worktree path in `AIService` writes through `AISessionsRepository.create` directly and emits no `create_ai_session` at all, which is pre-existing.
+
 | Event Name | File(s) | Trigger | Properties | First Added (Public) | Significant Changes |
 | --- | --- | --- | --- | --- | --- |
-| `create_ai_session` | `AIService.ts:1860`<br/>`SessionHandlers.ts:323, 672` | User creates new AI chat session | `provider`<br/>`is_worktree_session` (boolean)<br/>`is_workstream_child` (boolean)<br/>`is_meta_agent_session` (boolean) | v0.45.25 (2025-11-14) | v0.52.14: Added is_worktree_session and is_workstream_child properties<br/>(pending release): Also emitted from SessionHandlers so Files and Agent mode session creation paths are tracked<br/>(pending release): Added is_meta_agent_session property |
+| `create_ai_session` | `sessionLaunchAnalytics.ts` (single emitter; called from `AIService.ts` and `SessionHandlers.ts`) | An agent session is created | `provider`<br/>`is_worktree_session` (boolean)<br/>`is_workstream_child` (boolean)<br/>`is_meta_agent_session` (boolean)<br/>`launchSource` (enum, see below)<br/>`initiator` (`user` \| `app` \| `agent`, derived from `launchSource`)<br/>`isFirstEverSession` (boolean)<br/>`sessionOrdinalBucket` (`1` \| `2-4` \| `5-9` \| `10+`)<br/>`hadPrefilledPrompt` (boolean) | v0.45.25 (2025-11-14) | v0.52.14: Added is_worktree_session and is_workstream_child properties<br/>(pending release): Also emitted from SessionHandlers so Files and Agent mode session creation paths are tracked<br/>(pending release): Added is_meta_agent_session property<br/>(pending release): Added launch context; consolidated the two drifted emitters into one |
 | `ai_message_sent` | `AIService.ts:1822` | User sends message in AI chat | `provider`<br/>`hasDocumentContext`<br/>`hasAttachments`<br/>`contentMode` (files/agent/unknown)<br/>`sessionMode` (optional, planning/agent)<br/>`fileExtension` (optional, when document open)<br/>`usedSlashCommand` (optional)<br/>`slashCommandName` (optional)<br/>`slashCommandPackageId` (optional) | v0.45.25 (2025-11-14) | v0.47.2 (2025-12-10): Added usedSlashCommand, slashCommandName, slashCommandPackageId properties<br/>(pending release as of 5698aa25): Added fileExtension property<br/>(pending release): Added sessionMode property |
 | `ai_message_submit_attempted` | `SessionTranscript.tsx`<br/>`SessionLaunchPopup.tsx` | User presses send. Fires at the composer **before every guard**, so it is the denominator for the send funnel — including the Claude CLI path, which returns before `ai:sendMessage` | `surface` (transcript/launch_popup)<br/>`provider`<br/>`promptLengthBucket` (short/medium/long, same scale as `ai_message_sent`)<br/>`isFirstMessageInSession`<br/>`sessionMode` | (pending release as of 9e36920c2) |  |
 | `ai_send_blocked` | `SessionTranscript.tsx`<br/>`SessionLaunchPopup.tsx`<br/>`MessageStreamingHandler.ts` | A send terminated without reaching a provider. One emitter per call path: main reports everything downstream of `ai:sendMessage`, the renderer reports its own guards and stays silent on IPC rejection so blocks are never double-counted | `surface`<br/>`reason` (closed enum: empty_draft, no_session_data, queued_cli_not_ready, cli_submit_failed, queued_while_loading, mode_switch_failed, slash_command_only, slash_command_clear, ipc_error, duplicate_prompt, no_session_id, no_workspace, session_not_found, session_mismatch, no_provider, no_api_key)<br/>`provider` | (pending release as of 9e36920c2) |  |

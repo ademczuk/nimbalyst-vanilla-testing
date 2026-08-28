@@ -31,6 +31,7 @@
 
 import type { ResourceRef } from '@nimbalyst/collab-protocol';
 import type {
+  FeedbackComposeDestination,
   FeedbackComposeSendPayload,
   FeedbackRequestSendResult,
 } from '@nimbalyst/runtime/ui/AgentTranscript/components/CustomToolWidgets/InteractiveWidgetHost';
@@ -50,6 +51,12 @@ import {
   type FeedbackPublishOutcome,
   type FeedbackPublishPlan,
 } from './publishFeedbackSubject';
+import {
+  createPendingFeedbackFolder,
+  resolveFeedbackDestination,
+  type ResolvedFeedbackDestination,
+} from './feedbackDestinationFolder';
+import { resolveDesktopCollabScope } from '../../store/atoms/collabDocuments';
 
 export type { FeedbackPublishOutcome, FeedbackPublishPlan };
 
@@ -61,10 +68,23 @@ export interface FeedbackComposeHostConfig {
   sessionId: string;
   sessionName?: string;
   invoke?: Invoke;
-  prepareSubject?: (ref: ResourceRef) => Promise<FeedbackPublishPlan>;
+  prepareSubject?: (
+    ref: ResourceRef,
+    destination?: ResolvedFeedbackDestination,
+  ) => Promise<FeedbackPublishPlan>;
   openResults?: (ref: FeedbackRequestTabRef) => void;
-  createRequestId?: () => string;
+  createRequestId?: (draftId: string) => string;
   createMutationId?: () => string;
+  /** Turns the draft's destination into a folder id. Creates nothing. */
+  resolveDestination?: (
+    destination: FeedbackComposeDestination | undefined,
+  ) => Promise<ResolvedFeedbackDestination>;
+  /** Creates the folder the author named, once, right before publishing. */
+  createPendingFolder?: (
+    destination: ResolvedFeedbackDestination,
+  ) => Promise<ResolvedFeedbackDestination>;
+  /** Records the request's destination as the workspace default, once. */
+  persistLastSharedFolder?: (destination: ResolvedFeedbackDestination) => void;
 }
 
 export interface FeedbackComposeHost {
@@ -75,6 +95,23 @@ export interface FeedbackComposeHost {
 function randomId(prefix: string): string {
   return globalThis.crypto?.randomUUID?.()
     ?? `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * One draft sends one request, however many times Send is pressed.
+ *
+ * `FeedbackRequestRoom.createRequest` is already idempotent: it loads the room's
+ * existing request and, for the same author, acks with that request rather than
+ * overwriting it. That guarantee was unreachable, because a fresh random id per
+ * call addressed a fresh empty room every time -- so two sends were two rooms,
+ * not one replayed create.
+ *
+ * Deriving the id from the draft id (the provider's tool call id, unique per
+ * `RequestFeedback` call) is what connects the two. It is the only backstop that
+ * survives an app reload, which the widget's sent-state atom does not.
+ */
+function requestIdForDraft(draftId: string): string {
+  return draftId ? `feedback-request-${draftId}` : randomId('feedback-request');
 }
 
 function refKey(ref: ResourceRef): string {
@@ -98,12 +135,58 @@ export function createFeedbackComposeHost(
   const invoke: Invoke = config.invoke
     ?? ((channel, request) => window.electronAPI.invoke(channel, request));
   const prepareSubject = config.prepareSubject
-    ?? ((ref: ResourceRef) =>
-      prepareFeedbackSubjectPublish(ref, { workspacePath: config.workspacePath }));
+    ?? ((ref: ResourceRef, destination?: ResolvedFeedbackDestination) =>
+      prepareFeedbackSubjectPublish(ref, {
+        workspacePath: config.workspacePath,
+        ...(destination
+          ? { destination: { folderId: destination.folderId, folderPath: destination.folderPath } }
+          : {}),
+      }));
   const openResults = config.openResults
     ?? ((ref: FeedbackRequestTabRef) => defaultOpenResults(config.workspacePath, ref));
-  const newRequestId = config.createRequestId ?? (() => randomId('feedback-request'));
+  const newRequestId = config.createRequestId ?? requestIdForDraft;
   const newMutationId = config.createMutationId ?? (() => randomId('feedback-compose'));
+
+  const withScope = async <T,>(
+    run: (scope: Awaited<ReturnType<typeof resolveDesktopCollabScope>>['scope'] & {}) => Promise<T>,
+    fallback: T,
+  ): Promise<T> => {
+    const { scope } = await resolveDesktopCollabScope(config.workspacePath);
+    return scope ? run(scope) : fallback;
+  };
+
+  const resolveDestination = config.resolveDestination
+    ?? ((destination: FeedbackComposeDestination | undefined) =>
+      withScope(
+        (scope) => resolveFeedbackDestination(scope, destination),
+        // No scope means no team folders to place anything in; the per-subject
+        // dialog still runs and the author places it themselves.
+        { folderId: null, folderPath: '' } as ResolvedFeedbackDestination,
+      ));
+
+  const createPendingFolder = config.createPendingFolder
+    ?? ((destination: ResolvedFeedbackDestination) =>
+      withScope(
+        (scope) => createPendingFeedbackFolder(scope, destination),
+        { folderId: destination.folderId, folderPath: destination.folderPath },
+      ));
+
+  const persistLastSharedFolder = config.persistLastSharedFolder
+    ?? ((destination: ResolvedFeedbackDestination) => {
+      if (!config.workspacePath || !window.electronAPI?.invoke) return;
+      // Direct rather than through `invoke`: this channel is workspace-scoped
+      // and takes the path as its own argument, which that alias cannot express.
+      window.electronAPI
+        .invoke('workspace:update-state', config.workspacePath, {
+          collabTree: {
+            lastSharedFolderId: destination.folderId,
+            lastSharedFolder: destination.folderPath,
+          },
+        })
+        .catch((error: unknown) => {
+          console.warn('[createFeedbackComposeHost] Could not persist the destination:', error);
+        });
+    });
 
   return {
     async send(payload: FeedbackComposeSendPayload): Promise<FeedbackRequestSendResult> {
@@ -133,14 +216,30 @@ export function createFeedbackComposeHost(
         };
       }
 
+      // Look the destination up before asking anything, so a file with nothing
+      // else to ask can publish without a dialog. Lookup only -- a folder the
+      // author named is not created until the send is definitely going ahead.
+      // Only files land in a folder. A tracker is published by flipping its own
+      // visibility bit, so a tracker-only request must not resolve a
+      // destination -- and must certainly not create one for nothing.
+      let destination: ResolvedFeedbackDestination | undefined;
+      if (payload.publishSubjectRefs.some((ref) => ref.kind === 'file')) {
+        try {
+          destination = await resolveDestination(payload.destination);
+        } catch (error) {
+          console.warn('[createFeedbackComposeHost] Could not resolve the destination:', error);
+        }
+      }
+
       // Pass one: everything the author has to answer, before anything is
-      // created. Preparing a file opens the share dialog, so a cancel here
-      // costs the author nothing but the dialog they just closed.
+      // created. Preparing a file may still open the share dialog when it
+      // embeds other documents, so a cancel here costs the author nothing but
+      // the dialog they just closed.
       const plans: Array<{ ref: ResourceRef; plan: FeedbackPublishPlan }> = [];
       for (const ref of payload.publishSubjectRefs) {
         let plan: FeedbackPublishPlan;
         try {
-          plan = await prepareSubject(ref);
+          plan = await prepareSubject(ref, destination);
         } catch (error) {
           plan = {
             status: 'blocked',
@@ -151,6 +250,23 @@ export function createFeedbackComposeHost(
         plans.push({ ref, plan });
       }
 
+      // Every question is answered and the send is going ahead, so the folder
+      // the author named can exist now. Before this line an abandoned send
+      // leaves the team with nothing, which is the point of deferring it.
+      if (destination?.pendingFolder && plans.length > 0) {
+        const folderName = destination.pendingFolder.name;
+        try {
+          destination = await createPendingFolder(destination);
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error
+              ? error.message
+              : `The ${folderName} folder could not be created.`,
+          };
+        }
+      }
+
       // Pass two: publish. A file turns into a shared document, so the ref the
       // request carries is the published one -- a recipient cannot resolve a
       // path on the author's disk.
@@ -159,7 +275,7 @@ export function createFeedbackComposeHost(
         if (plan.status !== 'ready') continue;
         let outcome: FeedbackPublishOutcome;
         try {
-          outcome = await plan.run();
+          outcome = await plan.run(destination);
         } catch (error) {
           outcome = {
             success: false,
@@ -172,6 +288,9 @@ export function createFeedbackComposeHost(
         if (!outcome.success) return { success: false, error: outcome.error };
         if (outcome.ref) publishedRefs.set(refKey(ref), outcome.ref);
       }
+      // Once for the request, not once per file. Reaching here means every plan
+      // ran without failing, since any failure returns above.
+      if (destination && plans.length > 0) persistLastSharedFolder(destination);
       // The published ref replaces the local one; the author's label rides
       // through untouched, because it is the only thing a recipient who never
       // synced the project can read.
@@ -188,7 +307,7 @@ export function createFeedbackComposeHost(
           ? { ...ask, artifacts: ask.artifacts.map(republish) }
           : ask);
 
-      const requestId = newRequestId();
+      const requestId = newRequestId(payload.draftId);
       const target: FeedbackRequestServiceTarget = {
         workspacePath: config.workspacePath,
         orgId: payload.orgId,

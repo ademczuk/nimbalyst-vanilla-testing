@@ -3,6 +3,8 @@ import { readdirSync } from 'fs';
 import { relative } from 'path';
 import { promisify } from 'util';
 
+import { createGitRemoteCache } from './gitRemoteCache';
+
 const execFileAsync = promisify(execFile);
 
 /**
@@ -364,6 +366,10 @@ export function legacyNormalizeGitRemote(remoteUrl: string | null): string | nul
  * post-sign-in project walk's clone step) needs this one.
  */
 export async function getRawGitRemote(workspacePath: string): Promise<string | null> {
+  return gitRemoteCache.get(workspacePath);
+}
+
+async function spawnGitRemote(workspacePath: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync('git', ['remote', 'get-url', 'origin'], {
       cwd: workspacePath,
@@ -375,4 +381,20 @@ export async function getRawGitRemote(workspacePath: string): Promise<string | n
   } catch {
     return null;
   }
+}
+
+/**
+ * Callers walk every recent workspace on a hot path, so each one must not cost
+ * a git spawn. See `gitRemoteCache.ts` for the measurements and for why the
+ * entries expire instead of living forever.
+ */
+const gitRemoteCache = createGitRemoteCache(spawnGitRemote);
+
+/**
+ * Forget a cached `origin`. Call this after anything that can change a
+ * workspace's remote (a clone into an existing path, `git remote set-url`
+ * issued through the app), so the next lookup re-reads it.
+ */
+export function invalidateGitRemoteCache(workspacePath?: string): void {
+  gitRemoteCache.invalidate(workspacePath);
 }

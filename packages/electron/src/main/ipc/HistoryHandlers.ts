@@ -5,6 +5,7 @@ import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import { getAppSetting } from '../utils/store';
 import { BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import { getWindowId, windowStates } from '../window/WindowManager';
+import { resolveSenderWorkspacePath } from '../window/captureWindowWorkspace';
 import { dirtyEditorRegistry } from '../services/DirtyEditorRegistry';
 import { ProjectFileService } from '../services/ProjectFileService';
 import { jsonKeyAccessor } from '../database/jsonKeyExpr';
@@ -17,11 +18,27 @@ const projectFiles = new ProjectFileService(
     (filePath) => dirtyEditorRegistry.isDirty(filePath),
 );
 
+/**
+ * The workspace this sender is allowed to read and write inside.
+ *
+ * Resolved in main from what main itself knows, never from an argument the
+ * renderer supplies -- that is the whole point of the check.
+ *
+ * The hidden screenshot capture window is created by `OffscreenEditorManager`
+ * rather than `WindowManager`, so it has no `WindowState` and used to fail this
+ * outright: an animation whose parts reference sibling `htmlFile` partials
+ * rendered as empty boxes under `capture_editor_screenshot` while looking
+ * correct in a tab. `resolveSenderWorkspacePath` falls back to the workspace of
+ * the file main most recently mounted in that window, which is main's own
+ * record and just as trustworthy as a `WindowState`.
+ */
 function getAuthorizedWorkspaceRoot(event: IpcMainInvokeEvent): string {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window) throw new Error('Project file access requires a workspace window.');
-    const windowId = getWindowId(window);
-    const workspaceRoot = windowId === null ? undefined : windowStates.get(windowId)?.workspacePath;
+    const workspaceRoot = resolveSenderWorkspacePath({
+        windowId: getWindowId(window),
+        webContentsId: event.sender.id,
+    });
     if (!workspaceRoot) throw new Error('Project file access is unavailable outside a workspace.');
     return workspaceRoot;
 }

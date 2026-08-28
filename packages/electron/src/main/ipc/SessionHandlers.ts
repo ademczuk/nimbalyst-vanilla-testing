@@ -18,6 +18,7 @@ import { parseJsonObjectColumn } from '../utils/jsonColumn';
 import type { SessionCreateResult } from '../../shared/ipc/types';
 import { TrayManager } from '../tray/TrayManager';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
+import { trackCreateAiSession } from '../services/analytics/sessionLaunchAnalytics';
 import { resolveRequestUserInputPromptTargets } from '../mcp/tools/codexToolCallResolver';
 import {
     getGitCommitProposalResponseChannel,
@@ -64,13 +65,10 @@ function trackCreateAISession(provider: AIProviderType, options?: {
     worktreeId?: string | null;
     parentSessionId?: string | null;
     agentRole?: string | null;
+    launchSource?: string | null;
+    hadPrefilledPrompt?: boolean;
 }): void {
-    analyticsService.sendEvent('create_ai_session', {
-        provider,
-        is_worktree_session: !!options?.worktreeId,
-        is_workstream_child: !!options?.parentSessionId,
-        is_meta_agent_session: options?.agentRole === 'meta-agent',
-    });
+    trackCreateAiSession({ provider, ...options });
 }
 
 function makeSessionFilesCacheKey(workspacePath: string, uncommittedFiles: Set<string>): string {
@@ -222,9 +220,18 @@ export async function registerSessionHandlers() {
     });
 
     // Create session (new format for agentic coding)
-    safeHandle('sessions:create', async (event, payload: { session: any; workspaceId: string }): Promise<SessionCreateResult> => {
+    safeHandle('sessions:create', async (event, payload: {
+        session: any;
+        workspaceId: string;
+        // Optional so an un-updated caller degrades to `unknown` rather than
+        // failing to create a session. Every renderer path that knows its
+        // surface passes it; the ones that cannot are honestly uncounted.
+        launchSource?: string;
+        /** A boolean, deliberately never the draft text itself. */
+        hadPrefilledPrompt?: boolean;
+    }): Promise<SessionCreateResult> => {
         try {
-            const { session, workspaceId } = payload;
+            const { session, workspaceId, launchSource, hadPrefilledPrompt } = payload;
 
             const requestedProvider = session.provider as AIProviderType;
             const { provider, model } = resolveSessionModelSelection(requestedProvider, session.model);
@@ -252,6 +259,8 @@ export async function registerSessionHandlers() {
                 worktreeId: createPayload.worktreeId,
                 parentSessionId: (session.parentSessionId as string | null | undefined) ?? null,
                 agentRole: createPayload.agentRole,
+                launchSource,
+                hadPrefilledPrompt,
             });
 
             // Update with full metadata
@@ -674,9 +683,13 @@ export async function registerSessionHandlers() {
             };
 
             await AISessionsRepository.create(createPayload as any);
+            // Always `workstream_child`: this handler exists only to parent a
+            // session under another one, so the surface is knowable here and
+            // does not need to be passed in.
             trackCreateAISession(provider as AIProviderType, {
                 worktreeId: createPayload.worktreeId,
                 parentSessionId,
+                launchSource: 'workstream_child',
             });
             console.log(`[SessionHandlers] Child session ${sessionId} created successfully with model: ${model}`);
 

@@ -22,8 +22,10 @@ export {
   type CanvasAgentDispatch,
   type CanvasCallbacks,
   type CanvasCardCommentSource,
+  type CanvasCardPick,
   type CanvasCardReference,
   type CanvasCardRenderProps,
+  type CanvasDropSource,
 } from './canvasCallbacks';
 export {
   CANVAS_EXTRAS_NAMESPACE,

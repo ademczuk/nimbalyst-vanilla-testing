@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "stage": {
+    "width": 1080,
+    "height": 470,
+    "fps": 25
+  },
+  "parts": {
+    "client": {
+      "type": "node",
+      "label": "Client",
+      "x": 80,
+      "y": 162,
+      "w": 220,
+      "h": 148,
+      "subtitle": "refs/heads/main",
+      "rows": [
+        {
+          "key": "c0 f7a9",
+          "value": "commit"
+        },
+        {
+          "key": "tree ?",
+          "value": "pending"
+        }
+      ]
+    },
+    "dagLabel": {
+      "type": "label",
+      "x": 80,
+      "y": 42,
+      "text": "COMMIT DAG",
+      "caps": true
+    },
+    "fetch": {
+      "type": "edge",
+      "from": "client",
+      "to": "store",
+      "text": "GET <sha>",
+      "packets": 4
+    },
+    "store": {
+      "type": "node",
+      "label": "Object store",
+      "x": 740,
+      "y": 118,
+      "w": 240,
+      "h": 236,
+      "subtitle": "SHA -> BYTES",
+      "rows": [
+        {
+          "key": "f7a9",
+          "value": "commit  182 B"
+        },
+        {
+          "key": "e816",
+          "value": "tree     96 B"
+        },
+        {
+          "key": "3d41",
+          "value": "blob   2.4 KB"
+        },
+        {
+          "key": "9b02",
+          "value": "blob    871 B"
+        }
+      ]
+    },
+    "storeLabel": {
+      "type": "label",
+      "x": 1000,
+      "y": 42,
+      "text": "KEY / VALUE STORE",
+      "align": "end",
+      "caps": true
+    }
+  },
+  "steps": [
+    {
+      "id": "idle",
+      "duration": 800,
+      "caption": "The client knows one ref.",
+      "set": {
+        "client": {
+          "state": "active",
+          "tone": "accent"
+        }
+      }
+    },
+    {
+      "id": "request",
+      "duration": 1200,
+      "caption": "It asks for the commit by SHA; the GET crosses the network.",
+      "set": {
+        "fetch": {
+          "state": "flowing",
+          "tone": "accent"
+        }
+      }
+    },
+    {
+      "id": "response",
+      "duration": 1000,
+      "caption": "The objects come back down the same wire.",
+      "set": {
+        "fetch": {
+          "state": "returning",
+          "tone": "success"
+        },
+        "store": {
+          "state": "active",
+          "tone": "accent"
+        }
+      }
+    },
+    {
+      "id": "settle",
+      "duration": 600,
+      "caption": "Counters advance.",
+      "set": {
+        "client": {
+          "state": "active",
+          "tone": "success"
+        },
+        "fetch": {
+          "state": "idle"
+        }
+      }
+    }
+  ]
+}

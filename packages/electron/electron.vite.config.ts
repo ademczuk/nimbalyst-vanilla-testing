@@ -6,6 +6,10 @@ import { viteStaticCopy } from 'vite-plugin-static-copy'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import fs from 'fs'
 import { findMainBundleGraphViolations } from '../../scripts/main-bundle-graph-policy.mjs'
+import {
+  findRequireCacheSelfEviction,
+  stripRequireCacheSelfEviction,
+} from '../../scripts/main-bundle-require-policy.mjs'
 
 // Plugin to optimize Shiki language imports
 const optimizeShikiPlugin = () => {
@@ -160,6 +164,93 @@ const guardMainBundleGraph = () => ({
   },
 });
 
+/**
+ * `conf` (via electron-store) ships `delete require.cache[__filename]`. In its
+ * own module that removes only conf's entry; inlined into our bundle,
+ * `__filename` is the main entry, so the entry evicts ITSELF from the module
+ * cache at startup. Any lazy chunk then re-enters via `require("../index.js")`,
+ * re-evaluates the whole main process, and dies re-registering electron-log.
+ *
+ * Strip it at the source module, then assert nothing put it back into the
+ * emitted output. See scripts/main-bundle-require-policy.mjs and #1389.
+ */
+const neutralizeRequireCacheSelfEviction = () => {
+  let stripped = 0;
+  return {
+    name: 'neutralize-require-cache-self-eviction',
+    transform(code: string, id: string) {
+      if (!id.replace(/\\/g, '/').includes('/node_modules/conf/')) return null;
+      const result = stripRequireCacheSelfEviction(code);
+      if (result.count === 0) return null;
+      stripped += result.count;
+      return { code: result.code, map: null };
+    },
+    generateBundle(
+      this: { error(message: string): never },
+      _options: unknown,
+      bundle: Record<string, { type: string; code?: string; fileName: string }>,
+    ) {
+      const offenders = Object.values(bundle)
+        .filter((output) => output.type === 'chunk'
+          && findRequireCacheSelfEviction(output.code ?? '').length > 0)
+        .map((output) => output.fileName);
+      if (offenders.length > 0) {
+        this.error(
+          'Electron main bundle still evicts itself from require.cache ' +
+          `(delete require.cache[__filename]) in: ${offenders.join(', ')}.\n` +
+          'A lazy chunk requiring the entry will then evaluate the main process ' +
+          'twice. Extend stripRequireCacheSelfEviction to cover the new source.',
+        );
+      }
+      console.log(`[require-policy] main entry keeps its require.cache entry (${stripped} self-eviction(s) stripped).`);
+    },
+  };
+};
+
+/**
+ * jimp 1.6.1 moved `@jimp/core` onto `file-type ^21`, which it reaches with
+ * `await import("file-type")` inside `Jimp.fromBuffer` — so every image read in
+ * the main process went through a lazy chunk. Rewrite it to a static import so
+ * the image path stays in the main chunk, per the no-dynamic-imports-in-main
+ * rule. #1389.
+ */
+const staticFileTypeInJimp = () => {
+  let rewrites = 0;
+  let sawJimpCore = false;
+  return {
+    name: 'static-file-type-in-jimp',
+    transform(code: string, id: string) {
+      const normalized = id.replace(/\\/g, '/');
+      if (!/\/node_modules\/@jimp\/core\/dist\/(esm|commonjs)\/index\.js$/.test(normalized)) {
+        return null;
+      }
+      sawJimpCore = true;
+      const dynamicImport = /await\s+import\(\s*["']file-type["']\s*\)/g;
+      if (!dynamicImport.test(code)) return null;
+      rewrites += 1;
+      if (normalized.includes('/dist/esm/')) {
+        return {
+          code: 'import * as __nimbalystFileType from "file-type";\n'
+            + code.replace(dynamicImport, '__nimbalystFileType'),
+          map: null,
+        };
+      }
+      return { code: code.replace(dynamicImport, 'require("file-type")'), map: null };
+    },
+    buildEnd(this: { error(message: string): never }, error?: Error) {
+      if (error) return;
+      if (sawJimpCore && rewrites === 0) {
+        this.error(
+          '@jimp/core is in the main bundle but its `await import("file-type")` was not ' +
+          'found, so this rewrite silently did nothing. jimp probably changed how it ' +
+          'loads file-type — re-read @jimp/core/dist/esm/index.js and update the pattern, ' +
+          'or drop this plugin if the dynamic import is gone. See #1389.',
+        );
+      }
+    },
+  };
+};
+
 export default defineConfig({
   main: {
     define: {
@@ -172,6 +263,8 @@ export default defineConfig({
     plugins: [
       resolveWorkspaceSubpaths(),
       guardMainBundleGraph(),
+      neutralizeRequireCacheSelfEviction(),
+      staticFileTypeInJimp(),
       {
         name: 'copy-sqlite-schemas',
         // Use options.dir so this works regardless of the active outDir
@@ -254,7 +347,11 @@ export default defineConfig({
       sourcemap: isDev,
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/preload/index.ts')
+          index: resolve(__dirname, 'src/preload/index.ts'),
+          // The hidden window that encodes an animation to H.264. A separate
+          // entry because it must not carry the main preload's surface into a
+          // window whose only job is to hold a VideoEncoder.
+          animationVideo: resolve(__dirname, 'src/preload/animationVideo.ts')
         }
       }
     }

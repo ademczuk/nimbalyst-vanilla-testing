@@ -501,7 +501,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
       if (hasEditorFind(editor)) {
         editor.openFind();
       } else if (isLexicalSearchEditor(editor)) {
-        SearchReplaceStateManager.toggle(filePath);
+        SearchReplaceStateManager.openAndFocus(filePath);
       }
     });
   }, [filePath]);

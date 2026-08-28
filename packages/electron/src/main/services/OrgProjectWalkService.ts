@@ -35,7 +35,7 @@ import {
   type ProjectFolderVerdict,
   type ProjectWalkOrg,
 } from '../../shared/orgProjectWalk';
-import { getNormalizedGitRemote } from '../utils/gitUtils';
+import { getNormalizedGitRemote, invalidateGitRemoteCache } from '../utils/gitUtils';
 import { safeHandle } from '../utils/ipcRegistry';
 import { logger } from '../utils/logger';
 import {
@@ -310,6 +310,11 @@ export function cloneOrgProjectRepository(input: {
 
     const finish = async (result: CloneProjectResult) => {
       runningClones.delete(cloneId);
+      // The destination's `origin` just changed in whichever direction: a
+      // successful clone gave a folder cached as "no remote" one, and the
+      // cleanup below takes it away again. Either way the cached answer is now
+      // wrong, and the walk that follows is what reads it.
+      invalidateGitRemoteCache(directoryPath);
       if (!result.success) {
         // So a failed or cancelled attempt doesn't leave a half-repository that
         // the next attempt then refuses as "not empty" -- but only ever what

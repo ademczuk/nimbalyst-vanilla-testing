@@ -108,7 +108,7 @@ const DOC_REGISTRATION = { component: BodyText, collaboration: { supported: true
 function readyResolution() {
   return {
     status: 'ready' as const,
-    registration: DOC_REGISTRATION,
+    editor: { kind: 'extension' as const, registration: DOC_REGISTRATION },
     displayName: 'Login',
     request: {
       workspacePath: '/ws',

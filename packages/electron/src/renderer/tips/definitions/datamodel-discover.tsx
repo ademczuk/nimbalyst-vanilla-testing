@@ -19,8 +19,7 @@ export const datamodelDiscoverTip: TipDefinition = {
   trigger: {
     screen: '*',
     condition: (context) =>
-      context.hasReachedCount(FEATURE_USAGE_KEYS.SESSION_COMPLETED_WITH_TOOLS, 5) &&
-      !context.hasBeenUsed(FEATURE_USAGE_KEYS.DATAMODEL_OPENED),
+      context.hasReachedCount(FEATURE_USAGE_KEYS.SESSION_COMPLETED_WITH_TOOLS, 5),
     delay: 2000,
     priority: 4,
   },

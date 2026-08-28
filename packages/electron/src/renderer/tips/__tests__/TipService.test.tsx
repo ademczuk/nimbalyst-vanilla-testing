@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import type { WalkthroughState } from '../../walkthroughs/types';
 import type { TipDefinition } from '../types';
-import { shouldShowTip } from '../TipService';
+import { shouldShowTip, tipLastShownAt } from '../TipService';
 import { TipCard } from '../TipCard';
 
 const baseState: WalkthroughState = {
@@ -61,6 +61,42 @@ describe('shouldShowTip', () => {
     };
 
     expect(shouldShowTip(state, baseTip)).toBe(true);
+  });
+});
+
+describe('tipLastShownAt rotation ordering', () => {
+  // The provider sorts by priority and then by this value. Without it the sort
+  // is stable on definition order, so the first tip in an equal-priority band
+  // wins every launch and its neighbours are unreachable.
+  const bandOf = (ids: string[], state: WalkthroughState) =>
+    [...ids].sort((a, b) => tipLastShownAt(state, a) - tipLastShownAt(state, b));
+
+  it('puts never-shown tips ahead of ones already seen', () => {
+    const state: WalkthroughState = {
+      ...baseState,
+      history: { 'tip-a': { shownAt: 5_000, version: 1 } },
+    };
+
+    expect(tipLastShownAt(state, 'tip-a')).toBe(5_000);
+    expect(tipLastShownAt(state, 'tip-never')).toBe(0);
+    expect(bandOf(['tip-a', 'tip-never'], state)).toEqual(['tip-never', 'tip-a']);
+  });
+
+  it('sends the most recently shown tip to the back of its band', () => {
+    const state: WalkthroughState = {
+      ...baseState,
+      history: {
+        'tip-a': { shownAt: 3_000, version: 1 },
+        'tip-b': { shownAt: 1_000, version: 1 },
+        'tip-c': { shownAt: 2_000, version: 1 },
+      },
+    };
+
+    expect(bandOf(['tip-a', 'tip-b', 'tip-c'], state)).toEqual([
+      'tip-b',
+      'tip-c',
+      'tip-a',
+    ]);
   });
 });
 

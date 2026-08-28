@@ -32,13 +32,35 @@ export interface CollaborativeEmbedResolutionInput {
   hintedExtension?: string | null;
   /** Fallback display name when the index has no title. */
   fallbackTitle?: string | null;
+  /**
+   * Accept documents whose editor is the app's own Lexical markdown editor
+   * rather than an extension's.
+   *
+   * Opt-in, and deliberately so. A markdown embed needs a host that mounts
+   * Lexical with a `CollabLexicalProvider` -- which the canvas card does and
+   * the in-document `EmbedFrame` does not, since it is *already* inside a
+   * Lexical editor and nesting one in itself is a different problem. Callers
+   * that leave this unset keep refusing markdown exactly as before.
+   */
+  allowLexical?: boolean;
 }
+
+/**
+ * Who renders the document once its room is open.
+ *
+ * A union rather than an optional `registration`, because "no registration"
+ * and "the built-in markdown editor" are different answers and a caller that
+ * forgot to tell them apart would mount nothing and say nothing.
+ */
+export type CollaborativeEmbedEditorChoice =
+  | { kind: 'extension'; registration: CustomEditorRegistration }
+  | { kind: 'lexical' };
 
 export type CollaborativeEmbedResolution =
   | {
       status: 'ready';
       request: CollaborativeEmbedProviderRequest;
-      registration: CustomEditorRegistration;
+      editor: CollaborativeEmbedEditorChoice;
       displayName: string;
     }
   | { status: 'unavailable'; error: string };
@@ -62,7 +84,8 @@ export function resolveCollaborativeEmbedRequest(
   }
 
   const descriptor = metadataResolution.descriptor;
-  if (descriptor.editor.kind !== 'extension') {
+  const isLexical = descriptor.editor.kind === 'lexical';
+  if (descriptor.editor.kind !== 'extension' && !(isLexical && input.allowLexical === true)) {
     return { status: 'unavailable', error: 'Only collaborative custom-editor documents can be embedded.' };
   }
 
@@ -70,15 +93,25 @@ export function resolveCollaborativeEmbedRequest(
     ?? hintedExtension
     ?? descriptor.defaultExtension;
   const editorId = input.sharedEditorId ?? catalog.editorIdForDescriptor(descriptor);
-  const registration = customEditorRegistry.findRegistrationForFile(`embedded${fileExtension}`);
-  if (!registration || registration.collaboration?.supported !== true) {
-    return { status: 'unavailable', error: 'The installed editor does not support collaborative embeds.' };
+
+  // The Lexical branch has no registration to look up and no manifest to ask:
+  // markdown collaboration is the app's own, and `CollaborativeTabEditor` has
+  // been running it as the primary shared-document path all along.
+  let editor: CollaborativeEmbedEditorChoice;
+  if (isLexical) {
+    editor = { kind: 'lexical' };
+  } else {
+    const registration = customEditorRegistry.findRegistrationForFile(`embedded${fileExtension}`);
+    if (!registration || registration.collaboration?.supported !== true) {
+      return { status: 'unavailable', error: 'The installed editor does not support collaborative embeds.' };
+    }
+    editor = { kind: 'extension', registration };
   }
 
   const displayName = input.sharedTitle || input.fallbackTitle || input.documentId;
   return {
     status: 'ready',
-    registration,
+    editor,
     displayName,
     request: {
       workspacePath: input.workspacePath,

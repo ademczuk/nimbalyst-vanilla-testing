@@ -70,6 +70,7 @@ import { getMcpConfigService, isInternalMcpServerEnabled, areTrackerToolsEnabled
 import { historyManager } from '../../../../../electron/src/main/HistoryManager';
 import {
   appendLargeAttachmentInstructions,
+  appendFailedAttachmentNotice,
   buildMessageWithDocumentContext,
   prepareClaudeCodeAttachments,
 } from './claudeCode/messagePreparation';
@@ -721,6 +722,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       imageContentBlocks,
       documentContentBlocks,
       largeAttachmentFilePaths,
+      failedAttachments,
     } = await prepareClaudeCodeAttachments({
       attachments,
       largeAttachmentCharThreshold: LARGE_ATTACHMENT_CHAR_THRESHOLD,
@@ -792,6 +794,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // Add large attachment file paths to system message
       // These are text attachments over 10k chars that were written to /tmp
       message = appendLargeAttachmentInstructions(message, largeAttachmentFilePaths);
+      message = appendFailedAttachmentNotice(message, failedAttachments);
 
       // Load env vars from ~/.claude/settings.json early so they're available for both
       // system prompt building (agent teams flag) and SDK environment setup

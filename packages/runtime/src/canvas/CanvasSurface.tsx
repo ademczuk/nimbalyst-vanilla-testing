@@ -28,11 +28,26 @@
  * which owns viewport animation. `autoPanOnNodeDrag` stays on: dragging a card
  * past the edge to move it further is what the user meant.
  *
- * **Activation is zoom-to-100** ([NIM-3845](nimbalyst://NIM-3845)). Clicking a
- * card animates the viewport to scale 1.0 centred on that card and then
- * activates it; when the viewport is already within 2% of 1.0 it activates in
- * place with no animation. Escape deactivates. Cards are pointer-inert until
- * activated -- see the header of CanvasCardNode for why that is not optional.
+ * **Activation is zoom-to-100** ([NIM-3845](nimbalyst://NIM-3845)).
+ * *Double*-clicking a card animates the viewport to scale 1.0 centred on that
+ * card and then activates it; when the viewport is already within 2% of 1.0 it
+ * activates in place with no animation. Escape deactivates. Cards are
+ * pointer-inert until activated -- see the header of CanvasCardNode for why
+ * that is not optional.
+ *
+ * A single click only *selects*, and the split is not cosmetic: the resize
+ * handles and the card toolbar are hidden while a card is active, because an
+ * active card owns the pointer. When one click did both, every card on the
+ * board was unresizable -- the handles appeared and vanished in the same frame.
+ *
+ * **Trackpad gestures follow the design-tool convention.** Two-finger drag
+ * pans (`panOnScroll`), pinch zooms (React Flow reads the `ctrlKey` macOS
+ * synthesises for a pinch), and Cmd/Ctrl + wheel zooms about the pointer. That
+ * last one is ours: `createPanOnScrollHandler` only understands `ctrlKey`, and
+ * its pinch branch multiplies the delta by ten, which is right for the tiny
+ * deltas a pinch emits and wildly wrong for a scroll. See `onZoomWheel`.
+ * `zoomOnDoubleClick` is off because double-click is now the activation
+ * gesture, and a dblclick on a node bubbles to the pane.
  *
  * **The viewport is per-user view state and never enters the document.** Where
  * you are looking is not something a teammate should inherit: activation alone
@@ -57,6 +72,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
@@ -86,6 +102,7 @@ import './CanvasSurface.css';
 
 import {
   toCanvasCoordinate,
+  type CanvasAnyNode,
   type CanvasDocument,
   type CanvasViewport,
 } from './CanvasDocument';
@@ -146,6 +163,7 @@ import {
   canvasReferenceNodeIds,
   connectCanvasEdge,
   createNativeCanvasNode,
+  createReferenceCanvasNode,
   readCanvasViewport,
   reorderCanvasNode,
   toFlowEdges,
@@ -154,6 +172,7 @@ import {
   updateCanvasNode,
   withCanvasNodeGeometry,
   withCanvasViewport,
+  zoomViewportAtPoint,
   type CanvasNodeGeometry,
 } from './canvasFlowMapping';
 import {
@@ -325,6 +344,14 @@ const NODE_TYPES: NodeTypes = { [CANVAS_FLOW_NODE_TYPE]: CanvasCardNode };
 const EDGE_TYPES: EdgeTypes = { [CANVAS_FLOW_EDGE_TYPE]: CanvasEdgeView };
 const DELETE_KEYS = ['Backspace', 'Delete'];
 
+/**
+ * Zoom bounds. Named because `onZoomWheel` has to clamp to exactly the same
+ * pair React Flow is given -- a hand-rolled zoom that overshoots `maxZoom`
+ * leaves d3's transform and the flow's own limits disagreeing.
+ */
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 2;
+
 export function CanvasSurface(props: CanvasSurfaceProps): ReactElement {
   return (
     <ReactFlowProvider>
@@ -362,9 +389,6 @@ function CanvasSurfaceInner({
   );
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const activationToken = useRef(0);
-  // A drag ends with a click event on the same card. Without this the gesture
-  // that moved a card would also activate it and animate the viewport.
-  const draggedRef = useRef(false);
   const pointerFrameRef = useRef<number | null>(null);
   const pendingPointerRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -657,6 +681,8 @@ function CanvasSurfaceInner({
   const [revisionsNodeId, setRevisionsNodeId] = useState<string | null>(null);
 
   const revisionSource = getCanvasCallbacks().revisions;
+  const pickCardReference = getCanvasCallbacks().pickCardReference;
+  const dropSource = getCanvasCallbacks().dropSource;
 
   const cardRevisions = useMemo<CanvasCardRevisionsAccess | null>(
     () =>
@@ -1057,6 +1083,36 @@ function CanvasSurfaceInner({
     [onViewportChange, publishViewportAwareness]
   );
 
+  /**
+   * Publish the live zoom so the resize affordances can cancel it out.
+   *
+   * A DOM write rather than React state, and guarded so a pan (which fires this
+   * on every frame without changing the scale) costs nothing. Putting the zoom
+   * in state would re-render every card on the board sixty times a second, to
+   * move four handles.
+   */
+  const publishedZoomRef = useRef<number | null>(null);
+  const publishZoom = useCallback((zoomLevel: number) => {
+    if (publishedZoomRef.current === zoomLevel) return;
+    publishedZoomRef.current = zoomLevel;
+    wrapperRef.current?.style.setProperty(
+      '--nim-canvas-resize-scale',
+      String(1 / zoomLevel)
+    );
+  }, []);
+
+  const onMove = useCallback(
+    (_event: unknown, viewport: Viewport) => publishZoom(viewport.zoom),
+    [publishZoom]
+  );
+
+  // The opening value. `onMove` covers every change after mount, but nothing
+  // fires for the viewport the board *opens* on -- a restored view at 40% would
+  // start with pointer-sized handles until the user happened to pan.
+  useEffect(() => {
+    publishZoom(flow.getViewport().zoom);
+  }, [flow, publishZoom]);
+
   /** Write the current view into the board as its home view. A real edit. */
   const saveHomeView = useCallback(() => {
     commit(withCanvasViewport(documentRef.current, flow.getViewport()));
@@ -1086,25 +1142,108 @@ function CanvasSurfaceInner({
     [collaborative, commit, observeCard, onDocumentChange, readOnly]
   );
 
-  const addCard = useCallback(
-    (kind: 'sticky' | 'text' | 'image' | 'group') => {
-      const bounds = wrapperRef.current?.getBoundingClientRect();
-      if (!bounds) return;
-      const center = flow.screenToFlowPosition({
-        x: bounds.left + bounds.width / 2,
-        y: bounds.top + bounds.height / 2,
-      });
-      const node = createNativeCanvasNode(documentRef.current, kind, center);
-      // The card's *origin* is what has to land on the grid, so snapping the
-      // pointer instead -- `screenToFlowPosition`'s own `snapGrid` -- would not
-      // do it: a new card is centred on that point, and half of 180 is not a
-      // multiple of 20.
+  /** Canvas coordinates of the middle of what the user is currently looking at. */
+  const viewportCenter = useCallback(() => {
+    const bounds = wrapperRef.current?.getBoundingClientRect();
+    if (!bounds) return null;
+    return flow.screenToFlowPosition({
+      x: bounds.left + bounds.width / 2,
+      y: bounds.top + bounds.height / 2,
+    });
+  }, [flow]);
+
+  /**
+   * Place `node` on the board and select it.
+   *
+   * The card's *origin* is what has to land on the grid, so snapping the
+   * pointer instead -- `screenToFlowPosition`'s own `snapGrid` -- would not do
+   * it: a new card is centred on that point, and half of 180 is not a multiple
+   * of 20.
+   */
+  const place = useCallback(
+    (node: CanvasAnyNode) => {
       const placed = snapDefeated ? node : snapCanvasNodeToGrid(node);
       commit(addCanvasNode(documentRef.current, placed));
       setSelectedIds(new Set([placed.id]));
     },
-    [commit, flow, snapDefeated]
+    [commit, snapDefeated]
   );
+
+  const addCard = useCallback(
+    (kind: 'sticky' | 'text' | 'image' | 'group') => {
+      const center = viewportCenter();
+      if (!center) return;
+      place(createNativeCanvasNode(documentRef.current, kind, center));
+    },
+    [place, viewportCenter]
+  );
+
+  /**
+   * Put an existing file or shared document on the board.
+   *
+   * The center is read *after* the picker resolves, not before: the dialog is
+   * modal but the board underneath is not frozen -- a teammate's edit or a
+   * restored viewport can move it while the user is choosing -- and a card
+   * dropped at where the board used to be is a card the user has to go find.
+   */
+  /**
+   * A card dragged in from the host's file or document tree.
+   *
+   * Placed under the pointer rather than at the viewport centre -- a drag *is*
+   * a placement, and dropping three documents in a row only to find them
+   * stacked in the middle of the board is worse than not accepting the drag.
+   */
+  const [dropActive, setDropActive] = useState(false);
+
+  const onDragOver = useCallback(
+    (event: ReactDragEvent) => {
+      if (readOnly || !dropSource?.accepts([...event.dataTransfer.types])) return;
+      event.preventDefault();
+      // The collab tree drags with `effectAllowed: 'copyMove'` so it can also
+      // reorder into folders; a board never moves the source, it references it.
+      event.dataTransfer.dropEffect = 'copy';
+      setDropActive(true);
+    },
+    [dropSource, readOnly]
+  );
+
+  const onDrop = useCallback(
+    (event: ReactDragEvent) => {
+      setDropActive(false);
+      if (readOnly || !dropSource?.accepts([...event.dataTransfer.types])) return;
+      event.preventDefault();
+      const pick = dropSource.read(event.dataTransfer);
+      if (!pick) return;
+      const at = flow.screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+      place(
+        createReferenceCanvasNode(
+          documentRef.current,
+          pick.reference,
+          at,
+          pick.label
+        )
+      );
+    },
+    [dropSource, flow, place, readOnly]
+  );
+
+  const addReferenceCard = useCallback(async () => {
+    const pick = await pickCardReference?.();
+    if (!pick) return;
+    const center = viewportCenter();
+    if (!center) return;
+    place(
+      createReferenceCanvasNode(
+        documentRef.current,
+        pick.reference,
+        center,
+        pick.label
+      )
+    );
+  }, [pickCardReference, place, viewportCenter]);
 
   // Restore this user's own last view if the host remembers one, then the
   // board's saved home view, and otherwise frame the cards. Read once: React
@@ -1134,6 +1273,51 @@ function CanvasSurfaceInner({
     return () => cancelAnimationFrame(frame);
   }, [nodesInitialized, onAwarenessChange, publishViewportAwareness]);
 
+  /**
+   * Cmd/Ctrl + wheel zooms about the pointer.
+   *
+   * `panOnScroll` hands every wheel event to React Flow's pan handler, which
+   * only diverts to zoom on `ctrlKey` -- the flag macOS synthesises for a
+   * trackpad pinch. Cmd is the other half of the design-tool convention and
+   * React Flow has no notion of it, so the board claims the event itself.
+   *
+   * Capture phase on the wrapper, so it is stopped before it reaches the
+   * `wheel.zoom` listener d3 installs on the pane below. `preventDefault` is
+   * what keeps Cmd + wheel from zooming the whole Electron window instead.
+   *
+   * The delta curve is deliberately React Flow's own `wheelDelta` *without* its
+   * pinch branch: `2 ^ (-deltaY * 0.002)` is the rate this board zoomed at
+   * before `panOnScroll`, so the gesture moved but the feel did not. The ten-fold
+   * factor that branch applies is calibrated for the near-zero deltas a pinch
+   * emits and would make a scroll unusable.
+   */
+  useEffect(() => {
+    const surface = wrapperRef.current;
+    if (!surface) return;
+
+    const onZoomWheel = (event: WheelEvent) => {
+      if (!event.metaKey && !event.ctrlKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const bounds = surface.getBoundingClientRect();
+      const next = zoomViewportAtPoint(
+        flow.getViewport(),
+        { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
+        { deltaY: event.deltaY, deltaMode: event.deltaMode },
+        { minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM }
+      );
+      if (next !== null) void flow.setViewport(next);
+    };
+
+    surface.addEventListener('wheel', onZoomWheel, {
+      capture: true,
+      passive: false,
+    });
+    return () =>
+      surface.removeEventListener('wheel', onZoomWheel, { capture: true });
+  }, [flow]);
+
   // Read `altKey` off the event rather than matching `event.key`: on macOS
   // Option changes the character a key produces, so the keydown that arrives
   // while snapping is defeated frequently is not named 'Alt' at all. The blur
@@ -1153,10 +1337,23 @@ function CanvasSurfaceInner({
 
   return (
     <div
-      className="canvas-surface"
+      className={`canvas-surface${
+        dropActive ? ' canvas-surface--drop-target' : ''
+      }`}
       ref={wrapperRef}
       onPointerMove={onPointerMove}
       onPointerLeave={onPointerLeave}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      // Fires when the pointer leaves for a child too, so it is compared
+      // against the surface itself; otherwise the highlight flickers off every
+      // time the drag crosses a card.
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          return;
+        }
+        setDropActive(false);
+      }}
     >
       <svg className="canvas-surface__markers" width={0} height={0} aria-hidden>
         <defs>
@@ -1202,27 +1399,24 @@ function CanvasSurfaceInner({
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             onMoveStart={() => setGestureActive(true)}
+            onMove={onMove}
             onMoveEnd={onMoveEnd}
             onNodeDragStart={() => {
-              draggedRef.current = false;
               // Close whatever step preceded this drag, so "move a card, move
               // another card" is two undos rather than one.
               onEditBoundary?.();
             }}
-            onNodeDrag={() => {
-              draggedRef.current = true;
-            }}
-            onNodeClick={(_event, node) => {
-              if (draggedRef.current) {
-                draggedRef.current = false;
-                return;
-              }
-              activate(node.id);
-            }}
+            // A single click only selects; React Flow does that itself, and
+            // there is no handler here because there is nothing left to do.
+            // The drag-then-click guard this used to need is gone with it: a
+            // drag ends in one click, and one click no longer activates.
+            onNodeDoubleClick={(_event, node) => activate(node.id)}
             onPaneClick={onPaneClick}
             defaultViewport={savedViewport ?? undefined}
-            minZoom={0.1}
-            maxZoom={2}
+            minZoom={MIN_ZOOM}
+            maxZoom={MAX_ZOOM}
+            panOnScroll
+            zoomOnDoubleClick={false}
             snapToGrid={!snapDefeated}
             snapGrid={SNAP_GRID}
             zIndexMode="manual"
@@ -1356,10 +1550,15 @@ function CanvasSurfaceInner({
               />
             </Panel>
             <Controls showInteractive={false} />
+            {/* React Flow has no colorMode set, so it paints minimap nodes with
+                its light-mode defaults -- white swatches on a dark board. The
+                mask and background beside these are themed for the same reason. */}
             <MiniMap
               pannable
               zoomable
               maskColor="color-mix(in srgb, var(--nim-bg) 65%, transparent)"
+              nodeColor="var(--nim-bg-tertiary)"
+              nodeStrokeColor="var(--nim-border)"
               style={{ background: 'var(--nim-bg)' }}
             />
             {!readOnly && (
@@ -1392,6 +1591,16 @@ function CanvasSurfaceInner({
                 >
                   Frame
                 </button>
+                {pickCardReference !== undefined && (
+                  <button
+                    type="button"
+                    className="canvas-toolbar__button"
+                    onClick={() => void addReferenceCard()}
+                    title="Put an existing file or shared document on the board"
+                  >
+                    Doc
+                  </button>
+                )}
                 {comments?.canComment === true && (
                   <button
                     type="button"
@@ -1428,6 +1637,8 @@ function CanvasSurfaceInner({
         <div className="canvas-surface__empty">
           {readOnly
             ? 'This board is empty.'
+            : pickCardReference !== undefined
+            ? 'Empty board. Add a sticky, text, image, frame, or an existing doc to start.'
             : 'Empty board. Add a sticky, text, image, or frame to start.'}
         </div>
       )}

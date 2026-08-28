@@ -65,6 +65,35 @@ export function feedbackBacklinkAuthorLabel(
   return null;
 }
 
+export interface FeedbackAuthorSession {
+  sessionId: string;
+  /** Falls back to a generic noun; an unnamed session is still openable. */
+  label: string;
+}
+
+/**
+ * The session that composed this request, for the one viewer who can open it.
+ *
+ * Author-only, and that is a correctness rule rather than a tidiness one: a
+ * session id names a row in the *author's* local database, so offering it to a
+ * recipient is a link to something that does not exist on their machine.
+ *
+ * Note the asymmetry this corrects. `feedbackBacklinkAuthorLabel` answers
+ * "Asked by you" for the author and only reaches the session name for everyone
+ * else -- so the person who could act on it was told the least about it.
+ */
+export function feedbackAuthorSession(
+  entry: Pick<FeedbackRequestIndexEntry, 'author'>,
+  teamMemberId: TeamMemberId | '',
+): FeedbackAuthorSession | null {
+  if (!teamMemberId || entry.author.onBehalfOfUserId !== teamMemberId) return null;
+  if (entry.author.kind !== 'agent' || !entry.author.sessionId) return null;
+  return {
+    sessionId: entry.author.sessionId,
+    label: entry.author.sessionName || 'the session that asked',
+  };
+}
+
 /** Most recently active first, so a live request never sits under a stale one. */
 export function sortFeedbackBacklinks<T extends Pick<FeedbackRequestIndexEntry, 'updatedAt'>>(
   entries: readonly T[],

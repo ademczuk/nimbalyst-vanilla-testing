@@ -166,7 +166,6 @@ function formatOrdinalDay(day: number): string {
 
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const TURN_FINISHED_AT_THRESHOLD_MS = 5 * 60 * 1000;
 
 /**
  * Check if a date is today
@@ -220,7 +219,8 @@ export function formatShortTime(timestamp: number | string | Date | undefined | 
 
 /**
  * Format a turn-end timestamp for transcript summaries.
- * Returns empty string when the turn finished within the last 5 minutes.
+ * Returns empty string only for an unparseable timestamp -- a turn that just
+ * finished still gets its time, so every turn in the transcript is stamped.
  */
 export function formatTurnFinishedAt(
   timestamp: number | string | Date | undefined | null,
@@ -229,10 +229,6 @@ export function formatTurnFinishedAt(
   const date = parseTimestamp(timestamp);
   const now = parseTimestamp(reference);
   if (!date || !now) return '';
-
-  if ((now.getTime() - date.getTime()) <= TURN_FINISHED_AT_THRESHOLD_MS) {
-    return '';
-  }
 
   const timeLabel = formatLowercaseMeridiemTime(date);
   if (isToday(date, now)) {

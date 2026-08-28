@@ -854,6 +854,44 @@ export function createNativeCanvasNode(
   }
 }
 
+/**
+ * A new card pointing at an existing `file` or `doc`, centred on `center`.
+ *
+ * The spec `type` is chosen so a plain JSON Canvas reader still shows something
+ * true: a workspace file is a `file` node carrying its path, and a shared
+ * document -- which the spec has no concept of -- is a `link` node carrying its
+ * `nimbalyst://doc/...` URI. Both also carry the `x-nimbalyst` reference, which
+ * is what `canvasCardKind` actually reads; the spec fields are for the other
+ * tool's benefit, not ours.
+ *
+ * Sized like a frame rather than like a sticky note. A reference card mounts a
+ * real editor, and the default has to be large enough that the thing inside it
+ * is legible without a resize first.
+ */
+export function createReferenceCanvasNode(
+  document: CanvasDocument,
+  reference: CanvasCardReference,
+  center: { x: number; y: number },
+  label?: string
+): CanvasAnyNode {
+  const size = NEW_CARD_SIZE.group;
+  const existing = new Set((document.nodes ?? []).map((node) => node.id));
+  const base = {
+    id: createCanvasId(reference.kind, existing),
+    x: toCanvasCoordinate(center.x - size.width / 2),
+    y: toCanvasCoordinate(center.y - size.height / 2),
+    width: size.width,
+    height: size.height,
+    [NIMBALYST_CANVAS_NAMESPACE]: {
+      reference,
+      ...(label ? { label } : {}),
+    },
+  };
+  return reference.kind === 'file'
+    ? ({ ...base, type: 'file', file: reference.path } as CanvasAnyNode)
+    : ({ ...base, type: 'link', url: reference.uri } as CanvasAnyNode);
+}
+
 export function createCanvasId(
   prefix: string,
   existing: ReadonlySet<string>
@@ -874,6 +912,43 @@ function randomSuffix(): string {
 // ---------------------------------------------------------------------------
 // Board metadata
 // ---------------------------------------------------------------------------
+
+/**
+ * The viewport a Cmd/Ctrl + wheel tick lands on, anchored under the pointer.
+ *
+ * Pure because the interesting part is arithmetic that is impossible to eyeball:
+ * the canvas point under the cursor has to come back out at the same screen
+ * position after the scale changes, and "zoomed toward the origin instead of the
+ * cursor" reads as a jitter rather than as a wrong number. `point` is in
+ * container coordinates -- client minus the surface's bounding rect.
+ *
+ * The delta curve is React Flow's own `wheelDelta` minus its pinch branch; see
+ * the `onZoomWheel` comment in CanvasSurface for why that factor must not come
+ * along. Returns `null` when the tick would not move the scale, so the caller
+ * can skip a viewport write (and the pan/zoom events it drags behind it) at the
+ * zoom limits.
+ */
+export function zoomViewportAtPoint(
+  viewport: CanvasViewport,
+  point: { x: number; y: number },
+  wheel: { deltaY: number; deltaMode: number },
+  limits: { minZoom: number; maxZoom: number }
+): CanvasViewport | null {
+  // deltaMode 1 is lines (Firefox), 2 is pages; 0 is pixels everywhere else.
+  const scale =
+    wheel.deltaMode === 1 ? 0.05 : wheel.deltaMode === 2 ? 1 : 0.002;
+  const zoom = viewport.zoom;
+  const next = Math.min(
+    limits.maxZoom,
+    Math.max(limits.minZoom, zoom * Math.pow(2, -wheel.deltaY * scale))
+  );
+  if (next === zoom || !Number.isFinite(next) || zoom === 0) return null;
+  return {
+    x: point.x - ((point.x - viewport.x) / zoom) * next,
+    y: point.y - ((point.y - viewport.y) / zoom) * next,
+    zoom: next,
+  };
+}
 
 export function readCanvasViewport(
   document: CanvasDocument

@@ -27,7 +27,7 @@ import { walkthroughStateAtom, isWalkthroughActiveAtom } from '../walkthroughs/a
 import { hasActiveDialogsAtom } from '../contexts/DialogContext';
 import { hasVisibleOverlay, getWalkthroughState } from '../walkthroughs/WalkthroughService';
 import { store } from '@nimbalyst/runtime/store';
-import { shouldShowTip, markTipCompleted, recordTipShown, registerTipMenuEntries } from './TipService';
+import { shouldShowTip, tipLastShownAt, markTipCompleted, recordTipShown, registerTipMenuEntries } from './TipService';
 import { tips } from './definitions';
 import {
   tipTriggerCommandAtom,
@@ -161,7 +161,24 @@ export function TipProvider({ children, currentMode, workspacePath }: TipProvide
       // console.log(`[Tips] Showing: ${tip.id}`);
       setActiveTipId(tip.id);
 
-      recordTipShown(tip.id, tip.version);
+      // Reload after recording so `history[id].shownAt` is visible to the next
+      // evaluation. `recordTipShown` only writes main-process state; without the
+      // reload the rotation tie-break would keep reading a stale history for the
+      // rest of the run and re-pick the tip it just showed.
+      //
+      // Only overwrite the atom with a state we actually got back. Writing an
+      // undefined result would trip the `!walkthroughStateRef.current` guard in
+      // evaluate() and silently switch every tip off for the rest of the run.
+      void (async () => {
+        try {
+          await recordTipShown(tip.id, tip.version);
+          const refreshed = await getWalkthroughState();
+          if (refreshed) store.set(walkthroughStateAtom, refreshed);
+        } catch {
+          // Rotation falls back to definition order until the next launch,
+          // which reloads this state anyway.
+        }
+      })();
 
       posthog?.capture('tip_shown', {
         tip_id: tip.id,
@@ -230,7 +247,17 @@ export function TipProvider({ children, currentMode, workspacePath }: TipProvide
         if (!tip.trigger.condition(triggerContext)) return false;
         return true;
       })
-      .sort((a, b) => (b.trigger.priority ?? 0) - (a.trigger.priority ?? 0));
+      .sort((a, b) => {
+        const byPriority = (b.trigger.priority ?? 0) - (a.trigger.priority ?? 0);
+        if (byPriority !== 0) return byPriority;
+        // Rotate within a priority band. Sorting by priority alone is stable, so
+        // ties resolved to definition order and the same tip won every time --
+        // a tip sitting behind an equal-priority neighbour could never surface,
+        // because nothing retires the winner except the user completing it.
+        // Never-shown sorts first, then oldest `shownAt`, so showing a tip sends
+        // it to the back of its band.
+        return tipLastShownAt(state, a.id) - tipLastShownAt(state, b.id);
+      });
 
     if (eligible.length > 0) {
       showTipRef.current(eligible[0]);

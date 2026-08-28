@@ -65,7 +65,10 @@ describe('readResourceSharingStatus', () => {
   }
 
   it('resolves a relative file sourceId against the workspace before looking up its binding', async () => {
-    const findLinkedDocument = vi.fn(async (_workspacePath: string, _sourceFilePath: string) => ({ orgId: 'org-design' }));
+    const findLinkedDocument = vi.fn(async (_workspacePath: string, _sourceFilePath: string) => ({
+      orgId: 'org-design',
+      documentId: 'doc-spec',
+    }));
     const deps = sharingDeps({ findLinkedDocument });
 
     const relative = await readResourceSharingStatus('file', 'docs/spec.md', '/workspace/design', deps);
@@ -77,7 +80,15 @@ describe('readResourceSharingStatus', () => {
       '/workspace/design/docs/spec.md',
       '/workspace/design/docs/spec.md',
     ]);
-    expect(relative).toMatchObject({ teamVisible: true, orgId: 'org-design', reason: 'shared' });
+    // The document id rides along because a `file` ref is only meaningful on
+    // the machine that reported it; a caller handing the resource to someone
+    // else has nothing else to name it by.
+    expect(relative).toMatchObject({
+      teamVisible: true,
+      orgId: 'org-design',
+      documentId: 'doc-spec',
+      reason: 'shared',
+    });
   });
 
   it('reports an unbound file as not shared', async () => {

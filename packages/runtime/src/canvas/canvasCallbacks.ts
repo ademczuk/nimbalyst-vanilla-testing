@@ -33,6 +33,38 @@ import type { CanvasRevisionSource } from './canvasRevisions';
 /** The two reference kinds that resolve to a real editor. */
 export type CanvasCardReference = CanvasFileReference | CanvasDocReference;
 
+/**
+ * What a host's picker resolves to.
+ *
+ * The label rides along rather than being derived from the reference, because
+ * it cannot be: a `doc` URI ends in an opaque document id, and a card titled
+ * `f3a91c...` is worse than no title. Only the host knows the human name.
+ */
+export interface CanvasCardPick {
+  reference: CanvasCardReference;
+  label?: string;
+}
+
+/**
+ * Turning something dragged onto the board into a card.
+ *
+ * Two methods rather than one because the browser gives a drag two different
+ * amounts of information. During `dragover` the payload is in *protected mode*
+ * -- `getData` returns an empty string, and only the list of MIME types is
+ * readable -- so deciding whether to show a drop target has to be answerable
+ * from `accepts(types)` alone. The values only become readable on `drop`.
+ *
+ * Host-supplied for the same reason `renderCard` is: the desktop drags
+ * workspace paths out of a file tree, the console drags document ids out of a
+ * shared-docs tree, and the canvas is published to both.
+ */
+export interface CanvasDropSource {
+  /** Dragover: types only; the values are unreadable at this point. */
+  accepts(types: readonly string[]): boolean;
+  /** Drop: the payload, or null if it turned out not to name anything. */
+  read(dataTransfer: DataTransfer): CanvasCardPick | null;
+}
+
 export interface CanvasCardRenderProps {
   /** Canvas node id. Stable across moves; useful as a mount key. */
   nodeId: string;
@@ -114,6 +146,30 @@ export interface CanvasCallbacks {
    * comment rather than a button that silently does nothing.
    */
   dispatchAgentThread?(request: CanvasAgentDispatch): void;
+
+  /**
+   * Ask the user which existing file or document to put on the board, and
+   * resolve with the reference to embed -- or null if they backed out.
+   *
+   * A host seam for the same reason `renderCard` is one: "which documents
+   * exist" is a filesystem question on the desktop and a collab-room question
+   * in the browser, and the canvas is published to both. It resolves a
+   * reference rather than creating one, so nothing here can mint a document as
+   * a side effect of a picker being cancelled.
+   *
+   * Absent means this host has no picker, and the board hides the affordance
+   * instead of offering a button that opens nothing.
+   */
+  pickCardReference?(): Promise<CanvasCardPick | null>;
+
+  /**
+   * Drag a file or document from the host's own tree onto the board.
+   *
+   * Absent means the board ignores drops entirely rather than swallowing them,
+   * so a drag the host cannot interpret falls through to whatever else on the
+   * page would have handled it.
+   */
+  dropSource?: CanvasDropSource;
 }
 
 let callbacks: CanvasCallbacks = {};

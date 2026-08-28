@@ -54,6 +54,7 @@ export async function dispatchCanvasAgentThread(
   const sessionId = await store.set(createNewSessionActionAtom, {
     title,
     selectSession: false,
+    launchSource: 'canvas',
   });
   if (!sessionId) {
     errorNotificationService.showError(

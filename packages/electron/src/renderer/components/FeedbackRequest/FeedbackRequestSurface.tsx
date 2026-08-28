@@ -35,10 +35,17 @@ import {
   startFeedbackRequestSync,
 } from './createFeedbackResultsHost';
 import { createFeedbackDiscussionAdapter } from './feedbackDiscussionAdapter';
-import { useFeedbackArtifactActionResolver } from './feedbackArtifactActions';
-import { renderLazyFeedbackOptionPreview } from './lazyFeedbackOptionPreview';
+import {
+  useFeedbackArtifactActionResolver,
+  useFeedbackAuthorSessionOpener,
+} from './feedbackArtifactActions';
+import {
+  renderLazyFeedbackOptionPreview,
+  renderLazyFeedbackSubjectPreview,
+} from './lazyFeedbackOptionPreview';
 import { renderFeedbackArtifactDetail } from './FeedbackArtifactDetail';
 import { feedbackRequestViewMode } from './feedbackRequestViewMode';
+import { useResourcePreviewResolver } from '../../hooks/useResourcePreviewResolver';
 
 export interface FeedbackRequestSurfaceProps {
   /** Workspace whose team JWT backs the request room. */
@@ -146,6 +153,7 @@ export function FeedbackRequestSurface({
   }, [target]);
 
   const resolveArtifactAction = useFeedbackArtifactActionResolver(workspacePath);
+  const openAuthorSession = useFeedbackAuthorSessionOpener(workspacePath);
 
   const mode = view === 'respond'
     ? 'respond'
@@ -153,12 +161,14 @@ export function FeedbackRequestSurface({
   const resolvedState: FeedbackRequestServiceState | null = state.teamMemberId
     ? { ...state, teamMemberId: state.teamMemberId }
     : null;
+  const resourceResolver = useResourcePreviewResolver(orgId);
 
   const discussion = (
     <div className={`feedback-request-discussion-thread ${discussionClassName}`}>
       <CommentThread
         adapter={adapter}
         capabilities={capabilities}
+        resolver={resourceResolver}
         context={{
           conversationId: requestId,
           conversationTitle: title,
@@ -190,6 +200,7 @@ export function FeedbackRequestSurface({
             host={respondHost}
             resolveArtifactAction={resolveArtifactAction}
             renderOptionPreview={renderLazyFeedbackOptionPreview}
+            renderSubjectPreview={renderLazyFeedbackSubjectPreview}
             renderArtifactDetail={renderFeedbackArtifactDetail}
             discussion={discussion}
           />
@@ -200,6 +211,8 @@ export function FeedbackRequestSurface({
               target={target}
               host={resultsHost}
               resolveArtifactAction={resolveArtifactAction}
+              onOpenAuthorSession={openAuthorSession}
+              renderSubjectPreview={renderLazyFeedbackSubjectPreview}
             />
             {/* The results card has no discussion slot of its own, so it is
                 stacked below rather than threaded through it. */}

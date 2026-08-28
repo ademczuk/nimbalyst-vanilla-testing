@@ -203,9 +203,10 @@ describe('PullRequestMode review session action', () => {
     fireEvent.click(screen.getByTestId('start-review'));
 
     await waitFor(() => {
-      expect(mocks.createSession).toHaveBeenCalledWith(
-        '/review-contribution https://github.com/nimbalyst/nimbalyst/pull/1408',
-      );
+      expect(mocks.createSession).toHaveBeenCalledWith({
+        initialDraft: '/review-contribution https://github.com/nimbalyst/nimbalyst/pull/1408',
+        launchSource: 'pull_request_panel',
+      });
       expect(invoke).toHaveBeenCalledWith('tracker:link-session', {
         trackerId: 'tracker-1',
         sessionId: 'session-review',

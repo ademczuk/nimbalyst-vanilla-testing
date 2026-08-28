@@ -10,7 +10,11 @@
  */
 
 import React, { useState } from 'react';
-import type { FeedbackComposeSubject } from './feedbackComposeDraft';
+import {
+  describeDestination,
+  type FeedbackComposeDestination,
+  type FeedbackComposeSubject,
+} from './feedbackComposeDraft';
 
 const WarningGlyph: React.FC = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="shrink-0 mt-0.5">
@@ -30,6 +34,15 @@ export interface FeedbackComposePublishPromptProps {
   /** Set true when the author presses the footer primary while unconfirmed. */
   forceExpanded?: boolean;
   disabled?: boolean;
+  /**
+   * How many of these subjects a destination applies to. Zero (all trackers)
+   * hides the destination line, because trackers do not land in a folder.
+   */
+  destinationSubjectCount?: number;
+  /** Absent is the unchosen default, not the root. */
+  destination?: FeedbackComposeDestination;
+  /** Absent hides the change affordance; the line still names where they go. */
+  onChangeDestination?: () => void;
 }
 
 export const FeedbackComposePublishPrompt: React.FC<FeedbackComposePublishPromptProps> = ({
@@ -39,6 +52,9 @@ export const FeedbackComposePublishPrompt: React.FC<FeedbackComposePublishPrompt
   onConfirmAndSend,
   forceExpanded,
   disabled,
+  destinationSubjectCount = 0,
+  destination,
+  onChangeDestination,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isExpanded = expanded || forceExpanded === true;
@@ -88,6 +104,31 @@ export const FeedbackComposePublishPrompt: React.FC<FeedbackComposePublishPrompt
             </>
           )}
         </p>
+
+        {/* Where they land, before the author commits rather than in a modal
+            after. Read-only on purpose: the folder tree lives in the host. */}
+        {destinationSubjectCount > 0 && (
+          <div
+            data-testid="feedback-compose-destination"
+            className="feedback-compose-destination flex items-center gap-1.5 flex-wrap text-[0.6875rem] text-nim-muted"
+          >
+            <span>Into</span>
+            <span className="font-medium text-nim select-text">
+              {describeDestination(destination)}
+            </span>
+            {onChangeDestination && (
+              <button
+                type="button"
+                data-testid="feedback-compose-change-destination"
+                onClick={onChangeDestination}
+                disabled={disabled}
+                className="text-nim-primary bg-transparent border-none p-0 cursor-pointer hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Change
+              </button>
+            )}
+          </div>
+        )}
 
         {!isExpanded && !settled && (
           <button

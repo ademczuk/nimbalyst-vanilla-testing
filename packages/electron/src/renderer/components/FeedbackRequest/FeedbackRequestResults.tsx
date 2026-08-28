@@ -43,6 +43,7 @@ import type {
 import {
   FeedbackArtifactSubjects,
   type FeedbackArtifactActionResolver,
+  type FeedbackSubjectPreviewRenderer,
 } from '@nimbalyst/collab-client/feedback-ui';
 import {
   InteractiveWidgetBody,
@@ -57,6 +58,7 @@ import { FeedbackCopyLinkButton } from '@nimbalyst/runtime/ui/AgentTranscript/co
 
 import type { FeedbackRequestServiceTarget } from '../../../shared/feedbackRequest';
 import { feedbackRequestConsoleUrl } from '../../../shared/feedbackRequestLinks';
+import { feedbackAuthorSession } from './feedbackBacklinkModel';
 import {
   feedbackRequestProgressAtomFamily,
   feedbackRequestStateForTargetAtomFamily,
@@ -96,6 +98,17 @@ export interface FeedbackRequestResultsProps {
   onOpenArtifact?: (artifact: FeedbackAskArtifact) => void;
   /** Resolves subjects and bound artifacts before rendering an open control. */
   resolveArtifactAction?: FeedbackArtifactActionResolver;
+  /**
+   * Opens the session that composed this request. Absent means the surface has
+   * no way to navigate there, so the session is named without being offered.
+   */
+  onOpenAuthorSession?: (sessionId: string) => void;
+  /**
+   * Paints the request's subjects. The author reading "two picked B" a week
+   * later is judging the same designs the recipient was, so this surface takes
+   * the same renderer rather than a denser variant of it.
+   */
+  renderSubjectPreview?: FeedbackSubjectPreviewRenderer;
   /** Overridden in tests; deadline copy is the only thing that reads it. */
   now?: number;
 }
@@ -486,6 +499,8 @@ export const FeedbackRequestResults: React.FC<FeedbackRequestResultsProps> = ({
   host,
   onOpenArtifact,
   resolveArtifactAction,
+  onOpenAuthorSession,
+  renderSubjectPreview,
   now,
 }) => {
   const atomKey = useMemo(() => feedbackRequestTargetKey(target), [target]);
@@ -582,6 +597,7 @@ export const FeedbackRequestResults: React.FC<FeedbackRequestResultsProps> = ({
   }
 
   const isAuthor = request.author.onBehalfOfUserId === state.teamMemberId;
+  const authorSession = feedbackAuthorSession(request, state.teamMemberId ?? '');
   const isOpen = request.lifecycle.status === 'open';
   const canAct = isAuthor && isOpen && Boolean(host) && pendingAction === null;
   const lifecyclePill = LIFECYCLE_PILL[request.lifecycle.status];
@@ -611,6 +627,24 @@ export const FeedbackRequestResults: React.FC<FeedbackRequestResultsProps> = ({
             <span className="text-[0.6875rem] font-normal text-nim-faint">
               Sent {formatWhen(request.createdAt)}
               {request.deadline !== undefined && ` · Due ${formatWhen(request.deadline)}`}
+              {/* The turn that composed this. An author comes back to a request
+                  long after the conversation that produced it, and the question
+                  they arrive with is usually "what was I doing?" rather than
+                  anything the tallies below answer. Author-only -- a session id
+                  names a row in this machine's database and nobody else's. */}
+              {authorSession && onOpenAuthorSession && (
+                <>
+                  {' · '}
+                  <button
+                    type="button"
+                    data-testid="feedback-results-open-author-session"
+                    className="feedback-results-author-session cursor-pointer border-none bg-transparent p-0 text-[0.6875rem] text-nim-muted underline decoration-dotted underline-offset-2 hover:text-nim"
+                    onClick={() => onOpenAuthorSession(authorSession.sessionId)}
+                  >
+                    {authorSession.label}
+                  </button>
+                </>
+              )}
             </span>
           </span>
         }
@@ -656,6 +690,7 @@ export const FeedbackRequestResults: React.FC<FeedbackRequestResultsProps> = ({
         <FeedbackArtifactSubjects
           subjects={request.subjects}
           resolveAction={resolveArtifactAction}
+          renderPreview={renderSubjectPreview}
         />
 
         {results.askResults.map((result) => (

@@ -9,7 +9,14 @@ import { openSettingsCommandAtom } from '../../store/atoms/settingsNavigation';
 import { organizationDirectoryAtom, type OrganizationDirectoryEntry } from '../../store/atoms/settingsDomains';
 import { FEATURE_USAGE_KEYS, type FeatureUsageKey, type FeatureUsageRecord } from '../../../shared/featureUsage';
 import { tipCreateWorktreeSessionRequestAtom } from '../atoms';
+import { agentDiagramTip } from '../definitions/agent-diagram';
+import { animationDiscoverTip } from '../definitions/animation-discover';
+import { canvasDiscoverTip } from '../definitions/canvas-discover';
+import { datamodelDiscoverTip } from '../definitions/datamodel-discover';
+import { excalidrawDiscoverTip } from '../definitions/excalidraw-discover';
 import { keyboardShortcutsTip } from '../definitions/keyboard-shortcuts';
+import { mockupDiscoverTip } from '../definitions/mockup-discover';
+import { spreadsheetDiscoverTip } from '../definitions/spreadsheet-discover';
 import { sessionCleanupTip } from '../definitions/session-cleanup';
 import { sessionLaunchShortcutTip } from '../definitions/session-launch-shortcut';
 import { filesAgentContextTip } from '../definitions/files-agent-context';
@@ -263,5 +270,71 @@ describe('contextual tip definitions', () => {
     expect(filesVisualEditorsTip.content.action?.insertPrompt).toBe(
       'Create a visual mockup for ',
     );
+  });
+
+  it('shows the animation and canvas tips to established tool users', () => {
+    const eligible = createContext({
+      featureUsage: createFeatureUsage({
+        [FEATURE_USAGE_KEYS.SESSION_COMPLETED_WITH_TOOLS]: 5,
+      }),
+    });
+    const newUser = createContext({
+      featureUsage: createFeatureUsage({
+        [FEATURE_USAGE_KEYS.SESSION_COMPLETED_WITH_TOOLS]: 4,
+      }),
+    });
+
+    expect(animationDiscoverTip.trigger.condition(eligible)).toBe(true);
+    expect(animationDiscoverTip.trigger.condition(newUser)).toBe(false);
+    expect(canvasDiscoverTip.trigger.condition(eligible)).toBe(true);
+    expect(canvasDiscoverTip.trigger.condition(newUser)).toBe(false);
+  });
+
+  it('keeps editor-discovery tips in the rotation after the editor has been used', () => {
+    // Discovery tips are recurring rotation content, not one-shot onboarding:
+    // using the editor must not retire the tip. Dismissal is the only thing
+    // that takes one out, and that is enforced by TipService, not the trigger.
+    const heavyUser = createContext({
+      featureUsage: createFeatureUsage({
+        [FEATURE_USAGE_KEYS.SESSION_COMPLETED_WITH_TOOLS]: 50,
+        [FEATURE_USAGE_KEYS.EXCALIDRAW_OPENED]: 30,
+        [FEATURE_USAGE_KEYS.MOCKUP_OPENED]: 30,
+        [FEATURE_USAGE_KEYS.SPREADSHEET_OPENED]: 30,
+        [FEATURE_USAGE_KEYS.DATAMODEL_OPENED]: 30,
+      }),
+    });
+
+    expect(animationDiscoverTip.trigger.condition(heavyUser)).toBe(true);
+    expect(canvasDiscoverTip.trigger.condition(heavyUser)).toBe(true);
+    expect(excalidrawDiscoverTip.trigger.condition(heavyUser)).toBe(true);
+    expect(mockupDiscoverTip.trigger.condition(heavyUser)).toBe(true);
+    expect(spreadsheetDiscoverTip.trigger.condition(heavyUser)).toBe(true);
+    expect(datamodelDiscoverTip.trigger.condition(heavyUser)).toBe(true);
+  });
+
+  it('shows the agent-diagram tip once the agent has still never driven Excalidraw', () => {
+    // Regression: this tip also required hasBeenUsed(EXCALIDRAW_OPENED), a key
+    // nothing records, so the condition was permanently false and the card
+    // could never appear. The MCP-tool gate is wired and stays.
+    const eligible = createContext({
+      featureUsage: createFeatureUsage({
+        [FEATURE_USAGE_KEYS.SESSION_COMPLETED_WITH_TOOLS]: 8,
+      }),
+    });
+    const agentAlreadyDrew = createContext({
+      featureUsage: createFeatureUsage({
+        [FEATURE_USAGE_KEYS.SESSION_COMPLETED_WITH_TOOLS]: 8,
+      }),
+      toolUsage: {
+        'mcp:nimbalyst-excalidraw': {
+          count: 1,
+          firstUsed: '2026-05-22T00:00:00.000Z',
+          lastUsed: '2026-05-22T00:00:00.000Z',
+        },
+      },
+    });
+
+    expect(agentDiagramTip.trigger.condition(eligible)).toBe(true);
+    expect(agentDiagramTip.trigger.condition(agentAlreadyDrew)).toBe(false);
   });
 });

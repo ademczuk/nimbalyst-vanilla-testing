@@ -14,7 +14,11 @@ import {
   createFeedbackResultsHost,
   startFeedbackRequestSync,
 } from './createFeedbackResultsHost';
-import { useFeedbackArtifactActionResolver } from './feedbackArtifactActions';
+import {
+  useFeedbackArtifactActionResolver,
+  useFeedbackAuthorSessionOpener,
+} from './feedbackArtifactActions';
+import { renderLazyFeedbackSubjectPreview } from './lazyFeedbackOptionPreview';
 import { parseFeedbackRequestTabUri } from './feedbackRequestTab';
 
 export interface FeedbackRequestResultsTabProps {
@@ -46,6 +50,7 @@ export const FeedbackRequestResultsTab: React.FC<FeedbackRequestResultsTabProps>
     [target],
   );
   const resolveArtifactAction = useFeedbackArtifactActionResolver(workspacePath);
+  const openAuthorSession = useFeedbackAuthorSessionOpener(workspacePath);
 
   if (!target) {
     return (
@@ -64,6 +69,8 @@ export const FeedbackRequestResultsTab: React.FC<FeedbackRequestResultsTabProps>
         target={target}
         host={host}
         resolveArtifactAction={resolveArtifactAction}
+        onOpenAuthorSession={openAuthorSession}
+        renderSubjectPreview={renderLazyFeedbackSubjectPreview}
       />
     </div>
   );

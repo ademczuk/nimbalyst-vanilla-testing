@@ -50,11 +50,26 @@ export type FeedbackPublishOutcome =
  * intact, so the compose widget can report one message and stay sendable.
  */
 export type FeedbackPublishPlan =
-  | { status: 'ready'; run: () => Promise<FeedbackPublishOutcome> }
+  | {
+      status: 'ready';
+      /**
+       * `destination` is the folder as it exists at publish time, which is not
+       * always what preparing saw: a folder the author named is only created
+       * once the send is definitely going ahead. A plan that already has its
+       * own answer (the author walked the share dialog) ignores it.
+       */
+      run: (destination?: { folderId: string | null; folderPath: string }) =>
+        Promise<FeedbackPublishOutcome>;
+    }
   | { status: 'blocked'; error: string };
 
 export interface PublishFeedbackSubjectOptions {
   workspacePath: string;
+  /**
+   * Where this request's files go, as chosen in the compose surface. Supplying
+   * it is what lets a file with nothing else to ask publish with no dialog.
+   */
+  destination?: { folderId: string | null; folderPath: string };
 }
 
 /**
@@ -138,6 +153,7 @@ function documentRef(ref: ResourceRef, orgId: string, documentId: string): Resou
 async function prepareFileSubject(
   ref: ResourceRef,
   workspacePath: string,
+  destination?: { folderId: string | null; folderPath: string },
 ): Promise<FeedbackPublishPlan> {
   const sourceFilePath = absoluteSubjectPath(ref.sourceId, workspacePath);
   const fileName = getFileName(sourceFilePath);
@@ -152,7 +168,10 @@ async function prepareFileSubject(
   }
 
   const { askShareToTeam, shareFileToTeam } = await loadShareToTeamFlow();
-  const ask = await askShareToTeam({ filePath: sourceFilePath, fileName });
+  const ask = await askShareToTeam(
+    { filePath: sourceFilePath, fileName },
+    destination ? { destination, skipWhenFullyAnswered: true } : {},
+  );
   if (ask.status === 'unavailable') return { status: 'blocked', error: ask.reason };
   if (ask.status === 'cancelled') {
     return {
@@ -162,16 +181,31 @@ async function prepareFileSubject(
     };
   }
 
+  // The dialog opening at all means the author placed this file themselves, so
+  // their answer wins over the request-level folder resolved later.
+  const authorChoseFolder = ask.answers.folderId !== destination?.folderId
+    || ask.answers.folderPath !== destination?.folderPath;
+
   return {
     status: 'ready',
-    run: async () => {
+    run: async (resolvedDestination) => {
+      const answers = !authorChoseFolder && resolvedDestination
+        ? {
+            ...ask.answers,
+            folderId: resolvedDestination.folderId,
+            folderPath: resolvedDestination.folderPath,
+          }
+        : ask.answers;
       const shared = await shareFileToTeam({
         filePath: sourceFilePath,
         fileName,
-        answers: ask.answers,
+        answers,
         // The author is mid-compose in the transcript; the shared copy should
         // not steal the tab the results are about to open in.
         openAfterCreate: false,
+        // One request, one destination: the compose host records it once after
+        // the batch instead of every file overwriting the last.
+        persistLastSharedFolder: false,
       });
       return shared.status === 'shared'
         ? { success: true, ref: documentRef(ref, shared.orgId, shared.documentId) }
@@ -188,7 +222,9 @@ export async function prepareFeedbackSubjectPublish(
     return { status: 'ready', run: () => publishTrackerSubject(ref) };
   }
   if (ref.kind === 'document') return prepareDocumentSubject(ref);
-  if (ref.kind === 'file') return prepareFileSubject(ref, options.workspacePath);
+  if (ref.kind === 'file') {
+    return prepareFileSubject(ref, options.workspacePath, options.destination);
+  }
   return { status: 'blocked', error: unpublishableSubjectMessage(ref) };
 }
 
@@ -198,5 +234,7 @@ export async function publishFeedbackSubject(
   options: PublishFeedbackSubjectOptions,
 ): Promise<FeedbackPublishOutcome> {
   const plan = await prepareFeedbackSubjectPublish(ref, options);
-  return plan.status === 'ready' ? plan.run() : { success: false, error: plan.error };
+  return plan.status === 'ready'
+    ? plan.run(options.destination)
+    : { success: false, error: plan.error };
 }

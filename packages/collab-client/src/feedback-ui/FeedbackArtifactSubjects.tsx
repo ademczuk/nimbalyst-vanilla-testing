@@ -37,6 +37,16 @@ export type FeedbackArtifactActionResolver = (
   artifact: FeedbackArtifact,
 ) => FeedbackArtifactAction;
 
+/**
+ * Nullish means "I have a renderer and this subject has nothing worth showing",
+ * exactly as it does for an option card. The subject then renders as the row it
+ * has always been.
+ */
+export type FeedbackSubjectPreviewRenderer = (
+  subject: FeedbackArtifact,
+  index: number,
+) => React.ReactNode;
+
 export interface FeedbackArtifactSubjectsProps {
   /**
    * Optional at runtime even though the protocol type is not: a request synced
@@ -47,6 +57,22 @@ export interface FeedbackArtifactSubjectsProps {
   subjects?: readonly (FeedbackArtifact | ResourceRef)[];
   onOpen?: FeedbackSubjectOpener;
   resolveAction?: FeedbackArtifactActionResolver;
+  /**
+   * Paints what the request is about, rather than naming it.
+   *
+   * Strictly additive: absent, or returning nullish, and every subject is the
+   * text row this component has always rendered. That is what keeps the two
+   * degradation contracts above intact -- "no host means readable, not hidden",
+   * and an `unavailableReason` still explaining itself -- without either being
+   * re-implemented for the preview path.
+   */
+  renderPreview?: FeedbackSubjectPreviewRenderer;
+  /**
+   * The whole preview panel is the click target when this is supplied. Falls
+   * back to the row's own `open` when it is not, so a host that can paint but
+   * cannot expand still opens the subject somewhere.
+   */
+  onExpand?: (subject: FeedbackArtifact, anchor: HTMLElement | null) => void;
 }
 
 const KIND_LABELS: Record<ResourceRef['kind'], string> = {
@@ -85,18 +111,84 @@ export const FeedbackArtifactSubjects: React.FC<FeedbackArtifactSubjectsProps> =
   subjects,
   onOpen,
   resolveAction,
+  renderPreview,
+  onExpand,
 }) => {
   if (!subjects?.length) return null;
+
+  const previews = renderPreview
+    ? subjects.map((raw, index) => renderPreview(normalizeFeedbackArtifact(raw), index))
+    : [];
+  const anyPreview = previews.some((preview) => preview != null);
+
   return (
     <div
       data-testid="feedback-artifact-subjects"
-      className="feedback-artifact-subjects flex flex-col gap-1.5"
+      data-has-previews={anyPreview || undefined}
+      className={anyPreview
+        ? 'feedback-artifact-subjects grid gap-2.5'
+        : 'feedback-artifact-subjects flex flex-col gap-1.5'}
+      /*
+       * Sized to the subjects, exactly as the option grid is sized to the
+       * options -- but with a larger floor, because a subject is what the whole
+       * request is about rather than one of several answers to it. One subject
+       * then spans the row, which against `PREVIEW_AUTHORED_WIDTH` is a
+       * readable layout instead of the smudge a 260px column produced.
+       */
+      style={anyPreview
+        ? { gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }
+        : undefined}
     >
       {subjects.map((raw, index) => {
         const subject = normalizeFeedbackArtifact(raw);
         const key = `${subject.ref.kind}\u0000${subject.ref.sourceId}\u0000${index}`;
         const action = resolveAction?.(subject)
           ?? (onOpen ? { open: () => onOpen(subject) } : {});
+        const preview = previews[index];
+
+        if (preview != null) {
+          /*
+           * Preview panel on top, the row beneath: the same object an option
+           * card is, minus the radio. The row is this component's own existing
+           * markup rather than a second rendering of the same facts, which is
+           * what keeps `unavailableReason` and the no-host case correct here
+           * without either being written twice.
+           */
+          const canExpand = Boolean(onExpand) || Boolean(action.open);
+          return (
+            <div
+              key={key}
+              data-testid="feedback-artifact-subject"
+              data-subject-kind={subject.ref.kind}
+              className="feedback-artifact-subject feedback-artifact-subject-card overflow-hidden rounded border border-nim bg-nim-secondary"
+            >
+              {canExpand ? (
+                <button
+                  type="button"
+                  data-testid="feedback-artifact-subject-expand"
+                  aria-label={`Open ${subject.label}`}
+                  onClick={(event) => {
+                    const anchor = event.currentTarget
+                      .closest<HTMLElement>('.feedback-artifact-subject');
+                    if (onExpand) onExpand(subject, anchor);
+                    else action.open?.();
+                  }}
+                  className="feedback-artifact-subject-preview relative block h-64 w-full border-b border-nim bg-nim p-2.5 text-left cursor-zoom-in hover:ring-1 hover:ring-inset hover:ring-nim-primary"
+                >
+                  {preview}
+                </button>
+              ) : (
+                <div className="feedback-artifact-subject-preview relative h-64 border-b border-nim bg-nim p-2.5">
+                  {preview}
+                </div>
+              )}
+              <div className="flex items-center gap-2 px-2.5 py-2 select-text">
+                <SubjectBody subject={subject} unavailableReason={action.unavailableReason} />
+              </div>
+            </div>
+          );
+        }
+
         const shared = 'flex w-full items-center gap-2 rounded border border-nim bg-nim-secondary px-2.5 py-2';
         return action.open ? (
           <button

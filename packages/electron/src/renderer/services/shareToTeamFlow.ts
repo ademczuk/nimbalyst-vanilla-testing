@@ -81,6 +81,23 @@ export type ShareToTeamAsk =
   | { status: "cancelled" }
   | { status: "unavailable"; reason: string };
 
+export interface ShareToTeamAskOptions {
+  /**
+   * Pre-answers the folder question. The feedback path asks it once for the
+   * whole request, in the compose surface, before the author commits to
+   * sending; re-asking per file would put the question back in a modal after
+   * the decision, which is the thing that change removes.
+   */
+  destination?: { folderId: string | null; folderPath: string };
+  /**
+   * With a destination supplied and nothing else left to ask, resolve without
+   * opening a dialog at all. Only honoured when there are no embedded
+   * documents: which embeds come along is a real question with no default, and
+   * silently answering it would publish files the author never saw named.
+   */
+  skipWhenFullyAnswered?: boolean;
+}
+
 export type ShareFileToTeamResult =
   | { status: "shared"; documentId: string; orgId: string; title: string }
   | { status: "failed"; error: string };
@@ -97,15 +114,125 @@ export interface ShareToTeamTarget {
  * why `ShareToTeamData` carries `onDismiss`: the dialog closes on both paths and
  * a caller that cannot tell them apart would treat a dismissal as an answer.
  */
-export async function askShareToTeam(
-  target: ShareToTeamTarget
-): Promise<ShareToTeamAsk> {
-  const catalog = getCollaborativeDocumentTypeCatalog();
-  const shareability = catalog.resolveShareability(target.fileName);
-  if (shareability.state !== "ready") {
-    return { status: "unavailable", reason: shareability.reason };
+/**
+ * Which already-local documents this file embeds, and would therefore drag
+ * along when it becomes collaborative.
+ *
+ * Extracted from `askShareToTeam` because "is there anything left to ask?" has
+ * to be answerable *without* opening a dialog. The feedback path decides
+ * whether it needs a modal at all from this result: no candidates means the
+ * folder was the only open question, and that one is already answered.
+ */
+export async function discoverShareEmbeddedDocuments(
+  filePath: string,
+  descriptor: CollaborativeDocumentTypeDescriptor
+): Promise<EmbeddedDocumentCandidate[]> {
+  const workspacePath = store.get(activeWorkspacePathAtom);
+  if (
+    (descriptor.documentType !== "markdown" &&
+      descriptor.documentType !== "canvas") ||
+    !workspacePath
+  ) {
+    return [];
   }
-  const descriptor = shareability.descriptor;
+
+  try {
+    const catalog = getCollaborativeDocumentTypeCatalog();
+    const source = await readShareToTeamSourceContent(filePath, descriptor);
+    const common = {
+      sourceFilePath: filePath,
+      workspacePath,
+      catalog,
+      expectedOrgId: store.get(activeTeamOrgIdAtom),
+      fileExists: async (absolutePath: string) => {
+        const exists = await window.electronAPI?.invoke?.(
+          "file:exists",
+          absolutePath
+        );
+        return exists === true;
+      },
+      findExisting: async (absolutePath: string) => {
+        const result =
+          await window.electronAPI?.documentSync?.findLocalOriginLink?.(
+            workspacePath,
+            absolutePath
+          );
+        const binding = result?.success ? result.binding : null;
+        return binding
+          ? { documentId: binding.documentId, orgId: binding.orgId }
+          : null;
+      },
+    };
+    if (descriptor.documentType === "markdown" && typeof source === "string") {
+      return await discoverEmbeddedDocuments({
+        markdown: source,
+        embeddableExtensions: getEmbeddableExtensions(),
+        ...common,
+      });
+    }
+    return await discoverCanvasEmbeddedDocuments({ canvas: source, ...common });
+  } catch (error) {
+    console.warn(
+      "[shareToTeamFlow] Could not inspect embedded documents:",
+      error
+    );
+    return [];
+  }
+}
+
+/** The document type that will own the shared copy, or why there is none. */
+export function resolveShareDescriptor(
+  fileName: string
+): { ok: true; descriptor: CollaborativeDocumentTypeDescriptor } | { ok: false; reason: string } {
+  const shareability = getCollaborativeDocumentTypeCatalog().resolveShareability(fileName);
+  return shareability.state === "ready"
+    ? { ok: true, descriptor: shareability.descriptor }
+    : { ok: false, reason: shareability.reason };
+}
+
+export async function askShareToTeam(
+  target: ShareToTeamTarget,
+  options: ShareToTeamAskOptions = {}
+): Promise<ShareToTeamAsk> {
+  const resolved = resolveShareDescriptor(target.fileName);
+  if (!resolved.ok) {
+    return { status: "unavailable", reason: resolved.reason };
+  }
+  const descriptor = resolved.descriptor;
+
+  const workspacePath = store.get(activeWorkspacePathAtom);
+  const sourceRelPath = workspacePath
+    ? getRelativePath(workspacePath, target.filePath) || target.fileName
+    : target.fileName;
+
+  // Only document types that can embed anything pay for the lookup. Without
+  // this guard a spreadsheet would await a call that can only return [], which
+  // pushes opening the dialog into a later microtask for no reason.
+  const embeddedDocuments =
+    descriptor.documentType === "markdown" || descriptor.documentType === "canvas"
+      ? await discoverShareEmbeddedDocuments(target.filePath, descriptor)
+      : [];
+
+  // Every question already has an answer: do not open a dialog to collect
+  // nothing. This is what makes "get feedback on this mockup" publish with no
+  // modal at all.
+  if (
+    options.destination &&
+    options.skipWhenFullyAnswered &&
+    embeddedDocuments.length === 0
+  ) {
+    return {
+      status: "answered",
+      answers: {
+        descriptor,
+        folderId: options.destination.folderId,
+        folderPath: options.destination.folderPath,
+        sharedName: target.fileName,
+        embeddedDocuments: [],
+        selectedEmbeddedDocumentPaths: [],
+      },
+    };
+  }
 
   const dialogs = dialogRef.current;
   if (!dialogs) {
@@ -115,69 +242,6 @@ export async function askShareToTeam(
     };
   }
 
-  const workspacePath = store.get(activeWorkspacePathAtom);
-  const sourceRelPath = workspacePath
-    ? getRelativePath(workspacePath, target.filePath) || target.fileName
-    : target.fileName;
-
-  let embeddedDocuments: EmbeddedDocumentCandidate[] = [];
-  if (
-    (descriptor.documentType === "markdown" ||
-      descriptor.documentType === "canvas") &&
-    workspacePath
-  ) {
-    try {
-      const source = await readShareToTeamSourceContent(
-        target.filePath,
-        descriptor
-      );
-      const common = {
-        sourceFilePath: target.filePath,
-        workspacePath,
-        catalog,
-        expectedOrgId: store.get(activeTeamOrgIdAtom),
-        fileExists: async (absolutePath: string) => {
-          const exists = await window.electronAPI?.invoke?.(
-            "file:exists",
-            absolutePath
-          );
-          return exists === true;
-        },
-        findExisting: async (absolutePath: string) => {
-          const result =
-            await window.electronAPI?.documentSync?.findLocalOriginLink?.(
-              workspacePath,
-              absolutePath
-            );
-          const binding = result?.success ? result.binding : null;
-          return binding
-            ? { documentId: binding.documentId, orgId: binding.orgId }
-            : null;
-        },
-      };
-      if (
-        descriptor.documentType === "markdown" &&
-        typeof source === "string"
-      ) {
-        embeddedDocuments = await discoverEmbeddedDocuments({
-          markdown: source,
-          embeddableExtensions: getEmbeddableExtensions(),
-          ...common,
-        });
-      } else if (descriptor.documentType === "canvas") {
-        embeddedDocuments = await discoverCanvasEmbeddedDocuments({
-          canvas: source,
-          ...common,
-        });
-      }
-    } catch (error) {
-      console.warn(
-        "[shareToTeamFlow] Could not inspect embedded documents:",
-        error
-      );
-    }
-  }
-
   return new Promise<ShareToTeamAsk>((resolve) => {
     let answered = false;
     dialogs.open<ShareToTeamData>(DIALOG_IDS.SHARE_TO_TEAM, {
@@ -185,6 +249,10 @@ export async function askShareToTeam(
       sourceRelPath,
       descriptor,
       embeddedDocuments,
+      // Only the folder is pre-answered; the dialog still asks the rest.
+      ...(options.destination
+        ? { initialFolderId: options.destination.folderId }
+        : {}),
       onConfirm: ({
         folderId,
         folderPath,
@@ -227,6 +295,12 @@ export async function shareFileToTeam(params: {
   answers: ShareToTeamAnswers;
   /** Defaults to the context-menu behavior: open the new shared copy. */
   openAfterCreate?: boolean;
+  /**
+   * Defaults to true. A caller sharing several files as one action turns this
+   * off and records the destination once itself; otherwise each file overwrites
+   * the previous one's write with the same value.
+   */
+  persistLastSharedFolder?: boolean;
 }): Promise<ShareFileToTeamResult> {
   const { filePath, fileName, answers } = params;
   const {
@@ -564,7 +638,11 @@ export async function shareFileToTeam(params: {
   });
 
   // Remember the destination folder so the next share defaults to it.
-  if (workspacePath && window.electronAPI?.invoke) {
+  if (
+    params.persistLastSharedFolder !== false
+    && workspacePath
+    && window.electronAPI?.invoke
+  ) {
     window.electronAPI
       .invoke("workspace:update-state", workspacePath, {
         collabTree: {

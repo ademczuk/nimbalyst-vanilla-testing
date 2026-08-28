@@ -143,6 +143,24 @@ async function buildWorker() {
       format: 'cjs',
     });
 
+    // Animation GIF encoder — palette derivation and LZW encoding for
+    // .anim.json exports. Off-thread because both are synchronous JS measured
+    // in tens of seconds on a ten-second animation, which stops every IPC call
+    // in the app while it runs.
+    await esbuild.build({
+      entryPoints: [
+        path.join(__dirname, '../src/main/workers/gifEncodeWorker.ts'),
+      ],
+      bundle: true,
+      platform: 'node',
+      target: 'node18',
+      outfile: path.join(outDir, 'gif-encode-worker.bundle.js'),
+      external: ['worker_threads'],
+      minify: false,
+      sourcemap: process.env.NODE_ENV !== 'production',
+      format: 'cjs',
+    });
+
     // Reads + sha256-hashes markdown files for ProjectFileSync's manifest off
     // the main thread. Node builtins only — nothing to keep external beyond the
     // worker plumbing itself.
@@ -164,6 +182,7 @@ async function buildWorker() {
     console.log('SQLite worker bundle created successfully at out/sqlite-worker.bundle.js');
     console.log('SQLite verify worker bundle created successfully at out/sqlite-verify-worker.bundle.js');
     console.log('History diff worker bundle created successfully at out/history-diff-worker.bundle.js');
+    console.log('GIF encode worker bundle created successfully at out/gif-encode-worker.bundle.js');
     console.log('Project manifest worker bundle created successfully at out/project-manifest-worker.bundle.js');
 
     // Copy PGLite runtime files that are loaded dynamically at runtime

@@ -44,6 +44,13 @@ vi.mock('../../Comments/ConversationCommentAdapter', () => ({
 vi.mock('../../../store/listeners/conversationDirectoryListeners', () => ({
   markConversationNotificationLevelChanged: vi.fn(),
 }));
+// RoomView only forwards this resolver to the stubbed thread, so the real hook
+// buys nothing here. It reaches the extension-SDK document-type catalog, which
+// re-exports the whole runtime barrel -- more than the narrow mock above
+// provides, so loading it fails collection outright.
+vi.mock('../../../hooks/useResourcePreviewResolver', () => ({
+  useResourcePreviewResolver: () => ({ resolve: async () => ({}) }),
+}));
 
 const entry: ConversationDirectoryEntry = {
   id: 'design',

@@ -8,6 +8,7 @@ import { createConversationCommentAdapter } from '../../Comments/ConversationCom
 import type { CommentCapabilities } from '../../Comments/commentTypes';
 import { FeedbackRequestSurface } from '../../FeedbackRequest/FeedbackRequestSurface';
 import { useOrgRoster } from '../../../hooks/useOrgRoster';
+import { useResourcePreviewResolver } from '../../../hooks/useResourcePreviewResolver';
 import { toMentionDirectory } from '../roomViewModel';
 import { openActionLabel } from './inboxViewModel';
 import type { InboxRowView, InboxSubscriptionState } from './inboxTypes';
@@ -308,6 +309,7 @@ function InboxConversationThread({
     () => toMentionDirectory(members, row.teamMemberId),
     [members, row.teamMemberId],
   );
+  const resourceResolver = useResourcePreviewResolver(row.orgId);
 
   return (
     <div
@@ -317,6 +319,7 @@ function InboxConversationThread({
       <CommentThread
         adapter={adapter}
         capabilities={capabilities}
+        resolver={resourceResolver}
         context={{
           conversationId,
           conversationTitle: row.sourceTitle,

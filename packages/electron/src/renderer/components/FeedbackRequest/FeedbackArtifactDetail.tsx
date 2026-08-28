@@ -137,7 +137,7 @@ export const FeedbackArtifactDetail: React.FC<{
       {mounted && resolution && (
         <React.Suspense fallback={null}>
           <CollaborativeEmbedEditor
-            registration={resolution.registration}
+            editor={resolution.editor}
             request={resolution.request}
             onViewportRegistered={api.onViewportReady}
           />

@@ -321,7 +321,7 @@ test('should not reload tab when clicking on already active tab', async () => {
 // Find/Replace tests (from tabs.spec.ts / find-replace-bar.spec.ts)
 // ========================================================================
 
-test('should open search/replace bar with Cmd+F and close with Escape', async () => {
+test('should open search/replace bar with Cmd+F, refocus it on a repeat Cmd+F, and close with Escape', async () => {
   await page.locator(PLAYWRIGHT_TEST_SELECTORS.fileTreeItem, { hasText: 'find-test-1.md' }).click();
   await expect(
     page.locator(PLAYWRIGHT_TEST_SELECTORS.tab).filter({ hasText: 'find-test-1.md' })
@@ -339,6 +339,17 @@ test('should open search/replace bar with Cmd+F and close with Escape', async ()
   });
 
   const searchInput = page.locator(PLAYWRIGHT_TEST_SELECTORS.searchInput);
+  await expect(searchInput).toBeFocused();
+
+  // #1388: Find is not a toggle. With focus back in the document, a second Find
+  // must pull focus into the search field rather than close the bar -- closing
+  // it left focus in the text, so the next keystrokes edited the file.
+  await page.locator(ACTIVE_EDITOR_SELECTOR).click();
+  await expect(searchInput).not.toBeFocused();
+
+  await sendFindMenuCommand();
+
+  await expect(page.locator(PLAYWRIGHT_TEST_SELECTORS.searchReplaceBar)).toBeVisible();
   await expect(searchInput).toBeFocused();
 
   await searchInput.press('Escape');

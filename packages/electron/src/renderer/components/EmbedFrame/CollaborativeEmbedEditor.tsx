@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import type { EditorHost, EditorViewport } from "@nimbalyst/runtime";
 
-import type { CustomEditorRegistration } from "../CustomEditors/types";
+import type { CollaborativeEmbedEditorChoice } from "./resolveCollaborativeEmbedRequest";
+import { CollaborativeMarkdownEmbed } from "./CollaborativeMarkdownEmbed";
 import { useTheme } from "../../hooks/useTheme";
 import {
   collaborativeEmbedProviderCache,
@@ -14,7 +15,12 @@ import { buildCollabUri } from "@nimbalyst/collab-protocol";
 import { createCollabExtensionHost } from "../TabEditor/collabExtensionHost";
 
 interface CollaborativeEmbedEditorProps {
-  registration: CustomEditorRegistration;
+  /**
+   * Who paints the document. An extension registration, or the app's own
+   * Lexical markdown editor -- see `resolveCollaborativeEmbedRequest`. Both
+   * share every line above this point: the room, the refcount, and the host.
+   */
+  editor: CollaborativeEmbedEditorChoice;
   request: CollaborativeEmbedProviderRequest;
   /** Defaults to the existing inline-embed behavior: read-only. */
   readOnly?: boolean;
@@ -33,7 +39,7 @@ interface CollaborativeEmbedEditorProps {
 export const CollaborativeEmbedEditor: React.FC<
   CollaborativeEmbedEditorProps
 > = ({
-  registration,
+  editor,
   request,
   readOnly = true,
   onConnectionReleased,
@@ -189,6 +195,14 @@ export const CollaborativeEmbedEditor: React.FC<
     );
   }
 
-  const ExtensionComponent = registration.component;
+  if (editor.kind === "lexical") {
+    // `acquisition` is non-null whenever `host` is -- they are built from the
+    // same memo -- but narrowing needs it said out loud.
+    return acquisition === null ? null : (
+      <CollaborativeMarkdownEmbed host={host} resource={acquisition.resource} />
+    );
+  }
+
+  const ExtensionComponent = editor.registration.component;
   return <ExtensionComponent host={host} />;
 };

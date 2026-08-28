@@ -242,13 +242,14 @@ async function activateCard(page: Page, nodeId: string): Promise<void> {
   const card = page.locator(`[data-canvas-node-id="${nodeId}"]`);
   await expect(card).toBeVisible({ timeout: 20_000 });
   // Warm cards intentionally make their body inert; activation belongs to
-  // React Flow's node click handler on the card root, which also performs the
-  // zoom-to-hot transition.
+  // React Flow's node *double*-click handler on the card root, which also
+  // performs the zoom-to-hot transition. A single click only selects, which is
+  // what leaves the resize handles reachable.
   // The test app's session-history pane can overlap transformed canvas
   // coordinates even though the node remains visible. Dispatching on the root
-  // still drives React Flow's real node-click handler without relying on the
-  // unrelated shell pane's hit-testing geometry.
-  await card.dispatchEvent("click");
+  // still drives React Flow's real handler without relying on the unrelated
+  // shell pane's hit-testing geometry.
+  await card.dispatchEvent("dblclick");
   await expect(card).toHaveClass(/canvas-card--active/);
 }
 

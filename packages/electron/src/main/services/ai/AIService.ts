@@ -61,6 +61,7 @@ import { getSettingsService } from '../SettingsService';
 import { subscribeProviderSettingsInvalidation } from './providerSettingsCacheInvalidation';
 import { windowStates, findWindowByWorkspace, getWindowId, createWindow, isAppQuitting } from '../../window/WindowManager';
 import { getWindowIdForWindow, resolveActiveWorkspacePathForWindowId } from '../../window/windowState';
+import { resolveSenderWorkspacePath } from '../../window/captureWindowWorkspace';
 import { sessionFileTracker } from '../SessionFileTracker';
 import { extractFilePath } from './tools/extractFilePath';
 import { handleBackendTool } from '../../mcp/tools/backendToolHandler';
@@ -69,6 +70,7 @@ import { resolveBackendWorkspacePath } from '../../mcp/mcpWorkspaceResolver';
 import { toolCallMatcher, unwrapShellCommand } from '../ToolCallMatcher';
 import { workspaceFileEditAttributionService } from '../WorkspaceFileEditAttributionService';
 import {AnalyticsService} from "../analytics/AnalyticsService.ts";
+import { trackCreateAiSession } from '../analytics/sessionLaunchAnalytics';
 import { FeatureUsageService, FEATURES } from "../FeatureUsageService.ts";
 import { historyManager } from '../../HistoryManager';
 import { addGitignoreBypass } from '../../file/WorkspaceEventBus';
@@ -2230,10 +2232,15 @@ export class AIService {
       // the index for pendingExecution flags. We do NOT call watchSession() here because
       // it creates a WebSocket connection per session, causing performance issues.
 
-      this.analytics.sendEvent('create_ai_session', {
+      // Was a second, drifted copy of the SessionHandlers emitter -- it omitted
+      // `is_meta_agent_session`, so meta-agent sessions created through this
+      // path were counted as ordinary ones. Both now go through one function.
+      trackCreateAiSession({
         provider,
-        is_worktree_session: !!session.worktreeId,
-        is_workstream_child: !!session.parentSessionId,
+        worktreeId: session.worktreeId,
+        parentSessionId: session.parentSessionId,
+        agentRole: (session as { agentRole?: string }).agentRole,
+        launchSource: (session as { launchSource?: string }).launchSource,
       });
       return session;
     });
@@ -4157,12 +4164,17 @@ export class AIService {
       }
 
       // Resolve the workspace: explicit arg wins, else the window's active
-      // project (honors the project rail selection in Multi-Project mode).
+      // project (honors the project rail selection in Multi-Project mode), else
+      // the offscreen mount's workspace when the sender is the hidden screenshot
+      // capture window, which WindowManager never registers.
       let workspacePath = options?.workspacePath;
       if (!workspacePath) {
         const browserWindow = BrowserWindow.fromWebContents(event.sender);
         const windowId = browserWindow ? getWindowId(browserWindow) : null;
-        workspacePath = resolveActiveWorkspacePathForWindowId(windowId) ?? undefined;
+        workspacePath = resolveSenderWorkspacePath({
+          windowId,
+          webContentsId: event.sender?.id,
+        });
       }
       if (!workspacePath) {
         throw new Error('No workspace path available for backend tool call');

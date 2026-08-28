@@ -30,6 +30,7 @@ import { DocumentModelRegistry } from './document-model/DocumentModelRegistry';
 import type { DocumentModelEditorHandle } from './document-model/types';
 import { fileDeletedAtomFamily } from '../store/atoms/fileWatch';
 import { assertFileSaveSucceeded } from '../utils/fileSaveResult';
+import { createProjectFileSystemHost } from './projectFileSystemHost';
 
 const LOG_PREFIX = '[HiddenTabManager]';
 const TTL_MS = 30_000; // 30 seconds after last release before cleanup
@@ -554,6 +555,21 @@ class HiddenTabManager {
       setEditorContext(): void {
         // Hidden editors don't push context to chat
       },
+
+      /*
+       * Sibling-file reads, the same surface a visible tab gets.
+       *
+       * Without this an editor whose document references files next to it --
+       * an animation's `htmlFile` partials, a mockup's assets -- renders those
+       * regions as nothing here while looking correct in a tab, so a screenshot
+       * taken to check the work quietly disagrees with the work. Nothing about
+       * the offscreen path made `fs` impossible; it was simply never wired.
+       */
+      fs: createProjectFileSystemHost({
+        // Nothing on screen to refresh: this host exists to render once.
+        onAfterWrite: async () => {},
+      }),
+
       setEditorContextItems(): void {
         // Hidden editors don't push context to chat
       },

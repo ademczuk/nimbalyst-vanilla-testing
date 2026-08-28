@@ -81,6 +81,43 @@ function dragChanges(nodeId: string): NodeChange[][] {
   return frames;
 }
 
+const RESIZE_FRAMES = 30;
+
+/**
+ * The frames `NodeResizer` emits for one resize, ending with `resizing: false`.
+ *
+ * Note what the closing frame is *not*: it carries no `setAttributes`, so
+ * `applyCanvasNodeChanges` folds nothing out of it on its own. The committed
+ * size comes from the held overlay the transient frames built, which is the
+ * whole reason this is asserted rather than assumed.
+ */
+function resizeChanges(nodeId: string): NodeChange[][] {
+  const frames: NodeChange[][] = [];
+  const sizeAt = (frame: number) => ({
+    width: 200 + frame * 10,
+    height: 120 + frame * 6,
+  });
+  for (let frame = 1; frame <= RESIZE_FRAMES; frame += 1) {
+    frames.push([
+      {
+        id: nodeId,
+        type: 'dimensions',
+        dimensions: sizeAt(frame),
+        resizing: true,
+      },
+    ]);
+  }
+  frames.push([
+    {
+      id: nodeId,
+      type: 'dimensions',
+      dimensions: sizeAt(RESIZE_FRAMES),
+      resizing: false,
+    },
+  ]);
+  return frames;
+}
+
 interface Harness {
   binding: CanvasBinding;
   yDoc: Y.Doc;
@@ -153,6 +190,13 @@ function positionOf(document: CanvasDocument, id: string) {
   return node === undefined ? null : { x: node.x, y: node.y };
 }
 
+function sizeOf(document: CanvasDocument, id: string) {
+  const node = (document.nodes ?? []).find((entry) => entry.id === id);
+  return node === undefined
+    ? null
+    : { width: node.width, height: node.height };
+}
+
 describe('drag write amplification', () => {
   it('spends one durable write on a drag instead of one per frame', () => {
     const gestureBoundary = harness();
@@ -185,6 +229,38 @@ describe('drag write amplification', () => {
       y: 600,
     });
     perFrame.destroy();
+  });
+
+  /**
+   * A resize is a gesture too, and it reaches the document by a different route
+   * than a drag does.
+   *
+   * `applyCanvasNodeChanges` deliberately ignores any `dimensions` change that
+   * is neither `resizing: true` nor `setAttributes` -- React Flow re-reports
+   * every node's measured box after every render, and honouring that would mark
+   * a board dirty with nobody having touched it. The consequence is that the
+   * frame which *ends* a resize contributes nothing on its own: the size that
+   * gets written is the one the held overlay accumulated. Get that wrong and a
+   * resize looks fine on screen for as long as the overlay survives, then
+   * snaps back to the old box on the next document round-trip.
+   *
+   * The reason this is worth a test at all: until the click model split select
+   * from activate, the handles were hidden the instant a card was clicked, so
+   * this path had no way to run.
+   */
+  it('commits a resize once, at the gesture boundary', () => {
+    const test = harness();
+    const overlay = runFrames(test, resizeChanges('card-prd'));
+
+    expect(test.durableWrites()).toBe(1);
+    expect(sizeOf(test.rendered(), 'card-prd')).toEqual({
+      width: 200 + RESIZE_FRAMES * 10,
+      height: 120 + RESIZE_FRAMES * 6,
+    });
+    // Resizing from a corner moves the origin too; nothing here should have.
+    expect(positionOf(test.rendered(), 'card-prd')).toEqual({ x: 0, y: 0 });
+    expect(overlay.size).toBe(0);
+    test.destroy();
   });
 
   /**

@@ -21,6 +21,12 @@ type AnalyticsSettings = {
    */
   firstLaunchAt?: string;
   launchCount?: number;
+  /**
+   * Lifetime count of agent sessions this install has created, for
+   * `create_ai_session`'s ordinal bucket. Same lifetime and same reasoning as
+   * the two above; it is a local integer and is never transmitted raw.
+   */
+  sessionsCreated?: number;
 }
 
 export type { BuildType } from './launchAttribution';
@@ -325,6 +331,24 @@ export class AnalyticsService {
     store.set('firstLaunchAt', next.firstLaunchAt);
     store.set('launchCount', next.launchCount);
     return this.launchAttribution = { launchNumber, daysSinceInstall };
+  }
+
+  /**
+   * Increment and read this install's lifetime session-creation count.
+   *
+   * A persisted counter rather than a `COUNT(*)` over `ai_sessions` on purpose:
+   * the number is wanted on every single create, and a per-create aggregate
+   * query is exactly the N+1 shape this codebase keeps having to remove.
+   *
+   * Deliberately NOT memoized the way `recordLaunch` is -- that one must count
+   * launches rather than windows, whereas every creation here is its own
+   * ordinal.
+   */
+  public nextSessionOrdinal(): number {
+    const store = this.getSettingsStore();
+    const ordinal = (store.get('sessionsCreated') ?? 0) + 1;
+    store.set('sessionsCreated', ordinal);
+    return ordinal;
   }
 
   private getSettingsStore(): Store<AnalyticsSettings> {

@@ -2,6 +2,7 @@ export * from './FeedbackRequestRespond';
 export * from './FeedbackRespondAskField';
 export * from './FeedbackRespondOptionCards';
 export * from './FeedbackArtifactSubjects';
+export * from './feedbackSubjectEntries';
 export * from './ArtifactViewport';
 export * from './ScaledPreviewFrame';
 export * from './artifactScrollCarry';

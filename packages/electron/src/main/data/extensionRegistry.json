@@ -1,7 +1,53 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-13T04:11:31.838Z",
+  "generatedAt": "2026-08-28T04:59:34.163Z",
   "extensions": [
+    {
+      "id": "com.nimbalyst.animation",
+      "name": "Animation",
+      "description": "Author step-based animations for technical explainer diagrams",
+      "version": "1.1.0",
+      "author": "Nimbalyst",
+      "categories": [
+        "diagrams"
+      ],
+      "tags": [
+        "animation",
+        "diagram",
+        "explainer",
+        "timeline",
+        "svg",
+        "motion"
+      ],
+      "icon": "animation",
+      "screenshots": [
+        {
+          "src": "https://extensions.nimbalyst.com/screenshots/com.nimbalyst.animation/com.nimbalyst.animation-0-dark.png",
+          "alt": "Animation editor showing a cache-aside read path, with the step strip and timeline below the stage",
+          "srcLight": "https://extensions.nimbalyst.com/screenshots/com.nimbalyst.animation/com.nimbalyst.animation-0-light.png"
+        }
+      ],
+      "downloads": 0,
+      "featured": true,
+      "permissions": [
+        "filesystem"
+      ],
+      "minimumAppVersion": "1.0.0",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.animation/1.1.0",
+      "checksum": "49066894356143d15544fc88d32c803b1e6eb5bbcf64e073e99e534361eb5f51",
+      "repositoryUrl": "",
+      "changelog": "1.1.0: Frames can show real product UI: an html part draws markup you write inline or keep in a file beside the animation, regions inside it animate on their own, and the document names the palette it renders under so the stage and every export match.",
+      "tagline": "Animate technical diagrams step by step",
+      "longDescription": "Build animated explainer diagrams from a named scene and an ordered list of steps. Scrub the timeline, drag a step boundary to retime it, click any part of the scene to put it in chat context, and let an agent make the edits.",
+      "highlights": [
+        "Steps and states rather than a keyframe dope sheet",
+        "Click any part to hand it to the agent with its state and time",
+        "Plain JSON on disk, so any agent can edit it without special tools"
+      ],
+      "fileTypes": [
+        ".anim.json"
+      ]
+    },
     {
       "id": "com.nimbalyst.astro",
       "name": "Astro",
@@ -162,6 +208,54 @@
       ],
       "fileTypes": [
         ".calc.md"
+      ]
+    },
+    {
+      "id": "com.nimbalyst.canvas",
+      "name": "Project Canvas",
+      "description": "Authoring guidance for Project Canvas boards",
+      "version": "1.0.0",
+      "author": "Nimbalyst",
+      "categories": [
+        "diagrams",
+        "ai-tools"
+      ],
+      "tags": [
+        "canvas",
+        "board",
+        "diagram",
+        "json-canvas",
+        "layout",
+        "whiteboard"
+      ],
+      "icon": "dashboard",
+      "screenshots": [
+        {
+          "src": "https://extensions.nimbalyst.com/screenshots/com.nimbalyst.canvas/com.nimbalyst.canvas-0-dark.png",
+          "alt": "Project Canvas board with live markdown, mockup, mindmap, and spreadsheet cards wired together inside a frame",
+          "srcLight": "https://extensions.nimbalyst.com/screenshots/com.nimbalyst.canvas/com.nimbalyst.canvas-0-light.png"
+        }
+      ],
+      "downloads": 0,
+      "featured": true,
+      "permissions": [
+        "filesystem",
+        "ai"
+      ],
+      "minimumAppVersion": "1.0.0",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.canvas/1.0.0",
+      "checksum": "c561e0746f98902cbd907f6d1307ae16264b9dff5962deca361b388e4df0a7e1",
+      "repositoryUrl": "",
+      "changelog": "",
+      "tagline": "An infinite board whose cards are live editors on your real files",
+      "longDescription": "Project Canvas is an infinite board where a card is not a screenshot of a file but the file's actual editor, mounted live. A mockup card renders the mockup, a spreadsheet card renders the grid, a markdown card renders the document. Arrange screens, plans, data, and notes spatially and wire them with edges. The editor ships inside Nimbalyst; this extension adds the authoring guidance an AI session needs to build a board for you from a description.",
+      "highlights": [
+        "Cards mount the real editor for the file they point at, not a preview",
+        "Ask an agent for a board and get one laid out on the grid, wired with edges",
+        "JSON Canvas 1.0 on disk, so a board written by another tool round-trips"
+      ],
+      "fileTypes": [
+        ".canvas"
       ]
     },
     {
@@ -537,6 +631,49 @@
       "longDescription": "",
       "highlights": [],
       "fileTypes": []
+    },
+    {
+      "id": "com.nimbalyst.jupyter",
+      "name": "Jupyter",
+      "description": "Jupyter notebook support for Nimbalyst: custom `.ipynb` editor with real kernel execution through managed local Jupyter kernels.",
+      "version": "0.4.0",
+      "author": "Nimbalyst",
+      "categories": [
+        "data"
+      ],
+      "tags": [
+        "jupyter",
+        "notebook",
+        "python",
+        "data",
+        "ipynb"
+      ],
+      "icon": "auto_stories",
+      "screenshots": [],
+      "downloads": 0,
+      "featured": false,
+      "permissions": [
+        "filesystem",
+        "ai"
+      ],
+      "minimumAppVersion": "1.0.0",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.jupyter/0.4.0",
+      "checksum": "181bc16609ce470062f7379abca6d98767f04c98768a25eff276e3f40b99b5bd",
+      "repositoryUrl": "https://github.com/nimbalyst/nimbalyst-jupyter",
+      "changelog": "0.4.0: First marketplace release with a managed local Jupyter runtime, guided Python and Jupyter setup, a slim notebook editor, and AI tools for cell CRUD, execution, variable introspection, and DataFrame previews.",
+      "tagline": "Edit Jupyter notebooks in Nimbalyst",
+      "longDescription": "Open, edit, and execute .ipynb files in a notebook editor built with JupyterLab notebook components. Cells run against a token-secured local Jupyter server managed by the extension backend module, with an escape hatch for user-started localhost servers. Core Jupyter MIME rendering covers code, markdown, HTML, images, LaTeX, and errors; core ipywidgets controls are supported. nbformat round-trip preserves cell IDs and metadata. AI tools can read, edit, run cells, inspect outputs, and request a compact notebook projection that hides large outputs by default.",
+      "highlights": [
+        "Real cell execution through managed local Jupyter kernels",
+        "Core Jupyter MIME rendering plus core ipywidgets controls",
+        "AI tools: full cell CRUD, execution with timeouts and interrupt, and compact projections",
+        "Agents can inspect kernel variables, preview DataFrames, and view plot images",
+        "Cell staleness flags tell agents which cells need re-running",
+        "nbformat round-trip preserves cell IDs and metadata"
+      ],
+      "fileTypes": [
+        ".ipynb"
+      ]
     },
     {
       "id": "com.nimbalyst.memory",

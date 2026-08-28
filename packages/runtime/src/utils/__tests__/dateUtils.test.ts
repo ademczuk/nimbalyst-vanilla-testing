@@ -10,11 +10,16 @@ describe('formatTurnFinishedAt', () => {
     expect(formatTurnFinishedAt(turnEndedAt, reference)).toBe('at 10:33 am');
   });
 
-  it('omits the finish timestamp for turns that ended within the last five minutes', () => {
+  it('still shows the time for a turn that just ended', () => {
     const turnEndedAt = new Date(2026, 4, 6, 10, 33, 0);
     const reference = new Date(2026, 4, 6, 10, 38, 0);
 
-    expect(formatTurnFinishedAt(turnEndedAt, reference)).toBe('');
+    expect(formatTurnFinishedAt(turnEndedAt, reference)).toBe('at 10:33 am');
+  });
+
+  it('returns nothing when the timestamp cannot be parsed', () => {
+    expect(formatTurnFinishedAt(null, new Date(2026, 4, 6, 16, 0, 0))).toBe('');
+    expect(formatTurnFinishedAt('not a date', new Date(2026, 4, 6, 16, 0, 0))).toBe('');
   });
 
   it('shows the full date for turns that ended on a prior day', () => {

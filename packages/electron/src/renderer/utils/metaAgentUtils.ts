@@ -27,6 +27,7 @@ export async function createMetaAgentSession(
         agentRole: 'meta-agent',
       },
       workspaceId: workspacePath,
+      launchSource: 'meta_agent',
     });
 
     if (result?.success && result.id) {

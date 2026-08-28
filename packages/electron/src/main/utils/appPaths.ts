@@ -47,6 +47,14 @@ export function getPreloadPath(): string {
 }
 
 /**
+ * The preload for the hidden animation-encoder window, resolved the same way as
+ * the main one. Built to <outDir>/preload/animationVideo.js.
+ */
+export function getAnimationVideoPreloadPath(): string {
+  return getPreloadPath().replace(/index\.js$/, 'animationVideo.js');
+}
+
+/**
  * Get the path for the restart signal file used by dev-loop.sh.
  * Uses a per-instance suffix when NIMBALYST_USER_DATA_DIR is set
  * so multiple dev-loop instances don't cross-talk.

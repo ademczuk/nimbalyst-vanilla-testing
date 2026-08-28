@@ -9,6 +9,18 @@ import type { WalkthroughState } from '../walkthroughs/types';
 import type { TipDefinition } from './types';
 
 /**
+ * When a tip was last shown, for rotating within a priority band.
+ *
+ * Never-shown returns 0 so it sorts ahead of everything already seen. Nothing
+ * retires a shown tip except the user completing it, so without this the
+ * highest-priority tip in a band wins forever and its equal-priority
+ * neighbours are unreachable except via the inline "Next" control.
+ */
+export function tipLastShownAt(state: WalkthroughState, tipId: string): number {
+  return state.history?.[tipId]?.shownAt ?? 0;
+}
+
+/**
  * Check if a tip should be shown based on current walkthrough/tip state.
  * Tips reuse the walkthrough completed/dismissed arrays.
  */

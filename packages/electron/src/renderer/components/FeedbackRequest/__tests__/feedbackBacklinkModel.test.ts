@@ -5,6 +5,7 @@ import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 import type { FeedbackRequestIndexEntry } from '@nimbalyst/collab-protocol';
 
 import {
+  feedbackAuthorSession,
   feedbackBacklinkAuthorLabel,
   feedbackBacklinkStatus,
   sortFeedbackBacklinks,
@@ -50,6 +51,28 @@ describe('feedback backlink presentation model', () => {
     // Another member's id is not a name -- the index carries resolved names for
     // recipients only, so there is nothing truthful to show.
     expect(feedbackBacklinkAuthorLabel(entry({}), asTeamMemberId('member-b'))).toBeNull();
+  });
+
+  it('offers the composing session to its author and to nobody else', () => {
+    const agentAuthored = entry({
+      author: {
+        kind: 'agent',
+        sessionId: 'session-9',
+        sessionName: 'Share popover ordering',
+        onBehalfOfUserId: 'member-a',
+      },
+    });
+
+    expect(feedbackAuthorSession(agentAuthored, asTeamMemberId('member-a')))
+      .toEqual({ sessionId: 'session-9', label: 'Share popover ordering' });
+
+    /*
+     * A session id names a row in the author's local database. Offering it to a
+     * recipient is a link to something that is not on their machine.
+     */
+    expect(feedbackAuthorSession(agentAuthored, asTeamMemberId('member-b'))).toBeNull();
+    // A person composed it by hand; there is no session to open.
+    expect(feedbackAuthorSession(entry({}), asTeamMemberId('member-a'))).toBeNull();
   });
 
   it('orders backlinks by most recent activity', () => {

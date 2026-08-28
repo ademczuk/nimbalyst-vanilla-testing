@@ -29,6 +29,12 @@ export type FeedbackArtifactAction = {
     unavailableReason?: string;
 };
 export type FeedbackArtifactActionResolver = (artifact: FeedbackArtifact) => FeedbackArtifactAction;
+/**
+ * Nullish means "I have a renderer and this subject has nothing worth showing",
+ * exactly as it does for an option card. The subject then renders as the row it
+ * has always been.
+ */
+export type FeedbackSubjectPreviewRenderer = (subject: FeedbackArtifact, index: number) => React.ReactNode;
 export interface FeedbackArtifactSubjectsProps {
     /**
      * Optional at runtime even though the protocol type is not: a request synced
@@ -39,5 +45,21 @@ export interface FeedbackArtifactSubjectsProps {
     subjects?: readonly (FeedbackArtifact | ResourceRef)[];
     onOpen?: FeedbackSubjectOpener;
     resolveAction?: FeedbackArtifactActionResolver;
+    /**
+     * Paints what the request is about, rather than naming it.
+     *
+     * Strictly additive: absent, or returning nullish, and every subject is the
+     * text row this component has always rendered. That is what keeps the two
+     * degradation contracts above intact -- "no host means readable, not hidden",
+     * and an `unavailableReason` still explaining itself -- without either being
+     * re-implemented for the preview path.
+     */
+    renderPreview?: FeedbackSubjectPreviewRenderer;
+    /**
+     * The whole preview panel is the click target when this is supplied. Falls
+     * back to the row's own `open` when it is not, so a host that can paint but
+     * cannot expand still opens the subject somewhere.
+     */
+    onExpand?: (subject: FeedbackArtifact, anchor: HTMLElement | null) => void;
 }
 export declare const FeedbackArtifactSubjects: React.FC<FeedbackArtifactSubjectsProps>;

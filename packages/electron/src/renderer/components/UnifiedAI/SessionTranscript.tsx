@@ -32,6 +32,7 @@ import { PromptQueueList } from './PromptQueueList';
 import { TranscriptEmbeddedFileCard } from './TranscriptEmbeddedFileCard';
 import { getDiffPeekSizeForInteractiveWidgetHost } from './interactiveWidgetHostProxy';
 import { createFeedbackComposeHost } from '../FeedbackRequest/createFeedbackComposeHost';
+import { askFeedbackDestination } from '../FeedbackRequest/askFeedbackDestination';
 import { renderComposeArtifactPreview } from '../FeedbackRequest/lazyFeedbackOptionPreview';
 import { renderComposeArtifactPopover } from '../FeedbackRequest/composeArtifactPopover';
 import { customEditorRegistry } from '../CustomEditors/registry';
@@ -1980,6 +1981,10 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
           sessionId,
         }).cancel(draftId),
 
+      // The folder every confirmed file subject lands in, chosen before the
+      // author commits to sending rather than in a modal afterwards.
+      pickFeedbackDestination: (current) => askFeedbackDestination(current),
+
       // Lets the author see the mockups they are about to send. A draft's
       // artifacts are always unpublished `file` refs -- nothing leaves the
       // machine before approval -- so this is the local-file path, not the
@@ -2250,6 +2255,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       toolPermissionCancel: (...args) => liveHostRef.current!.toolPermissionCancel(...args),
       feedbackRequestSend: (...args) => liveHostRef.current!.feedbackRequestSend!(...args),
       feedbackRequestCancel: (...args) => liveHostRef.current!.feedbackRequestCancel!(...args),
+      pickFeedbackDestination: (...args) => liveHostRef.current!.pickFeedbackDestination!(...args),
       renderFeedbackArtifactPreview: (...args) => liveHostRef.current!.renderFeedbackArtifactPreview!(...args),
       renderFeedbackArtifactPopover: (...args) => liveHostRef.current!.renderFeedbackArtifactPopover!(...args),
       setAutoCommitEnabled: (...args) => liveHostRef.current!.setAutoCommitEnabled(...args),

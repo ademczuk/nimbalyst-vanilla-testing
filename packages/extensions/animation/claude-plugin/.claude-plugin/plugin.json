@@ -1,0 +1,10 @@
+{
+  "name": "animation",
+  "version": "1.0.0",
+  "description": "Step-based animated explainer diagrams (.anim.json) for Nimbalyst",
+  "author": {
+    "name": "Nimbalyst",
+    "url": "https://nimbalyst.com"
+  },
+  "keywords": ["animation", "diagram", "explainer", "timeline", "svg", "motion"]
+}

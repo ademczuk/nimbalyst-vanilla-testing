@@ -277,7 +277,7 @@ const SessionHistoryComponent: React.FC = () => {
     void dispatchBranchSession(sessionId);
   }, [dispatchBranchSession]);
   const onNewSession: (() => void) | undefined = useCallback(() => {
-    void dispatchCreateNewSession(undefined);
+    void dispatchCreateNewSession({ launchSource: 'session_history' });
   }, [dispatchCreateNewSession]);
   const onNewWorktreeSession: ((options?: { baseBranch?: string; name?: string }) => void | Promise<void>) | undefined = isWorktreesFeatureAvailable
     ? async (options?: { baseBranch?: string; name?: string }) => {

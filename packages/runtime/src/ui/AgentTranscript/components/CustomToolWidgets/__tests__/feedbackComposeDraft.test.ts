@@ -15,12 +15,16 @@ import {
   addRecipient,
   confirmPublish,
   createEmptyFeedbackComposeDraft,
+  describeDestination,
+  destinationSubjects,
+  FEEDBACK_DEFAULT_DESTINATION_NAME,
   feedbackComposeSendPayload,
   feedbackComposeSubmitPlan,
   feedbackComposeTier,
   feedbackComposeTierPromotionReasons,
   removeRecipient,
   setDeadline,
+  setDestination,
   setVisibility,
   toggleAssignment,
   type FeedbackComposeDraft,
@@ -187,5 +191,59 @@ describe('feedback compose — submit plan', () => {
       subjects: [...confirmed.subjects, subject('direction-b', false)],
     };
     expect(feedbackComposeSubmitPlan(withAnother).kind).toBe('needsPublishConfirmation');
+  });
+});
+
+describe('feedback compose — publish destination', () => {
+  it('applies only to unshared file subjects', () => {
+    const tracker: FeedbackComposeSubject = {
+      ref: { orgId: 'org-1', kind: 'tracker', sourceId: 'item-9' },
+      label: 'NIM-9',
+      shared: false,
+    };
+    const draft: FeedbackComposeDraft = {
+      ...quickDraft(),
+      subjects: [subject('direction-a', false), subject('direction-b', true), tracker],
+    };
+    // A tracker has no folder, and an already-shared file is not being placed.
+    expect(destinationSubjects(draft).map((s) => s.ref.sourceId)).toEqual(['direction-a']);
+  });
+
+  it('reads as the named default until the author picks one', () => {
+    expect(describeDestination(undefined)).toBe(FEEDBACK_DEFAULT_DESTINATION_NAME);
+    // Absent and root are different states; root is an explicit choice.
+    expect(describeDestination({ folderId: null, path: '' })).toBe('Team files');
+    expect(describeDestination({ folderId: 'f-1', path: 'Design/Mockups' })).toBe('Design / Mockups');
+  });
+
+  it('names a folder that does not exist yet by what the author typed', () => {
+    expect(
+      describeDestination({
+        folderId: null,
+        path: 'Design',
+        pendingFolder: { name: 'Round 2', parentFolderId: 'f-design' },
+      }),
+    ).toBe('Design / Round 2');
+  });
+
+  it('sends the destination only when something is actually being published', () => {
+    const placed = setDestination(
+      { ...quickDraft(), subjects: [subject('direction-a', false)] },
+      { folderId: 'f-1', path: 'Design/Mockups' },
+    );
+    const confirmed = confirmPublish(placed);
+    const refs = [placed.subjects[0].ref];
+    expect(feedbackComposeSendPayload(confirmed, refs).destination).toEqual({
+      folderId: 'f-1',
+      path: 'Design/Mockups',
+    });
+
+    // Nothing to publish: handing the host a destination would have it resolve,
+    // and possibly create, a folder for zero documents.
+    const allShared = setDestination(
+      { ...quickDraft(), subjects: [subject('direction-a', true)] },
+      { folderId: 'f-1', path: 'Design/Mockups' },
+    );
+    expect(feedbackComposeSendPayload(allShared, []).destination).toBeUndefined();
   });
 });
