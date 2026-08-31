@@ -24,6 +24,14 @@ export interface SessionAttentionRowProps {
   updatedAt: number;
   /** Workspace label. Only the global tray panel needs it; the popover omits it. */
   workspaceName?: string;
+  /**
+   * One line of what the session last said, under the metadata line.
+   *
+   * Only the menu bar island passes this: it is the surface you look at without
+   * opening the app, so "running" alone does not answer what it is running. The
+   * popover and tray panel sit next to the transcript itself and omit it.
+   */
+  snippet?: string;
   /** Live status indicator, rendered to the right of the title. */
   statusSlot?: React.ReactNode;
   /** Optional control on the metadata line, right-aligned. */
@@ -45,6 +53,7 @@ export function SessionAttentionRow({
   model,
   updatedAt,
   workspaceName,
+  snippet,
   statusSlot,
   trailingSlot,
   onSelect,
@@ -104,6 +113,14 @@ export function SessionAttentionRow({
           )}
           {trailingSlot && <span className="ml-auto flex shrink-0 items-center">{trailingSlot}</span>}
         </div>
+        {snippet && (
+          <div
+            className="agent-sessions-row-snippet mt-1 line-clamp-2 text-[11px] leading-snug text-nim-muted"
+            title={snippet}
+          >
+            {snippet}
+          </div>
+        )}
       </div>
     </div>
   );

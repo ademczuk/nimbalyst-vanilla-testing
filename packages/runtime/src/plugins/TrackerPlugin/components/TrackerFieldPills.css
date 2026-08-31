@@ -56,6 +56,17 @@
   border-style: dashed;
 }
 
+/*
+ * A value carried over from the previous item in a rapid-fire run, not one
+ * chosen for this item. It has to read differently from a deliberate value:
+ * an unmarked inherited `critical` priority is silently wrong on every
+ * subsequent item and nothing on screen says so.
+ */
+.tracker-field-pill-carried {
+  border-style: dotted;
+  opacity: 0.75;
+}
+
 .tracker-field-pill:disabled {
   color: var(--nim-text-disabled);
   cursor: default;

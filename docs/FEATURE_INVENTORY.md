@@ -228,6 +228,7 @@ A concise reference of all features in the product. Keep this up to date as feat
 - Mobile voice mode (soft chime + haptic cue when the session connects and it's your turn to talk)
 - Mobile voice: asking the voice agent to start a new session opens it automatically on the device that asked
 - Mobile voice: the floating mic shows a tool-call indicator (animated ring + tool-icon badge) while the agent runs a tool
+- Session fleet Live Activity — Lock Screen card and Dynamic Island mirroring the macOS menu bar strip, with the sessions waiting on you ranked by wait time; tap a row to open that session. Server-started, so it appears without opening the app; dims when the Mac stops reporting, ends when the fleet goes quiet. Toggled in Settings
 
 ## Mobile (Android)
 
@@ -425,6 +426,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Multi-window support with per-project state persistence
 - Project Manager (Cmd+P)
 - System tray with session status and click-to-navigate
+- macOS menu bar fleet strip — names a session for a few seconds as it starts, finishes, blocks or fails, flags a stalled one, and disappears when nothing is running ("Show Fleet Status" in the tray menu)
 - Dock badge for sessions needing attention
 - OS notifications for session events
 - Sound notifications

@@ -1,8 +1,9 @@
 // @vitest-environment node
 /**
- * These providers are the first to write MCP servers into a file the user also
- * owns and edits (`.cursor/mcp.json`, `~/.grok/mcp.json`), so the properties
- * under test are all "we did not clobber their config".
+ * Cursor Agent is the only provider that writes MCP servers into a file the
+ * user also owns and edits (`.cursor/mcp.json`), so the properties under test
+ * are all "we did not clobber their config" — plus one that the resolved,
+ * credential-bearing server map never lands anywhere else.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
@@ -12,6 +13,7 @@ import {
   HeadlessAgentMcpConfigService,
   mergeNimbalystMcpServers,
   resolveHeadlessAgentMcpConfigPath,
+  type HeadlessAgentMcpTarget,
 } from '../HeadlessAgentMcpConfigService';
 
 describe('mergeNimbalystMcpServers', () => {
@@ -45,14 +47,19 @@ describe('mergeNimbalystMcpServers', () => {
 });
 
 describe('resolveHeadlessAgentMcpConfigPath', () => {
-  it('scopes Cursor to the workspace and Grok to the home directory', () => {
-    expect(resolveHeadlessAgentMcpConfigPath('cursor-agent', '/proj', '/home/u'))
-      .toBe(path.join('/proj', '.cursor', 'mcp.json'));
-    // No workspace: fall back to the user-level file rather than writing nowhere.
-    expect(resolveHeadlessAgentMcpConfigPath('cursor-agent', undefined, '/home/u'))
-      .toBe(path.join('/home/u', '.cursor', 'mcp.json'));
-    expect(resolveHeadlessAgentMcpConfigPath('grok-build', '/proj', '/home/u'))
-      .toBe(path.join('/home/u', '.grok', 'mcp.json'));
+  it('scopes Cursor to the workspace and never resolves outside .cursor', () => {
+    // Every target this service accepts, so a new one cannot quietly reopen a
+    // credential-bearing file for an agent that gets its servers inline. Grok
+    // is not a target: it receives them through ACP `session/new`, and the
+    // `~/.grok/mcp.json` this used to write is mode 0644 resolved secrets.
+    const targets: HeadlessAgentMcpTarget[] = ['cursor-agent'];
+    for (const target of targets) {
+      expect(resolveHeadlessAgentMcpConfigPath(target, '/proj', '/home/u'))
+        .toBe(path.join('/proj', '.cursor', 'mcp.json'));
+      // No workspace: fall back to the user-level file rather than writing nowhere.
+      expect(resolveHeadlessAgentMcpConfigPath(target, undefined, '/home/u'))
+        .toBe(path.join('/home/u', '.cursor', 'mcp.json'));
+    }
   });
 });
 

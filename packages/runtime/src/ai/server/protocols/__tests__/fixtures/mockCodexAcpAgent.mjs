@@ -12,6 +12,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import {
@@ -19,6 +20,22 @@ import {
   PROTOCOL_VERSION,
   ndJsonStream,
 } from '@agentclientprotocol/sdk';
+
+// The only honest observation point for what the child was actually spawned
+// with. Asserting on the map the protocol *built* passes even when the spawn
+// site merges process.env back over it.
+const auditPath = process.env.CODEX_ACP_TEST_AUDIT_PATH;
+if (auditPath) {
+  fs.appendFileSync(auditPath, `${JSON.stringify({
+    method: 'process:env',
+    params: {
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? null,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? null,
+      XAI_API_KEY: process.env.XAI_API_KEY ?? null,
+      CODEX_ACP_TEST_PASSTHROUGH: process.env.CODEX_ACP_TEST_PASSTHROUGH ?? null,
+    },
+  })}\n`, 'utf8');
+}
 
 class MockCodexAcpAgent {
   constructor(connection) {

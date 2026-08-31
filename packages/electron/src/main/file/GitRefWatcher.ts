@@ -4,6 +4,7 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import { BrowserWindow } from 'electron';
 import { logger } from '../utils/logger';
 import { clearGitStatusCache } from '../ipc/GitStatusHandlers';
+import { clearGitFactsCache } from '../utils/gitUncommittedFiles';
 
 type NativeFileWatchListener = (curr: fs.Stats, prev: fs.Stats) => void;
 
@@ -15,8 +16,11 @@ interface NativeFileWatcher {
 interface WatcherEntry {
   refWatcher: NativeFileWatcher;
   indexWatcher: NativeFileWatcher;
+  headWatcher: NativeFileWatcher;
   lastCommitHash: string;
   currentBranch: string;
+  /** Where refs/heads lives — the shared parent dir for a worktree. */
+  commonDir: string;
   git: SimpleGit;
 }
 
@@ -263,11 +267,28 @@ export class GitRefWatcher {
         },
       );
 
+      // Watch HEAD for branch switches. Without this the ref watcher above
+      // stays pinned to whichever branch was current at start(), so after a
+      // checkout no commit on the new branch is ever detected — no
+      // auto-approve, no `git:commit-detected`, no cache invalidation (#1403).
+      const headPath = path.join(gitDir, 'HEAD');
+      const headWatcher = watchGitFile(
+        headPath,
+        async () => {
+          await this.handleHeadChange(workspacePath);
+        },
+        (error) => {
+          logger.main.error('[GitRefWatcher] HEAD watcher error:', error);
+        },
+      );
+
       this.watchers.set(workspacePath, {
         refWatcher,
         indexWatcher,
+        headWatcher,
         lastCommitHash,
         currentBranch,
+        commonDir,
         git,
       });
 
@@ -290,6 +311,7 @@ export class GitRefWatcher {
     if (entry) {
       unwatchGitFile(entry.refWatcher);
       unwatchGitFile(entry.indexWatcher);
+      unwatchGitFile(entry.headWatcher);
       this.watchers.delete(workspacePath);
 
       // Clear any pending debounce timer
@@ -378,6 +400,7 @@ export class GitRefWatcher {
 
       // Clear git status cache so next query gets fresh data
       clearGitStatusCache(workspacePath);
+      clearGitFactsCache(workspacePath);
 
       // Notify main-process listeners (e.g., CommitTrackerLinker)
       const commitEvent: CommitDetectedEvent = {
@@ -408,6 +431,61 @@ export class GitRefWatcher {
   }
 
   /**
+   * Handle .git/HEAD changes (branch switches).
+   *
+   * Re-points the branch-ref watcher at the new branch and refreshes cached git
+   * facts. Deliberately does NOT run the auto-approve sweep: the files that
+   * differ between two branch tips are not "files that were just committed",
+   * and retiring their pending reviews on that basis would drop edits the user
+   * never saw. Reconciliation on the read path handles those.
+   */
+  private async handleHeadChange(workspacePath: string): Promise<void> {
+    try {
+      const entry = this.watchers.get(workspacePath);
+      if (!entry) return;
+
+      const status = await entry.git.status();
+      // Detached HEAD (mid-rebase, bisect, checkout of a tag): nothing to
+      // re-point at. Leave the existing watcher alone until HEAD names a branch
+      // again.
+      if (!status.current || status.current === entry.currentBranch) return;
+
+      const previousBranch = entry.currentBranch;
+      const branchRefPath = path.join(entry.commonDir, 'refs/heads', status.current);
+
+      unwatchGitFile(entry.refWatcher);
+      entry.refWatcher = watchGitFile(
+        branchRefPath,
+        async () => {
+          await this.handleRefChange(workspacePath);
+        },
+        (error) => {
+          logger.main.error('[GitRefWatcher] Ref watcher error:', error);
+        },
+      );
+      entry.currentBranch = status.current;
+
+      // Re-baseline the commit hash to the new branch tip, so the next commit
+      // on it is detected as a delta from here rather than diffed against the
+      // old branch.
+      const log = await entry.git.log({ maxCount: 1 });
+      entry.lastCommitHash = log.latest?.hash || '';
+
+      logger.main.info('[GitRefWatcher] Branch switch detected, re-pointed ref watcher:', {
+        workspace: path.basename(workspacePath),
+        from: previousBranch,
+        to: status.current,
+      });
+
+      clearGitStatusCache(workspacePath);
+      clearGitFactsCache(workspacePath);
+      this.emitToAllWindows('git:status-changed', { workspacePath });
+    } catch (error) {
+      logger.main.error('[GitRefWatcher] Error handling HEAD change:', error);
+    }
+  }
+
+  /**
    * Handle .git/index changes with debouncing
    */
   private handleIndexChangeDebounced(workspacePath: string): void {
@@ -432,6 +510,7 @@ export class GitRefWatcher {
   private handleIndexChange(workspacePath: string): void {
     // Clear git status cache so next query gets fresh data
     clearGitStatusCache(workspacePath);
+    clearGitFactsCache(workspacePath);
 
     // Emit event to update UI
     this.emitToAllWindows('git:status-changed', {

@@ -130,6 +130,165 @@ describe("GitOperationLogService", () => {
     expect(remaining.output).toContain("hook still running");
   });
 
+  // A fetch moves refs/remotes/* only, which the branch-ref and index watchers
+  // never see. The journal's terminal event is the signal that covers it.
+  it("announces every terminal outcome so status can refresh", async () => {
+    const service = new GitOperationLogService({ rootDir: tmpRoot });
+    const seen: Array<{ workspacePath: string; status: string }> = [];
+    service.onOperationTerminal((path, entry) => {
+      seen.push({ workspacePath: path, status: entry.status });
+    });
+
+    const ok = await service.start(workspacePath, ["fetch", "origin"]);
+    await service.finish(workspacePath, ok.id, { success: true, exitCode: 0 });
+    const failed = await service.start(workspacePath, ["push", "origin", "main"]);
+    await service.finish(workspacePath, failed.id, {
+      success: false,
+      exitCode: 1,
+      error: "rejected",
+    });
+
+    expect(seen).toEqual([
+      { workspacePath, status: "success" },
+      // A rejected push can still have moved the index or left conflicts.
+      { workspacePath, status: "error" },
+    ]);
+  });
+
+  it("stamps app-owned operations as direct git and keeps legacy entries readable", async () => {
+    const service = new GitOperationLogService({ rootDir: tmpRoot });
+    const entry = await service.start(workspacePath, ["fetch", "origin"]);
+    expect(entry.source).toBe("nimbalyst");
+    expect(entry.executor).toBe("git");
+
+    // A journal written before this metadata existed must project the same way
+    // rather than being rewritten on disk.
+    const journalPath = path.join(
+      tmpRoot,
+      "com.nimbalyst.git",
+      "workspaces",
+    );
+    const [hash] = await fs.readdir(journalPath);
+    const file = path.join(journalPath, hash, "operation-log.jsonl");
+    const raw = await fs.readFile(file, "utf8");
+    await fs.writeFile(
+      file,
+      raw.replace(/,"source":"nimbalyst","executor":"git"/, ""),
+      "utf8",
+    );
+
+    const reloaded = new GitOperationLogService({ rootDir: tmpRoot });
+    const [legacy] = await reloaded.list(workspacePath);
+    expect(legacy.source).toBe("nimbalyst");
+    expect(legacy.executor).toBe("git");
+  });
+
+  it("upserts one entry for duplicate agent start and completion events", async () => {
+    const service = new GitOperationLogService({ rootDir: tmpRoot });
+    const external = {
+      workspacePath,
+      command: "git fetch https://user:secret@example.com/repo.git",
+      source: "agent" as const,
+      sessionId: "session-1",
+      providerToolCallId: "call-1",
+      provider: "openai-codex",
+    };
+
+    await service.startExternal(external);
+    await service.startExternal(external);
+    await service.finishExternal({
+      workspacePath,
+      sessionId: "session-1",
+      providerToolCallId: "call-1",
+      success: true,
+      output: "From example.com\n",
+      exitCode: 0,
+    });
+    await service.finishExternal({
+      workspacePath,
+      sessionId: "session-1",
+      providerToolCallId: "call-1",
+      success: false,
+      error: "late duplicate",
+    });
+
+    const entries = await service.list(workspacePath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].status).toBe("success");
+    expect(entries[0].source).toBe("agent");
+    expect(entries[0].executor).toBe("shell");
+    expect(entries[0].sessionId).toBe("session-1");
+    // An observed shell command was not invoked as a direct `git` child, so it
+    // must not claim a structured argument list.
+    expect(entries[0].args).toEqual([]);
+    expect(entries[0].command).not.toContain("secret");
+    expect(entries[0].output).toContain("From example.com");
+  });
+
+  it("interrupts an agent command whose result never arrives", async () => {
+    const service = new GitOperationLogService({ rootDir: tmpRoot });
+    await service.startExternal({
+      workspacePath,
+      command: "git push origin main",
+      source: "agent",
+      sessionId: "session-1",
+      providerToolCallId: "call-1",
+    });
+
+    await service.interruptExternal({
+      workspacePath,
+      sessionId: "session-1",
+      providerToolCallId: "call-1",
+      reason: "cancelled",
+    });
+
+    const [entry] = await service.list(workspacePath);
+    expect(entry.status).toBe("interrupted");
+    expect(entry.error).toBe("cancelled");
+  });
+
+  it("interrupts every outstanding command of a session that stopped streaming", async () => {
+    // The turn that opened these entries can be abandoned without resuming --
+    // a cancelled or stalled provider generator parks while another path settles
+    // the session -- so the end-of-turn sweep never runs and the menu-bar
+    // indicator spins until the next app restart.
+    const service = new GitOperationLogService({ rootDir: tmpRoot });
+    for (const providerToolCallId of ["call-1", "call-2"]) {
+      await service.startExternal({
+        workspacePath,
+        command: "git log --oneline -5",
+        source: "agent",
+        sessionId: "session-1",
+        providerToolCallId,
+      });
+    }
+    await service.startExternal({
+      workspacePath,
+      command: "git status",
+      source: "agent",
+      sessionId: "session-2",
+      providerToolCallId: "call-3",
+    });
+    await service.finishExternal({
+      workspacePath,
+      sessionId: "session-1",
+      providerToolCallId: "call-2",
+      success: true,
+      exitCode: 0,
+    });
+
+    await service.interruptSession("session-1", "session ended");
+
+    const byId = new Map(
+      (await service.list(workspacePath)).map((entry) => [entry.id, entry])
+    );
+    expect(byId.get("ext:session-1:call-1")?.status).toBe("interrupted");
+    // Already settled: the sweep must not restate a real outcome.
+    expect(byId.get("ext:session-1:call-2")?.status).toBe("success");
+    // Another session's turn may still be live.
+    expect(byId.get("ext:session-2:call-3")?.status).toBe("running");
+  });
+
   it("redacts credentials while retaining exact structured arguments", () => {
     expect(
       formatGitCommand([

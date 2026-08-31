@@ -169,11 +169,15 @@ import {
 import { useProjectOrg } from './hooks/useProjectOrg';
 import { shouldLeaveOrgMode } from '../shared/orgProjectWalk';
 import { TrayPanelApp } from './components/TrayPanel/TrayPanelApp';
+import { MenuBarIslandApp } from './components/MenuBarIsland/MenuBarIslandApp';
 import { TerminalBottomPanel } from './components/TerminalBottomPanel';
 import { SessionLaunchPopup } from './components/UnifiedAI/SessionLaunchPopup';
+import { TrackerQuickCreatePopup } from './components/TrackerQuickCreate/TrackerQuickCreatePopup';
 import { ProjectRail } from './components/ProjectRail';
 import {
   WindowTopBar,
+  type WindowTopBarGitActivity,
+  type WindowTopBarGitActivityEntry,
   type WindowTopBarPanelControls,
 } from './components/WindowTopBar';
 import { AccountExpiryBanner } from './components/Accounts/AccountExpiryBanner';
@@ -229,6 +233,11 @@ import {
 } from './store/atoms/workspaceLayout';
 import { gitStatusAtom } from './store/atoms/gitOperations';
 import { normalizeGitStatus } from './utils/gitStatus';
+import { useGitActivity, type GitActivityEntry } from './hooks/useGitActivity';
+import {
+  GIT_SHOW_OUTPUT_REQUEST_EVENT,
+  type GitShowOutputRequestDetail,
+} from '@nimbalyst/extension-sdk/git-operation-log';
 import {
   defaultAgentModelAtom,
   developerModeAtom,
@@ -569,6 +578,12 @@ export default function App() {
     return <TrayPanelApp />;
   }
 
+  // The menu bar island: the fleet strip drawn in the menu bar row itself,
+  // expanding into the same session rows the panel above shows.
+  if (windowMode === 'menu-bar-island') {
+    return <MenuBarIslandApp />;
+  }
+
   // IMPORTANT: These are refs, not state, to prevent re-renders when the active file changes.
   // Window title and other side effects are updated imperatively via editorModeRef.
   const currentFilePathRef = useRef<string | null>(null);
@@ -658,6 +673,9 @@ export default function App() {
   const toggleExpandedTabVersion = useAtomValue(toggleExpandedTabRequestAtom);
   const gitStatus = useAtomValue(gitStatusAtom);
   const setGitStatus = useSetAtom(gitStatusAtom);
+  // Projection of the main-process Git journal, so the title bar shows commands
+  // this window did not start (Git panel, agent sessions) as well as its own.
+  const gitActivity = useGitActivity(workspacePath);
   const [gitActionState, setGitActionState] = useState<{
     busyAction: 'pull' | 'push' | null;
     feedback: { kind: 'success' | 'error'; message: string } | null;
@@ -695,14 +713,33 @@ export default function App() {
       cancelled = true;
     };
 
+    // Two orderings can regress the displayed counts: a `git:status` response
+    // landing after a newer one, and a revisioned snapshot arriving out of
+    // order. `generation` settles the first, `appliedRevision` the second.
+    let generation = 0;
+    let appliedGeneration = 0;
+    let appliedRevision = -1;
+
+    const applySnapshot = (status: unknown, revision?: number) => {
+      if (cancelled) return;
+      if (revision !== undefined) {
+        if (revision <= appliedRevision) return;
+        appliedRevision = revision;
+      }
+      appliedGeneration = ++generation;
+      setGitStatus(normalizeGitStatus(status));
+    };
+
     const refreshGitStatus = async () => {
+      const requested = ++generation;
       try {
         const result = await window.electronAPI?.invoke('git:status', workspacePath);
-        if (!cancelled) {
-          setGitStatus(normalizeGitStatus(result));
-        }
+        if (cancelled || requested < appliedGeneration) return;
+        appliedGeneration = requested;
+        setGitStatus(normalizeGitStatus(result));
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && requested >= appliedGeneration) {
+          appliedGeneration = requested;
           setGitStatus(null);
           console.error('[App] Failed to refresh title-bar git status:', error);
         }
@@ -711,9 +748,14 @@ export default function App() {
 
     void refreshGitStatus();
     const unsubscribe = window.electronAPI?.git?.onStatusChanged?.((data) => {
-      if (data.workspacePath === workspacePath) {
-        void refreshGitStatus();
+      if (data.workspacePath !== workspacePath) return;
+      // Main computes the snapshot when it publishes a revision; the index and
+      // ref watchers still send the legacy path-only shape, which needs a read.
+      if (data.status) {
+        applySnapshot(data.status, data.revision);
+        return;
       }
+      void refreshGitStatus();
     });
 
     return () => {
@@ -1302,6 +1344,14 @@ export default function App() {
     return labels[activeMode];
   }, [activeMode]);
 
+  /**
+   * `busyAction` is now only a re-entrancy guard and a label for the menu the
+   * user clicked; the running command itself is shown from the shared activity
+   * projection. Notably there is no status re-read here any more -- main
+   * publishes a revisioned snapshot when the operation settles, which is what
+   * keeps this bar and the Git panel on the same counts. Re-reading here raced
+   * that broadcast and could put the older answer on screen.
+   */
   const runTitleBarGitAction = useCallback(async (action: 'pull' | 'push') => {
     if (!workspacePath || gitActionState.busyAction) return;
     setGitActionState({ busyAction: action, feedback: null });
@@ -1309,10 +1359,6 @@ export default function App() {
       const result = await window.electronAPI.invoke(`git:${action}`, workspacePath);
       if (!result?.success) {
         throw new Error(result?.error || `Git ${action} failed`);
-      }
-      const refreshedStatus = await window.electronAPI.invoke('git:status', workspacePath);
-      if (store.get(activeWorkspacePathAtom) === workspacePath) {
-        setGitStatus(normalizeGitStatus(refreshedStatus));
       }
       setGitActionState({
         busyAction: null,
@@ -1330,9 +1376,9 @@ export default function App() {
         },
       });
     }
-  }, [gitActionState.busyAction, setGitStatus, workspacePath]);
+  }, [gitActionState.busyAction, workspacePath]);
 
-  const handleOpenGitLog = useCallback(() => {
+  const handleOpenGitLog = useCallback((options?: { showOutput?: boolean }) => {
     const panelId = 'com.nimbalyst.git.git-log';
     const panel = getPanelById(panelId);
     if (!panel || panel.placement !== 'bottom') {
@@ -1347,7 +1393,35 @@ export default function App() {
     }
     setActiveExtensionBottomPanel(panelId);
     closeTerminalPanel();
-  }, [closeTerminalPanel]);
+    if (options?.showOutput && workspacePath) {
+      // Which tab is showing is the panel's own state; ask for Output rather
+      // than reaching into the extension bundle to set it.
+      window.dispatchEvent(
+        new CustomEvent<GitShowOutputRequestDetail>(GIT_SHOW_OUTPUT_REQUEST_EVENT, {
+          detail: { workspacePath },
+        }),
+      );
+    }
+  }, [closeTerminalPanel, workspacePath]);
+
+  const handleOpenGitActivity = useCallback(() => {
+    handleOpenGitLog({ showOutput: true });
+  }, [handleOpenGitLog]);
+
+  const gitActivityForTopBar = useMemo<WindowTopBarGitActivity>(() => {
+    const toIndicatorEntry = (entry: GitActivityEntry): WindowTopBarGitActivityEntry => ({
+      id: entry.id,
+      command: entry.command,
+      source: entry.source ?? 'nimbalyst',
+      sessionId: entry.sessionId,
+    });
+    return {
+      running: gitActivity.runningEntries.map(toIndicatorEntry),
+      latest: gitActivity.latestRunningEntry
+        ? toIndicatorEntry(gitActivity.latestRunningEntry)
+        : null,
+    };
+  }, [gitActivity]);
 
   const handleOpenGitExtensionSettings = useCallback(() => {
     setGitActionState({ busyAction: null, feedback: null });
@@ -2692,11 +2766,13 @@ export default function App() {
             onPush: () => {
               void runTitleBarGitAction('push');
             },
-            onOpenLog: handleOpenGitLog,
+            onOpenLog: () => handleOpenGitLog(),
+            onOpenActivity: handleOpenGitActivity,
             onOpenExtensionSettings: handleOpenGitExtensionSettings,
             gitLogAvailable:
               getPanelById('com.nimbalyst.git.git-log')?.placement === 'bottom',
             busyAction: gitActionState.busyAction,
+            activity: gitActivityForTopBar,
             feedback: gitActionState.feedback,
           }}
           panelControls={windowTopBarPanelControls}
@@ -3078,6 +3154,7 @@ export default function App() {
       {/* KeyboardShortcutsDialog, ApiKeyDialog, ProjectSelectionDialog, ErrorDialog are now managed by DialogProvider */}
       <GlobalHistoryDialog theme={theme === 'auto' ? 'dark' : theme} workspacePath={workspacePath || undefined} />
       <SessionLaunchPopup workspacePath={workspacePath} />
+      <TrackerQuickCreatePopup workspacePath={workspacePath} />
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         title={confirmDialog.options.title}

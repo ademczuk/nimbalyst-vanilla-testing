@@ -17,11 +17,9 @@
  *   it -- see the palette note in stripMarkup.ts.
  */
 
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { app, BrowserWindow, nativeImage } from 'electron';
-import { getPackageRoot } from '../utils/appPaths';
+import { BrowserWindow, nativeImage } from 'electron';
 import { logger } from '../utils/logger';
+import { loadTrayGlyphDataUri } from './trayGlyph';
 import { STRIP_HEIGHT, STRIP_MAX_WIDTH, renderStripBody, stripDocumentHtml } from './stripMarkup';
 import { stripViewKey, type StripView } from './stripStateMachine';
 
@@ -155,26 +153,9 @@ export class TrayStripRenderer {
     return window;
   }
 
-  /**
-   * The tray template PNG, inlined so the `data:` document can reach it.
-   * Cached: the file never changes while the app runs.
-   */
+  /** Shared with the island, so the two strip styles carry the same mark. */
   private loadGlyphDataUri(): string {
-    if (this.glyphDataUri) return this.glyphDataUri;
-
-    const resourcesDir = app.isPackaged
-      ? process.resourcesPath
-      : path.join(getPackageRoot(), 'resources');
-
-    try {
-      const bytes = readFileSync(path.join(resourcesDir, 'trayTemplate@2x.png'));
-      this.glyphDataUri = `data:image/png;base64,${bytes.toString('base64')}`;
-    } catch (error) {
-      logger.main.warn('[TrayStripRenderer] Could not inline the tray glyph:', error);
-      // A strip with counts and no glyph still answers the question; a strip
-      // that fails to render answers nothing.
-      this.glyphDataUri = nativeImage.createEmpty().toDataURL();
-    }
+    if (!this.glyphDataUri) this.glyphDataUri = loadTrayGlyphDataUri();
     return this.glyphDataUri;
   }
 }

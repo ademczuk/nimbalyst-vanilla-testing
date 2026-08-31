@@ -51,7 +51,7 @@ import type {
   MobilePushResult,
 } from './types';
 import { filterSessionsForPersonalSync } from './types';
-import type { PushRejectionCause } from '@nimbalyst/collab-protocol';
+import type { FleetActivitySnapshot, PushRejectionCause } from '@nimbalyst/collab-protocol';
 import type { SyncedReadReceipt } from '../readReceipts/readReceipts';
 
 /**
@@ -319,6 +319,7 @@ type ClientMessage =
       force?: boolean;
       reason?: string;
     }
+  | { type: 'fleetActivityUpdate'; activity: FleetActivitySnapshot; shownOnDesktop?: boolean }
   | { type: 'settingsSync'; settings: EncryptedSettingsPayload }
   | { type: 'readReceipt'; receipt: EncryptedReadReceiptPayload }
   | { type: 'trackerPersonalState'; state: EncryptedTrackerPersonalStatePayload }
@@ -4173,6 +4174,25 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     onTrackerPersonalState(callback: (change: SyncedTrackerPersonalStateChange) => void): () => void {
       trackerPersonalStateListeners.add(callback);
       return () => trackerPersonalStateListeners.delete(callback);
+    },
+
+    /**
+     * Push the ambient fleet snapshot to the user's Live Activity.
+     *
+     * Unlike `requestMobilePush` this does not reconnect on demand. The lane is
+     * ambient and coalesced, so a disconnected desktop simply misses an update
+     * and the phone's stale date says so -- forcing a reconnect for a card that
+     * nobody may be looking at would be the more expensive mistake, and the next
+     * transition after reconnect carries the full current state anyway.
+     */
+    async sendFleetActivity(activity: FleetActivitySnapshot, shownOnDesktop = false): Promise<void> {
+      if (!indexWs || !indexConnected || indexWs.readyState !== WebSocket.OPEN) return;
+      const msg: ClientMessage = { type: 'fleetActivityUpdate', activity, shownOnDesktop };
+      try {
+        indexWs.send(JSON.stringify(msg));
+      } catch (error) {
+        console.warn('[CollabV3] Failed to send fleet activity update:', error);
+      }
     },
 
     /** Request the sync server to send a push notification to mobile devices */

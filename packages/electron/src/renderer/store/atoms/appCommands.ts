@@ -12,6 +12,7 @@ import { atom } from 'jotai';
 export const newMockupRequestAtom = atom(0);
 export const newBrowserTabRequestAtom = atom(0);
 export const sessionLaunchPopupRequestAtom = atom(0);
+export const trackerQuickCreateRequestAtom = atom(0);
 export const toggleAIChatPanelRequestAtom = atom(0);
 export const toggleExpandedTabRequestAtom = atom(0);
 export const fileSaveRequestAtom = atom(0);

@@ -38,6 +38,10 @@ const alias = [
     replacement: path.resolve(__dirname, './packages/extension-sdk/src/fileMask.ts'),
   },
   {
+    find: '@nimbalyst/extension-sdk/git-operation-log',
+    replacement: path.resolve(__dirname, './packages/extension-sdk/src/gitOperationLog.ts'),
+  },
+  {
     find: '@nimbalyst/extension-sdk',
     replacement: path.resolve(__dirname, './packages/extension-sdk/src'),
   },

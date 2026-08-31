@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import {
+  mergeGitOperationEntries,
+  normalizeGitOperationEntry,
+  type GitOperationLogEvent,
+  type GitOperationLogWireEntry,
+} from '@nimbalyst/extension-sdk/git-operation-log';
 
 const ipc = (window as unknown as {
   electronAPI: {
@@ -6,58 +12,35 @@ const ipc = (window as unknown as {
   };
 }).electronAPI;
 
-export interface OperationLogEntry {
-  id: string;
+/**
+ * The host's wire entry plus the panel's own presentation additions: a parsed
+ * `timestamp` and the actionable hint we derive from a failure message.
+ */
+export interface OperationLogEntry
+  extends Omit<GitOperationLogWireEntry, 'timestamp'> {
   timestamp: Date;
-  updatedAt: number;
-  command: string;
-  executable: 'git';
-  args: string[];
-  cwd: string;
-  status: 'running' | 'success' | 'error' | 'interrupted';
-  output: string;
-  stdout: string;
-  stderr: string;
-  error?: string;
   suggestion?: string;
-  exitCode?: number;
-  durationMs?: number;
 }
-
-interface WireOperationLogEntry extends Omit<OperationLogEntry, 'timestamp' | 'suggestion'> {
-  timestamp: number;
-}
-
-type OperationLogEvent =
-  | { workspacePath: string; type: 'upsert'; entry: WireOperationLogEntry }
-  | { workspacePath: string; type: 'clear' };
 
 type WorkspaceEventSubscriber = (
   event: string,
   callback: (data: unknown) => void,
 ) => () => void;
 
-function normalizeEntry(entry: WireOperationLogEntry): OperationLogEntry {
+function normalizeEntry(entry: GitOperationLogWireEntry): OperationLogEntry {
+  const normalized = normalizeGitOperationEntry(entry);
   return {
-    ...entry,
-    timestamp: new Date(entry.timestamp),
-    suggestion: entry.error ? getSuggestionForError(entry.error) : undefined,
+    ...normalized,
+    timestamp: new Date(normalized.timestamp),
+    suggestion: normalized.error ? getSuggestionForError(normalized.error) : undefined,
   };
 }
 
-export function mergeOperationEntries(
-  current: OperationLogEntry[],
-  incoming: OperationLogEntry[],
-): OperationLogEntry[] {
-  const byId = new Map(current.map(entry => [entry.id, entry]));
-  for (const entry of incoming) {
-    const existing = byId.get(entry.id);
-    if (!existing || entry.updatedAt >= existing.updatedAt) {
-      byId.set(entry.id, entry);
-    }
-  }
-  return Array.from(byId.values()).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-}
+/**
+ * Kept as a named re-export because this panel and the menu-bar indicator must
+ * agree entry-for-entry; the rule itself lives with the wire contract.
+ */
+export const mergeOperationEntries = mergeGitOperationEntries<OperationLogEntry>;
 
 /** Main-process journal projection. Renderer reloads cannot lose Git output. */
 export function useOperationLog(
@@ -71,7 +54,7 @@ export function useOperationLog(
     setEntries([]);
     const unsubscribe = subscribeToWorkspaceEvent('git:operation-log-changed', data => {
       if (disposed) return;
-      const event = data as OperationLogEvent;
+      const event = data as GitOperationLogEvent;
       if (event.type === 'clear') {
         setEntries([]);
         return;
@@ -82,7 +65,7 @@ export function useOperationLog(
     void ipc.invoke('git:operation-log:get', workspacePath)
       .then(result => {
         if (disposed) return;
-        const hydrated = (result as WireOperationLogEntry[]).map(normalizeEntry);
+        const hydrated = (result as GitOperationLogWireEntry[]).map(normalizeEntry);
         // Preserve live events that arrived while the initial read was in flight.
         setEntries(current => mergeOperationEntries(hydrated, current));
       })

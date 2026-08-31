@@ -1,3 +1,15 @@
+/** Mirrors the main-process `git:status-changed` payload. */
+interface GitStatusChangedPayload {
+  workspacePath: string;
+  revision?: number;
+  status?: {
+    branch: string;
+    ahead: number;
+    behind: number;
+    hasUncommitted: boolean;
+  };
+}
+
 interface FileTreeItem {
   name: string;
   path: string;
@@ -151,6 +163,12 @@ interface SemanticSearchResult {
   snippet: string;
   score: number;
   signals: { dense: boolean; sparse: boolean };
+  /**
+   * Raw pre-fusion scores. `score` is an RRF rank reciprocal and is not
+   * comparable across queries; a caller that needs an absolute similarity
+   * threshold reads `similarity.cosine`.
+   */
+  similarity?: { cosine?: number; bm25?: number };
 }
 
 interface ElectronAPI {
@@ -1065,7 +1083,7 @@ interface ElectronAPI {
 
   // Git operations (real-time status events)
   git?: {
-    onStatusChanged?: (callback: (data: { workspacePath: string }) => void) => () => void;
+    onStatusChanged?: (callback: (data: GitStatusChangedPayload) => void) => () => void;
     onCommitDetected?: (callback: (data: {
       workspacePath: string;
       commitHash: string;

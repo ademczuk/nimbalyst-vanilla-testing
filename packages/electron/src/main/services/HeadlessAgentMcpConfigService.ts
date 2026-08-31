@@ -1,14 +1,20 @@
 /**
- * Writes Nimbalyst's enabled MCP servers into the config files Grok Build and
- * Cursor Agent read.
+ * Writes Nimbalyst's enabled MCP servers into the config file Cursor Agent
+ * reads.
  *
- * Neither CLI accepts an inline server list. Cursor reads `.cursor/mcp.json`
- * (workspace) or `~/.cursor/mcp.json`; Grok reads `~/.grok/config.toml` via
- * `grok mcp add`, but also accepts a plain `mcp.json` alongside it. So unlike
- * the ACP providers — which hand `mcpServers` to `session/new` and leave no
- * trace on disk — these providers must edit files the user also owns.
+ * `cursor-agent` accepts no inline server list, so it must be told through
+ * `.cursor/mcp.json` (workspace) or `~/.cursor/mcp.json` — a file the user also
+ * owns. Every ACP provider, Grok Build included, hands `mcpServers` to
+ * `session/new` instead and leaves no trace on disk.
  *
- * That ownership is the whole design constraint here:
+ * Grok deliberately has no target here. It used to get `~/.grok/mcp.json`, back
+ * when it ran as `grok -p`. That file is written mode 0644 and holds the
+ * *resolved* server map — real `DISCORD_TOKEN` and `POSTHOG_PERSONAL_API_KEY`
+ * values, not placeholders — so once ACP delivery made it redundant it was pure
+ * credential exposure. Do not add a target back without an inline-delivery
+ * reason; there isn't one for any ACP agent.
+ *
+ * Ownership of the file we do write is the whole design constraint here:
  *
  * - Only the `nimbalyst:`-prefixed keys are ever written or removed. A server
  *   the user added by hand, or that another tool added, is left exactly as it
@@ -67,26 +73,28 @@ export function mergeNimbalystMcpServers(
   return base;
 }
 
-export type HeadlessAgentMcpTarget = 'cursor-agent' | 'grok-build';
+/**
+ * Agents that can only be told about MCP servers through a file on disk.
+ *
+ * Narrow by construction: adding a member is how a credential-bearing file gets
+ * written for an agent that did not need one.
+ */
+export type HeadlessAgentMcpTarget = 'cursor-agent';
 
 /**
  * Resolve the config file to write for a target.
  *
  * Cursor is workspace-scoped when a workspace is known — that keeps a project's
- * servers out of the user's other projects. Grok's MCP configuration is
- * user-scoped only.
+ * servers out of the user's other projects.
  */
 export function resolveHeadlessAgentMcpConfigPath(
-  target: HeadlessAgentMcpTarget,
+  _target: HeadlessAgentMcpTarget,
   workspacePath: string | undefined,
   homedir = os.homedir(),
 ): string {
-  if (target === 'cursor-agent') {
-    return workspacePath
-      ? path.join(workspacePath, '.cursor', 'mcp.json')
-      : path.join(homedir, '.cursor', 'mcp.json');
-  }
-  return path.join(homedir, '.grok', 'mcp.json');
+  return workspacePath
+    ? path.join(workspacePath, '.cursor', 'mcp.json')
+    : path.join(homedir, '.cursor', 'mcp.json');
 }
 
 export class HeadlessAgentMcpConfigService {

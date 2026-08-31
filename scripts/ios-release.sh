@@ -64,6 +64,14 @@ echo "New version: $NEW_VERSION (build $NEW_BUILD)"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $NEW_VERSION" "$PLIST_PATH"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD" "$PLIST_PATH"
 
+# The widget extension is a separate bundle and App Store Connect rejects an
+# embedded extension whose version does not match the app's, so it bumps here too.
+WIDGET_PLIST_PATH="packages/ios/NimbalystApp/NimbalystWidgets/Info.plist"
+if [ -f "$WIDGET_PLIST_PATH" ]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $NEW_VERSION" "$WIDGET_PLIST_PATH"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD" "$WIDGET_PLIST_PATH"
+fi
+
 # Extract release notes from [Unreleased] section
 RELEASE_NOTES=$(awk '/^## \[Unreleased\]/,0 {
   if (/^## \[Unreleased\]/) next

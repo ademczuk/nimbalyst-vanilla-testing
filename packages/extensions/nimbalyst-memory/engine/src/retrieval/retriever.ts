@@ -49,6 +49,11 @@ export class Retriever {
       opts?.sourceClasses && opts.sourceClasses.length ? new Set(opts.sourceClasses) : null;
     const inScope = (c: StoredChunk): boolean => !allowed || allowed.has(c.sourceClass);
 
+    // Raw per-arm scores are kept alongside the ranks. RRF output is a rank
+    // reciprocal, not a similarity: it is not comparable across queries, so a
+    // caller that needs a threshold ("close enough to warn about a duplicate")
+    // cannot get one from `score`. `similarity` carries the raw numbers.
+    const denseScores = new Map<string, number>();
     const denseRanked =
       queryVector && queryVector.length
         ? this.chunks
@@ -56,9 +61,13 @@ export class Retriever {
             .map((c) => ({ id: c.id, s: cosineSimilarity(queryVector, c.denseEmbedding!) }))
             .sort((a, b) => b.s - a.s)
             .slice(0, DENSE_CANDIDATES)
-            .map((x) => x.id)
+            .map((x) => {
+              denseScores.set(x.id, x.s);
+              return x.id;
+            })
         : [];
 
+    const sparseScores = new Map<string, number>();
     const sparseRanked = this.bm25
       .search(queryText)
       .filter((x) => {
@@ -66,7 +75,10 @@ export class Retriever {
         return c ? inScope(c) : false;
       })
       .slice(0, SPARSE_CANDIDATES)
-      .map((x) => x.id);
+      .map((x) => {
+        sparseScores.set(x.id, x.score);
+        return x.id;
+      });
 
     // Membership sets for per-hit signal provenance (semantic vs keyword).
     const denseSet = new Set(denseRanked);
@@ -91,6 +103,10 @@ export class Retriever {
         score,
         citation: citation(c),
         signals: { dense: denseSet.has(id), sparse: sparseSet.has(id) },
+        similarity: {
+          ...(denseScores.has(id) ? { cosine: denseScores.get(id)! } : {}),
+          ...(sparseScores.has(id) ? { bm25: sparseScores.get(id)! } : {}),
+        },
       });
     }
     return hits;

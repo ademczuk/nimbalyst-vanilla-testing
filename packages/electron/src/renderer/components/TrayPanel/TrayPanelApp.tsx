@@ -4,11 +4,10 @@ import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import {
   TRAY_PANEL_CHANNELS,
   trayPanelFeedTotal,
-  type TrayPanelSectionState,
-  type TrayPanelSession,
 } from '../../../shared/traySessions';
 import { initTrayPanelListener, trayPanelFeedAtom } from '../../store/listeners/trayPanelListeners';
 import { SessionAttentionRow } from '../AgenticCoding/SessionAttentionRow';
+import { TraySessionSectionHeader, TrayStatusIndicator } from './traySessionSections';
 
 /**
  * The menu-bar sessions panel.
@@ -18,24 +17,6 @@ import { SessionAttentionRow } from '../AgenticCoding/SessionAttentionRow';
  * atoms the in-app popover reads. The rows are the same component, so the two
  * surfaces stay visually identical.
  */
-
-const STATE_STYLES: Record<TrayPanelSectionState, { label: string; colorClass: string; dotClass: string }> = {
-  attention: {
-    label: 'Needs attention',
-    colorClass: 'text-nim-warning',
-    dotClass: 'bg-[var(--nim-warning)]',
-  },
-  running: {
-    label: 'Running',
-    colorClass: 'text-nim-success',
-    dotClass: 'bg-[var(--nim-success)]',
-  },
-  unread: {
-    label: 'Unread',
-    colorClass: 'text-nim-primary',
-    dotClass: 'bg-[var(--nim-primary)]',
-  },
-};
 
 /** Unread is the bucket that historically ran the menu off the screen. */
 const UNREAD_COLLAPSE_AT = 6;
@@ -52,47 +33,6 @@ const UNREAD_COLLAPSE_AT = 6;
  * so nothing shifts when it appears.
  */
 const FOCUS_RING = 'focus:outline-none focus-visible:outline-2 focus-visible:outline-[var(--nim-border-focus)] focus-visible:outline-offset-[-2px]';
-
-function TrayStatusIndicator({
-  session,
-  state,
-}: {
-  session: TrayPanelSession;
-  state: TrayPanelSectionState;
-}) {
-  if (session.hasError) {
-    return (
-      <div className="flex h-5 w-5 items-center justify-center text-[var(--nim-error)]" title="Session error">
-        <MaterialSymbol icon="error" size={14} />
-      </div>
-    );
-  }
-  if (session.hasPendingPrompt) {
-    return (
-      <div className="flex h-5 w-5 animate-pulse items-center justify-center text-[var(--nim-warning)]" title="Waiting for your response">
-        <MaterialSymbol icon="contact_support" size={14} />
-      </div>
-    );
-  }
-  // Every row in the Running section spins, not just the ones mid-stream:
-  // `isStreaming` is only true between streaming events, so a session waiting on
-  // a tool call rendered as a bare row with no indicator at all.
-  if (state === 'running') {
-    return (
-      <div className="flex h-5 w-5 items-center justify-center text-[var(--nim-primary)] opacity-80" title="Running">
-        <MaterialSymbol icon="progress_activity" size={14} className="animate-spin" />
-      </div>
-    );
-  }
-  if (state === 'unread') {
-    return (
-      <div className="flex h-5 w-5 items-center justify-center text-[var(--nim-primary)]" title="Unread response">
-        <MaterialSymbol icon="circle" size={8} fill />
-      </div>
-    );
-  }
-  return null;
-}
 
 export function TrayPanelApp() {
   const feed = useAtomValue(trayPanelFeedAtom);
@@ -143,7 +83,7 @@ export function TrayPanelApp() {
   }, []);
 
   const handleSelect = useCallback((sessionId: string) => {
-    const all = [...feed.needsAttention, ...feed.running, ...feed.unread];
+    const all = [...feed.needsAttention, ...feed.running, ...feed.stalled, ...feed.unread];
     const session = all.find((candidate) => candidate.sessionId === sessionId);
     if (!session) return;
     window.electronAPI.send(TRAY_PANEL_CHANNELS.selectSession, {
@@ -155,15 +95,17 @@ export function TrayPanelApp() {
   const sections = useMemo(() => ([
     { state: 'attention' as const, sessions: feed.needsAttention },
     { state: 'running' as const, sessions: feed.running },
+    { state: 'stalled' as const, sessions: feed.stalled },
     { state: 'unread' as const, sessions: feed.unread },
   ]).filter((section) => section.sessions.length > 0), [feed]);
 
   const total = trayPanelFeedTotal(feed);
   const summary = total === 0
-    ? 'Nothing needs you'
+    ? 'Nothing running'
     : [
       feed.needsAttention.length > 0 ? `${feed.needsAttention.length} need attention` : null,
       feed.running.length > 0 ? `${feed.running.length} running` : null,
+      feed.stalled.length > 0 ? `${feed.stalled.length} not responding` : null,
       feed.unread.length > 0 ? `${feed.unread.length} unread` : null,
     ].filter(Boolean).join(' · ');
 
@@ -193,24 +135,24 @@ export function TrayPanelApp() {
 
       <div className="min-h-0 flex-1 overflow-y-auto pb-1" data-testid="tray-panel-list">
         {sections.length === 0 && (
+          // "No sessions need your attention" answered the wrong question: it
+          // is the empty state of the *attention* list, but this panel is the
+          // fleet panel, so it contradicted anything the strip was showing. The
+          // header above already says "Nothing running"; this says what to do
+          // about it.
           <div className="px-3.5 py-6 text-center text-[12px] text-nim-faint" data-testid="tray-panel-empty">
-            No sessions need your attention.
+            Nothing running. Start a session to get going.
           </div>
         )}
         {sections.map(({ state, sessions }) => {
-          const style = STATE_STYLES[state];
           const collapsed = state === 'unread' && !showAllUnread && sessions.length > UNREAD_COLLAPSE_AT;
           const visible = collapsed ? sessions.slice(0, UNREAD_COLLAPSE_AT) : sessions;
           return (
             <section key={state} className={`tray-panel-group tray-panel-group--${state}`}>
-              <div className={`flex items-center justify-between gap-2 px-3.5 pb-1 pt-2.5 text-[10.5px] font-semibold uppercase tracking-wide ${style.colorClass}`}>
-                <span className="flex items-center gap-1.5">
-                  <span className={`h-1.5 w-1.5 rounded-full ${style.dotClass}`} />
-                  <span>{style.label}</span>
-                  <span aria-hidden>·</span>
-                  <span>{sessions.length}</span>
-                </span>
-                {state === 'unread' && (
+              <TraySessionSectionHeader
+                state={state}
+                count={sessions.length}
+                actionSlot={state === 'unread' ? (
                   <button
                     type="button"
                     className={`tray-panel-mark-all-read rounded px-1.5 py-0.5 text-[10.5px] font-medium normal-case tracking-normal text-nim-muted transition-colors hover:bg-nim-tertiary hover:text-nim ${FOCUS_RING}`}
@@ -219,8 +161,8 @@ export function TrayPanelApp() {
                   >
                     Mark all as read
                   </button>
-                )}
-              </div>
+                ) : undefined}
+              />
               {visible.map((session) => (
                 <SessionAttentionRow
                   key={session.sessionId}

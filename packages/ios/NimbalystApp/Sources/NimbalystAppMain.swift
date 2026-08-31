@@ -114,6 +114,12 @@ struct NimbalystAppMain: App {
             // Surface the in-app scanner only; the link's payload is never applied.
             NSLog("[DeepLink] Opening in-app pairing scanner (payload ignored)")
             appState.pairingScannerRequested = true
+        case .session(let sessionId):
+            // Same channel a notification tap uses, so the Live Activity gets
+            // the navigation that was already built and tested for pushes
+            // instead of a second path that has to be kept in step with it.
+            NSLog("[DeepLink] Opening session \(sessionId)")
+            NotificationManager.shared.pendingSessionId = sessionId
         case .unsupported:
             NSLog("[DeepLink] Ignored: URL is not allowlisted")
         }

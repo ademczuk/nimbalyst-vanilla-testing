@@ -60,6 +60,7 @@ import {
   SessionOptions,
   ToolResult,
 } from './ProtocolInterface';
+import { scrubProviderApiKeys } from '../providerApiKeyScrub';
 import { buildDocumentAttachmentPromptText } from '../providers/codex/documentAttachmentPrompt';
 import type { ToolPermissionScope } from '../providers/ProviderPermissionMixin';
 
@@ -437,13 +438,22 @@ export class CodexACPProtocol implements AgentProtocol {
 
   private async initializeConnection(): Promise<void> {
     this.processExitError = null;
+    // Scrub after the final merge, never before: a key deleted upstream is
+    // merely absent, and absence cannot mask the `...process.env` spread above.
+    const env = scrubProviderApiKeys({ ...process.env, ...this.extraEnv });
+    // OPENAI_API_KEY is re-applied here, deliberately, after the scrub removed
+    // it. Codex needs a key to authenticate, and this one is not ambient: it is
+    // the key the user explicitly configured in Nimbalyst settings, handed to
+    // the constructor. The distinction is the whole point of the scrub -- a
+    // configured key authenticates, one that merely happens to sit in the
+    // user's shell never does. Do not fold this back into the merge above.
+    if (this.apiKey) {
+      env.OPENAI_API_KEY = this.apiKey;
+    }
+
     const child = this.spawnProcess(this.command, this.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        ...this.extraEnv,
-        ...(this.apiKey ? { OPENAI_API_KEY: this.apiKey } : {}),
-      },
+      env,
       cwd: process.cwd(),
     });
 

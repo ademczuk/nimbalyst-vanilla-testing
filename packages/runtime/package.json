@@ -18,6 +18,10 @@
       "import": "./dist/editor/index.js",
       "types": "./dist/editor/index.d.ts"
     },
+    "./editor/utils/collabAssetUri": {
+      "import": "./dist/editor/utils/collabAssetUri.js",
+      "types": "./dist/editor/utils/collabAssetUri.d.ts"
+    },
     "./plugins/DiffPlugin": {
       "import": "./dist/editor/plugins/DiffPlugin/core/exports.js",
       "types": "./dist/editor/plugins/DiffPlugin/core/exports.d.ts"
@@ -117,6 +121,10 @@
     "./sync": {
       "import": "./dist/sync/index.js",
       "types": "./dist/sync/index.d.ts"
+    },
+    "./sync/collabAssetFormat": {
+      "import": "./dist/sync/collabAssetFormat.js",
+      "types": "./dist/sync/collabAssetFormat.d.ts"
     },
     "./sync/collabConnectionDiagnostics": {
       "import": "./dist/sync/collabConnectionDiagnostics.js",

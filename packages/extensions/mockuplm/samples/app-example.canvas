@@ -1,0 +1,140 @@
+{
+  "nodes": [
+    {
+      "id": "login",
+      "type": "file",
+      "x": 0,
+      "y": 60,
+      "width": 520,
+      "height": 540,
+      "file": "packages/extensions/mockuplm/samples/login.mockup.html",
+      "x-nimbalyst": {
+        "reference": {
+          "kind": "file",
+          "path": "packages/extensions/mockuplm/samples/login.mockup.html"
+        },
+        "label": "Login"
+      }
+    },
+    {
+      "id": "dashboard",
+      "type": "file",
+      "x": 600,
+      "y": 0,
+      "width": 600,
+      "height": 500,
+      "file": "packages/extensions/mockuplm/samples/dashboard.mockup.html",
+      "x-nimbalyst": {
+        "reference": {
+          "kind": "file",
+          "path": "packages/extensions/mockuplm/samples/dashboard.mockup.html"
+        },
+        "label": "Dashboard"
+      }
+    },
+    {
+      "id": "settings",
+      "type": "file",
+      "x": 600,
+      "y": 600,
+      "width": 600,
+      "height": 500,
+      "file": "packages/extensions/mockuplm/samples/settings.mockup.html",
+      "x-nimbalyst": {
+        "reference": {
+          "kind": "file",
+          "path": "packages/extensions/mockuplm/samples/settings.mockup.html"
+        },
+        "label": "Settings"
+      }
+    },
+    {
+      "id": "sticky-57df8ee3fd39",
+      "type": "text",
+      "x": 140,
+      "y": -180,
+      "width": 240,
+      "height": 160,
+      "color": "5",
+      "text": "This is a test",
+      "x-nimbalyst": {
+        "reference": {
+          "kind": "native",
+          "nativeKind": "sticky"
+        }
+      }
+    },
+    {
+      "id": "file-0e2b6056080f",
+      "type": "file",
+      "x": 540,
+      "y": -340,
+      "width": 480,
+      "height": 320,
+      "file": "CONTRIBUTING.md",
+      "x-nimbalyst": {
+        "reference": {
+          "kind": "file",
+          "path": "CONTRIBUTING.md"
+        },
+        "label": "CONTRIBUTING.md"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "conn-dashboard-settings",
+      "fromNode": "dashboard",
+      "toNode": "settings",
+      "label": "Settings Nav",
+      "x-nimbalyst": {
+        "kind": "flow",
+        "flow": {
+          "fromElementSelector": "[data-page=settings]",
+          "trigger": "click"
+        }
+      }
+    },
+    {
+      "id": "conn-login-dashboard",
+      "fromNode": "login",
+      "toNode": "dashboard",
+      "label": "Sign In",
+      "x-nimbalyst": {
+        "kind": "flow",
+        "flow": {
+          "fromElementSelector": ".btn-primary",
+          "trigger": "click"
+        }
+      }
+    },
+    {
+      "id": "conn-settings-dashboard",
+      "fromNode": "settings",
+      "toNode": "dashboard",
+      "label": "Overview Nav",
+      "x-nimbalyst": {
+        "kind": "flow",
+        "flow": {
+          "fromElementSelector": "[data-page=overview]",
+          "trigger": "click"
+        }
+      }
+    }
+  ],
+  "x-nimbalyst": {
+    "version": 1,
+    "meta": {
+      "name": "AcmeHub App",
+      "description": "Full app flow: Login -> Dashboard (Overview, Projects) -> Settings (Profile, Security, Integrations)",
+      "viewport": {
+        "x": 289.76253298153034,
+        "y": 41,
+        "zoom": 0.4837291116974494
+      },
+      "designSystem": {
+        "theme": "dark"
+      }
+    }
+  }
+}

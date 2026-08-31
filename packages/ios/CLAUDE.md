@@ -14,17 +14,19 @@ packages/ios/
       Auth/                 # AuthManager (Stytch OAuth via ASWebAuthenticationSession)
       Crypto/               # CryptoManager (AES-256-GCM, PBKDF2), KeychainManager
       Database/             # DatabaseManager (GRDB migrations, queries)
+      LiveActivity/         # FleetActivityAttributes/Formatting/Controller (ActivityKit tokens)
       Models/               # GRDB record types: Project, Session, Message, QueuedPrompt, SyncState
       Notifications/        # NotificationManager (push notification registration)
       Sync/                 # SyncManager, WebSocketClient, SyncProtocol types
       Utils/                # RelativeTimestamp, NimbalystColors
       Views/                # All SwiftUI views
-    Tests/                  # Unit and integration tests (68 tests)
+    Tests/                  # Unit and integration tests
     Package.swift           # Swift Package Manager manifest (GRDB dependency)
 
   NimbalystApp/             # Xcode app target
     Sources/                # App entry point (@main), DebugMenu
     Resources/              # Assets.xcassets (AppIcon, Splash), transcript-dist bundle
+    NimbalystWidgets/       # Widget extension: Live Activity lock screen + Dynamic Island
     project.yml             # XcodeGen project definition
 
   CryptoCompatibility/      # CommonCrypto bridging header for PBKDF2 key derivation
@@ -56,6 +58,17 @@ packages/ios/
 ### iPad Support
 - `NavigationSplitView` for regular size class (sidebar + detail)
 - `NavigationStack` for compact size class (iPhone)
+
+### Session Fleet Live Activity
+
+The Lock Screen card and Dynamic Island render the same derived fleet snapshot as the macOS menu bar strip (`packages/electron/src/main/tray/fleetActivity.ts`). Four rules that are easy to break by accident:
+
+1. **The app never calls `Activity.request`.** The card is started, updated and ended by the server through APNs. `FleetActivityController` only observes ActivityKit and hands tokens to `SyncManager`. If you add a local start for convenience, the server will believe a card it did not start is its own.
+2. **Push-to-start and update tokens are different things.** A push-to-start token belongs to the app; an update token belongs to one activity and dies with it. They travel as separate `LiveActivityTokenKind` values all the way to the server's storage, because sending an update to a push-to-start token fails at APNs with an error indistinguishable from a bad token.
+3. **The widget extension shares source files by target membership, not by linking `NimbalystNative`** (GRDB + PostHog have no business in an extension memory budget). ActivityKit matches an activity to its attributes by the *unqualified* type name, so both targets must compile the same `FleetActivityAttributes` declaration. The server also sends that name as a string (`LIVE_ACTIVITY_ATTRIBUTES_TYPE` in `collabv3/src/liveActivity.ts`) — renaming the Swift type without moving that constant breaks push-to-start with an APNs rejection and no client-side symptom.
+4. **The widget's `Info.plist` version must match the app's.** `scripts/ios-release.sh` bumps both; App Store Connect rejects a drifted embedded extension.
+
+Anything user-facing on the card that can be expressed as a pure function belongs in `FleetActivityFormatting.swift`, which is unit tested. The views themselves are not, and cannot be exercised in the simulator without a real push — see [TESTING.md](./TESTING.md).
 
 ## Development
 
@@ -115,9 +128,13 @@ Rules for editing `TranscriptApp` in `main.tsx`:
 | `Sources/Views/SessionDetailView.swift` | Session detail with transcript, scroll-to-top, jump-to-prompt |
 | `Sources/Views/SessionListView.swift` | Time-grouped session list with search and swipe-to-delete |
 | `Sources/Views/ProjectListView.swift` | Project list sorted by last activity with desktop connection indicator |
+| `Sources/LiveActivity/FleetActivityAttributes.swift` | Wire shape of the Live Activity; shared with the widget target by membership |
+| `Sources/LiveActivity/FleetActivityController.swift` | ActivityKit token observation and activity lifecycle; never starts an activity |
+| `Sources/LiveActivity/FleetActivityFormatting.swift` | Pure, testable card text (counts, elapsed time, row labels) |
+| `../NimbalystApp/NimbalystWidgets/FleetActivityWidget.swift` | Widget configuration: lock screen + Dynamic Island minimal/compact/expanded |
 | `src/transcript/main.tsx` | React transcript app with `scrollToTop`, `scrollToMessage`, `getPromptList` JS bridge |
 
 ## Testing
-- 68 Swift tests covering database, crypto, sync integration, and web view
-- See [TESTING.md](./TESTING.md) for CI/CD pipeline details
+- Swift tests cover database, crypto, sync integration, web view, and the Live Activity formatting/attributes layer
+- See [TESTING.md](./TESTING.md) for CI/CD pipeline details and for what the Live Activity can and cannot prove in the simulator
 - Tests run on both macOS (via Swift Package Manager) and iOS simulator (via Xcode)

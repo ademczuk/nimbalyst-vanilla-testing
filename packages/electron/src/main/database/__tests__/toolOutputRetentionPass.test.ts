@@ -47,9 +47,11 @@ function makeDb(): SqliteDatabase {
       source TEXT NOT NULL,
       direction TEXT NOT NULL,
       content TEXT NOT NULL,
+      metadata TEXT,
       message_kind TEXT
     );
-    INSERT INTO ai_sessions (id, status) VALUES ('idle-session', 'idle'), ('live-session', 'running');
+    INSERT INTO ai_sessions (id, status)
+      VALUES ('idle-session', 'idle'), ('live-session', 'running'), ('other-session', 'idle');
   `);
   return db;
 }
@@ -63,12 +65,14 @@ function insert(
     direction: string;
     content: string;
     kind: string;
+    metadata: Record<string, unknown>;
   }>,
 ): number {
   const info = db
     .prepare(
-      `INSERT INTO ai_agent_messages (session_id, created_at, source, direction, content, message_kind)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ai_agent_messages
+         (session_id, created_at, source, direction, content, metadata, message_kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       row.session ?? 'idle-session',
@@ -76,6 +80,7 @@ function insert(
       row.source ?? 'claude-code',
       row.direction ?? 'output',
       row.content ?? toolResult(BIG),
+      row.metadata ? JSON.stringify(row.metadata) : null,
       row.kind ?? 'tool',
     );
   return Number(info.lastInsertRowid);
@@ -354,14 +359,64 @@ const thinkingTick = JSON.stringify({
 const initFrame = (n: number) =>
   JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', tools: Array(n).fill('Tool') });
 
+/** A codex `item/agentMessage/delta` row, optionally anonymous about its item. */
+function codexDelta(db: SqliteDatabase, itemId: string | null, session = 'idle-session'): number {
+  return insert(db, {
+    session, source: 'openai-codex', kind: 'meta',
+    metadata: { eventType: 'item/agentMessage/delta' },
+    content: JSON.stringify({
+      method: 'item/agentMessage/delta',
+      params: { threadId: 't', turnId: 'turn', ...(itemId ? { itemId } : {}), delta: ' partial' },
+    }),
+  });
+}
+
+/** The codex row that supersedes a delta: same item id, later row id. */
+function codexItemCompleted(db: SqliteDatabase, itemId: string, session = 'idle-session'): number {
+  return insert(db, {
+    session, source: 'openai-codex', kind: 'meta',
+    metadata: { eventType: 'item/completed' },
+    content: JSON.stringify({
+      method: 'item/completed',
+      params: { item: { type: 'agentMessage', id: itemId, text: 'Done.' }, threadId: 't', turnId: 'turn' },
+    }),
+  });
+}
+
+/** The start of a turn: every provider logs the user's prompt before it runs. */
+const turnStart = (db: SqliteDatabase, session = 'idle-session') =>
+  insert(db, { session, source: 'grok-build', direction: 'input', kind: 'user', content: 'go' });
+
+const grokTextDelta = (db: SqliteDatabase, session = 'idle-session') => insert(db, {
+  session, source: 'grok-build', kind: 'meta',
+  content: JSON.stringify({ type: 'text', data: 'partial answer' }),
+});
+
+const grokThoughtDelta = (db: SqliteDatabase, session = 'idle-session') => insert(db, {
+  session, source: 'grok-build', kind: 'meta',
+  content: JSON.stringify({ type: 'thought', data: 'let me think' }),
+});
+
+/** What `HeadlessCliAgentProvider.storeAssistantResponse` writes at `complete`. */
+const grokTurnFinal = (db: SqliteDatabase, session = 'idle-session') => insert(db, {
+  session, source: 'grok-build', kind: 'assistant',
+  metadata: { eventType: 'item.completed' },
+  content: JSON.stringify({
+    type: 'item.completed',
+    item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done.' }] },
+  }),
+});
+
 describe('raw message prune lane', () => {
   it('deletes aged non-rendering frames and reports why', () => {
     const db = makeDb();
     const tick = insert(db, { content: thinkingTick, kind: 'system' });
-    const delta = insert(db, {
+    const status = insert(db, {
       source: 'openai-codex', kind: 'meta',
-      content: JSON.stringify({ method: 'item/agentMessage/delta', params: { delta: 'hi' } }),
+      content: JSON.stringify({ method: 'thread/tokenUsage/updated', params: { tokenUsage: {} } }),
     });
+    const delta = codexDelta(db, 'msg_1');
+    codexItemCompleted(db, 'msg_1');
     const started = insert(db, {
       source: 'openai-codex', kind: 'meta',
       content: JSON.stringify({ method: 'item/started', params: { item: { type: 'reasoning' } } }),
@@ -369,12 +424,14 @@ describe('raw message prune lane', () => {
 
     const result = runPrune(db);
 
-    expect(result.deleted).toBe(3);
+    expect(result.deleted).toBe(4);
     expect(result.byReason).toEqual({
-      claudeCodeTransient: 1, codexAppServerTransient: 1, codexItemStartedNonRendering: 1,
+      claudeCodeTransient: 1, codexAppServerStatus: 1, codexAgentMessageDelta: 1,
+      codexCommandOutputDelta: 0, codexItemStartedNonRendering: 1,
+      headlessAgentTextDelta: 0, grokAcpTextDelta: 0, grokAvailableCommands: 0,
     });
     expect(result.bytesFreed).toBeGreaterThan(0);
-    for (const id of [tick, delta, started]) expect(exists(db, id)).toBe(false);
+    for (const id of [tick, status, delta, started]) expect(exists(db, id)).toBe(false);
   });
 
   // Every guard the tombstone lane has, the prune lane must have too -- it is
@@ -405,6 +462,163 @@ describe('raw message prune lane', () => {
     insert(db, { content: thinkingTick, kind: 'system' });
     expect(runPrune(db).deleted).toBe(1);
     expect(runPrune(db).deleted).toBe(0);
+  });
+
+  // The classifier calls a headless delta "superseded by the turn-final
+  // item.completed", and that row is written from exactly one place: the
+  // provider's `case 'complete':`. A turn the user cancels, or whose CLI dies
+  // mid-stream, never reaches it -- and then these deltas are the ONLY record
+  // of what the assistant said, with no server-side copy to restore from. None
+  // of that is visible in the row, so the driver has to prove it.
+  // The correction that matters most. `id`-ordered append-only storage makes "a
+  // later item.completed exists in this session" true for a turn that never
+  // stored one, as long as SOME later turn did. Three turns is the smallest
+  // layout that shows it, and the cancelled turn in the middle is the one whose
+  // partial response has no other copy anywhere.
+  it('does not let a later turn vouch for a cancelled turn between two completed ones', () => {
+    const db = makeDb();
+
+    turnStart(db);
+    const turnAdelta = grokTextDelta(db);
+    grokTurnFinal(db);
+
+    turnStart(db);
+    const cancelledTurnBdelta = grokTextDelta(db);
+
+    turnStart(db);
+    const turnCdelta = grokTextDelta(db);
+    grokTurnFinal(db);
+
+    runPrune(db);
+
+    expect(exists(db, cancelledTurnBdelta)).toBe(true);
+    // The turns that did complete are still reclaimed, so the guard is scoped
+    // rather than simply refusing everything.
+    expect(exists(db, turnAdelta)).toBe(false);
+    expect(exists(db, turnCdelta)).toBe(false);
+  });
+
+  // `fullText` in HeadlessCliAgentProvider accumulates `case 'text':` only --
+  // its `case 'reasoning':` is a bare break -- so the turn-final item.completed
+  // it synthesizes carries assistant text and no reasoning at all. A thought
+  // delta is therefore the sole copy of the agent's thinking even for a turn
+  // that completed perfectly, which is the opposite of superseded.
+  it('never deletes a reasoning delta, even for a turn that completed', () => {
+    const db = makeDb();
+
+    turnStart(db);
+    const thought = grokThoughtDelta(db);
+    const text = grokTextDelta(db);
+    grokTurnFinal(db);
+
+    const result = runPrune(db);
+
+    expect(exists(db, thought)).toBe(true);
+    // Same turn, same proof: the text delta really is superseded and goes.
+    expect(exists(db, text)).toBe(false);
+    expect(result.keptAwaitingTurnFinal).toBe(0);
+  });
+
+  // The prompt row is written best-effort, so a session with none of them is a
+  // session whose turn boundaries were lost -- not one that had no turns. With
+  // nothing to scope against, answering from the session as a whole is exactly
+  // the rule that deleted a cancelled turn's only copy.
+  it('keeps headless deltas in a session whose turn boundaries were never logged', () => {
+    const db = makeDb();
+    const orphaned = grokTextDelta(db);
+    grokTurnFinal(db);
+
+    const result = runPrune(db);
+
+    expect(exists(db, orphaned)).toBe(true);
+    expect(result.keptAwaitingTurnFinal).toBe(1);
+  });
+
+  // Historical codex deltas reached the lane through a reason shared with pure
+  // status notifications, so they were deleted with no proof of supersession at
+  // all -- the largest population in the table bypassing the guard entirely.
+  it('prunes a codex delta only once its own item completed', () => {
+    const db = makeDb();
+
+    const proven = codexDelta(db, 'msg_done');
+    const cancelledMidMessage = codexDelta(db, 'msg_never');
+    const anonymous = codexDelta(db, null);
+    codexItemCompleted(db, 'msg_done');
+    // A completion for a DIFFERENT item, later than every delta above: it must
+    // not vouch for any of them.
+    codexItemCompleted(db, 'msg_unrelated');
+    // Same item id, but in another session -- sessions never vouch for each other.
+    codexDelta(db, 'msg_other', 'other-session');
+
+    const result = runPrune(db);
+
+    expect(exists(db, proven)).toBe(false);
+    expect(exists(db, cancelledMidMessage)).toBe(true);
+    expect(exists(db, anonymous)).toBe(true);
+    expect(result.keptAwaitingItemCompleted).toBe(3);
+  });
+
+  it('prunes a headless delta only once its turn stored a final message', () => {
+    const db = makeDb();
+    const grokDelta = (session: string) => insert(db, {
+      session, source: 'grok-build', kind: 'meta',
+      content: JSON.stringify({ type: 'text', data: 'partial answer' }),
+    });
+    const grokAcpDelta = (session: string) => insert(db, {
+      session, source: 'grok-build', kind: 'meta',
+      content: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: session,
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial answer' } },
+        },
+      }),
+    });
+
+    // One turn, so nothing that follows these deltas belongs to a later one.
+    turnStart(db);
+    const completedTurn = grokDelta('idle-session');
+    const completedAcpTurn = grokAcpDelta('idle-session');
+    // Same session and an EARLIER id than the completion below, but a different
+    // provider -- one provider's turn cannot vouch for another's deltas.
+    const otherProvider = insert(db, {
+      session: 'idle-session', source: 'cursor-agent', kind: 'meta',
+      content: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } }),
+    });
+    const turnFinal = insert(db, {
+      session: 'idle-session', source: 'grok-build', kind: 'assistant',
+      metadata: { eventType: 'item.completed' },
+      content: JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done.' }] },
+      }),
+    });
+    // Cancelled last turn: a completion exists in this session, but before it.
+    const cancelledTurn = grokDelta('idle-session');
+    const cancelledAcpTurn = grokAcpDelta('idle-session');
+    // A session that never completed a turn at all.
+    turnStart(db, 'other-session');
+    const neverCompleted = grokDelta('other-session');
+    // The command catalog is a static built-in, superseded by nothing, so it
+    // carries no such premise and needs no proof.
+    const catalog = insert(db, {
+      session: 'other-session', source: 'grok-build', kind: 'meta',
+      content: JSON.stringify({ type: 'available_commands', commands: [{ name: 'read_file' }] }),
+    });
+
+    const result = runPrune(db);
+
+    expect(exists(db, completedTurn)).toBe(false);
+    expect(exists(db, completedAcpTurn)).toBe(false);
+    expect(exists(db, catalog)).toBe(false);
+    for (const id of [otherProvider, turnFinal, cancelledTurn, cancelledAcpTurn, neverCompleted]) {
+      expect(exists(db, id)).toBe(true);
+    }
+    expect(result.keptAwaitingTurnFinal).toBe(4);
+    expect(result.byReason.headlessAgentTextDelta).toBe(1);
+    expect(result.byReason.grokAcpTextDelta).toBe(1);
+    expect(result.byReason.grokAvailableCommands).toBe(1);
   });
 
   // A frame that renders nothing renders nothing on the day it is written, so

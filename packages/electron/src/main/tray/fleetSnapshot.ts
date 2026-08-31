@@ -33,16 +33,16 @@ export type WantingState = PromptKind | 'failed';
 /**
  * A state the strip will expand and name a session for.
  *
- * Wider than `WantingState`. Starting and finishing are both worth announcing
- * but neither is something the user has to act on, so they must not add to the
- * waiting count or drag the blocked-age down every time a turn begins or ends.
- * They own the priority slot without being wanting states.
+ * Wider than `WantingState`. Starting, stalling and finishing are all worth
+ * announcing but none is something the user has to act on, so they must not add
+ * to the waiting count or drag the blocked-age down every time a turn begins or
+ * ends. They own the priority slot without being wanting states.
  *
  * Naming a session as it *starts* is deliberate teaching: it is the moment the
  * user is most likely to be looking, so it is what tells them this patch of the
  * menu bar is where session state changes show up.
  */
-export type PriorityState = WantingState | 'completed' | 'running';
+export type PriorityState = WantingState | 'completed' | 'running' | 'stalled';
 
 export interface TraySessionInfo {
   sessionId: string;
@@ -101,12 +101,21 @@ export interface FleetSnapshot {
   /** AskUserQuestion / ExitPlanMode / PromptForUserInput pending -- thinking required. */
   needsDecision: number;
   failed: number;
+  /** Running, but silent past `STALL_AFTER_MS`. Counted out of `running`, not on top of it. */
+  stalled: number;
   unread: number;
   /** The session that most recently entered a wanting state, if any. */
   priority?: FleetPriority;
-  /** Oldest `since` across wanting sessions; the age the strip shows while anything waits. */
+  /** Oldest `since` across *blocked* sessions; the age the strip shows while anything waits. */
   oldestWantingSince?: number;
-  /** Newest activity anywhere in the fleet; the age the quiet strip shows. */
+  /**
+   * Newest activity anywhere in the fleet.
+   *
+   * Consumed only by the panel's idle header, which labels it ("Last session
+   * finished 3h ago"). It is deliberately *not* on the strip: an unlabeled
+   * duration in the menu bar's actionable slot was the whole bug this state
+   * audit came out of. See the State inventory in the plan.
+   */
   lastActivityAt?: number;
   /** Monotonic. Lets a renderer drop a snapshot that arrives out of order. */
   revision: number;
@@ -115,15 +124,44 @@ export interface FleetSnapshot {
 /** Past this, a blocked session is a stall you did not notice, and the age escalates. */
 export const AGE_HOT_MS = 60 * 60_000;
 
+/**
+ * How long a running session may go silent before it is called stalled.
+ *
+ * A guess, and flagged as one: the honest floor is the tail of the real gap
+ * distribution in `ai_agent_messages`, which nobody has measured yet. Fifteen
+ * minutes is chosen to sit clear of a long build or a slow tool call, on the
+ * principle that a false stall is worse than a late one -- the whole point of
+ * the state is that it is trustworthy enough to act on.
+ */
+export const STALL_AFTER_MS = 15 * 60_000;
+
 export function emptyFleetSnapshot(revision = 0): FleetSnapshot {
-  return { running: 0, needsApproval: 0, needsDecision: 0, failed: 0, unread: 0, revision };
+  return {
+    running: 0,
+    needsApproval: 0,
+    needsDecision: 0,
+    failed: 0,
+    stalled: 0,
+    unread: 0,
+    revision,
+  };
 }
 
-/** How urgent each state is, for tie-breaking the priority slot. */
-const STATE_URGENCY: Record<PriorityState, number> = {
-  failed: 4,
-  decision: 3,
-  approval: 2,
+/**
+ * How urgent each state is.
+ *
+ * Two consumers: tie-breaking the priority slot here, and deciding in
+ * `StripStateMachine` whether a new transition is important enough to interrupt
+ * an announcement the user may still be reading.
+ */
+export const STATE_URGENCY: Record<PriorityState, number> = {
+  failed: 5,
+  decision: 4,
+  approval: 3,
+  // Above a plain completion because a stall is the one informational state the
+  // user probably wants to do something about; below every wanting state because
+  // nothing is actually blocked on them.
+  stalled: 2,
   completed: 1,
   running: 0,
 };
@@ -136,6 +174,34 @@ const STATE_URGENCY: Record<PriorityState, number> = {
  * puts both in the same bucket so the order is invisible there; here it decides
  * which number the session is counted in, so it has to be stated.
  */
+/**
+ * Whether a state means "this session is waiting on you".
+ *
+ * The dividing line between the two kinds of announcement: a wanting name goes
+ * stale the moment the thing it named is dealt with, while `completed` and
+ * `running` describe something that already happened and stay true.
+ */
+export function isWantingState(state: PriorityState): state is WantingState {
+  return state === 'approval' || state === 'decision' || state === 'failed';
+}
+
+/**
+ * A running session that has gone quiet.
+ *
+ * This is the state the retired quiet-age was standing in for. "Is it idle or is
+ * it broken" cannot be answered by the wall clock -- three hours is lunch or a
+ * catastrophe depending on what you were expecting -- but it can be answered by
+ * measuring the thing that would be broken: a session that claims to be running
+ * and has not said anything.
+ *
+ * A session with no `updatedAt` is never stalled. That is the just-restored
+ * case, where the absence of a timestamp means "not observed", not "silent".
+ */
+export function isStalled(session: TraySessionInfo, now: number): boolean {
+  if (session.updatedAt === undefined) return false;
+  return now - session.updatedAt >= STALL_AFTER_MS;
+}
+
 function wantingStateOf(session: TraySessionInfo): WantingState | null {
   if (session.status === 'error') return 'failed';
   if (session.hasPendingPrompt) return session.promptKind === 'decision' ? 'decision' : 'approval';
@@ -146,19 +212,29 @@ function wantingStateOf(session: TraySessionInfo): WantingState | null {
  * Derive the snapshot both ambient surfaces render.
  *
  * `revision` is an input rather than an internal counter so this stays pure --
- * the caller owns the monotonic sequence.
+ * the caller owns the monotonic sequence. `now` is an input for the same reason:
+ * the stall bucket is the one classification that depends on the clock rather
+ * than on an event, which also means the caller has to re-derive on a timer or
+ * a stall is never noticed. See `TrayManager.stripAgeTimer`.
+ *
+ * `now` is deliberately *required* rather than defaulted to `Date.now()`. A
+ * defaulted clock inside a function documented as pure is how a fixture stops
+ * meaning what it reads: every test here pins its sessions to a fixed `NOW`, and
+ * a default would have silently measured them against the real wall clock --
+ * making every running fixture in the suite read as stalled by several years.
  *
  * `lastActivityAt` is a floor supplied by the caller because the session cache
  * is not a history: completed sessions are evicted after a minute, so on a quiet
- * machine there is nothing left to read a "how long has it been" age off -- which
- * is exactly when that age matters, since it is what tells idle from broken.
+ * machine there is nothing left to read a "how long has it been" age off. It
+ * feeds the panel's idle header and nothing else.
  */
 export function deriveFleetSnapshot(
   sessions: Iterable<TraySessionInfo>,
   revision: number,
-  options: { lastActivityAt?: number } = {},
+  options: { now: number; lastActivityAt?: number },
 ): FleetSnapshot {
   const snapshot = emptyFleetSnapshot(revision);
+  const { now } = options;
   let priority: FleetPriority | undefined;
   let oldestWantingSince: number | undefined;
   let lastActivityAt: number | undefined = options.lastActivityAt;
@@ -190,7 +266,16 @@ export function deriveFleetSnapshot(
       else snapshot.needsApproval += 1;
 
       const since = session.wantingSince ?? session.updatedAt ?? 0;
-      if (oldestWantingSince === undefined || since < oldestWantingSince) {
+      // A failure does not feed the blocked-age. The age means "how long has
+      // something been waiting on you", and a session that crashed is not
+      // waiting on anything -- `wantingStateOf` says as much when it ranks
+      // `error` above a pending prompt. Letting it in made one old failure pin
+      // `oldestWantingSince` forever: nothing clears `wantingSince` while the
+      // status stays `error`, so the age went hot at an hour and stayed there
+      // until the process restarted. Eviction was the other candidate fix and
+      // is worse -- it would drop the failure out of the panel too, which is
+      // the one place it still has something to say.
+      if (state !== 'failed' && (oldestWantingSince === undefined || since < oldestWantingSince)) {
         oldestWantingSince = since;
       }
       considerPriority(session, state, since);
@@ -202,12 +287,21 @@ export function deriveFleetSnapshot(
       // may only suppress the running bucket -- never an unread or prompting
       // session. Mirrors groupTraySessions and agentSessionAttentionAtom.
       if (session.phase !== 'complete') {
-        snapshot.running += 1;
-        // Same guard as `completedAt` below: only a start this process actually
-        // observed is nameable, so restoring the cache never announces a batch
-        // of sessions as though they had all just begun.
-        if (session.startedAt !== undefined) {
-          considerPriority(session, 'running', session.startedAt);
+        // Stalled is counted *out of* running rather than on top of it, so the
+        // two numbers still add up to the fleet and a stalled session does not
+        // read as one more thing making progress.
+        if (isStalled(session, now)) {
+          snapshot.stalled += 1;
+          // `updatedAt` is defined by construction here -- isStalled requires it.
+          considerPriority(session, 'stalled', session.updatedAt! + STALL_AFTER_MS);
+        } else {
+          snapshot.running += 1;
+          // Same guard as `completedAt` below: only a start this process
+          // actually observed is nameable, so restoring the cache never
+          // announces a batch of sessions as though they had all just begun.
+          if (session.startedAt !== undefined) {
+            considerPriority(session, 'running', session.startedAt);
+          }
         }
       }
       continue;

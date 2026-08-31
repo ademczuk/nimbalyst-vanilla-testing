@@ -19,7 +19,8 @@
     "baseUrl": ".",
     "paths": {
       "@nimbalyst/extension-sdk/file-tree": ["../../extension-sdk/src/fileDirectoryTree.ts"],
-      "@nimbalyst/extension-sdk/file-mask": ["../../extension-sdk/src/fileMask.ts"]
+      "@nimbalyst/extension-sdk/file-mask": ["../../extension-sdk/src/fileMask.ts"],
+      "@nimbalyst/extension-sdk/git-operation-log": ["../../extension-sdk/src/gitOperationLog.ts"]
     }
   },
   "include": ["src"]

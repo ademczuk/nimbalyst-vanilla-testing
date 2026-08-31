@@ -60,6 +60,13 @@ export interface SemanticSearchResult {
   snippet: string;
   score: number;
   signals: { dense: boolean; sparse: boolean };
+  /**
+   * Raw pre-fusion scores. `score` is an RRF rank reciprocal — comparable
+   * within one query's result list, meaningless across queries — so a caller
+   * that needs an absolute threshold (duplicate detection) reads
+   * `similarity.cosine`. Absent when the engine predates the passthrough.
+   */
+  similarity?: { cosine?: number; bm25?: number };
 }
 
 interface PendingChanges {

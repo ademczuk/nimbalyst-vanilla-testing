@@ -21,7 +21,9 @@ import log from 'electron-log/main';
 import { getUntrackedFilesInDirectories } from '../utils/gitUtils';
 import { GIT_INHERITED_ENV_UNSAFE } from './gitInheritedEnvUnsafe';
 import { gitOperationLock } from './GitOperationLock';
+import { getGitOperationLogService, recordGitActivity } from './GitOperationLogService';
 import { SessionCommitService } from './SessionCommitService';
+import { historyManager } from '../HistoryManager';
 
 const logger = log.scope('GitWorktreeService');
 
@@ -243,7 +245,15 @@ export class GitWorktreeService {
 
     // Use centralized lock to prevent concurrent worktree operations
     return gitOperationLock.withLock(workspacePath, 'createWorktree', () =>
-      this.createWorktreeImpl(workspacePath, options)
+      recordGitActivity(
+        getGitOperationLogService(),
+        workspacePath,
+        // The final name is generated inside the impl when not supplied; the
+        // entry's output line below names the worktree that was actually made.
+        ['worktree', 'add', options.name ?? '(generated name)'],
+        () => this.createWorktreeImpl(workspacePath, options),
+        (worktree) => `Created worktree ${worktree.path} on ${worktree.branch}`,
+      )
     );
   }
 
@@ -447,7 +457,12 @@ export class GitWorktreeService {
 
     // Use centralized lock on workspace to prevent concurrent worktree operations
     return gitOperationLock.withLock(workspacePath, 'deleteWorktree', () =>
-      this.deleteWorktreeImpl(worktreePath, workspacePath)
+      recordGitActivity(
+        getGitOperationLogService(),
+        workspacePath,
+        ['worktree', 'remove', worktreePath],
+        () => this.deleteWorktreeImpl(worktreePath, workspacePath),
+      )
     );
   }
 
@@ -510,6 +525,20 @@ export class GitWorktreeService {
     }
 
     logger.info('Worktree directory confirmed deleted', { worktreePath });
+
+    // Step 4b: Retire pending AI reviews for files that lived in this worktree.
+    // Their paths can never resolve again, so the tags would sit pending
+    // forever, inflating the pending counts (#1403). This marks them reviewed;
+    // the rows and their baselines stay in document_history.
+    try {
+      const { count } = await historyManager.clearAllPending(worktreePath);
+      if (count > 0) {
+        logger.info('Retired pending AI reviews for removed worktree', { worktreePath, count });
+      }
+    } catch (error) {
+      // Never let history bookkeeping fail a worktree removal that succeeded.
+      logger.warn('Failed to retire pending reviews for removed worktree', { error, worktreePath });
+    }
 
     // Step 5: Delete the branch if we found it (best effort, don't fail if this doesn't work)
     if (branchName && branchName !== 'HEAD') {
@@ -1356,7 +1385,13 @@ ${newLines.map(line => '+' + line).join('\n')}`;
 
     // Use centralized lock to prevent concurrent commit/staging operations
     const commit = await gitOperationLock.withLock(worktreePath, 'commitChanges', () =>
-      this.commitChangesImpl(worktreePath, message, files)
+      recordGitActivity(
+        getGitOperationLogService(),
+        worktreePath,
+        ['commit', '-m', message],
+        () => this.commitChangesImpl(worktreePath, message, files),
+        (result) => `[${result.hash.slice(0, 7)}] ${result.message}`,
+      )
     );
 
     if (sessionId && commit.hash) {
@@ -1461,7 +1496,15 @@ ${newLines.map(line => '+' + line).join('\n')}`;
     }
 
     // Use centralized lock to prevent concurrent merge/rebase/squash operations
-    return gitOperationLock.withLock(mainRepoPath, 'mergeToMain', () => this.mergeToMainImpl(worktreePath, mainRepoPath));
+    return gitOperationLock.withLock(mainRepoPath, 'mergeToMain', () =>
+      recordGitActivity(
+        getGitOperationLogService(),
+        mainRepoPath,
+        ['merge', worktreePath],
+        () => this.mergeToMainImpl(worktreePath, mainRepoPath),
+        (result) => result.message,
+      )
+    );
   }
 
   /**
@@ -1963,7 +2006,15 @@ ${newLines.map(line => '+' + line).join('\n')}`;
     }
 
     // Use lock to prevent concurrent merge/rebase/squash operations
-    return gitOperationLock.withLock(worktreePath, 'rebaseFromBase', () => this.rebaseFromBaseImpl(worktreePath, baseBranch));
+    return gitOperationLock.withLock(worktreePath, 'rebaseFromBase', () =>
+      recordGitActivity(
+        getGitOperationLogService(),
+        worktreePath,
+        ['rebase', baseBranch],
+        () => this.rebaseFromBaseImpl(worktreePath, baseBranch),
+        (result) => result.message,
+      )
+    );
   }
 
   /**
@@ -2416,7 +2467,14 @@ ${newLines.map(line => '+' + line).join('\n')}`;
     }
 
     // Use lock to prevent concurrent merge/rebase/squash operations
-    return gitOperationLock.withLock(worktreePath, 'squashCommits', () => this.squashCommitsImpl(worktreePath, commitHashes, message));
+    return gitOperationLock.withLock(worktreePath, 'squashCommits', () =>
+      recordGitActivity(
+        getGitOperationLogService(),
+        worktreePath,
+        ['reset', '--soft', `HEAD~${commitHashes.length}`],
+        () => this.squashCommitsImpl(worktreePath, commitHashes, message),
+      )
+    );
   }
 
   /**

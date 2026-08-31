@@ -1,6 +1,6 @@
 /**
- * Shared provider body for CLI agents driven over a per-turn headless process
- * that streams NDJSON (Grok Build, Cursor Agent).
+ * Shared provider body for structured CLI agents (Grok ACP and Cursor's
+ * per-turn NDJSON transport).
  *
  * The two providers differ only in their executable name, install
  * instructions, protocol adapter and system-prompt tool vocabulary. Everything
@@ -15,6 +15,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { BaseAgentProvider } from './BaseAgentProvider';
+import { scrubProviderApiKeys } from '../providerApiKeyScrub';
 import { buildUserMessageAddition } from './documentContextUtils';
 import { describeUnusableWorkspacePath } from './workspacePreconditions';
 import { buildClaudeCodeSystemPrompt } from '../../prompt';
@@ -60,11 +61,12 @@ export interface HeadlessCliAgentDescriptor {
   /** Shown when the CLI reports it is not authenticated. */
   notLoggedInMessage: string;
   /**
-   * Why this agent requires an allow-all workspace: neither CLI exposes a
-   * per-tool approval callback in headless mode, so a turn cannot be paused
-   * for a Nimbalyst permission prompt.
+   * Message shown when this transport cannot pause for per-tool approval and
+   * the current workspace mode does not authorize the whole turn.
    */
   permissionModeMessage: string;
+  /** Whether this transport can pause and round-trip per-tool approval. */
+  supportsToolPermissions?: boolean;
 }
 
 export abstract class HeadlessCliAgentProvider extends BaseAgentProvider {
@@ -194,6 +196,11 @@ export abstract class HeadlessCliAgentProvider extends BaseAgentProvider {
    * source. Vendor-specific keys (`CURSOR_API_KEY`, `XAI_API_KEY`) are scrubbed
    * for the same reason — the user's CLI login is the only credential these
    * providers are authorised to use.
+   *
+   * This return value is NOT the last word: a protocol that merges it over
+   * `process.env` would restore every key deleted here, since absence cannot
+   * mask a value. The spawn site re-applies `scrubProviderApiKeys` for that
+   * reason, and it is what actually guarantees the key never ships.
    */
   protected buildChildEnvironment(): Record<string, string> | null {
     const loaders = this.getLoaders();
@@ -220,13 +227,7 @@ export abstract class HeadlessCliAgentProvider extends BaseAgentProvider {
     if (shellEnv) Object.assign(env, shellEnv);
     if (enhancedPath) env.PATH = enhancedPath;
 
-    delete env.ANTHROPIC_API_KEY;
-    delete env.OPENAI_API_KEY;
-    delete env.CURSOR_API_KEY;
-    delete env.XAI_API_KEY;
-    delete env.GROK_API_KEY;
-
-    return env;
+    return scrubProviderApiKeys(env);
   }
 
   async *sendMessage(
@@ -300,7 +301,14 @@ export abstract class HeadlessCliAgentProvider extends BaseAgentProvider {
       const isResumedSession = !!existingSessionId;
       const resolvedModel = this.config?.model || this.getDefaultModelId();
 
-      const sessionOptions = { workspacePath, model: resolvedModel, systemPrompt, mcpServers };
+      const sessionOptions = {
+        workspacePath,
+        model: resolvedModel,
+        systemPrompt,
+        mcpServers,
+        permissionMode: permission.permissionMode ?? undefined,
+        raw: { permissionsPath: documentContext?.permissionsPath },
+      };
       const session = isResumedSession
         ? await this.protocol.resumeSession(existingSessionId, sessionOptions)
         : await this.protocol.createSession(sessionOptions);
@@ -313,8 +321,11 @@ export abstract class HeadlessCliAgentProvider extends BaseAgentProvider {
       }
 
       this._initData = {
-        model: resolvedModel,
-        mcpServerCount: Object.keys(mcpServers).length,
+        // A protocol that can observe the agent's model wins over the one we
+        // asked for: reporting a model the agent did not run is worse than not
+        // offering the choice at all.
+        model: session.appliedModel ?? resolvedModel,
+        mcpServerCount: session.deliveredMcpServerCount ?? 0,
         isResumedSession,
       };
 
@@ -490,16 +501,14 @@ export abstract class HeadlessCliAgentProvider extends BaseAgentProvider {
   /**
    * Gate the whole turn up front.
    *
-   * Neither CLI can pause a headless turn for an approval: Cursor's `--print`
-   * grants write and shell unconditionally (a run without `--force` still
-   * edited a file and emitted no approval event), and Grok's headless mode has
-   * no per-tool callback either. Pretending otherwise would show the user a
-   * permission prompt that gates nothing.
+   * Cursor cannot pause its one-shot headless turn for an approval. Grok ACP
+   * can, so it only needs the trust-level gate here and handles risky tools via
+   * `session/request_permission`.
    */
   private requestTurnPermission(
     workspacePath: string,
     permissionsPath?: string,
-  ): { decision: 'allow' | 'deny'; reason?: string } {
+  ): { decision: 'allow' | 'deny'; reason?: string; permissionMode?: string | null } {
     const pathForTrust = permissionsPath || workspacePath;
     if (!pathForTrust || !BaseAgentProvider.trustChecker) {
       return { decision: 'allow' };
@@ -513,7 +522,10 @@ export abstract class HeadlessCliAgentProvider extends BaseAgentProvider {
       };
     }
     if (trustStatus.mode === 'bypass-all' || trustStatus.mode === 'allow-all') {
-      return { decision: 'allow' };
+      return { decision: 'allow', permissionMode: trustStatus.mode };
+    }
+    if (this.descriptor.supportsToolPermissions) {
+      return { decision: 'allow', permissionMode: trustStatus.mode };
     }
     return { decision: 'deny', reason: this.descriptor.permissionModeMessage };
   }

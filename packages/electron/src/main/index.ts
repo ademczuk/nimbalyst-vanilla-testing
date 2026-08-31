@@ -40,6 +40,7 @@ import {
 import { createWorkspaceManagerWindow, setupWorkspaceManagerHandlers, wasWorkspaceManagerManuallyClosed } from './window/WorkspaceManagerWindow.ts';
 import { createTeamManagementWindow, setupTeamManagementHandlers } from './window/TeamManagementWindow';
 import { setupTrayPanelHandlers } from './window/TrayPanelWindow';
+import { setupMenuBarIslandHandlers } from './window/MenuBarIslandWindow';
 import { applyDockIcon } from './utils/dockIcon';
 import { showSplashScreen, closeSplashScreen } from './window/SplashScreen';
 import { registerFileHandlers } from './ipc/FileHandlers';
@@ -225,6 +226,7 @@ import {
 import { configureMcpServers } from '@nimbalyst/runtime/ai/server';
 import { matchesAllowPattern } from '@nimbalyst/runtime/ai/server/permissions/toolPermissionHelpers';
 import { resolveCodexPreEditHookScriptPath } from './services/ai/codexPreEditHookPath';
+import { createGrokAskUserQuestionHandler } from './services/ai/grokAskUserQuestionHandler';
 import { executeGeminiTool } from './services/ai/geminiToolExecutor';
 import { sessionFileTracker } from './services/SessionFileTracker';
 import {
@@ -2011,6 +2013,15 @@ app.whenReady().then(async () => {
             void TrayManager.getInstance().clearAllUnreadSessions();
         },
     });
+    setupMenuBarIslandHandlers({
+        onSelectSession: (sessionId, workspacePath) =>
+            TrayManager.getInstance().handleSessionClick(sessionId, workspacePath),
+        onExpandedChange: (expanded) =>
+            TrayManager.getInstance().onIslandExpandedChange(expanded),
+        onNewSession: () => TrayManager.getInstance().handleNewSession(),
+        onOpenApp: () => TrayManager.getInstance().handleOpenApp(),
+        onSettingChange: (change) => TrayManager.getInstance().applyIslandSetting(change),
+    });
     setupSessionFileHandlers();
     setupCanvasRevisionProvenanceHandlers();
     registerSlashCommandHandlers();
@@ -2287,11 +2298,11 @@ app.whenReady().then(async () => {
         return enabledServers;
     });
 
-    // Grok and Cursor read MCP servers from config files, not from a
-    // command-line list or a session/new payload. So their loaders write the
-    // filtered set to disk before returning it -- the returned value still
-    // feeds the provider's mcpServerCount, but the file is what the CLI acts
-    // on. Only `nimbalyst:`-prefixed entries are touched; see
+    // Cursor reads MCP servers from a config file, not from a command-line
+    // list or a session/new payload. So its loader writes the filtered set to
+    // disk before returning it -- the returned value still feeds the provider's
+    // mcpServerCount, but the file is what the CLI acts on. Only
+    // `nimbalyst:`-prefixed entries are touched; see
     // HeadlessAgentMcpConfigService.
     const syncHeadlessAgentMcpConfig = async (
         target: HeadlessAgentMcpTarget,
@@ -2313,8 +2324,12 @@ app.whenReady().then(async () => {
         return servers;
     };
 
+    // Grok gets its servers inline through ACP `session/new`, so it writes
+    // nothing to disk. `~/.grok/mcp.json` used to be written here for the old
+    // `grok -p` transport; it is mode 0644 and holds resolved credentials, so
+    // once ACP delivery landed the write was redundant exposure.
     GrokBuildProvider.setMCPConfigLoader(
-        (workspacePath?: string) => syncHeadlessAgentMcpConfig('grok-build', MCP_PROVIDER_IDS.GROK, 'Grok', workspacePath),
+        (workspacePath?: string) => loadEnabledMcpServersFor(MCP_PROVIDER_IDS.GROK, 'Grok', workspacePath),
     );
     CursorAgentProvider.setMCPConfigLoader(
         (workspacePath?: string) => syncHeadlessAgentMcpConfig('cursor-agent', MCP_PROVIDER_IDS.CURSOR, 'Cursor', workspacePath),
@@ -2707,9 +2722,18 @@ app.whenReady().then(async () => {
     OpenAICodexACPProvider.setPermissionPatternChecker(patternChecker);
     OpenAICodexACPProvider.setTrustChecker(trustChecker);
 
-    // Both headless CLI agents gate the whole turn on workspace trust rather
-    // than per tool -- neither can pause a headless turn for an approval.
+    GrokBuildProvider.setPermissionPatternSaver(patternSaver);
+    GrokBuildProvider.setPermissionPatternChecker(patternChecker);
     GrokBuildProvider.setTrustChecker(trustChecker);
+
+    // Grok's native `ask_user_question` tool reaches the user through the
+    // ordinary AskUserQuestion widget. Without a handler the ACP request
+    // returns `cancelled` and Grok answers itself, which is the bug that
+    // started this workstream.
+    GrokBuildProvider.setAskUserQuestionHandler(createGrokAskUserQuestionHandler());
+
+    // Cursor's one-shot headless transport still gates the whole turn; Grok's
+    // ACP transport uses the same trust check plus per-tool permission events.
     CursorAgentProvider.setTrustChecker(trustChecker);
 
     // ACP exposes pre/post file-write hooks. Wire them so Codex ACP edits

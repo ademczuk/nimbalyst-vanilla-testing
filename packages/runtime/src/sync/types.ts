@@ -5,7 +5,7 @@
  * It's designed to be completely optional - the app works without it.
  */
 
-import type { PushRejectionCause, SkipReason } from '@nimbalyst/collab-protocol';
+import type { FleetActivitySnapshot, PushRejectionCause, SkipReason } from '@nimbalyst/collab-protocol';
 
 import type { AgentMessage } from '../ai/server/types';
 import type { PersonalJwt, PersonalMemberId } from '../auth/jwtScopes';
@@ -322,6 +322,18 @@ export interface SyncProvider {
     body: string,
     options?: MobilePushOptions
   ): Promise<MobilePushResult>;
+
+  /**
+   * Push the ambient fleet snapshot to the user's Live Activity.
+   *
+   * Fire-and-forget by design, and unlike `requestMobilePush` it is not
+   * acknowledged: this lane is ambient, it carries no alert, and the phone's own
+   * stale date is what covers a desktop that has stopped sending. Callers must
+   * coalesce -- see `FleetActivityPublisher`. Sending one of these per streaming
+   * tick would get the activity silently throttled by ActivityKit, which looks
+   * identical to the feature being broken.
+   */
+  sendFleetActivity?(activity: FleetActivitySnapshot, shownOnDesktop?: boolean): Promise<void>;
 
   /** Get list of currently connected devices */
   getConnectedDevices?(): DeviceInfo[];

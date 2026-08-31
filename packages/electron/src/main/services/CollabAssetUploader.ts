@@ -24,7 +24,7 @@ import {
   COLLAB_ASSET_HEADER_MIME,
   COLLAB_ASSET_HEADER_PLAINTEXT_SIZE,
   MAX_COLLAB_ASSET_FILE_NAME_LENGTH,
-} from "../../shared/collabAssetFormat";
+} from "@nimbalyst/runtime/sync/collabAssetFormat";
 
 export interface UploadCollabAssetParams {
   orgId: string;

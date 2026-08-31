@@ -149,6 +149,16 @@ export interface ProtocolSession {
 
   /** Platform-specific session data (for internal use) */
   raw?: RawProtocolSession;
+
+  /** Number of host-supplied MCP servers this protocol actually delivered. */
+  deliveredMcpServerCount?: number;
+
+  /**
+   * Model the agent is actually running, when the protocol can observe it.
+   * Absent means "the protocol has no say"; the host then reports the model it
+   * asked for. Never report a requested model a protocol knows was not applied.
+   */
+  appliedModel?: string;
 }
 
 /**

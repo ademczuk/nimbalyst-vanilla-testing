@@ -389,4 +389,69 @@ describe('WindowTopBar', () => {
     expect(clampGitFeedbackMessage('line 1\nline 2')).toBe('line 1\nline 2');
     expect(clampGitFeedbackMessage('a\nb\nc\nd\ne\nf\ng')).toBe('a\nb\nc\nd\ne\nf…');
   });
+
+  // Confirmed design decision: activity is additive. Branch and ahead/behind
+  // stay put rather than being replaced by a busy label.
+  it('keeps branch and counts while running activity adds a command and a +N', () => {
+    render(
+      <WindowTopBar
+        workspaceName="Repo"
+        activeModeLabel="Files"
+        gitStatus={{ branch: 'main', hasUncommitted: false, ahead: 2, behind: 1 }}
+        gitActions={{
+          onPull: () => {},
+          onPush: () => {},
+          onOpenLog: () => {},
+          activity: {
+            running: [
+              { id: 'a', command: 'git push', source: 'nimbalyst' },
+              { id: 'b', command: 'git fetch origin', source: 'agent', sessionId: 's1' },
+            ],
+            latest: { id: 'b', command: 'git fetch origin', source: 'agent', sessionId: 's1' },
+          },
+        }}
+      />,
+    );
+
+    const git = screen.getByTestId('window-top-bar-git-status');
+    expect(git.textContent).toContain('main');
+    expect(git.textContent).toContain('2');
+    expect(git.textContent).toContain('1');
+    expect(screen.getByTestId('window-top-bar-git-activity').textContent).toContain('git fetch origin');
+    expect(screen.getByTestId('window-top-bar-git-activity-more').textContent).toBe('+1');
+    // Attribution is the thing the bar cannot otherwise convey.
+    expect(git.getAttribute('title')).toContain('Agent session: git fetch origin');
+  });
+
+  // Observing an agent's read-only git command must not lock the user out of
+  // their own pull/push.
+  it('leaves the user\'s own git actions enabled while an agent command runs', () => {
+    const onOpenActivity = vi.fn();
+    render(
+      <WindowTopBar
+        workspaceName="Repo"
+        activeModeLabel="Files"
+        gitStatus={{ branch: 'main', hasUncommitted: false, ahead: 0, behind: 0 }}
+        gitActions={{
+          onPull: () => {},
+          onPush: () => {},
+          onOpenLog: () => {},
+          onOpenActivity,
+          gitLogAvailable: true,
+          activity: {
+            running: [{ id: 'a', command: 'git status', source: 'agent', sessionId: 's1' }],
+            latest: { id: 'a', command: 'git status', source: 'agent', sessionId: 's1' },
+          },
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('window-top-bar-git-status'));
+    const items = screen.getAllByRole('menuitem');
+    const pull = items.find((item) => item.textContent?.endsWith('Pull'))!;
+    expect(pull.hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(screen.getByTestId('window-top-bar-git-activity-item'));
+    expect(onOpenActivity).toHaveBeenCalledTimes(1);
+  });
 });

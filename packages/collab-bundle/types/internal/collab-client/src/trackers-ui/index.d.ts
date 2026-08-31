@@ -65,9 +65,10 @@ export { registerKanbanDragCallbacks, resolveDropIndex, } from './board/kanbanDr
 export type { KanbanCardHit, KanbanDragCallbacks, KanbanDragOverCallback, KanbanDropCallback, } from './board/kanbanDragListeners';
 export { NEUTRAL_SWATCH, PRIORITY_COLORS, STATUS_CATEGORY_COLORS, STATUS_COLORS, TYPE_COLORS, } from './board/trackerBoardTokens';
 export { buildGridActionsColumn, buildGridColumns, buildGridSource, ROW_ACTIONS, ROW_ITEM_ID, ROW_ITEM_TYPE, } from './grid/trackerGridColumns';
-export type { BuildGridColumnsOptions, FavoritesOptions, } from './grid/trackerGridColumns';
+export type { BuildGridColumnsOptions, FavoritesOptions, KeyLinkOptions, } from './grid/trackerGridColumns';
 export { commitOnNavigationKeys, createRowAwareTrackerCellEditor, createTrackerCellEditor, } from './grid/trackerGridEditors';
 export type { RelationshipCandidate, TrackerEditorContext, } from './grid/trackerGridEditors';
+export { keydownOriginatedInGrid, useGridKeyOriginGuard } from './grid/gridKeyOrigin';
 export { LazyTrackerColumnFilterPopover as TrackerColumnFilterPopover } from './grid/LazyTrackerColumnFilterPopover';
 export type { TrackerColumnFilterPopoverProps } from './grid/TrackerColumnFilterPopover';
 export { TrackerGridSurface } from './grid/TrackerGridSurface';

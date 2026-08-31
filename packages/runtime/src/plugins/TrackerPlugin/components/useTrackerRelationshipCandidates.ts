@@ -3,6 +3,9 @@
  *
  * Shared so every field surface offers the same candidates: all loaded records
  * except the item itself, filtered by the field's allowed tracker types.
+ *
+ * `item` may be null — the quick-create popup fills relationship fields for an
+ * item that does not exist yet, and there is simply nothing to exclude.
  */
 
 import { useMemo } from 'react';
@@ -22,13 +25,12 @@ export function useTrackerRelationshipCandidates(
 
   return useMemo(() => {
     const candidates = new Map<string, RelationshipCandidate[]>();
-    if (!item) return candidates;
     for (const field of fields) {
       if (!isRelationshipField(field)) continue;
       const allowed = field.targetTrackerTypes;
       const values: RelationshipCandidate[] = [];
       for (const record of itemsMap.values()) {
-        if (record.id === item.id) continue;
+        if (item && record.id === item.id) continue;
         if (allowed && allowed !== '*' && !allowed.includes(record.primaryType)) continue;
         values.push({
           itemId: record.id,

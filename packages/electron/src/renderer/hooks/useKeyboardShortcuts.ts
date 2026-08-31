@@ -18,7 +18,7 @@ import {
 } from '../store/atoms/openProjects';
 import { prRemoteAtom } from '../store/atoms/pullRequests';
 import { developerModeAtom } from '../store/atoms/appSettings';
-import { sessionLaunchPopupRequestAtom } from '../store/atoms/appCommands';
+import { sessionLaunchPopupRequestAtom, trackerQuickCreateRequestAtom } from '../store/atoms/appCommands';
 import posthog from 'posthog-js';
 
 interface KeyboardShortcutsOptions {
@@ -85,6 +85,14 @@ export function isSessionLaunchPopupShortcut(
   return isAppModifier && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'n';
 }
 
+export function isTrackerQuickCreateShortcut(
+  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>,
+  macPlatform = isMac,
+): boolean {
+  const isAppModifier = macPlatform ? event.metaKey : event.ctrlKey;
+  return isAppModifier && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'i';
+}
+
 export function isToggleSidebarShortcut(
   event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>,
   macPlatform = isMac,
@@ -145,6 +153,15 @@ export function useKeyboardShortcuts({
         return;
       }
 
+      // Cmd/Ctrl+Shift+I opens (or toggles) the tracker quick-create popup from
+      // anywhere, without changing the active content mode.
+      if (workspaceMode && isTrackerQuickCreateShortcut(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        store.set(trackerQuickCreateRequestAtom, (version) => version + 1);
+        return;
+      }
+
       if (workspaceMode && isToggleSidebarShortcut(e)) {
         e.preventDefault();
         e.stopPropagation();
@@ -199,6 +216,10 @@ export function useKeyboardShortcuts({
 
       // Cmd+T for Tracker mode (toggle the sidebar if already in tracker mode)
       if (workspaceMode && isAppModifier && !e.shiftKey && !e.altKey && e.key === 't') {
+        // Quick Track owns Cmd+T while it is open. This listener runs in the
+        // capture phase, before the popup's React handler can preventDefault,
+        // so arbitrate on the popup marker instead of the event state.
+        if (document.querySelector('.tracker-quick-create-popup')) return;
         e.preventDefault();
         if (isFullscreenPanelActive) {
           exitFullscreenPanel();

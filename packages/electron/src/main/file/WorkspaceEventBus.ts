@@ -580,6 +580,23 @@ export function getSubscriberIds(workspacePath: string): string[] {
   return [...entry.listeners.keys()];
 }
 
+/**
+ * Whether a session is subscribed to any workspace, i.e. an AI turn could still
+ * be in flight for it.
+ *
+ * Used as a liveness guard before retiring that session's pending-review
+ * baselines (#1403): `AgentToolHooks.tagFileBeforeEdit` records a baseline
+ * equal to current disk content BEFORE the tool writes, so a tag belonging to a
+ * live session can look already-landed for as long as a permission prompt sits
+ * unanswered.
+ */
+export function isSessionSubscribedAnywhere(sessionId: string): boolean {
+  for (const entry of busEntries.values()) {
+    if (entry.listeners.has(sessionId)) return true;
+  }
+  return false;
+}
+
 /** Number of active bus entries. Visible for testing/diagnostics. */
 export function getBusEntryCount(): number {
   return busEntries.size;

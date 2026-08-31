@@ -23,6 +23,7 @@ import { applyBrowserEditorChrome } from './browserChrome';
 import { deriveCollabEditorCommentsState } from './commenting';
 import { resolveCollabEditorUser } from './presence';
 import { createCollabDocumentSession } from './session';
+import { acquireCollabAssetImageResolver } from './collabAssetImages';
 
 import type {
   CollabEditorHandle,
@@ -75,6 +76,20 @@ export function mountCollabEditor(options: CollabEditorMountOptions): CollabEdit
   let readyReported = false;
 
   const hostCanComment = (): boolean => options.comments?.canComment?.() ?? true;
+
+  /**
+   * Serves the document's `collab-asset://` images. Only a team room has an
+   * origin and a JWT to fetch them with; an in-memory harness document has no
+   * server behind it, so it gets no resolver and its images fall through to
+   * the editor's own handling.
+   */
+  const assetImages = options.source.kind === 'team-room'
+    ? acquireCollabAssetImageResolver({
+        serverUrl: options.source.serverUrl,
+        orgId: options.source.room.orgId,
+        getTeamJwt: options.source.auth.getTeamJwt,
+      })
+    : null;
 
   // Declared before the session because DocumentSyncProvider can report a
   // status from inside its own constructor, before the provider below exists.
@@ -170,6 +185,7 @@ export function mountCollabEditor(options: CollabEditorMountOptions): CollabEdit
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      assetImages?.release();
       session.destroy({
         beforeTransportTeardown: () => {
           root?.unmount();
@@ -204,6 +220,7 @@ export function mountCollabEditor(options: CollabEditorMountOptions): CollabEdit
       isCodeHighlighted: true,
       hasLinkAttributes: true,
       markdownOnly: true,
+      resolveImageSrc: assetImages?.resolve,
       collaboration: {
         providerFactory,
         shouldBootstrap: false,

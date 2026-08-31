@@ -63,7 +63,11 @@ import {
 } from '../../store/atoms/trackers';
 import { activeTeamOrgIdAtom, buildTrackerDeepLink, buildTrackerDocumentDeepLink } from '../../store/atoms/collabDocuments';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
-import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
+import {
+  buildTrackerCreatePayload,
+  formatTrackerValidationErrors,
+  globalRegistry,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import { resolveTrackerWriteAccess } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerLifecycle';
 import { useTrackerBodyPrewarm } from '../../hooks/useTrackerBodyPrewarm';
 import { setSelectedWorkstreamAtom, sessionRegistryAtom, refreshSessionListAtom, initSessionList } from '../../store/atoms/sessions';
@@ -891,27 +895,17 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     if (!workspacePath || !quickAddType) return;
 
     try {
-      const tracker = trackerTypes.find(t => t.type === quickAddType);
-      if (tracker?.creatable === false) return;
-      const prefix = tracker?.idPrefix || quickAddType.substring(0, 3);
-      const timestamp = Date.now().toString(36);
-      const random = Math.random().toString(36).substring(2, 8);
-      const id = `${prefix}_${timestamp}${random}`;
+      const priorityField = globalRegistry.get(quickAddType)?.roles?.priority ?? 'priority';
+      const built = buildTrackerCreatePayload(
+        quickAddType,
+        { title, fields: { [priorityField]: priority } },
+        { workspacePath },
+      );
+      if (!built.ok) {
+        throw new Error(formatTrackerValidationErrors(built.errors));
+      }
 
-      const statusFieldName = tracker?.roles?.workflowStatus ?? 'status';
-      const statusField = tracker?.fields.find(f => f.name === statusFieldName);
-      const defaultStatus = (statusField?.default as string) || 'to-do';
-
-      const result = await window.electronAPI.documentService.createTrackerItem({
-        id,
-        type: quickAddType,
-        title,
-        status: defaultStatus,
-        priority,
-        workspace: workspacePath,
-        sharing: tracker?.sharing ?? 'personal',
-        draftByDefault: tracker?.draftByDefault ?? false,
-      });
+      const result = await window.electronAPI.documentService.createTrackerItem(built.payload);
 
       if (!result.success) {
         throw new Error(result.error || 'Failed to create tracker item');
@@ -919,12 +913,12 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
 
       setQuickAddType(null);
       // Auto-select the newly created item so the detail panel opens for editing
-      const createdId = result.item?.id ?? id;
+      const createdId = result.item?.id ?? built.payload.id;
       setModeLayout({ selectedItemId: createdId });
     } catch (error) {
       console.error('[TrackerMainView] Failed to create tracker item:', error);
     }
-  }, [workspacePath, quickAddType, trackerTypes, setModeLayout]);
+  }, [workspacePath, quickAddType, setModeLayout]);
 
   // Import state
   const [importMenuOpen, setImportMenuOpen] = useState(false);

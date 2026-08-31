@@ -52,6 +52,10 @@
     "./file-mask": {
       "types": "./dist/fileMask.d.ts",
       "import": "./dist/fileMask.js"
+    },
+    "./git-operation-log": {
+      "types": "./dist/gitOperationLog.d.ts",
+      "import": "./dist/gitOperationLog.js"
     }
   },
   "files": [

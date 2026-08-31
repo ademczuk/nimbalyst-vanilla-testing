@@ -58,16 +58,33 @@ export const CLAUDE_CODE_TRANSIENT_CHUNK_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Codex app-server notification methods that render nothing.
+ * Codex app-server delta methods, superseded by the `item/completed` frame for
+ * the SAME item id, which carries the final text or the aggregated output.
  *
- * The two `*Delta` methods are superseded by the `item/completed` frame for the
- * same item id, which carries the final text. They stopped being written when
- * the write-path filter landed; the rows they left behind are what the prune
- * lane clears.
+ * Held apart from the status methods below because the two answer different
+ * questions. A status notification renders nothing and is superseded by
+ * nothing, so "does it render" settles it. A delta renders nothing only
+ * BECAUSE a later frame holds the same content -- and a turn the user cancelled
+ * or whose CLI died never wrote that frame, leaving the delta as the only copy
+ * of what the assistant said. A destructive path may only act on a delta once
+ * it has found the matching `item/completed`; see `rawMessagePrune`.
+ *
+ * Both carry `params.itemId`, and `item/completed` carries `params.item.id`, so
+ * that proof is exact per item rather than per session. They stopped being
+ * written when the write-path filter landed; the rows they left behind are what
+ * the prune lane clears.
  */
-export const CODEX_APP_SERVER_TRANSIENT_EVENT_TYPES: ReadonlySet<string> = new Set([
+export const CODEX_APP_SERVER_SUPERSEDED_DELTA_METHODS: ReadonlySet<string> = new Set([
   'item/agentMessage/delta',
   'item/commandExecution/outputDelta',
+]);
+
+/**
+ * Codex app-server notification methods that are pure status: a counter, a
+ * lifecycle marker, a rate-limit snapshot. Nothing renders them and nothing
+ * supersedes them, because they carry no content to supersede.
+ */
+export const CODEX_APP_SERVER_STATUS_EVENT_TYPES: ReadonlySet<string> = new Set([
   'thread/tokenUsage/updated',
   'account/rateLimits/updated',
   'thread/status/changed',
@@ -76,6 +93,18 @@ export const CODEX_APP_SERVER_TRANSIENT_EVENT_TYPES: ReadonlySet<string> = new S
   'turn/completed',
   'turn/diff/updated',
   'skills/changed',
+]);
+
+/**
+ * Every codex app-server method that renders nothing, deltas and status alike.
+ *
+ * The sync wire gate wants exactly this union -- it decides what to put on the
+ * wire, which is not destructive and so does not care WHY a frame renders
+ * nothing. Only the prune lane needs the distinction.
+ */
+export const CODEX_APP_SERVER_TRANSIENT_EVENT_TYPES: ReadonlySet<string> = new Set([
+  ...CODEX_APP_SERVER_SUPERSEDED_DELTA_METHODS,
+  ...CODEX_APP_SERVER_STATUS_EVENT_TYPES,
 ]);
 
 /**
@@ -103,9 +132,35 @@ export function isTransientClaudeCodeFrame(chunk: unknown): boolean {
   return typeof c.type === 'string' && CLAUDE_CODE_TRANSIENT_CHUNK_TYPES.has(c.type);
 }
 
-/** True when a parsed codex app-server envelope produces no transcript event. */
-export function isTransientCodexAppServerFrame(envelope: unknown): boolean {
+/**
+ * True for a delta frame whose content lives on in a later `item/completed`
+ * for the same item -- IF that frame was ever written.
+ */
+export function isSupersededCodexAppServerDelta(envelope: unknown): boolean {
+  return codexAppServerMethod(envelope, CODEX_APP_SERVER_SUPERSEDED_DELTA_METHODS);
+}
+
+/** True for a codex app-server frame that is pure status and supersedes nothing. */
+export function isStatusCodexAppServerFrame(envelope: unknown): boolean {
+  return codexAppServerMethod(envelope, CODEX_APP_SERVER_STATUS_EVENT_TYPES);
+}
+
+/**
+ * The item a delta frame belongs to, which is the id its `item/completed` will
+ * carry as `params.item.id`.
+ *
+ * Returns null when the field is absent, and the caller must then treat the
+ * frame as unproven -- an unidentifiable delta cannot be shown to be superseded
+ * by anything.
+ */
+export function readCodexAppServerDeltaItemId(envelope: unknown): string | null {
+  if (!envelope || typeof envelope !== 'object') return null;
+  const itemId = (envelope as { params?: { itemId?: unknown } }).params?.itemId;
+  return typeof itemId === 'string' && itemId ? itemId : null;
+}
+
+function codexAppServerMethod(envelope: unknown, methods: ReadonlySet<string>): boolean {
   if (!envelope || typeof envelope !== 'object') return false;
   const method = (envelope as { method?: unknown }).method;
-  return typeof method === 'string' && CODEX_APP_SERVER_TRANSIENT_EVENT_TYPES.has(method);
+  return typeof method === 'string' && methods.has(method);
 }

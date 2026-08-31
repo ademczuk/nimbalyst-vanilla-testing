@@ -118,12 +118,15 @@ Detects commits and staging changes in real-time by watching git internals.
 **Watches:**
 - `.git/refs/heads/<branch>` - Detects new commits
 - `.git/index` - Detects staging changes
+- `.git/HEAD` - Detects branch switches, and re-points the ref watcher at the new branch
 - Handles worktrees where `.git` is a file pointing to shared refs
 
 **Key behaviors:**
 - Auto-approves pending reviews for committed files
 - Debounces index changes at 100ms
-- Clears git status cache on changes
+- Clears git status and cached git facts on changes
+- A branch switch re-points the ref watcher but does NOT auto-approve: the files
+  differing between two branch tips are not "files that were just committed"
 
 **Events emitted:**
 - `git:commit-detected` - Payload: `{ workspacePath, commitHash, commitMessage, committedFiles }`
@@ -601,7 +604,21 @@ FilesEditedSidebar provides toggle-staging UI via `worktree:stage-file` IPC. The
 1. DiffApprovalBar shows accept/reject controls
 2. User accepts -> tag marked `'reviewed'` -> `history:pending-cleared` event
 3. TabEditor exits diff mode, reloads from disk
-4. GitRefWatcher auto-approves any remaining pending reviews on commit
+4. GitRefWatcher auto-approves remaining pending reviews for the files in a
+   detected commit -- but only for the workspace whose own branch ref moved, and
+   only if the tag already existed when the sweep ran
+
+This sweep is best-effort, not an invariant. It misses tags created after it
+runs, tags in another workspace, and every git operation that moves no watched
+ref. Correctness comes from reconciliation on the read path instead
+(`history/pendingTagReconciler.ts`): before answering `history:get-pending-tags`
+or `history:get-diff-baseline` for a file, a tag is retired if the file is gone,
+if its baseline already matches disk, or if git tracks the path and reports
+nothing uncommitted for it. Two liveness guards run first -- a grace period and
+a check that the tag's session is not still subscribed -- because
+`AgentToolHooks.tagFileBeforeEdit` records a baseline equal to current disk
+content before the tool writes. Retiring flips `metadata.status` to `reviewed`;
+the row and its baseline are never deleted. See GitHub #1403.
 
 ### AI Session End
 1. `SessionFileWatcher.stop()` releases shared watcher reference

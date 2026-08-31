@@ -1463,6 +1463,13 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                   // next thinking/generation phase. NIM-1481.
                   outstandingToolCalls = Math.max(0, outstandingToolCalls - 1);
 
+                  // The result is attached by mutating the object yielded at
+                  // tool_use, which a consumer that already handled that chunk
+                  // can never observe. Announce the completion so liveness
+                  // tracking -- the Git journal behind the menu-bar indicator --
+                  // can settle the call instead of spinning until turn end.
+                  yield { type: 'tool_result', toolCall };
+
                   // Diagnostic: detect "Stream closed" errors from the native binary
                   const resultText = typeof item.content === 'string' ? item.content : JSON.stringify(item.content);
                   if (item.isError && resultText.includes('Stream closed')) {

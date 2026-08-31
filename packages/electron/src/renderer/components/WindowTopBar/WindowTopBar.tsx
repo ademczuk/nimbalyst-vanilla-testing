@@ -40,13 +40,34 @@ export interface WindowTopBarPanelControls {
   right?: WindowTopBarPanelControl;
 }
 
+/** One Git command the indicator knows is running right now. */
+export interface WindowTopBarGitActivityEntry {
+  id: string;
+  /** Redacted, display-ready command text. */
+  command: string;
+  source: 'nimbalyst' | 'agent';
+  sessionId?: string;
+}
+
+export interface WindowTopBarGitActivity {
+  running: WindowTopBarGitActivityEntry[];
+  latest: WindowTopBarGitActivityEntry | null;
+}
+
 export interface WindowTopBarGitActions {
   onPull: () => void;
   onPush: () => void;
   onOpenLog: () => void;
+  /** Open the Git Log panel on its Output tab. Falls back to `onOpenLog`. */
+  onOpenActivity?: () => void;
   onOpenExtensionSettings?: () => void;
   gitLogAvailable?: boolean;
   busyAction?: 'pull' | 'push' | null;
+  /**
+   * Foreground Git activity projected from the main-process journal, covering
+   * commands this window did not start (Git panel, agent sessions).
+   */
+  activity?: WindowTopBarGitActivity;
   feedback?: {
     kind: 'success' | 'error';
     message: string;
@@ -70,6 +91,12 @@ export interface WindowTopBarProps {
 const GIT_FEEDBACK_MAX_LINES = 6;
 const GIT_FEEDBACK_MAX_CHARS = 300;
 const GIT_FEEDBACK_TOOLTIP_MAX_CHARS = 2000;
+/**
+ * The title bar shares one row with the workspace name and the panel controls,
+ * so an agent's chained shell command has to be cut short here. The untruncated
+ * (still redacted) text stays in the tooltip and the Output tab.
+ */
+const GIT_ACTIVITY_LABEL_MAX_CHARS = 28;
 
 const FOCUS_RING =
   'focus-visible:[outline:2px_solid_var(--nim-border-focus)] focus-visible:[outline-offset:-2px]';
@@ -107,6 +134,34 @@ export function clampGitFeedbackMessage(
     truncated = true;
   }
   return truncated ? `${clamped}…` : clamped;
+}
+
+/** Collapse a command to one clipped line; multi-line shell text renders as one. */
+export function clampGitActivityCommand(
+  command: string,
+  maxChars = GIT_ACTIVITY_LABEL_MAX_CHARS,
+): string {
+  const single = command.trim().replace(/\s+/g, ' ');
+  return single.length > maxChars ? `${single.slice(0, maxChars).trimEnd()}…` : single;
+}
+
+/**
+ * Full-length description for the tooltip and menu row. Attribution comes first
+ * because "who started this" is the question the menu bar cannot otherwise
+ * answer -- a `git fetch` an agent launched looks identical to one the user did.
+ */
+export function describeGitActivityEntry(entry: WindowTopBarGitActivityEntry): string {
+  const prefix = entry.source === 'agent' ? 'Agent session' : 'Nimbalyst';
+  return `${prefix}: ${entry.command.trim().replace(/\s+/g, ' ')}`;
+}
+
+/** The tooltip line for the indicator: the newest command plus how many others. */
+export function describeGitActivity(activity: WindowTopBarGitActivity | undefined): string | null {
+  const latest = activity?.latest;
+  if (!latest) return null;
+  const others = Math.max(0, (activity?.running.length ?? 0) - 1);
+  const suffix = others > 0 ? ` (+${others} more running)` : '';
+  return `${describeGitActivityEntry(latest)}${suffix}`;
 }
 
 function PanelButton({
@@ -235,15 +290,22 @@ function GitStatusMenu({
   actions: WindowTopBarGitActions;
 }) {
   const menu = useFloatingMenu({ placement: 'bottom-end' });
+  const activityDescription = describeGitActivity(actions.activity);
   const branchTitle = gitStatus
     ? [
         gitStatus.branch,
         gitStatus.hasUncommitted ? 'Modified' : null,
         gitStatus.ahead > 0 ? `${gitStatus.ahead} ahead` : null,
         gitStatus.behind > 0 ? `${gitStatus.behind} behind` : null,
+        activityDescription,
       ].filter(Boolean).join(' · ')
     : 'Git unavailable';
+  // Only this window's own pull/push blocks the menu's actions. Observing an
+  // agent's `git status` must not lock the user out of their own Git commands.
   const busy = actions.busyAction != null;
+  const runningActivity = actions.activity?.running ?? [];
+  const latestActivity = actions.activity?.latest ?? null;
+  const additionalRunning = Math.max(0, runningActivity.length - 1);
 
   return (
     <>
@@ -297,6 +359,29 @@ function GitStatusMenu({
             Git unavailable
           </span>
         )}
+        {/* Additive: branch and counts above stay put so the indicator does not
+            reflow every time a background-ish command starts and stops. */}
+        {latestActivity && (
+          <span
+            className="window-top-bar__git-activity inline-flex items-center gap-1 min-w-0 text-nim-muted"
+            data-testid="window-top-bar-git-activity"
+            data-source={latestActivity.source}
+            role="status"
+          >
+            <MaterialSymbol icon="progress_activity" size={13} className="animate-spin" />
+            <span className={`window-top-bar__git-activity-command min-w-0 overflow-hidden text-ellipsis ${GIT_DETAIL}`}>
+              {clampGitActivityCommand(latestActivity.command)}
+            </span>
+            {additionalRunning > 0 && (
+              <span
+                className={`window-top-bar__git-activity-more text-nim-faint ${GIT_DETAIL}`}
+                data-testid="window-top-bar-git-activity-more"
+              >
+                +{additionalRunning}
+              </span>
+            )}
+          </span>
+        )}
         <MaterialSymbol icon="arrow_drop_down" size={16} />
       </button>
       {menu.isOpen && (
@@ -308,6 +393,32 @@ function GitStatusMenu({
             className={`window-top-bar__menu window-top-bar__git-menu min-w-[210px] max-w-[min(420px,calc(100vw-24px))] ${MENU_SURFACE} ${NO_DRAG_REGION}`}
             data-testid="window-top-bar-git-menu"
           >
+            {runningActivity.length > 0 && (
+              <>
+                {runningActivity.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    role="menuitem"
+                    className={`window-top-bar__menu-item window-top-bar__git-activity-item ${MENU_ITEM}`}
+                    data-testid="window-top-bar-git-activity-item"
+                    data-source={entry.source}
+                    disabled={actions.gitLogAvailable === false}
+                    title={describeGitActivityEntry(entry)}
+                    onClick={() => {
+                      (actions.onOpenActivity ?? actions.onOpenLog)();
+                      menu.setIsOpen(false);
+                    }}
+                  >
+                    <MaterialSymbol icon="progress_activity" size={17} className="animate-spin" />
+                    <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                      {describeGitActivityEntry(entry)}
+                    </span>
+                  </button>
+                ))}
+                <div className="window-top-bar__menu-separator h-px my-1 mx-0.5 bg-[var(--nim-border)]" />
+              </>
+            )}
             <button
               type="button"
               role="menuitem"

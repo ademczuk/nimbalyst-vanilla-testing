@@ -24,6 +24,7 @@ import {
   ProtocolEvent,
   ToolResult,
 } from './ProtocolInterface';
+import { scrubProviderApiKeys } from '../providerApiKeyScrub';
 
 interface ACPRequest {
   jsonrpc: '2.0';
@@ -93,9 +94,13 @@ export class CopilotACPProtocol implements AgentProtocol {
       return this.process;
     }
 
+    // The `?? process.env` fallback (taken whenever the provider could not
+    // build an environment) hands the child the user's shell verbatim, so the
+    // scrub has to happen here, on the map actually passed to spawn, rather
+    // than upstream where it only covers the authoritative branch.
     const proc = spawn(this.command, this.baseArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: this.processEnv ?? process.env,
+      env: scrubProviderApiKeys({ ...(this.processEnv ?? process.env) }),
     });
 
     this.process = proc;

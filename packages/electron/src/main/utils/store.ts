@@ -5,6 +5,7 @@ import * as path from 'path';
 import { RecentItem, SessionState, SessionWindow } from '../types';
 import { logger } from './logger';
 import { type EffortLevel, type ThinkingMode, parseEffortLevel, parseThinkingMode } from '@nimbalyst/runtime/ai/server/effortLevels';
+import type { FleetStatusStyle, IslandDisplayPreference } from '../../shared/menuBarIsland';
 import type { OnboardingConfig } from '../../shared/types/workspace';
 import { DEFAULT_ONBOARDING_CONFIG } from '../../shared/types/workspace';
 import { AlphaFeatureTag, getDefaultAlphaFeatures, ALPHA_FEATURES } from '../../shared/alphaFeatures';
@@ -80,6 +81,9 @@ export const DEFAULT_DATABASE_MAINTENANCE: DatabaseMaintenanceSettings = {
   // default. See the rollout in the storage plan.
   toolOutputRetentionDays: 0,
 };
+
+/** How the macOS menu bar fleet strip is drawn. See `getTrayStripStyle`. */
+export type TrayStripStyle = FleetStatusStyle;
 
 interface AppStoreSchema {
   theme: AppTheme;
@@ -276,6 +280,11 @@ interface AppStoreSchema {
   // A wide item is a real risk of overflowing under the notch on a laptop, so
   // it can be turned off without losing the tray icon and its panel.
   showTrayStrip?: boolean;
+  trayStripStyle?: TrayStripStyle;
+  // Which display the user dragged the menu bar island onto. Absent means the
+  // primary display, which is also the fallback when this names a monitor that
+  // is no longer connected.
+  islandDisplay?: IslandDisplayPreference;
   // Advanced: V8 heap memory limit in MB (default: 4096 = 4GB)
   // Increase if you experience OOM crashes with large sessions
   maxHeapSizeMB?: number;
@@ -1705,6 +1714,47 @@ export function isShowTrayStrip(): boolean {
 
 export function setShowTrayStrip(show: boolean): void {
   getAppStore().set('showTrayStrip', show);
+}
+
+/**
+ * How the fleet strip is drawn.
+ *
+ * `image` is the bitmap composited onto the tray item; `island` is a live
+ * window drawn in the menu bar row that expands into the session rows on hover.
+ * Both render the same `StripView`, and they are mutually exclusive -- island
+ * mode removes the tray item rather than sitting beside it.
+ *
+ * The default is the island on macOS and `image` everywhere else, where there
+ * is no menu bar row to draw into. Read as an unset-vs-set check rather than a
+ * defaulted `get`, because the platform decides the default and an existing
+ * install that never chose a style should move with it.
+ */
+export function getTrayStripStyle(): TrayStripStyle {
+  const stored = getAppStore().get('trayStripStyle');
+  if (stored === 'island' || stored === 'image') return stored;
+  return process.platform === 'darwin' ? 'island' : 'image';
+}
+
+export function setTrayStripStyle(style: TrayStripStyle): void {
+  getAppStore().set('trayStripStyle', style);
+}
+
+/**
+ * The display the user dragged the island onto, if any.
+ *
+ * Null rather than a default display because "no preference" and "the primary
+ * display" are different states: the first follows the primary as the user
+ * rearranges their monitors, the second would pin the island to whatever
+ * happened to be primary the day it was saved.
+ */
+export function getIslandDisplay(): IslandDisplayPreference | null {
+  const stored = getAppStore().get('islandDisplay');
+  if (!stored || typeof stored.id !== 'number') return null;
+  return { id: stored.id, label: typeof stored.label === 'string' ? stored.label : '' };
+}
+
+export function setIslandDisplay(preference: IslandDisplayPreference): void {
+  getAppStore().set('islandDisplay', preference);
 }
 
 // Completion Sound Settings

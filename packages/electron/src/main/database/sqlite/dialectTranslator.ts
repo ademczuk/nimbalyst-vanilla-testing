@@ -244,11 +244,33 @@ function rewriteJsonbSet(sql: string): string {
       continue;
     }
     const path = '$' + pathMatch[1].split(',').map((p) => '.' + p.trim()).join('');
-    const replacement = `json_set(${colExpr.trim()}, '${path}', ${valueExpr.trim()})`;
+    const replacement = `json_set(${colExpr.trim()}, '${path}', ${asJsonValue(valueExpr.trim())})`;
     out = out.slice(0, m.index) + replacement + out.slice(closeParenIdx + 1);
   }
   // Restore any "keep" sentinels we used to step past non-literal-path calls.
   return out.replace(/__JSONB_SET_KEEP__/g, 'jsonb_set');
+}
+
+/** A bare SQL string literal: `'...'`, with `''` as the embedded quote. */
+const SQL_STRING_LITERAL_RE = /^'(?:[^']|'')*'$/;
+
+/**
+ * Coerce a `jsonb_set` value argument to the semantics Postgres gives it.
+ *
+ * In Postgres the third argument is typed `jsonb`, so a literal like
+ * `'"reviewed"'` is *parsed as JSON* and stores the string `reviewed`. SQLite's
+ * `json_set` takes a plain SQL value and stores it verbatim, so the same
+ * literal lands as the 10-character string `"reviewed"` — quotes and all. That
+ * divergence silently corrupted 2,613 `document_history.metadata.status`
+ * values into `"\"reviewed\""`, a state no reader recognizes (#1403).
+ *
+ * Wrapping the literal in `json()` restores the Postgres reading: SQLite tracks
+ * the JSON subtype of a `json()` result and `json_set` then treats it as JSON
+ * rather than text. Non-literals are left alone — a bound parameter (what
+ * `to_jsonb($1::text)` reduces to) is a scalar and must stay one.
+ */
+function asJsonValue(valueExpr: string): string {
+  return SQL_STRING_LITERAL_RE.test(valueExpr) ? `json(${valueExpr})` : valueExpr;
 }
 
 /**

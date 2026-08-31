@@ -122,6 +122,16 @@ The renderer resolves both from the main process rather than re-deriving them fr
 | `tip_all_tips_opened` | `InlineTipDisplay.tsx:143`<br/>`FilesEmptyTipDisplay.tsx` | User opens the All Tips dialog from an inline tip card | `from_tip_id`<br/>`surface` (inline_empty_transcript / files_empty) | v0.56.8 (2026-03-23) | (pending release as of 6ddf1d7): Added files_empty surface |
 | `tip_navigated` | `FilesEmptyTipDisplay.tsx` | User clicks "Next tip" on the Files empty-state tip card | `from_tip_id`<br/>`to_tip_id`<br/>`direction` (next)<br/>`reason` (next_button)<br/>`surface` (files_empty) | (pending release as of 6ddf1d7) |  |
 
+### Tracker Quick Create
+
+The three outcomes are instrumented together so the duplicate thresholds can be tuned from evidence: how often the strip appears, how often it is acted on, and how often an item is created anyway with suggestions on screen (`duplicatesShown > 0`).
+
+| Event Name | File(s) | Trigger | Properties | First Added (Public) | Significant Changes |
+| --- | --- | --- | --- | --- | --- |
+| `tracker_quick_create_duplicates_shown` | `TrackerQuickCreatePopup.tsx` | The duplicate strip surfaces at least one match during a quick-create run (once per run) | `matchCount`<br/>`semanticAvailable` (whether the memory engine contributed) | (pending release) |  |
+| `tracker_quick_create_duplicate_opened` | `TrackerQuickCreatePopup.tsx` | User opens a suggested existing item instead of creating a new one | `matchCount` | (pending release) |  |
+| `tracker_quick_create_item_created` | `TrackerQuickCreatePopup.tsx` | User creates a tracker item from the quick-create popup | `trackerType`<br/>`sharing` (personal/team)<br/>`duplicatesShown` (matches on screen at create time)<br/>`closedAfterCreate` (Cmd+Enter vs Enter) | (pending release) |  |
+
 ### Session Kanban Board
 
 | Event Name | File(s) | Trigger | Properties | First Added (Public) | Significant Changes |

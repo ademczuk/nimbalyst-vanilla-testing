@@ -32,7 +32,7 @@ import {
 } from '../protocols/collabAssetProtocol';
 import { uploadCollabAsset } from '../services/CollabAssetUploader';
 import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
-import { MAX_COLLAB_ASSET_BYTES } from '../../shared/collabAssetFormat';
+import { MAX_COLLAB_ASSET_BYTES } from '@nimbalyst/runtime/sync/collabAssetFormat';
 import {
   scanMarkdownImageRefs,
   resolveAssetRef,

@@ -1,19 +1,26 @@
 /**
  * Grok Build agent provider (xAI).
  *
- * Runs `grok -p <prompt> --output-format streaming-json` per turn. See
- * `GrokBuildProtocol` for why this transport was chosen over `grok agent
- * stdio` (ACP).
+ * Runs `grok agent stdio` as a long-lived ACP v1 connection. Unlike the old
+ * one-shot `grok -p` transport, ACP keeps stdin open for permissions, native
+ * questions, and MCP delivery while preserving Grok's exact diff blocks.
  *
  * File tracking is `'tool-args'`, not `'structured'`: Grok reports rich diff
  * blocks for edits but has no delete or move tool, so the filesystem watcher
  * stays on to catch removals. `providerFileTracking.ts` is the declaration.
  */
 
-import { GrokBuildProtocol } from '../protocols/GrokBuildProtocol';
+import {
+  GrokACPProtocol,
+  type GrokACPPermissionDecision,
+  type GrokACPPermissionRequest,
+  type GrokAskUserQuestionHandler,
+} from '../protocols/GrokACPProtocol';
 import { DEFAULT_MODELS } from '../../modelConstants';
 import type { AIModel, AIProviderType } from '../types';
 import type { MCPServerConfig } from '../../../types/MCPServerConfig';
+import { generateToolPattern } from '../permissions/toolPermissionHelpers';
+import { handleToolPermissionFallback } from './claudeCode/toolAuthorization';
 import {
   HeadlessCliAgentProvider,
   type HeadlessCliAgentDescriptor,
@@ -23,7 +30,7 @@ import {
 const DESCRIPTOR: HeadlessCliAgentDescriptor = {
   providerName: 'grok-build' as AIProviderType,
   displayName: 'Grok Build',
-  description: 'xAI Grok Build CLI agent, driven headlessly over streaming JSON',
+  description: 'xAI Grok Build CLI agent over the Agent Client Protocol',
   executableName: 'grok',
   // The installer writes the real binary to `~/.grok/bin` and symlinks
   // `~/.local/bin`. It also symlinks `~/.local/bin/agent`, which the Cursor
@@ -35,26 +42,28 @@ const DESCRIPTOR: HeadlessCliAgentDescriptor = {
     + 'Then run `grok login` to authenticate.',
   notLoggedInMessage:
     'Grok is not signed in. Run `grok login` in your terminal, then try again.',
-  permissionModeMessage:
-    'Grok Build requires "Allow Edits" permission mode. Its headless mode cannot '
-    + 'pause a turn for a per-tool approval, so the whole turn is gated up front. '
-    + 'Change the permission mode in workspace settings.',
+  permissionModeMessage: 'Grok Build permission request could not be delivered.',
+  supportsToolPermissions: true,
 };
 
 export class GrokBuildProvider extends HeadlessCliAgentProvider {
   static readonly DEFAULT_MODEL = DEFAULT_MODELS['grok-build'];
 
   protected readonly descriptor = DESCRIPTOR;
-  protected readonly protocol: GrokBuildProtocol;
+  protected readonly protocol: GrokACPProtocol;
 
   private static mcpConfigLoader: ((workspacePath?: string) => Promise<Record<string, MCPServerConfig>>) | null = null;
   private static shellEnvironmentLoader: (() => Record<string, string> | null) | null = null;
   private static enhancedPathLoader: (() => string) | null = null;
   private static grokPathLoader: (() => string | null) | null = null;
+  private static askUserQuestionHandler: GrokAskUserQuestionHandler | null = null;
 
-  constructor(deps?: { protocol?: GrokBuildProtocol }) {
+  constructor(deps?: { protocol?: GrokACPProtocol }) {
     super(GrokBuildProvider.loaders());
-    this.protocol = deps?.protocol ?? new GrokBuildProtocol();
+    this.protocol = deps?.protocol ?? new GrokACPProtocol({
+      onPermissionRequest: (request) => this.handleProtocolPermissionRequest(request),
+      onAskUserQuestion: GrokBuildProvider.askUserQuestionHandler ?? undefined,
+    });
   }
 
   private static loaders(): HeadlessCliEnvironmentLoaders {
@@ -73,6 +82,7 @@ export class GrokBuildProvider extends HeadlessCliAgentProvider {
   protected configureProtocol(executablePath: string, env: Record<string, string> | null): void {
     this.protocol.setGrokPath(executablePath);
     this.protocol.setProcessEnv(env);
+    this.protocol.setAskUserQuestionHandler(GrokBuildProvider.askUserQuestionHandler);
   }
 
   protected getDefaultModelId(): string {
@@ -95,6 +105,63 @@ export class GrokBuildProvider extends HeadlessCliAgentProvider {
 
   static setGrokPathLoader(loader: (() => string | null) | null): void {
     GrokBuildProvider.grokPathLoader = loader;
+  }
+
+  static setAskUserQuestionHandler(handler: GrokAskUserQuestionHandler | null): void {
+    GrokBuildProvider.askUserQuestionHandler = handler;
+  }
+
+  private async handleProtocolPermissionRequest(
+    request: GrokACPPermissionRequest,
+  ): Promise<GrokACPPermissionDecision> {
+    const permissionsPath = request.permissionsPath || request.workspacePath;
+    const trust = GrokBuildProvider.trustChecker?.(permissionsPath);
+    if (!trust) return { decision: 'allow' as const, scope: 'once' as const };
+    if (!trust.trusted) return { decision: 'deny' as const, scope: 'once' as const };
+    if (trust.mode === 'bypass-all') {
+      return { decision: 'allow' as const, scope: 'once' as const };
+    }
+    if (
+      trust.mode === 'allow-all'
+      && ['Edit', 'Write', 'Read', 'Glob', 'Grep', 'LS', 'NotebookEdit'].includes(request.toolName)
+    ) {
+      return { decision: 'allow' as const, scope: 'once' as const };
+    }
+
+    const input = request.toolInput ?? {};
+    const pattern = generateToolPattern(request.toolName, input);
+    if (
+      GrokBuildProvider.permissionPatternChecker
+      && await GrokBuildProvider.permissionPatternChecker(permissionsPath, pattern)
+    ) {
+      this.permissions.sessionApprovedPatterns.add(pattern);
+      return { decision: 'allow' as const, scope: 'always' as const };
+    }
+
+    const authorization = await handleToolPermissionFallback(
+      {
+        permissions: this.permissions,
+        logSecurity: (message, data) => this.logSecurity(message, data),
+        logAgentMessage: (sessionId, content) =>
+          this.logAgentMessage(sessionId, this.getProviderName(), 'output', content),
+        emit: (event, payload) => this.emit(event, payload),
+        pollForPermissionResponse: (sessionId, requestId, signal) =>
+          this.pollForPermissionResponse(sessionId, requestId, signal),
+        savePattern: GrokBuildProvider.permissionPatternSaver ?? undefined,
+        logError: (message, error) => console.error(message, error),
+      },
+      {
+        toolName: request.toolName,
+        input,
+        options: { signal: request.signal, toolUseID: request.requestId },
+        sessionId: request.nimbalystSessionId,
+        workspacePath: permissionsPath,
+      },
+    );
+    return {
+      decision: authorization.behavior === 'allow' ? 'allow' as const : 'deny' as const,
+      scope: 'once' as const,
+    };
   }
 
   /**

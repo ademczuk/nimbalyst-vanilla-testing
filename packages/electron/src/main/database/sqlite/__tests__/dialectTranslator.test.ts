@@ -118,12 +118,15 @@ describe('translateSql - to_jsonb wrappers', () => {
 });
 
 describe('translateSql - jsonb_set with literal paths', () => {
-  it('translates a single-segment path', () => {
+  // A literal value argument is jsonb in Postgres, so it must be parsed as
+  // JSON rather than stored verbatim. Without the json() wrapper SQLite writes
+  // the string `"reviewed"` with its quotes intact (#1403).
+  it('parses a literal value as JSON rather than storing it verbatim', () => {
     const r = translateSql(
       "UPDATE t SET m = jsonb_set(m, '{status}', '\"reviewed\"')",
     );
     expect(r.sql).toBe(
-      "UPDATE t SET m = json_set(m, '$.status', '\"reviewed\"')",
+      "UPDATE t SET m = json_set(m, '$.status', json('\"reviewed\"'))",
     );
   });
 
@@ -132,8 +135,15 @@ describe('translateSql - jsonb_set with literal paths', () => {
       "UPDATE t SET m = jsonb_set(m, '{a,b,c}', '1')",
     );
     expect(r.sql).toBe(
-      "UPDATE t SET m = json_set(m, '$.a.b.c', '1')",
+      "UPDATE t SET m = json_set(m, '$.a.b.c', json('1'))",
     );
+  });
+
+  it('leaves a bound value alone, since to_jsonb($N::text) is a scalar', () => {
+    const r = translateSql(
+      "UPDATE t SET m = jsonb_set(m, '{status}', to_jsonb($1::text))",
+    );
+    expect(r.sql).toBe("UPDATE t SET m = json_set(m, '$.status', $p1)");
   });
 });
 

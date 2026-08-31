@@ -41,6 +41,9 @@ targets:
     dependencies:
       - package: NimbalystNative
         product: NimbalystNative
+      # Embeds the widget extension into PlugIns/. The Live Activity only exists
+      # if this bundle ships inside the app.
+      - target: NimbalystWidgets
     entitlements:
       path: Sources/NimbalystApp.entitlements
       properties:
@@ -91,3 +94,24 @@ targets:
           cp dist-editor/editor.html "${SRCROOT}/Resources/editor-dist/"
           cp -R dist-editor/assets "${SRCROOT}/Resources/editor-dist/"
         basedOnDependencyAnalysis: false
+
+  NimbalystWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - NimbalystWidgets
+      # Target membership, not a package dependency. `NimbalystNative` pulls in
+      # GRDB and PostHog, and a widget extension runs under a memory limit that
+      # has no business paying for a database engine it will never open. Sharing
+      # the files is also what Apple's own samples do for `ActivityAttributes`:
+      # ActivityKit matches an activity to its attributes by the unqualified
+      # type name, so app and extension must compile the same declaration.
+      - path: ../NimbalystNative/Sources/LiveActivity/FleetActivityAttributes.swift
+      - path: ../NimbalystNative/Sources/LiveActivity/FleetActivityFormatting.swift
+      - path: ../NimbalystNative/Sources/Utils/NimbalystColors.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nimbalyst.app.widgets
+        INFOPLIST_FILE: NimbalystWidgets/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: YES

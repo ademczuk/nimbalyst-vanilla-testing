@@ -14,6 +14,13 @@
  *
  * Keep in lockstep with `packages/collabv3/src/documentAssetFormat.ts` in the
  * collab server repo.
+ *
+ * Lives in runtime because both clients read these headers off the same
+ * response: the desktop's `collab-asset://` protocol handler in main, and the
+ * browser bundle's image resolver. The body arrives as
+ * `Content-Type: application/octet-stream`, so the real type is only available
+ * from `X-Collab-Asset-Mime-Type` -- a reader that ignores it cannot render
+ * what it fetched.
  */
 
 /** The only body encoding this client sends or accepts. */

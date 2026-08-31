@@ -10,19 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
-- The macOS menu bar shows your session fleet at a glance, and names a session for a few seconds whenever it starts, finishes, blocks or fails.
+- The macOS menu bar shows your session fleet at a glance: it names a session for a few seconds as it starts, finishes, blocks or fails, flags one that has stopped responding, and quiets to a single mark when nothing is running. It takes the place of the menu bar icon rather than sitting beside it, and a row along the bottom of the panel switches back to the plain icon, hides the fleet status, or turns system notifications off if the two feel duplicative. Drag it onto whichever display's menu bar you want, where it sits clear of a MacBook's camera notch. The same view reaches your iPhone as a Live Activity on the Lock Screen and in the Dynamic Island, with the sessions waiting on you ranked by how long they have been waiting; tap one to open it. The phone card stands down while you are sitting at the Mac, so you never see the same counts twice.
+- Quick Track (Cmd+Shift+I) files a tracker item of any type from anywhere in the app without leaving what you were on: type a few letters to pick the type, fill the fields from the keyboard, then Enter to file another or Cmd+Enter to open the one you just made, with similar existing items offered before you add a duplicate.
 - Animations can show a spinning indicator for a running or loading state.
+- The title bar names the Git command running right now, whether you started it, the Git panel did or an agent session did, and the Git panel's Output tab marks the ones an agent ran.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Grok Build sessions can answer questions and approve tool use while they run, reach your Nimbalyst tools, and use the model you picked.
 - An animation plays inline in the agent transcript when an agent creates or edits it, as a click-to-activate stage rather than a plain file row.
 - In the tracker table the Key cell is the open button: click it for the detail pane, or its expand icon to open the document. Clicking any other cell just selects it, and double-click always means edit.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Sessions that were already unread when Nimbalyst started now appear in the menu bar again, up to the 25 most recent.
+- Files whose AI edits have already been committed no longer open with a leftover change count and review dot.
+- Images in a shared document now render in the web console instead of showing a broken-image placeholder.
+- Sending a message to Grok Build, Cursor Agent or Gemini no longer fails with "Unknown provider".
+- Grok Build and Cursor Agent report the tokens a session actually consumed, including cached input, instead of a fraction of it.
 - The session model picker loads ahead of opening and uses cached results instead of blocking on provider discovery.
 - Typing in a dialog while the tracker table is open no longer edits the selected cell.
 - A tracker item's body is no longer cleared when the item's metadata syncs with your team.
+- A tracker item can no longer drift onto an issue key that belongs to a different item.
+- An API key left in your shell environment is no longer handed to the Codex or Copilot coding agents; only a key you configured in Nimbalyst settings is used.
 
 ### Removed
 <!-- Removed features go here -->

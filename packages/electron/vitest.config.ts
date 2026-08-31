@@ -29,6 +29,7 @@ export default defineConfig({
       // Use array form so we can match @nimbalyst/runtime/<deep-path> with a regex.
       { find: /^@nimbalyst\/runtime$/, replacement: path.resolve(__dirname, '../runtime/src/index.ts') },
       { find: /^@nimbalyst\/runtime\/(.+)$/, replacement: path.resolve(__dirname, '../runtime/src') + '/$1' },
+      { find: /^@nimbalyst\/extension-sdk\/git-operation-log$/, replacement: path.resolve(__dirname, '../extension-sdk/src/gitOperationLog.ts') },
       { find: '@', replacement: path.resolve(__dirname, './src') },
       // Monaco's ESM entry imports raw `.css`, which Node's externalized-dep
       // loader rejects ("Unknown file extension .css"). No electron unit test

@@ -4,6 +4,10 @@ import {
   useDismiss, useInteractions, autoUpdate,
 } from '@floating-ui/react';
 import type { PanelHostProps } from '@nimbalyst/extension-sdk';
+import {
+  GIT_SHOW_OUTPUT_REQUEST_EVENT,
+  type GitShowOutputRequestDetail,
+} from '@nimbalyst/extension-sdk/git-operation-log';
 import { CommitHoverCard } from './CommitHoverCard';
 import { CommitContextMenu } from './CommitContextMenu';
 import { CommitDetailContent, type CommitDetail } from './CommitDetailContent';
@@ -30,6 +34,17 @@ interface GitStatusResult {
   ahead: number;
   behind: number;
   hasUncommitted: boolean;
+}
+
+/**
+ * `git:status-changed` payload. The index and ref watchers send `workspacePath`
+ * alone; main adds a computed snapshot and a monotonic revision when it
+ * refreshes after a Git operation settles.
+ */
+interface GitStatusChangedPayload {
+  workspacePath: string;
+  revision?: number;
+  status?: GitStatusResult;
 }
 
 interface GitBranchResult {
@@ -319,17 +334,31 @@ export function GitLogPanel({ host }: PanelHostProps) {
     }
   }, [workspacePath]);
 
+  // Ordering guards for the status snapshot. `generation` stops an older
+  // `git:status` response from overwriting a newer one; `appliedRevision` does
+  // the same for revisioned snapshots main pushes after an operation settles.
+  const statusGenerationRef = useRef(0);
+  const appliedStatusGenerationRef = useRef(0);
+  const appliedStatusRevisionRef = useRef(-1);
+
+  const applyStatus = useCallback((result: GitStatusResult) => {
+    setStatus(result);
+    if (result.branch) {
+      setSelectedBranch(current => current || result.branch);
+    }
+  }, []);
+
   const loadStatus = useCallback(async () => {
+    const requested = ++statusGenerationRef.current;
     try {
       const result = await ipc.invoke('git:status', workspacePath) as GitStatusResult;
-      setStatus(result);
-      if (result.branch) {
-        setSelectedBranch(current => current || result.branch);
-      }
+      if (requested < appliedStatusGenerationRef.current) return;
+      appliedStatusGenerationRef.current = requested;
+      applyStatus(result);
     } catch {
       // Non-fatal
     }
-  }, [workspacePath]);
+  }, [applyStatus, workspacePath]);
 
   const loadCommits = useCallback(async () => {
     setLoading(true);
@@ -363,12 +392,41 @@ export function GitLogPanel({ host }: PanelHostProps) {
   // Auto-refresh when git HEAD changes (commits, checkouts, merges, etc.)
   // Uses PanelHost.onWorkspaceEvent which filters to the current workspace centrally.
   useEffect(() => {
-    return host.onWorkspaceEvent('git:status-changed', () => {
-      loadStatus();
+    return host.onWorkspaceEvent('git:status-changed', (data) => {
+      const payload = data as GitStatusChangedPayload | undefined;
+      // Main already computed the snapshot when it stamped a revision; taking it
+      // directly is what keeps this panel and the menu-bar indicator settling on
+      // the same counts instead of racing two independent reads.
+      if (payload?.status) {
+        if (
+          payload.revision === undefined
+          || payload.revision > appliedStatusRevisionRef.current
+        ) {
+          if (payload.revision !== undefined) {
+            appliedStatusRevisionRef.current = payload.revision;
+          }
+          appliedStatusGenerationRef.current = ++statusGenerationRef.current;
+          applyStatus(payload.status);
+        }
+      } else {
+        loadStatus();
+      }
       loadBranches();
       loadCommits();
     });
-  }, [host, loadStatus, loadBranches, loadCommits]);
+  }, [host, applyStatus, loadStatus, loadBranches, loadCommits]);
+
+  // The menu-bar Git indicator can ask to show running-command detail. It has no
+  // handle on this panel's tab state, so it states the intent and we honour it.
+  useEffect(() => {
+    const handleShowOutput = (event: Event) => {
+      const detail = (event as CustomEvent<GitShowOutputRequestDetail>).detail;
+      if (detail?.workspacePath && detail.workspacePath !== workspacePath) return;
+      setActiveTab('output');
+    };
+    window.addEventListener(GIT_SHOW_OUTPUT_REQUEST_EVENT, handleShowOutput);
+    return () => window.removeEventListener(GIT_SHOW_OUTPUT_REQUEST_EVENT, handleShowOutput);
+  }, [setActiveTab, workspacePath]);
 
   // Drag-to-resize handle
   const handleResizeStart = useCallback((e: React.MouseEvent) => {

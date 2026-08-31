@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest';
 import fs from 'fs';
 import os from 'os';
@@ -7,6 +9,13 @@ import { CodexACPProtocol, appendBoundedTail } from '../CodexACPProtocol';
 
 function fixturePath(): string {
   return fileURLToPath(new URL('./fixtures/mockCodexAcpAgent.mjs', import.meta.url));
+}
+
+function auditRows(auditPath: string): Array<{ method: string; params: Record<string, string | null> }> {
+  return fs.readFileSync(auditPath, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
 }
 
 describe('CodexACPProtocol', () => {
@@ -79,6 +88,61 @@ describe('CodexACPProtocol', () => {
       expect(fs.existsSync(path.join(workspacePath, 'acp-target.txt'))).toBe(false);
     } finally {
       protocol.destroy();
+      fs.rmSync(workspacePath, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('delivers the configured OPENAI_API_KEY and no other key the shell happens to hold', async () => {
+    const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-acp-env-'));
+    const configuredAudit = path.join(workspacePath, 'configured.ndjson');
+    const unconfiguredAudit = path.join(workspacePath, 'unconfigured.ndjson');
+    const saved = { openai: process.env.OPENAI_API_KEY, anthropic: process.env.ANTHROPIC_API_KEY };
+    // The exact CLAUDE.md incident: unrelated keys sitting in the user's shell.
+    // They must never authenticate or bill the Codex child.
+    process.env.OPENAI_API_KEY = 'sentinel-from-user-shell';
+    process.env.ANTHROPIC_API_KEY = 'sentinel-from-user-shell';
+
+    const withKey = new CodexACPProtocol('configured-key', {
+      command: process.execPath,
+      args: [fixturePath()],
+      env: {
+        CODEX_ACP_TEST_AUDIT_PATH: configuredAudit,
+        CODEX_ACP_TEST_PASSTHROUGH: 'delivered',
+        // Scrubbing must be the LAST step, so even a key handed in explicitly
+        // is dropped rather than merged back over a sanitized map.
+        XAI_API_KEY: 'sentinel-from-extra-env',
+      },
+    });
+    const withoutKey = new CodexACPProtocol('', {
+      command: process.execPath,
+      args: [fixturePath()],
+      env: { CODEX_ACP_TEST_AUDIT_PATH: unconfiguredAudit },
+    });
+
+    try {
+      await withKey.createSession({ workspacePath });
+      await withoutKey.createSession({ workspacePath });
+
+      // Observed inside the child, not in what the protocol assembled: the bug
+      // was the spawn site merging process.env back over the sanitized map, and
+      // a test on that map passes while the shell key still ships.
+      expect(auditRows(configuredAudit).find((row) => row.method === 'process:env')?.params).toEqual({
+        // The key the user configured in Nimbalyst settings -- not the shell's.
+        OPENAI_API_KEY: 'configured-key',
+        ANTHROPIC_API_KEY: null,
+        XAI_API_KEY: null,
+        CODEX_ACP_TEST_PASSTHROUGH: 'delivered',
+      });
+      // No configured key means no key at all; the shell's does not stand in.
+      expect(auditRows(unconfiguredAudit).find((row) => row.method === 'process:env')?.params)
+        .toMatchObject({ OPENAI_API_KEY: null, ANTHROPIC_API_KEY: null });
+    } finally {
+      withKey.destroy();
+      withoutKey.destroy();
+      process.env.OPENAI_API_KEY = saved.openai;
+      process.env.ANTHROPIC_API_KEY = saved.anthropic;
+      if (saved.openai === undefined) delete process.env.OPENAI_API_KEY;
+      if (saved.anthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
       fs.rmSync(workspacePath, { recursive: true, force: true });
     }
   }, 15000);

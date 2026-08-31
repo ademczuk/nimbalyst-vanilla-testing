@@ -35,6 +35,8 @@ import type { Database as SqliteDatabase } from 'better-sqlite3';
 import { tombstoneRawContent } from '@nimbalyst/runtime/storage/toolOutputRetention';
 import {
   classifyPrunableRawMessage,
+  readCodexDeltaItemId,
+  PRUNE_REASON_SUPERSESSION_PROOF,
   type PruneReason,
 } from '@nimbalyst/runtime/storage/rawMessagePrune';
 
@@ -441,6 +443,22 @@ export function createToolOutputRetentionWork(
  * parsers themselves -- see that module's header for why a destructive path is
  * allowed to trust it. This file only does row selection, batching and lane
  * discipline, exactly as the tombstone lane does.
+ *
+ * One thing row selection DOES decide, because only it can: whether a delta row
+ * is really superseded. Those reasons' premise is "a later row holds this
+ * content", and a turn the user cancelled -- or one whose CLI died mid-stream --
+ * never wrote that row, leaving the deltas as the only surviving record of the
+ * response. The classifier is pure and per-row and cannot see that; the proofs
+ * below establish it from the row set, and rows they cannot prove are kept.
+ *
+ * Both proofs are SCOPED, and that scoping is the correction that matters. A
+ * session-wide "some later `item.completed` exists" is not a proof: for
+ * completed turn A, cancelled turn B, completed turn C, C's row is later than
+ * B's deltas and vouches for a response nobody ever stored. Codex stamps an
+ * item id on both the delta and its completion, so its proof is per item.
+ * Headless deltas carry no id at all, so their proof is per turn, with turn
+ * boundaries read from the session's input rows -- which this lane can never
+ * delete, since it selects `direction = 'output'` only.
  * ========================================================================== */
 
 /**
@@ -456,6 +474,21 @@ export interface PruneProgress {
   bytesFreed: number;
   /** Per-reason counts, so a run can say what it removed and on what grounds. */
   byReason: Record<PruneReason, number>;
+  /**
+   * Headless delta rows SPARED because their own turn never stored a final
+   * message. Reported rather than silently skipped: this is the whole
+   * cancelled/crashed-turn population, and a run that cannot say how big it was
+   * cannot be checked against the loss it is claiming not to cause.
+   */
+  keptAwaitingTurnFinal: number;
+  /**
+   * Codex delta rows SPARED because no `item/completed` for their item id was
+   * found later in the session -- or because the row named no item id at all.
+   * Counted separately from `keptAwaitingTurnFinal` because it is a different
+   * population proven a different way, and a single number would hide which
+   * proof did the sparing.
+   */
+  keptAwaitingItemCompleted: number;
 }
 
 export interface PruneResult extends PruneProgress {
@@ -482,7 +515,16 @@ export type PruneOptions = Omit<RetentionOptions, 'onProgress'> & {
 };
 
 function emptyByReason(): Record<PruneReason, number> {
-  return { claudeCodeTransient: 0, codexAppServerTransient: 0, codexItemStartedNonRendering: 0 };
+  return {
+    claudeCodeTransient: 0,
+    codexAppServerStatus: 0,
+    codexAgentMessageDelta: 0,
+    codexCommandOutputDelta: 0,
+    codexItemStartedNonRendering: 0,
+    headlessAgentTextDelta: 0,
+    grokAcpTextDelta: 0,
+    grokAvailableCommands: 0,
+  };
 }
 
 /**
@@ -499,7 +541,7 @@ function emptyByReason(): Record<PruneReason, number> {
  */
 function pruneCandidateSql(ignoreAge: boolean): string {
   return `
-  SELECT m.id, m.source, m.content
+  SELECT m.id, m.session_id, m.source, m.content
   FROM ai_agent_messages m
   JOIN ai_sessions s ON s.id = m.session_id
   WHERE m.id > ?
@@ -514,8 +556,139 @@ function pruneCandidateSql(ignoreAge: boolean): string {
 
 interface PruneCandidateRow {
   id: number;
+  session_id: string;
   source: string;
   content: string;
+}
+
+/**
+ * Where each of a session's turns BEGINS.
+ *
+ * Every provider logs the user's prompt as a `direction = 'input'` row before
+ * the turn runs, so the input rows are the session's turn boundaries. That is
+ * the finest turn identity available for a headless delta, which carries no
+ * turn or item id of its own.
+ *
+ * Not filtered by source. A turn started under any provider still ends the
+ * previous one, and admitting them all only ever moves a boundary EARLIER,
+ * which spares more rows. Erring toward more boundaries is the fail-closed
+ * direction.
+ *
+ * These rows are also the one piece of evidence this lane provably cannot
+ * destroy: `pruneCandidateSql` selects `direction = 'output'` only.
+ */
+const TURN_STARTS_SQL = `
+  SELECT m.id AS id
+  FROM ai_agent_messages m
+  WHERE m.session_id = ?
+    AND m.direction = 'input'
+  ORDER BY m.id ASC
+`;
+
+/**
+ * Every turn-final assistant message stored for one (session, source).
+ *
+ * `HeadlessCliAgentProvider.storeAssistantResponse` is the only writer of this
+ * row, and it tags it `metadata.eventType = 'item.completed'` -- a DOT, the
+ * synthesized Codex-shaped envelope, not to be confused with codex's own
+ * `item/completed` method below. Matching the metadata column rather than
+ * sniffing `content` keeps the proof on the field the writer set deliberately,
+ * and keeps it working if the stored envelope is ever reshaped.
+ *
+ * The whole list rather than the newest one: the newest is what let a later
+ * turn's completion vouch for an earlier cancelled turn's deltas. Pairing each
+ * delta with the FIRST completion after it, and requiring that completion to
+ * fall before the next turn boundary, is what makes the proof the delta's own
+ * turn's.
+ *
+ * `source` is matched exactly, not by prefix: both rows come from the same
+ * `getProviderName()` call, so a mixed-provider session can never have one
+ * provider's completion vouch for another provider's deltas.
+ */
+const TURN_FINALS_SQL = `
+  SELECT m.id AS id
+  FROM ai_agent_messages m
+  WHERE m.session_id = ?
+    AND m.source = ?
+    AND m.direction = 'output'
+    AND json_extract(m.metadata, '$.eventType') = 'item.completed'
+  ORDER BY m.id ASC
+`;
+
+/**
+ * Every codex item that reached `item/completed`, with the row id that recorded
+ * it, for one (session, source).
+ *
+ * Codex stamps `params.itemId` on a delta and `params.item.id` on the matching
+ * completion, so this is an exact per-item proof and needs no turn arithmetic.
+ * On the measured install all 161 surviving `item/agentMessage/delta` rows pair
+ * with a completion for their own item, so the guard costs nothing real and
+ * only closes the case where the turn died mid-message.
+ *
+ * `json_extract` over `content` sits in the SELECT list behind a `json_valid`
+ * guard, never in the WHERE clause. SQLite raises on malformed JSON rather than
+ * returning null, and it does not promise to evaluate `AND` terms left to
+ * right, so a `WHERE json_extract(content, ...)` term could hit a row this
+ * filter was meant to exclude and abort the whole pass. Select-list expressions
+ * are only evaluated for rows that already passed WHERE.
+ *
+ * ## What the scoping costs
+ *
+ * Re-measured on the shape the session-wide lookup was measured against:
+ * 230,000 rows, 400 sessions of 500 rows plus one pathological 20,000-row
+ * session, half the rows a 4 KB payload, every session seeded with deltas so
+ * both proofs run for all of them.
+ *
+ *   per session, memoised     old 3.2 us  ->  turn proof 140 us, item proof 102 us
+ *   pathological 20k session  old 4.8 ms  ->  turn proof 4.2 ms, item proof 3.0 ms
+ *   whole run, 400 sessions   old 0.6 ms  ->  90 ms
+ *
+ * The typical session is ~44x dearer because the old query stopped at the first
+ * hit walking the session index backwards and these read the session through.
+ * The pathological session is unchanged-to-cheaper: nothing could short-circuit
+ * there before either. It stays per SESSION and memoised, not per row, and 90 ms
+ * spread across a background pass that walks the whole table is not a cost worth
+ * trading a cancelled turn's only copy for.
+ *
+ * The number to watch is the per-chunk one: `PRUNE_CHUNK_ROWS` delta rows in
+ * 1,000 DISTINCT sessions would be ~240 ms in a single chunk, over the
+ * coordinator's 50 ms warning. Deltas arrive in runs of dozens per session, so a
+ * chunk realistically touches a handful; if that warning ever fires from this
+ * lane, this is why.
+ */
+const ITEM_COMPLETIONS_SQL = `
+  SELECT m.id AS id,
+         CASE WHEN json_valid(m.content)
+              THEN json_extract(m.content, '$.params.item.id') END AS item_id
+  FROM ai_agent_messages m
+  WHERE m.session_id = ?
+    AND m.source = ?
+    AND m.direction = 'output'
+    AND json_extract(m.metadata, '$.eventType') = 'item/completed'
+  ORDER BY m.id ASC
+`;
+
+/**
+ * Distinct (session, source) pairs whose proof lists are held at once.
+ *
+ * Each entry is a handful of integer arrays or a small id map, but the run
+ * walks the whole table and would otherwise accumulate one per session for
+ * thousands of sessions. Candidates arrive in `id` order and a session's rows
+ * are largely contiguous, so dropping the whole cache on overflow costs at most
+ * a re-query for a session that interleaves with many others.
+ */
+const MAX_CACHED_SESSION_PROOFS = 64;
+
+/** Index of the first entry strictly greater than `value` in an ascending list. */
+function upperBound(sorted: number[], value: number): number {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] > value) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
 }
 
 /**
@@ -541,10 +714,133 @@ export function createRawMessagePruneWork(
   const ageArgs = ignoreAge ? [] : [cutoff];
 
   const progress: PruneProgress = {
-    scanned: 0, deleted: 0, bytesFreed: 0, byReason: emptyByReason(),
+    scanned: 0,
+    deleted: 0,
+    bytesFreed: 0,
+    byReason: emptyByReason(),
+    keptAwaitingTurnFinal: 0,
+    keptAwaitingItemCompleted: 0,
   };
   let lastId = 0;
   let announced = false;
+
+  /**
+   * Proof lists per (session, source), memoised for the run. One pair of
+   * lookups per distinct session rather than one per row: `PRUNE_CHUNK_ROWS` is
+   * 1,000 and a single session contributes hundreds of delta rows, so the
+   * unmemoised form would be an N+1 over the widest table in the database.
+   *
+   * Safe to cache: neither an `item.completed` row, an `item/completed` row nor
+   * an input row is ever prunable -- the classifier returns null for the first
+   * two and the candidate SQL admits only `direction = 'output'` -- so this lane
+   * cannot delete its own evidence. The table is append-only, so the answer
+   * cannot change under us mid-run.
+   *
+   * Both maps are cleared together on overflow, so a session can never hold one
+   * half of its proof from before the drop and the other half from after.
+   */
+  const turnProofs = new Map<string, { turnStarts: number[]; turnFinals: number[] }>();
+  const itemCompletions = new Map<string, Map<string, number>>();
+
+  const proofKey = (row: PruneCandidateRow) => `${row.session_id}\u001f${row.source}`;
+
+  function evictIfFull(): void {
+    if (turnProofs.size + itemCompletions.size <= MAX_CACHED_SESSION_PROOFS) return;
+    turnProofs.clear();
+    itemCompletions.clear();
+  }
+
+  /**
+   * True when an `item.completed` for this row's OWN turn was stored after it.
+   *
+   * "Own turn" is the span from the row up to the next input row. A completion
+   * at or beyond that boundary belongs to a LATER turn and says nothing about
+   * this one -- which is exactly what a session-wide lookup got wrong for a
+   * cancelled turn sitting between two completed ones.
+   */
+  function ownTurnStoredFinal(db: SqliteDatabase, row: PruneCandidateRow): boolean {
+    const key = proofKey(row);
+    let proof = turnProofs.get(key);
+    if (!proof) {
+      evictIfFull();
+      proof = {
+        turnStarts: (db.prepare(TURN_STARTS_SQL).all(row.session_id) as Array<{ id: number }>)
+          .map((r) => Number(r.id)),
+        turnFinals: (db.prepare(TURN_FINALS_SQL).all(row.session_id, row.source) as Array<{ id: number }>)
+          .map((r) => Number(r.id)),
+      };
+      turnProofs.set(key, proof);
+    }
+
+    // A session with no input row at all has no turn structure to scope
+    // against, and scoping is the entire point -- answering from the session as
+    // a whole is the bug this replaced. The prompt row is written best-effort
+    // (`logAgentMessageBestEffort`), so its absence means the evidence is
+    // missing, not that there were no turns. Keep.
+    if (proof.turnStarts.length === 0) return false;
+
+    // Strictly later, so a delta can only be dropped by a completion that came
+    // after it; no completion after it at all is the fail-closed answer.
+    const nextFinal = proof.turnFinals[upperBound(proof.turnFinals, row.id)];
+    if (nextFinal === undefined) return false;
+    // No turn starts AFTER this row means it belongs to the session's last
+    // turn, so the completion it found can only be that turn's.
+    const nextTurnStart = proof.turnStarts[upperBound(proof.turnStarts, row.id)];
+    return nextTurnStart === undefined || nextFinal < nextTurnStart;
+  }
+
+  /**
+   * True when an `item/completed` for this row's OWN item was stored after it.
+   *
+   * A delta that names no item id is unproven by construction, and kept.
+   */
+  function ownItemCompleted(db: SqliteDatabase, row: PruneCandidateRow): boolean {
+    const itemId = readCodexDeltaItemId(row.content);
+    if (!itemId) return false;
+
+    const key = proofKey(row);
+    let completions = itemCompletions.get(key);
+    if (!completions) {
+      evictIfFull();
+      completions = new Map<string, number>();
+      const rows = db
+        .prepare(ITEM_COMPLETIONS_SQL)
+        .all(row.session_id, row.source) as Array<{ id: number; item_id: string | null }>;
+      for (const completion of rows) {
+        if (typeof completion.item_id === 'string' && completion.item_id) {
+          completions.set(completion.item_id, Number(completion.id));
+        }
+      }
+      itemCompletions.set(key, completions);
+    }
+
+    const completedAt = completions.get(itemId);
+    return completedAt !== undefined && row.id < completedAt;
+  }
+
+  /**
+   * Whether a reason resting on a later row may be acted on, tallying a spare
+   * against the counter for whichever proof failed. A reason with no such
+   * premise needs nothing proven: the frame's own shape settles it.
+   */
+  function supersessionProven(
+    db: SqliteDatabase,
+    row: PruneCandidateRow,
+    reason: PruneReason,
+  ): boolean {
+    switch (PRUNE_REASON_SUPERSESSION_PROOF.get(reason)) {
+      case 'headlessTurnFinal':
+        if (ownTurnStoredFinal(db, row)) return true;
+        progress.keptAwaitingTurnFinal++;
+        return false;
+      case 'codexItemCompleted':
+        if (ownItemCompleted(db, row)) return true;
+        progress.keptAwaitingItemCompleted++;
+        return false;
+      default:
+        return true;
+    }
+  }
 
   return {
     name: 'raw-message-prune',
@@ -573,7 +869,9 @@ export function createRawMessagePruneWork(
         log(
           'info',
           `[RawPrune] complete: scanned=${progress.scanned} deleted=${progress.deleted} `
-            + `freed=${(progress.bytesFreed / 1024 / 1024).toFixed(1)}MB ${breakdown}`,
+            + `freed=${(progress.bytesFreed / 1024 / 1024).toFixed(1)}MB ${breakdown} `
+            + `keptAwaitingTurnFinal=${progress.keptAwaitingTurnFinal} `
+            + `keptAwaitingItemCompleted=${progress.keptAwaitingItemCompleted}`,
         );
         onDone({
           ...progress,
@@ -590,6 +888,11 @@ export function createRawMessagePruneWork(
         progress.scanned++;
         const reason = classifyPrunableRawMessage(row.content, row.source);
         if (reason === null) continue;
+        // "Superseded by a later row" is only true if that row exists AND
+        // belongs to this delta's own turn or item. A cancelled or crashed turn
+        // never wrote one, and its deltas are then the only copy of what the
+        // assistant said.
+        if (!supersessionProven(db, row, reason)) continue;
         doomed.push(row.id);
         progress.byReason[reason]++;
         // Measured in JS from the string we already hold. Asking SQL for

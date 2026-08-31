@@ -109,6 +109,7 @@ public final class SyncManager: ObservableObject {
         setupIndexClient()
         setupSessionClient()
         setupPushTokenForwarding()
+        setupLiveActivityForwarding()
     }
 
     // MARK: - Activity Tracking
@@ -255,6 +256,15 @@ public final class SyncManager: ObservableObject {
                         self?.registerPushToken(token)
                     } else {
                         self?.unregisterPushToken()
+                    }
+                    // ActivityKit hands out a push-to-start token once per
+                    // launch, which is routinely before the socket is up. A
+                    // token that only existed while we were disconnected is a
+                    // card that never appears, with nothing to see in any log.
+                    if FleetActivityController.shared.shouldRegister {
+                        FleetActivityController.shared.resendTokens()
+                    } else {
+                        self?.unregisterLiveActivityToken(kind: nil)
                     }
                 }
             }
@@ -1661,6 +1671,55 @@ public final class SyncManager: ObservableObject {
            let json = String(data: data, encoding: .utf8) {
             indexClient.sendRaw(json)
             logger.info("Unregistered push token with server")
+        }
+    }
+
+    // MARK: - Live Activity Token Registration
+
+    private func setupLiveActivityForwarding() {
+        FleetActivityController.shared.onTokenReceived = { [weak self] token, kind in
+            Task { @MainActor in
+                self?.registerLiveActivityToken(token, kind: kind)
+            }
+        }
+        FleetActivityController.shared.onTokenInvalidated = { [weak self] kind in
+            Task { @MainActor in
+                self?.unregisterLiveActivityToken(kind: kind)
+            }
+        }
+        FleetActivityController.shared.start()
+    }
+
+    /// Send an ActivityKit token to the sync server.
+    ///
+    /// Kept apart from the APNs device token all the way down: the server stores
+    /// the two kinds under different prefixes because a token in the wrong lane
+    /// fails with an error indistinguishable from a bad token.
+    public func registerLiveActivityToken(_ token: String, kind: LiveActivityTokenKind) {
+        guard FleetActivityController.shared.shouldRegister else { return }
+        let message = RegisterLiveActivityTokenMessage(
+            token: token,
+            kind: kind.rawValue,
+            deviceId: WebSocketClient.deviceId,
+            platform: "ios",
+            environment: "production"
+        )
+        if let data = try? JSONEncoder().encode(message),
+           let json = String(data: data, encoding: .utf8) {
+            indexClient.sendRaw(json)
+            logger.info("Registered Live Activity \(kind.rawValue) token with server")
+        }
+    }
+
+    public func unregisterLiveActivityToken(kind: LiveActivityTokenKind?) {
+        let message = UnregisterLiveActivityTokenMessage(
+            deviceId: WebSocketClient.deviceId,
+            kind: kind?.rawValue
+        )
+        if let data = try? JSONEncoder().encode(message),
+           let json = String(data: data, encoding: .utf8) {
+            indexClient.sendRaw(json)
+            logger.info("Unregistered Live Activity token(s) with server")
         }
     }
 

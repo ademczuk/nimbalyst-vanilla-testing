@@ -152,11 +152,18 @@ function extractAssistantText(record: Record<string, unknown>): string {
 /**
  * Cursor reports cumulative counts with no context-window size, so there is no
  * honest fill percentage to derive — `contextReporting: 'token-counts'`.
+ *
+ * `inputTokens` excludes the cache, same as grok's frame: a measured `result`
+ * carried 16,177 fresh input against 27,492 cache reads, so counting only the
+ * former reported 16k for a session that had consumed ~44k. Cache reads and
+ * writes are consumed input and belong in the input count.
  */
 function normalizeCursorUsage(value: unknown): ProtocolEvent['usage'] | null {
   const usage = asRecord(value);
   if (!usage) return null;
-  const input = numberOr(usage.inputTokens, 0);
+  const input = numberOr(usage.inputTokens, 0)
+    + numberOr(usage.cacheReadTokens, 0)
+    + numberOr(usage.cacheWriteTokens, 0);
   const output = numberOr(usage.outputTokens, 0);
   if (input === 0 && output === 0) return null;
   return { input_tokens: input, output_tokens: output, total_tokens: input + output };

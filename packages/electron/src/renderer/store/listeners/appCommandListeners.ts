@@ -23,6 +23,7 @@ import {
   marketplaceInstallProgressAtom,
   newBrowserTabRequestAtom,
   sessionLaunchPopupRequestAtom,
+  trackerQuickCreateRequestAtom,
   navigationGoBackRequestAtom,
   navigationGoForwardRequestAtom,
   newMockupRequestAtom,
@@ -81,6 +82,11 @@ export function initAppCommandListeners(): () => void {
     store.set(sessionLaunchPopupRequestAtom, (v) => v + 1);
   });
   if (typeof uSessionLaunchPopup === 'function') cleanups.push(uSessionLaunchPopup);
+
+  const uTrackerQuickCreate = window.electronAPI?.on?.('tracker-quick-create-open', () => {
+    store.set(trackerQuickCreateRequestAtom, (v) => v + 1);
+  });
+  if (typeof uTrackerQuickCreate === 'function') cleanups.push(uTrackerQuickCreate);
 
   const u2 = window.electronAPI?.on?.('toggle-ai-chat-panel', () => {
     store.set(toggleAIChatPanelRequestAtom, (v) => v + 1);

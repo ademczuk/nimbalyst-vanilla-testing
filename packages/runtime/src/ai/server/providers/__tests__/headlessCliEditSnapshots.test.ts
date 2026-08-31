@@ -16,7 +16,7 @@ import path from 'path';
 import { CursorAgentProvider } from '../CursorAgentProvider';
 import { GrokBuildProvider } from '../GrokBuildProvider';
 import { mapCursorRecord } from '../../protocols/CursorAgentProtocol';
-import { mapGrokRecord } from '../../protocols/GrokBuildProtocol';
+import { mapGrokRecord } from '../../protocols/headless/GrokBuildRecordMapper';
 import type { StreamChunk } from '../../types';
 import type { ProtocolEvent } from '../../protocols/ProtocolInterface';
 
@@ -86,7 +86,9 @@ describe('Grok Build edit snapshots', () => {
     // 'tool-args', keeps the watcher, and uses the pre-edit tag path instead.
     const events = fixtureEvents(
       'grokBuildStreamingJson.editTurn.ndjson',
-      (r) => mapGrokRecord(r, WORKSPACE),
+      // The desktop resolver, passed explicitly: the shared mapper leaves
+      // `file_path` untouched by default, which is transcript-replay semantics.
+      (r) => mapGrokRecord(r, WORKSPACE, (base, filePath) => path.resolve(base, filePath)),
     );
     expect(snapshotsFor(new GrokBuildProvider(), events)).toEqual([]);
   });

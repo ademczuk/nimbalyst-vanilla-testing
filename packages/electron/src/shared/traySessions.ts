@@ -23,14 +23,36 @@ export interface TrayPanelSession {
   hasError: boolean;
 }
 
-/** The three attention buckets, mirroring `agentSessionAttentionAtom`. */
+/**
+ * The attention buckets, mirroring `agentSessionAttentionAtom` plus one.
+ *
+ * `stalled` is drawn *out of* `running`, not on top of it, so the buckets stay
+ * disjoint and the panel's section counts still add up to the fleet.
+ */
 export interface TrayPanelFeed {
   needsAttention: TrayPanelSession[];
   running: TrayPanelSession[];
+  stalled: TrayPanelSession[];
   unread: TrayPanelSession[];
 }
 
-export type TrayPanelSectionState = 'attention' | 'running' | 'unread';
+export type TrayPanelSectionState = 'attention' | 'running' | 'stalled' | 'unread';
+
+/**
+ * What the panel says when every bucket is empty.
+ *
+ * The idle strip shows nothing, so the panel is the only surface left that can
+ * answer "is this thing alive". It does it the way the strip could not: with the
+ * quiet age *labeled*, sitting above the sessions it describes, each one
+ * clickable. Same fact the retired quiet-age carried, in the one place it means
+ * something.
+ */
+export interface TrayIdleSummary {
+  /** Newest activity anywhere, or undefined if this install has no sessions yet. */
+  lastActivityAt?: number;
+  /** Most recently touched sessions, newest first. Empty on a fresh install. */
+  recent: TrayPanelSession[];
+}
 
 export const TRAY_PANEL_CHANNELS = {
   /** main → panel: the full feed, pushed on the same debounce as the old menu rebuild. */
@@ -50,9 +72,14 @@ export const TRAY_PANEL_CHANNELS = {
 } as const;
 
 export function emptyTrayPanelFeed(): TrayPanelFeed {
-  return { needsAttention: [], running: [], unread: [] };
+  return { needsAttention: [], running: [], stalled: [], unread: [] };
 }
 
 export function trayPanelFeedTotal(feed: TrayPanelFeed): number {
-  return feed.needsAttention.length + feed.running.length + feed.unread.length;
+  return (
+    feed.needsAttention.length
+    + feed.running.length
+    + feed.stalled.length
+    + feed.unread.length
+  );
 }

@@ -150,6 +150,48 @@ describe('SQLiteStoreAdapter', () => {
     });
   });
 
+  // Regression (#1403): `HistoryManager` retires pending-review tags with a
+  // *literal* jsonb value, `jsonb_set(metadata, '{status}', '"reviewed"')`,
+  // rather than a bound `to_jsonb($1::text)`. Postgres parses that literal as
+  // jsonb and stores the string `reviewed`; SQLite's json_set stores whatever
+  // text it is handed, so the row landed as `{"status":"\"reviewed\""}` — a
+  // value that satisfies neither the pending-review nor the reviewed predicate.
+  // 2,613 rows on one dev machine reached that state before this was caught.
+  // The string-level translator test could not see it: the SQL was
+  // syntactically fine and only the stored value was wrong.
+  it('jsonb_set with a literal value stores parsed JSON, not the raw text (#1403)', async () => {
+    const adapter = createSQLiteStoreAdapter(db);
+    await adapter.query(
+      `INSERT INTO ai_sessions (id, workspace_id, title, provider, metadata)
+       VALUES ($1, $2, $3, $4, $5)`,
+      ['s1', 'ws1', 't', 'claude', JSON.stringify({ status: 'pending-review' })],
+    );
+    await adapter.query(
+      `UPDATE ai_sessions
+       SET metadata = jsonb_set(
+                        jsonb_set(metadata, '{status}', '"reviewed"'),
+                        '{updatedAt}', to_jsonb($1::bigint))
+       WHERE id = $2`,
+      [1234567890, 's1'],
+    );
+
+    const { rows } = await adapter.query<{ metadata: string }>(
+      `SELECT metadata FROM ai_sessions WHERE id = $1`,
+      ['s1'],
+    );
+    expect(JSON.parse(rows[0].metadata)).toEqual({
+      status: 'reviewed',
+      updatedAt: 1234567890,
+    });
+
+    // And the predicate the readers actually use must match it.
+    const { rows: matched } = await adapter.query<{ id: string }>(
+      `SELECT id FROM ai_sessions WHERE metadata->>'status' = $1`,
+      ['reviewed'],
+    );
+    expect(matched.map((r) => r.id)).toEqual(['s1']);
+  });
+
   it('handles RETURNING * on INSERT', async () => {
     const adapter = createSQLiteStoreAdapter(db);
     const { rows } = await adapter.query<{ id: string; title: string }>(

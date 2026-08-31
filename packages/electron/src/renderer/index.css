@@ -55,6 +55,17 @@ html.tray-panel-window #root {
   background: transparent;
 }
 
+/*
+ * The menu bar island's window is a large transparent canvas; only the island
+ * itself paints. The window is click-through everywhere else, so an opaque root
+ * here would both hide the menu bar and look like a black slab across it.
+ */
+html.menu-bar-island-window,
+html.menu-bar-island-window body,
+html.menu-bar-island-window #root {
+  background: transparent;
+}
+
 /* =============================================================================
    Floating surfaces must opt out of the window drag region
    =============================================================================

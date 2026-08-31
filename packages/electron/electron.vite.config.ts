@@ -118,7 +118,17 @@ const claudeAgentSdkVersion = (() => {
 const runtimeSrcDir = resolve(__dirname, '../runtime/src');
 const runtimeDistDir = resolve(__dirname, '../runtime/dist');
 const runtimeElectronMainEntry = resolve(runtimeSrcDir, 'electronMain.ts');
-const extensionSdkElectronMainEntry = resolve(__dirname, '../extension-sdk/src/electronMain.ts');
+const extensionSdkSrcDir = resolve(__dirname, '../extension-sdk/src');
+const extensionSdkElectronMainEntry = resolve(extensionSdkSrcDir, 'electronMain.ts');
+/**
+ * `@nimbalyst/extension-sdk` is not a declared dependency of this package, so a
+ * subpath import would otherwise resolve through the workspace symlink into
+ * `dist/` and silently serve a stale build. Point the subpaths this app imports
+ * at source, matching what tsconfig's `paths` already typechecks against.
+ */
+const extensionSdkSourceSubpaths = [
+  { find: /^@nimbalyst\/extension-sdk\/git-operation-log$/, replacement: resolve(extensionSdkSrcDir, 'gitOperationLog.ts') },
+];
 
 // Plugin to resolve workspace package subpaths correctly in production
 const resolveWorkspaceSubpaths = () => {
@@ -297,6 +307,7 @@ export default defineConfig({
         // The public SDK barrel includes renderer hooks which import the public
         // runtime barrel. Main only needs validation and protocol helpers.
         { find: /^@nimbalyst\/extension-sdk$/, replacement: extensionSdkElectronMainEntry },
+        ...extensionSdkSourceSubpaths,
       ]
     },
     build: {
@@ -518,6 +529,7 @@ export default defineConfig({
       alias: [
         // Ensure renderer also points runtime imports at source
         { find: '@nimbalyst/runtime', replacement: runtimeSrcDir },
+        ...extensionSdkSourceSubpaths,
         // Redirect `import ... from 'prismjs'` (exact match only) to a shim
         // that returns the window.Prism instance loaded by the classic
         // <script> tag in index.html. Avoids a second IIFE run on the ESM

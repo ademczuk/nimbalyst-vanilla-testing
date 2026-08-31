@@ -111,6 +111,33 @@ async function expectBodySurvivesMetadataAck(
   expect(readBody(result.rows[0].content)).toBe(BODY);
 }
 
+/**
+ * The issue number and key belong to the indexed columns and nowhere else.
+ * Persisting a second copy inside `data` gave the two writers different rules
+ * -- the column COALESCEs, the blob is replaced wholesale from the server
+ * payload -- so they drifted apart and an item could report a key that was not
+ * its own. Readers all go through the column, so the blob copy was a shadow
+ * that could only ever be wrong.
+ */
+async function expectIssueKeyStoredOnceOnly(
+  db: { query<T>(sql: string, params?: unknown[]): Promise<{ rows: T[] }> },
+  apply: () => Promise<unknown>,
+  expectedKey: string | null,
+  expectedNumber: number | null,
+) {
+  await apply();
+  const result = await db.query<{ issue_key: string | null; issue_number: unknown; data: unknown }>(
+    'SELECT issue_key, issue_number, data FROM tracker_items WHERE id = $1',
+    ['bug-1'],
+  );
+  const row = result.rows[0];
+  expect(row.issue_key).toBe(expectedKey);
+  expect(row.issue_number === null ? null : Number(row.issue_number)).toBe(expectedNumber);
+  const data = parseData(row.data);
+  expect(data.issueKey).toBeUndefined();
+  expect(data.issueNumber).toBeUndefined();
+}
+
 async function expectSystemCollections(db: { query<T>(sql: string, params?: unknown[]): Promise<{ rows: T[] }> }) {
   const result = await db.query<{ data: unknown }>('SELECT data FROM tracker_items WHERE id = $1', ['bug-1']);
   const data = parseData(result.rows[0].data);
@@ -191,6 +218,25 @@ describe('TrackerPGLiteStore system metadata projection (PGLite)', () => {
   it('does not let a metadata ack erase the item body', async () => {
     await expectBodySurvivesMetadataAck(db as any, store);
   });
+
+  it('keeps the issue key in the column only, through applyRemoteItem', async () => {
+    await expectIssueKeyStoredOnceOnly(
+      db as any,
+      () => store.applyRemoteItem({ ...envelope(), issueNumber: 42, issueKey: 'NIM-42' }, payload()),
+      'NIM-42',
+      42,
+    );
+  });
+
+  it('keeps the issue key in the column only, through applyOptimistic', async () => {
+    await store.applyRemoteItem({ ...envelope(), issueNumber: 42, issueKey: 'NIM-42' }, payload());
+    await expectIssueKeyStoredOnceOnly(
+      db as any,
+      () => store.applyOptimistic('bug-1', payload()),
+      'NIM-42',
+      42,
+    );
+  });
 });
 
 describe('TrackerPGLiteStore system metadata projection (SQLite)', () => {
@@ -249,5 +295,24 @@ describe('TrackerPGLiteStore system metadata projection (SQLite)', () => {
 
   it('does not let a metadata ack erase the item body', async () => {
     await expectBodySurvivesMetadataAck(db as any, store);
+  });
+
+  it('keeps the issue key in the column only, through applyRemoteItem', async () => {
+    await expectIssueKeyStoredOnceOnly(
+      db as any,
+      () => store.applyRemoteItem({ ...envelope(), issueNumber: 42, issueKey: 'NIM-42' }, payload()),
+      'NIM-42',
+      42,
+    );
+  });
+
+  it('keeps the issue key in the column only, through applyOptimistic', async () => {
+    await store.applyRemoteItem({ ...envelope(), issueNumber: 42, issueKey: 'NIM-42' }, payload());
+    await expectIssueKeyStoredOnceOnly(
+      db as any,
+      () => store.applyOptimistic('bug-1', payload()),
+      'NIM-42',
+      42,
+    );
   });
 });

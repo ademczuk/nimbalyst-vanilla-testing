@@ -4,35 +4,30 @@ import { spawn } from "child_process";
 import * as fs from "fs/promises";
 import * as path from "path";
 import log from "electron-log/main";
+import type {
+  GitOperationExecutor,
+  GitOperationLogEvent,
+  GitOperationLogWireEntry,
+  GitOperationSource,
+  GitOperationStatus,
+} from "@nimbalyst/extension-sdk/git-operation-log";
 import { getGitSubprocessEnv } from "./gitEnv";
 
-export type GitOperationStatus =
-  | "running"
-  | "success"
-  | "error"
-  | "interrupted";
+export type {
+  GitOperationExecutor,
+  GitOperationLogEvent,
+  GitOperationSource,
+  GitOperationStatus,
+};
 export type GitOutputStream = "stdout" | "stderr";
 
-export interface GitOperationLogEntry {
-  id: string;
-  timestamp: number;
-  updatedAt: number;
-  command: string;
-  executable: "git";
-  args: string[];
-  cwd: string;
-  status: GitOperationStatus;
-  output: string;
-  stdout: string;
-  stderr: string;
-  error?: string;
-  exitCode?: number;
-  durationMs?: number;
-}
-
-export type GitOperationLogEvent =
-  | { workspacePath: string; type: "upsert"; entry: GitOperationLogEntry }
-  | { workspacePath: string; type: "clear" };
+/**
+ * The journal's in-memory shape is the wire shape: every field here crosses IPC
+ * to the Git panel and the menu-bar indicator. Keeping one definition (in the
+ * SDK, which both consumers can import) is what stops the two surfaces from
+ * drifting apart on what a running operation looks like.
+ */
+export type GitOperationLogEntry = GitOperationLogWireEntry;
 
 type JournalEvent =
   | { version: 1; type: "start"; entry: GitOperationLogEntry }
@@ -159,6 +154,21 @@ function quoteDisplayArg(arg: string): string {
   return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * Journal identity for an observed (externally executed) command.
+ *
+ * Keyed on the session plus the provider's tool-call id rather than a fresh
+ * UUID, so the provider's repeated start events and its later completion all
+ * address one entry. Codex reuses raw item ids like `item_0` across turns, so
+ * callers must pass the stable synthetic id, not the raw one.
+ */
+export function externalEntryId(
+  sessionId: string,
+  providerToolCallId: string
+): string {
+  return `ext:${sessionId}:${providerToolCallId}`;
+}
+
 export function formatGitCommand(args: string[]): {
   command: string;
   args: string[];
@@ -178,6 +188,9 @@ export class GitOperationLogService {
   private readonly compactThresholdBytes: number;
   private readonly broadcast: (event: GitOperationLogEvent) => void;
   private readonly now: () => number;
+  private readonly terminalListeners = new Set<
+    (workspacePath: string, entry: GitOperationLogEntry) => void
+  >();
 
   constructor(options: GitOperationLogServiceOptions = {}) {
     this.rootDir = options.rootDir;
@@ -189,10 +202,57 @@ export class GitOperationLogService {
     this.now = options.now ?? Date.now;
   }
 
+  /**
+   * Observe operations reaching a terminal state (success, error, interrupted).
+   *
+   * The journal is where every foreground Git operation already converges, so it
+   * is the one place that knows "something just finished in this repository" --
+   * which is what the status refresh needs. Kept as a listener rather than a
+   * direct call so this service stays unaware of Git status reading.
+   */
+  onOperationTerminal(
+    listener: (workspacePath: string, entry: GitOperationLogEntry) => void
+  ): () => void {
+    this.terminalListeners.add(listener);
+    return () => {
+      this.terminalListeners.delete(listener);
+    };
+  }
+
+  private emitTerminal(
+    workspacePath: string,
+    entry: GitOperationLogEntry
+  ): void {
+    for (const listener of this.terminalListeners) {
+      try {
+        listener(workspacePath, this.project(entry));
+      } catch (error) {
+        // Observability must never take down the operation that triggered it.
+        log.error("[GitOperationLog] Terminal listener failed:", error);
+      }
+    }
+  }
+
   async list(workspacePath: string): Promise<GitOperationLogEntry[]> {
     this.requireWorkspacePath(workspacePath);
     const state = await this.ensureLoaded(workspacePath);
-    return state.entries.map((entry) => ({ ...entry, args: [...entry.args] }));
+    return state.entries.map((entry) => this.project(entry));
+  }
+
+  /**
+   * Copy an entry for a consumer outside this service, filling in metadata that
+   * postdates the journal format. Journals written before agent activity existed
+   * only ever held app-owned direct `git` invocations, so that is what an absent
+   * `source`/`executor` means -- resolved on the way out rather than by
+   * rewriting a file the user may still be appending to.
+   */
+  private project(entry: GitOperationLogEntry): GitOperationLogEntry {
+    return {
+      ...entry,
+      args: [...entry.args],
+      source: entry.source ?? "nimbalyst",
+      executor: entry.executor ?? "git",
+    };
   }
 
   async start(
@@ -215,6 +275,8 @@ export class GitOperationLogService {
       output: "",
       stdout: "",
       stderr: "",
+      source: "nimbalyst",
+      executor: "git",
     };
 
     state.entries.push(entry);
@@ -225,7 +287,142 @@ export class GitOperationLogService {
       entry,
     });
     this.emitUpsert(workspacePath, entry);
-    return { ...entry, args: [...entry.args] };
+    return this.project(entry);
+  }
+
+  /**
+   * Record a Git command Nimbalyst observed but did not spawn -- today, an agent
+   * shell tool call whose command line invokes Git.
+   *
+   * Idempotent on `(sessionId, providerToolCallId)` because providers re-emit a
+   * tool call's start: Codex sends both `item.started` and `item.completed` for
+   * one `command_execution`, and a duplicate start must upsert the same entry
+   * rather than leave a phantom running forever.
+   *
+   * Deliberately does NOT take `GitOperationLock`: we are watching someone
+   * else's process, and holding a lock we cannot use to stop it would only
+   * stall the user's own Git actions behind an agent command.
+   */
+  async startExternal(input: {
+    workspacePath: string;
+    command: string;
+    source: GitOperationSource;
+    sessionId: string;
+    provider?: string;
+    providerToolCallId: string;
+  }): Promise<GitOperationLogEntry> {
+    this.requireWorkspacePath(input.workspacePath);
+    const state = await this.ensureLoaded(input.workspacePath);
+    const id = externalEntryId(input.sessionId, input.providerToolCallId);
+
+    const existing = state.entries.find((candidate) => candidate.id === id);
+    if (existing) return this.project(existing);
+
+    const timestamp = this.now();
+    const entry: GitOperationLogEntry = {
+      id,
+      timestamp,
+      updatedAt: timestamp,
+      // The provider lifecycle only proves the whole tool call is running, so
+      // show the whole (redacted) command line. Claiming a specific child
+      // segment is active at a given instant would be a guess.
+      command: redactSensitiveText(stripAnsi(input.command)).trim(),
+      executable: "git",
+      // Empty: this was not invoked as a direct `git` child with these args.
+      args: [],
+      cwd: input.workspacePath,
+      status: "running",
+      output: "",
+      stdout: "",
+      stderr: "",
+      source: input.source,
+      executor: "shell",
+      sessionId: input.sessionId,
+      provider: input.provider,
+      providerToolCallId: input.providerToolCallId,
+    };
+
+    state.entries.push(entry);
+    this.trimEntries(state);
+    await this.queueEvent(input.workspacePath, state, {
+      version: 1,
+      type: "start",
+      entry,
+    });
+    this.emitUpsert(input.workspacePath, entry);
+    return this.project(entry);
+  }
+
+  /** Terminalize an observed command. Duplicate terminal events are harmless. */
+  async finishExternal(input: {
+    workspacePath: string;
+    sessionId: string;
+    providerToolCallId: string;
+    success: boolean;
+    output?: string;
+    error?: string;
+    exitCode?: number;
+  }): Promise<GitOperationLogEntry | undefined> {
+    const id = externalEntryId(input.sessionId, input.providerToolCallId);
+    if (input.output) {
+      this.appendOutput(input.workspacePath, id, "stdout", input.output);
+    }
+    return this.finish(input.workspacePath, id, {
+      success: input.success,
+      exitCode: input.exitCode,
+      error: input.error,
+    });
+  }
+
+  /**
+   * Mark an observed command interrupted, for when the session is cancelled or
+   * the provider disconnects. Without this the entry waits for a result that
+   * will never arrive and reads as "still running" until the next app restart.
+   */
+  async interruptExternal(input: {
+    workspacePath: string;
+    sessionId: string;
+    providerToolCallId: string;
+    reason?: string;
+  }): Promise<GitOperationLogEntry | undefined> {
+    const id = externalEntryId(input.sessionId, input.providerToolCallId);
+    return this.finish(input.workspacePath, id, {
+      success: false,
+      error:
+        input.reason ??
+        "The agent session ended before this command reported a final status.",
+      interrupted: true,
+    });
+  }
+
+  /**
+   * Terminalize every command still open for a session, across all workspaces
+   * it touched.
+   *
+   * The per-turn sweep in `GitActivityBridge` only runs if the streaming
+   * function resumes; a cancelled or stalled provider generator can park while
+   * another path settles the session, leaving entries running -- and visibly
+   * spinning in the menu-bar indicator -- until the next app restart. This is
+   * the backstop, keyed on the session rather than the turn. Idempotent:
+   * already-settled entries keep their real outcome.
+   */
+  async interruptSession(sessionId: string, reason?: string): Promise<void> {
+    if (!sessionId) return;
+    for (const [workspacePath, state] of this.states) {
+      if (!state.loaded) continue;
+      const stranded = state.entries.filter(
+        (entry) => entry.sessionId === sessionId && entry.status === "running"
+      );
+      for (const entry of stranded) {
+        await this.finish(workspacePath, entry.id, {
+          success: false,
+          error:
+            reason ??
+            "The agent session ended before this command reported a final status.",
+          interrupted: true,
+        });
+      }
+    }
   }
 
   appendOutput(
@@ -258,15 +455,27 @@ export class GitOperationLogService {
   async finish(
     workspacePath: string,
     id: string,
-    result: { success: boolean; exitCode?: number; error?: string }
+    result: {
+      success: boolean;
+      exitCode?: number;
+      error?: string;
+      interrupted?: boolean;
+    }
   ): Promise<GitOperationLogEntry | undefined> {
     const state = await this.ensureLoaded(workspacePath);
     const entry = state.entries.find((candidate) => candidate.id === id);
     if (!entry) return undefined;
+    // Providers re-emit terminal events; the first outcome is the real one, and
+    // re-finishing would restate duration and re-trigger the status refresh.
+    if (entry.status !== "running") return this.project(entry);
 
     const at = this.now();
     entry.updatedAt = at;
-    entry.status = result.success ? "success" : "error";
+    entry.status = result.interrupted
+      ? "interrupted"
+      : result.success
+        ? "success"
+        : "error";
     entry.exitCode = result.exitCode;
     entry.error = result.error ? sanitizeOutputText(result.error) : undefined;
     entry.durationMs = Math.max(0, at - entry.timestamp);
@@ -285,7 +494,8 @@ export class GitOperationLogService {
       true
     );
     this.emitUpsert(workspacePath, entry);
-    return { ...entry, args: [...entry.args] };
+    this.emitTerminal(workspacePath, entry);
+    return this.project(entry);
   }
 
   async clear(workspacePath: string): Promise<void> {
@@ -427,7 +637,7 @@ export class GitOperationLogService {
     this.broadcast({
       workspacePath,
       type: "upsert",
-      entry: { ...entry, args: [...entry.args] },
+      entry: this.project(entry),
     });
   }
 
@@ -584,6 +794,43 @@ export async function withGitOperationLog<
       success: false,
       exitCode: 1,
       error: message,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Record a user-visible Git operation that is not a single `git` child process.
+ *
+ * `withGitOperationLog` requires the operation to report `{ success }`; the
+ * worktree services throw on failure and return domain objects otherwise, so
+ * this variant treats "did not throw" as success. `args` is the operation the
+ * user asked for, in Git's own vocabulary -- the same convention the commit
+ * handler already uses for its multi-step stage-then-commit.
+ */
+export async function recordGitActivity<T>(
+  service: GitOperationLogService,
+  workspacePath: string,
+  args: string[],
+  operation: () => Promise<T>,
+  formatOutput?: (result: T) => string | undefined
+): Promise<T> {
+  const entry = await service.start(workspacePath, args);
+  try {
+    const result = await operation();
+    const output = formatOutput?.(result);
+    if (output)
+      service.appendOutput(workspacePath, entry.id, "stdout", `${output}\n`);
+    await service.finish(workspacePath, entry.id, {
+      success: true,
+      exitCode: 0,
+    });
+    return result;
+  } catch (error) {
+    await service.finish(workspacePath, entry.id, {
+      success: false,
+      exitCode: 1,
+      error: error instanceof Error ? error.message : String(error),
     });
     throw error;
   }

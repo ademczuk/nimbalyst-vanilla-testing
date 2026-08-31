@@ -28,7 +28,7 @@ import {
   COLLAB_ASSET_HEADER_WIRE_FORMAT,
   COLLAB_ASSET_WIRE_FORMAT_PLAINTEXT,
   MAX_COLLAB_ASSET_FILE_NAME_LENGTH,
-} from "../../../shared/collabAssetFormat";
+} from "@nimbalyst/runtime/sync/collabAssetFormat";
 
 const BYTES = new TextEncoder().encode("png-bytes").buffer as ArrayBuffer;
 

@@ -82,6 +82,28 @@ describe('Cmd+T', () => {
     expect(setActiveMode).toHaveBeenCalledWith('tracker');
     expect(toggleActiveLeftPane).not.toHaveBeenCalled();
   });
+
+  it('leaves Cmd+T to Quick Track while its popup is open', () => {
+    const { getByRole } = render(
+      <>
+        <Harness activeMode="files" />
+        <div className="tracker-quick-create-popup">
+          <input aria-label="Quick Track title" />
+        </div>
+      </>,
+    );
+    const isMac = navigator.platform.startsWith('Mac');
+
+    getByRole('textbox').dispatchEvent(new KeyboardEvent('keydown', {
+      key: 't',
+      metaKey: isMac,
+      ctrlKey: !isMac,
+      bubbles: true,
+    }));
+
+    expect(setActiveMode).not.toHaveBeenCalled();
+    expect(toggleActiveLeftPane).not.toHaveBeenCalled();
+  });
 });
 
 describe('Cmd+Alt+M', () => {

@@ -83,6 +83,12 @@ interface GlobalSearchResult {
   snippet: string;
   score: number;
   signals: { dense: boolean; sparse: boolean };
+  /**
+   * Raw pre-fusion scores from the best chunk. `score` is an RRF rank
+   * reciprocal and cannot carry a threshold across queries; callers that need
+   * "how similar, absolutely" (duplicate detection) read `similarity.cosine`.
+   */
+  similarity?: { cosine?: number; bm25?: number };
 }
 
 /**
@@ -105,6 +111,7 @@ function collapseToEntities(hits: SearchHit[], limit: number): GlobalSearchResul
       snippet: h.text.slice(0, 240),
       score: h.score,
       signals: h.signals ?? { dense: false, sparse: false },
+      ...(h.similarity ? { similarity: h.similarity } : {}),
     });
   }
   return Array.from(best.values())

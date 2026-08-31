@@ -108,9 +108,11 @@ describe('ContextUsageDisplay - measured provider support (#914)', () => {
   });
 
   it('shows cumulative counts without inventing a percentage for count-only providers', () => {
+    // contextWindow is deliberately non-zero: a catalog window must not turn
+    // cumulative spend into a fill, whatever else is passed in.
     render(
       <ContextUsageDisplay
-        provider="openai"
+        provider="grok-build"
         inputTokens={80_000}
         outputTokens={20_000}
         totalTokens={100_000}
@@ -118,7 +120,7 @@ describe('ContextUsageDisplay - measured provider support (#914)', () => {
       />
     );
 
-    screen.getByText('100k tokens');
-    expect(screen.queryByText(/%/)).toBeNull();
+    // #914: never a fill percentage without a real denominator.
+    expect(screen.getByTestId('context-indicator').textContent).not.toMatch(/%|\//);
   });
 });

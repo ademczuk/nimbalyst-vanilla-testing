@@ -33,6 +33,9 @@ export type ClientMessage =
   | SessionControlCommandMessage
   | RegisterPushTokenMessage
   | UnregisterPushTokenMessage
+  | RegisterLiveActivityTokenMessage
+  | UnregisterLiveActivityTokenMessage
+  | FleetActivityUpdateMessage
   | RequestMobilePushMessage
   | ProjectConfigUpdateMessage
   | SettingsSyncMessage
@@ -268,6 +271,116 @@ export interface RegisterPushTokenMessage {
 export interface UnregisterPushTokenMessage {
   type: 'unregisterPushToken';
   deviceId: string;
+}
+
+/**
+ * Which ActivityKit token this is.
+ *
+ * They are not interchangeable and they are not the device token either. A
+ * push-to-start token belongs to the app and lets the server create an activity
+ * on a phone whose owner has not opened the app; an update token belongs to one
+ * live activity and dies with it. Sending a content-state update to a
+ * push-to-start token, or a start payload to an update token, fails at APNs with
+ * an error that reads like a bad token — so the kinds are stored separately and
+ * never merged.
+ */
+export type LiveActivityTokenKind = 'pushToStart' | 'update';
+
+/**
+ * Register an ActivityKit push token for the Live Activity lane.
+ *
+ * Deliberately a different message from `registerPushToken`: the alert lane and
+ * the Live Activity lane use different APNs topics and different payload shapes,
+ * and conflating the two kinds of token server-side would send fleet updates to
+ * the alert channel or vice versa.
+ */
+export interface RegisterLiveActivityTokenMessage {
+  type: 'registerLiveActivityToken';
+  token: string;
+  kind: LiveActivityTokenKind;
+  deviceId: string;
+  /** Only iOS has Live Activities today; carried so the server never has to guess. */
+  platform: 'ios';
+  /** `development` uses the APNs sandbox host. Absent means production. */
+  environment?: 'development' | 'production';
+}
+
+/**
+ * Drop a Live Activity token.
+ *
+ * Sent when the activity ends, when the user turns the feature off, and when the
+ * phone notices its own activity is gone. Omitting `kind` drops both kinds for
+ * the device, which is what turning the feature off means.
+ */
+export interface UnregisterLiveActivityTokenMessage {
+  type: 'unregisterLiveActivityToken';
+  deviceId: string;
+  kind?: LiveActivityTokenKind;
+}
+
+/**
+ * One row on the Live Activity card.
+ *
+ * Plaintext, like the existing push titles: the plan settled that lock-screen
+ * exposure of session names rather than coarsening to counts-plus-project.
+ */
+export interface FleetActivityRow {
+  sessionId: string;
+  title: string;
+  /** Workspace basename. The card has no room for a path. */
+  project: string;
+  state: 'approval' | 'decision' | 'failed' | 'stalled';
+  /** Epoch ms this session entered `state`; the phone ticks the elapsed time itself. */
+  since: number;
+}
+
+/**
+ * The whole ambient fleet, as the phone renders it.
+ *
+ * The same derived value the macOS menu bar strip renders, so the two surfaces
+ * cannot disagree. `revision` is monotonic per desktop process and lets the
+ * server (and the phone) drop an update that arrives out of order.
+ */
+export interface FleetActivitySnapshot {
+  running: number;
+  needsApproval: number;
+  needsDecision: number;
+  failed: number;
+  stalled: number;
+  unread: number;
+  /** Ranked, at most three. Empty means nothing is waiting on the user. */
+  rows: FleetActivityRow[];
+  /** Waiting sessions that did not fit in `rows`. */
+  overflow: number;
+  revision: number;
+  /** Epoch ms the desktop generated this. */
+  updatedAt: number;
+  /** How long after `updatedAt` the card should dim itself. */
+  staleAfterMs: number;
+}
+
+/**
+ * Desktop -> server: the fleet changed, update the Live Activity.
+ *
+ * Coalesced on the desktop — this arrives on transitions, not on streaming
+ * ticks. The server decides between starting, updating and ending an activity
+ * from the payload and the tokens it holds.
+ */
+export interface FleetActivityUpdateMessage {
+  type: 'fleetActivityUpdate';
+  activity: FleetActivitySnapshot;
+  /**
+   * Whether this desktop is itself displaying the fleet right now.
+   *
+   * Deliberately on the message rather than on the snapshot: it is routing
+   * metadata, not card content, and the snapshot is sent verbatim to the phone
+   * as `content-state`. The server pairs this with its own presence check
+   * before suppressing the card — a Mac that says it is showing the strip but
+   * that nobody is sitting at should not silence the phone. Absent from older
+   * desktops, and absent means "not showing", which preserves the previous
+   * always-publish behaviour.
+   */
+  shownOnDesktop?: boolean;
 }
 
 /** Request to send a push notification to mobile devices */

@@ -84,6 +84,14 @@ export interface TrackerFieldPillsProps {
    * existing collections.
    */
   onCreateCollection?: (title: string, type: string) => Promise<RelationshipCandidate | null>;
+  /**
+   * Fields whose value was carried over rather than chosen for this item —
+   * they render with a distinct treatment. The quick-create popup's rapid-fire
+   * loop reuses the previous item's priority/assignee/milestone, and a run that
+   * silently inherits `critical` from the first item is the failure this marking
+   * exists to prevent.
+   */
+  carriedFieldNames?: ReadonlySet<string>;
   /** Extra class on the chip row for surface-specific layout. */
   className?: string;
   /**
@@ -102,6 +110,8 @@ export interface TrackerFieldPillProps {
   onOpenItem?: (itemId: string) => void;
   onCreateCollection?: (title: string, type: string) => Promise<RelationshipCandidate | null>;
   onSave: (fieldName: string, value: unknown) => void | Promise<void>;
+  /** See `TrackerFieldPillsProps.carriedFieldNames`. */
+  carried?: boolean;
   testIdBase?: string;
 }
 
@@ -204,6 +214,7 @@ export const TrackerFieldPill: React.FC<TrackerFieldPillProps> = ({
   onOpenItem,
   onCreateCollection,
   onSave,
+  carried = false,
   testIdBase = DEFAULT_TEST_ID_BASE,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -337,7 +348,7 @@ export const TrackerFieldPill: React.FC<TrackerFieldPillProps> = ({
         ref={floating.refs.setReference}
         {...getReferenceProps()}
         type="button"
-        className={`tracker-field-pill ${empty ? 'tracker-field-pill-empty' : 'tracker-field-pill-set'}${showLabel ? ' tracker-field-pill-labeled' : ''}`}
+        className={`tracker-field-pill ${empty ? 'tracker-field-pill-empty' : 'tracker-field-pill-set'}${showLabel ? ' tracker-field-pill-labeled' : ''}${carried ? ' tracker-field-pill-carried' : ''}`}
         disabled={!editable}
         onClick={() => {
           if (togglesDirectly) {
@@ -476,6 +487,7 @@ export const TrackerFieldPills: React.FC<TrackerFieldPillsProps> = ({
   onSave,
   onOpenItem,
   onCreateCollection,
+  carriedFieldNames,
   className,
   testIdBase = DEFAULT_TEST_ID_BASE,
 }) => {
@@ -497,6 +509,7 @@ export const TrackerFieldPills: React.FC<TrackerFieldPillsProps> = ({
           onOpenItem={onOpenItem}
           onCreateCollection={onCreateCollection}
           onSave={onSave}
+          carried={carriedFieldNames?.has(field.name) ?? false}
           testIdBase={testIdBase}
         />
       ))}

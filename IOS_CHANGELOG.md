@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- A Live Activity on the Lock Screen and in the Dynamic Island shows what your session fleet is doing, ranks the sessions waiting on you, and opens one when you tap it; turn it off in Settings.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

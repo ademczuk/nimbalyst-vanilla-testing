@@ -25,6 +25,7 @@ import {
   selectStalePendingPromptSessions,
 } from '../services/ai/pendingPromptTerminalClear';
 import { hasLiveInteractivePrompt } from '../mcp/tools/interactivePromptLiveness';
+import { getGitOperationLogService } from '../services/GitOperationLogService';
 
 // Track if handlers are registered to prevent double registration
 let handlersRegistered = false;
@@ -195,6 +196,26 @@ export async function registerSessionStateHandlers() {
       onError: (err) =>
         console.error('[SessionStateHandlers] Failed to clear stale pending prompt on terminal event:', err),
     });
+  });
+
+  // Terminalize Git commands the session was still running. The per-turn sweep
+  // in MessageStreamingHandler only fires if the streaming function resumes; a
+  // cancelled or stalled provider generator can park while another path settles
+  // the session, and the entry then spins in the menu-bar indicator until the
+  // next app restart. `session:waiting` is deliberately not terminal -- an
+  // interactive prompt leaves the turn live.
+  stateManager.subscribe((event: SessionStateEvent) => {
+    if (
+      event.type !== 'session:completed'
+      && event.type !== 'session:error'
+      && event.type !== 'session:interrupted'
+    ) {
+      return;
+    }
+    void getGitOperationLogService()
+      .interruptSession(event.sessionId)
+      .catch((err) =>
+        console.error('[SessionStateHandlers] Failed to settle Git activity on session end:', err));
   });
 
   // Get tracked session IDs (bare map membership; may include idle sessions).

@@ -36,6 +36,23 @@ final class Phase4Tests: XCTestCase {
         )
     }
 
+    /// The Live Activity's row links. Only an id crosses the boundary, and an id
+    /// that does not resolve locally opens nothing.
+    func testSessionDeepLinkCarriesOnlyAnId() throws {
+        XCTAssertEqual(
+            NimbalystExternalURLRouter.route(try XCTUnwrap(URL(string: "nimbalyst://session/abc-123"))),
+            .session(id: "abc-123")
+        )
+        XCTAssertEqual(
+            NimbalystExternalURLRouter.route(try XCTUnwrap(URL(string: "nimbalyst://session/"))),
+            .unsupported
+        )
+        XCTAssertEqual(
+            NimbalystExternalURLRouter.route(try XCTUnwrap(URL(string: "nimbalyst://session"))),
+            .unsupported
+        )
+    }
+
     func testInAppScannerStillParsesPairingDeepLinkPayload() throws {
         let json = """
         {"seed":"scanner-seed","serverUrl":"wss://sync.example.com","userId":"scanner@example.com"}

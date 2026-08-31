@@ -93,11 +93,13 @@ export async function persistInteractivePromptToolUse(args: {
   toolName: string;
   input: unknown;
   createdAt?: Date;
+  /** Row source. Defaults to the CLI path this was written for. */
+  source?: string;
 }): Promise<void> {
   try {
     await AgentMessagesRepository.create({
       sessionId: args.sessionId,
-      source: "claude-code",
+      source: args.source ?? "claude-code",
       direction: "output",
       content: buildInteractivePromptToolUseContent(args),
       hidden: false,
@@ -121,6 +123,8 @@ export async function persistInteractivePromptToolResult(args: {
   result: unknown;
   isError?: boolean;
   createdAt?: Date;
+  /** Row source. Defaults to the CLI path this was written for. */
+  source?: string;
 }): Promise<void> {
   // Mark this tool_use_id as persisted BEFORE the await so the proxy observation
   // (which scrapes the CLI's echoed tool_result from the continuation request
@@ -129,7 +133,7 @@ export async function persistInteractivePromptToolResult(args: {
   try {
     await AgentMessagesRepository.create({
       sessionId: args.sessionId,
-      source: "claude-code",
+      source: args.source ?? "claude-code",
       direction: "output",
       content: buildInteractivePromptToolResultContent(args),
       hidden: false,

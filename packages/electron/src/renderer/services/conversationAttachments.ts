@@ -25,7 +25,7 @@ import {
   type MessageAttachment,
 } from '@nimbalyst/collab-protocol';
 
-import { MAX_COLLAB_ASSET_BYTES } from '../../shared/collabAssetFormat';
+import { MAX_COLLAB_ASSET_BYTES } from '@nimbalyst/runtime/sync/collabAssetFormat';
 
 /** Longest edge a re-encoded image keeps. Above this it is scaled down. */
 export const ATTACHMENT_MAX_IMAGE_EDGE = 1920;

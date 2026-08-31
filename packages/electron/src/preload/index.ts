@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { createIpcSubscriber } from './ipcSubscriptions.ts';
 import {ClaudeForWindowsInstallation} from "../main/services/CLIManager.ts";
 import type { GhCliStatus } from '../main/services/GhCliDetector.ts';
+import type { GitStatusChangedPayload } from '../main/services/GitStatusRefreshCoordinator.ts';
 import type {
   AppendLocalReplicaUpdateInput,
   AppendRemoteReplicaUpdatesInput,
@@ -1074,6 +1075,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
           snippet: string;
           score: number;
           signals: { dense: boolean; sparse: boolean };
+          /** Raw pre-fusion scores; `score` is an RRF rank and carries no threshold. */
+          similarity?: { cosine?: number; bm25?: number };
         }>
       >,
   },
@@ -2121,8 +2124,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Git operations (real-time status events)
   git: {
     // Listen for git status changes (staging, unstaging, etc.)
-    onStatusChanged: (callback: (data: { workspacePath: string }) => void) => {
-      const handler = (_event: any, data: { workspacePath: string }) => callback(data);
+    // `revision`/`status` are present when main computed the snapshot itself
+    // (after a Git operation settled). The index and ref watchers still send the
+    // path-only shape, so both must stay handled.
+    onStatusChanged: (callback: (data: GitStatusChangedPayload) => void) => {
+      const handler = (_event: any, data: GitStatusChangedPayload) => callback(data);
       ipcRenderer.on('git:status-changed', handler);
       return () => ipcRenderer.removeListener('git:status-changed', handler);
     },

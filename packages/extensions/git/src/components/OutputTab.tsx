@@ -92,9 +92,14 @@ function EntryRow({ entry }: { entry: OperationLogEntry }) {
     'git-output-entry--success';
 
   return (
-    <div className={`git-output-entry ${borderClass}`}>
+    <div className={`git-output-entry ${borderClass}`} data-source={entry.source ?? 'nimbalyst'}>
       <div className="git-output-entry-header">
         <span className="git-output-timestamp">{formatTime(entry.timestamp)}</span>
+        {/* An agent's `git fetch` is indistinguishable from the user's without
+            this, and the two carry very different expectations. */}
+        {entry.source === 'agent' && (
+          <span className="git-output-source" title="Started by an agent session">Agent</span>
+        )}
         <code className="git-output-command">{entry.command}</code>
       </div>
 

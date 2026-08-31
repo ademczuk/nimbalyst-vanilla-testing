@@ -48,6 +48,16 @@ export interface HistoryTag {
  * Storage: All data is stored in the PGLite database (document_history table) with
  * compressed content to minimize disk usage.
  */
+/**
+ * How long a tag may sit in `pending-review` before it is retired unreviewed.
+ *
+ * Two weeks: no real AI review waits that long, and reconciliation on the read
+ * path has had every chance to reach the file first. Deliberately independent
+ * of `maxAgeDays`, which governs when a snapshot row is DELETED — this only
+ * flips a status.
+ */
+const PENDING_REVIEW_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+
 export class HistoryManager {
   private maxSnapshots = 250;
   private maxAgeDays = 30;
@@ -363,6 +373,15 @@ export class HistoryManager {
       const now = Date.now();
       const maxAge = this.maxAgeDays * 24 * 60 * 60 * 1000;
 
+      // Isolated: cleanup()'s single catch would otherwise let a failure here
+      // silently skip snapshot retention entirely, which is how this very step
+      // first went in.
+      try {
+        await this.retireStalePendingTags(now);
+      } catch (error) {
+        logger.main.error('[HistoryManager] Pending-review retention failed:', error);
+      }
+
       // Delete old snapshots
       await database.query(`
         DELETE FROM document_history
@@ -400,6 +419,46 @@ export class HistoryManager {
     } catch (error: any) {
       logger.main.error('[HistoryManager] Cleanup failed:', error);
     }
+  }
+
+  /**
+   * Retire pending-review tags that have sat unreviewed past the bound.
+   *
+   * Before #1403 a tag could stay `pending-review` forever — 3,284 rows on one
+   * dev machine, the oldest three months old. Reconciliation on the read path
+   * heals a file the moment it is opened, but a file nobody opens again is
+   * never reached, and every one of those rows still inflates the pending
+   * counts the UI shows.
+   *
+   * This flips status only. The row and its compressed baseline stay put, so
+   * nothing here loses data — unlike the snapshot pass below, which deletes.
+   */
+  private async retireStalePendingTags(now: number): Promise<void> {
+    const cutoff = now - PENDING_REVIEW_RETENTION_MS;
+
+    const stale = await database.query<{ file_path: string }>(`
+      SELECT DISTINCT file_path
+      FROM document_history
+      WHERE timestamp < $1
+        AND ${this.md('status')} = 'pending-review'
+    `, [cutoff]);
+
+    if (stale.rows.length === 0) return;
+
+    await database.query(`
+      UPDATE document_history
+      SET metadata = jsonb_set(
+            jsonb_set(metadata, '{status}', '"reviewed"'),
+            '{updatedAt}', to_jsonb($1::bigint)
+          )
+      WHERE timestamp < $2
+        AND ${this.md('status')} = 'pending-review'
+    `, [now, cutoff]);
+
+    logger.main.info('[HistoryManager] Retired pending tags past the retention bound:', {
+      count: stale.rows.length,
+      retentionDays: PENDING_REVIEW_RETENTION_MS / (24 * 60 * 60 * 1000),
+    });
   }
 
   /**

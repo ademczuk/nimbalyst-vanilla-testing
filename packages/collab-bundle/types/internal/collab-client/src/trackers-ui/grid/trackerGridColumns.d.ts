@@ -15,6 +15,13 @@ export interface FavoritesOptions {
     favoriteItemIds: ReadonlySet<string>;
     onToggleFavorite: (itemId: string) => void;
 }
+/** Turns the Key cell into the row's open affordance; omit to leave it plain text. */
+export interface KeyLinkOptions {
+    /** Clicking the key opens the row in the detail pane. */
+    onOpenDetail: (itemId: string) => void;
+    /** Hover affordance inside the key cell; omit where documents are unavailable. */
+    onOpenDocument?: (itemId: string) => void;
+}
 export interface BuildGridColumnsOptions {
     /** Active tracker type; `'all'` means a mixed-type view. */
     trackerType: string;
@@ -34,6 +41,8 @@ export interface BuildGridColumnsOptions {
     favorites?: FavoritesOptions;
     /** Also renders the overflow trigger inside the title cell. */
     rowActions?: boolean;
+    /** Makes the Key cell the row's open affordance. */
+    keyLink?: KeyLinkOptions;
     /** Names a relationship target from the live record rather than the link snapshot. */
     resolveRelationshipLabel?: TrackerRelationshipLabelResolver;
 }
@@ -43,4 +52,4 @@ export declare function buildGridActionsColumn(): ColumnRegular;
  * Map visible tracker columns to RevoGrid columns, attaching the per-field
  * editor and a per-cell readonly gate.
  */
-export declare function buildGridColumns(columns: TrackerColumnDef[], { trackerType, columnWidths, isRowEditable, editorContext, filteredColumnIds, onOpenFilter, sortingEnabled, favorites, rowActions, resolveRelationshipLabel: resolveLabel, }: BuildGridColumnsOptions): ColumnRegular[];
+export declare function buildGridColumns(columns: TrackerColumnDef[], { trackerType, columnWidths, isRowEditable, editorContext, filteredColumnIds, onOpenFilter, sortingEnabled, favorites, rowActions, keyLink, resolveRelationshipLabel: resolveLabel, }: BuildGridColumnsOptions): ColumnRegular[];

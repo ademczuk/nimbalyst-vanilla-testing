@@ -289,6 +289,27 @@ public struct UnregisterPushTokenMessage: Encodable {
     public let deviceId: String
 }
 
+/// Register an ActivityKit token for the Live Activity lane.
+///
+/// A separate message from `registerPushToken` because it is a separate lane:
+/// different APNs topic, different payload shape, and two token kinds that are
+/// never interchangeable. `kind` is the wire form of `LiveActivityTokenKind`.
+public struct RegisterLiveActivityTokenMessage: Encodable {
+    let type = "registerLiveActivityToken"
+    public let token: String
+    public let kind: String
+    public let deviceId: String
+    public let platform: String
+    public let environment: String
+}
+
+/// Drop a Live Activity token. Omitting `kind` drops every kind for this device.
+public struct UnregisterLiveActivityTokenMessage: Encodable {
+    let type = "unregisterLiveActivityToken"
+    public let deviceId: String
+    public let kind: String?
+}
+
 struct CreateSessionRequestMessage: Encodable {
     let type = "createSessionRequest"
     let request: EncryptedCreateSessionRequest

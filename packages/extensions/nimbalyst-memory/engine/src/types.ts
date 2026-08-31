@@ -149,6 +149,13 @@ export interface SearchHit {
    * come from one or both. Omitted only by callers that don't compute it.
    */
   signals?: { dense: boolean; sparse: boolean };
+  /**
+   * Raw per-arm scores, before RRF. `score` above is a fused RANK reciprocal
+   * and is not comparable across queries, so it cannot carry a threshold.
+   * Duplicate detection needs the dense cosine to decide "close enough to
+   * warn". Absent for an arm that did not surface this hit.
+   */
+  similarity?: { cosine?: number; bm25?: number };
 }
 
 /** A single fact, parsed from its markdown file + frontmatter. */

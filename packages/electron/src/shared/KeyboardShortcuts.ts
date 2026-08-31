@@ -9,6 +9,9 @@ export const KeyboardShortcuts = {
     newFile: 'Cmd+N',
     newSession: 'Cmd+N',
     sessionLaunchPopup: 'Cmd+Shift+N',
+    // I for Issue. Cmd+Shift+T would be the natural sibling to Cmd+T (Tracker
+    // mode) but it is reopenClosedTab, and displacing that is not worth it.
+    trackerQuickCreate: 'Cmd+Shift+I',
     newBrowserTab: 'Cmd+Shift+B',
     open: 'Cmd+O',
     save: 'Cmd+S',

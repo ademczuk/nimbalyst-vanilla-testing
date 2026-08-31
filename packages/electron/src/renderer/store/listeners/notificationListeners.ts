@@ -11,6 +11,7 @@
 
 import { store } from '@nimbalyst/runtime/store';
 import { activeSessionIdAtom } from '../atoms/sessions';
+import { notificationSettingsAtom } from '../atoms/appSettings';
 
 let initialized = false;
 
@@ -33,10 +34,31 @@ export function initNotificationListeners(): () => void {
     },
   );
 
+  /*
+   * The menu bar island can turn notifications off from outside any window.
+   *
+   * Not merely a stale checkbox if this is missed: the Notifications settings
+   * panel rewrites the *whole* notification block on any edit, so a window that
+   * never heard about the island's change would put the old value straight back
+   * the next time the user touched the completion sound. Written straight into
+   * the atom rather than through the setter, which would persist it again.
+   */
+  const unsubscribeEnabled = window.electronAPI?.on?.(
+    'notifications:enabled-changed',
+    (enabled: boolean) => {
+      const current = store.get(notificationSettingsAtom);
+      if (current.osNotificationsEnabled === enabled) return;
+      store.set(notificationSettingsAtom, { ...current, osNotificationsEnabled: enabled });
+    },
+  );
+
   return () => {
     initialized = false;
     if (typeof unsubscribe === 'function') {
       unsubscribe();
+    }
+    if (typeof unsubscribeEnabled === 'function') {
+      unsubscribeEnabled();
     }
   };
 }

@@ -137,6 +137,12 @@ if (new URLSearchParams(window.location.search).get('mode') === 'tray-panel') {
   document.documentElement.classList.add('tray-panel-window');
 }
 
+// The island window is transparent so the menu bar shows through everywhere the
+// island itself is not. Same reason as above: mark it before the first paint.
+if (new URLSearchParams(window.location.search).get('mode') === 'menu-bar-island') {
+  document.documentElement.classList.add('menu-bar-island-window');
+}
+
 // Expose offscreen renderer on window for main process access
 (window as any).offscreenEditorRenderer = offscreenEditorRenderer;
 

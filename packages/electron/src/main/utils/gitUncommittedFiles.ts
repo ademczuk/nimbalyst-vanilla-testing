@@ -17,6 +17,19 @@ const gitStatusCache = new Map<string, GitStatusCache>();
 const gitStatusInFlight = new Map<string, Promise<Set<string>>>();
 const GIT_STATUS_CACHE_TTL_MS = 5000; // 5 second cache
 
+interface TrackedFilesCache {
+    trackedFiles: Set<string>;
+    timestamp: number;
+}
+
+const trackedFilesCache = new Map<string, TrackedFilesCache>();
+const trackedFilesInFlight = new Map<string, Promise<Set<string>>>();
+// Tracked-ness only moves on `git add`/`rm`/`checkout`, far slower than
+// working-tree status, and the payload is the whole index (~500KB on this
+// repo). Cache it longer than the status set, and let GitRefWatcher punch it
+// out on ref/index changes rather than paying for a re-listing every 5s.
+const TRACKED_FILES_CACHE_TTL_MS = 30000;
+
 // Hard cap on `git status` so a hung git subprocess can never freeze the
 // session list. On Windows a stale `.git/index.lock`, a credential-helper
 // prompt, or antivirus scanning can leave `git status` hanging forever; the
@@ -110,4 +123,83 @@ export async function getCachedUncommittedFiles(workspacePath: string): Promise<
     } finally {
         gitStatusInFlight.delete(workspacePath);
     }
+}
+
+/**
+ * Returns the set of workspace-relative paths git tracks, cached and
+ * de-duplicated the same way as {@link getCachedUncommittedFiles}.
+ *
+ * This exists as the second half of the "did this AI edit land?" question
+ * (#1403). A path missing from the uncommitted set means EITHER "tracked and
+ * clean" OR "gitignored", and those need opposite answers: the first says the
+ * edit landed and its pending-review baseline can be retired, the second says
+ * nothing at all. Only the intersection — tracked AND not uncommitted — is
+ * evidence.
+ *
+ * Returns an empty set for a non-repo. Callers must treat "empty" as "no
+ * signal", never as "nothing is tracked".
+ */
+export async function getCachedTrackedFiles(workspacePath: string): Promise<Set<string>> {
+    if (!existsSync(path.join(workspacePath, '.git'))) {
+        return new Set();
+    }
+
+    const cached = trackedFilesCache.get(workspacePath);
+    if (cached && Date.now() - cached.timestamp < TRACKED_FILES_CACHE_TTL_MS) {
+        return cached.trackedFiles;
+    }
+
+    const inFlight = trackedFilesInFlight.get(workspacePath);
+    if (inFlight) return inFlight;
+
+    const queryPromise = (async () => {
+        const simpleGit = (await import('simple-git')).default;
+        // Same env handling as the status query above: GIT_OPTIONAL_LOCKS=0 to
+        // keep a read-only listing off `.git/index`, and the unsafe flags
+        // because supplying ANY env makes simple-git scan it and refuse to
+        // spawn when the user's own environment carries GIT_EDITOR and friends.
+        const git = simpleGit(workspacePath, {
+            timeout: { block: GIT_STATUS_TIMEOUT_MS },
+            unsafe: GIT_INHERITED_ENV_UNSAFE,
+        }).env({ ...process.env, GIT_OPTIONAL_LOCKS: '0' });
+
+        // -z so paths with spaces, quotes or non-ASCII bytes survive intact;
+        // git otherwise quotes and escapes them and the set would miss entries.
+        const raw = await withTimeout(
+            git.raw(['ls-files', '-z']),
+            GIT_STATUS_TIMEOUT_MS,
+            `git ls-files timed out after ${GIT_STATUS_TIMEOUT_MS}ms for ${workspacePath}`,
+        );
+
+        const trackedFiles = new Set(raw.split('\0').filter(Boolean));
+
+        trackedFilesCache.set(workspacePath, {
+            trackedFiles,
+            timestamp: Date.now(),
+        });
+
+        return trackedFiles;
+    })();
+
+    trackedFilesInFlight.set(workspacePath, queryPromise);
+    try {
+        return await queryPromise;
+    } finally {
+        trackedFilesInFlight.delete(workspacePath);
+    }
+}
+
+/**
+ * Drop cached git facts for a workspace (or all workspaces). Called when a ref
+ * or the index moves, so the next reconciliation sees the new reality instead
+ * of waiting out a TTL.
+ */
+export function clearGitFactsCache(workspacePath?: string): void {
+    if (workspacePath) {
+        gitStatusCache.delete(workspacePath);
+        trackedFilesCache.delete(workspacePath);
+        return;
+    }
+    gitStatusCache.clear();
+    trackedFilesCache.clear();
 }

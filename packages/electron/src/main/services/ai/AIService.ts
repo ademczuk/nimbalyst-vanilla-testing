@@ -11,6 +11,7 @@ import {
   isExtensionAgentProvider,
   resolveExtensionAgentRef,
 } from './providerResolution';
+import { resolveProviderAuthRequirement } from './providerAuthRequirement';
 import { getAgentProviderRegistry } from '../../extensions/AgentProviderRegistry';
 import {
   SessionManager,
@@ -2026,48 +2027,14 @@ export class AIService {
       // Extension-agent providers defer auth to the extension itself, so they
       // skip this switch entirely (no apiKey requirement on the host side).
       if (!isExtensionAgentProvider(provider)) {
-        switch (provider) {
-          case 'claude':
-            if (!apiKey) {
-              throw new Error('Anthropic API key not configured');
-            }
-            break;
-          case 'claude-code':
-            // Claude Code: API key is optional, uses SSO login if not provided
-            // No error if missing - will use SSO login
-            break;
-          case 'claude-code-cli':
-            // Genuine `claude` CLI: uses its own login/subscription, no API key.
-            break;
-          case 'openai':
-            if (!apiKey) {
-              throw new Error('OpenAI API key not configured');
-            }
-            break;
-          case 'openai-codex':
-            // Codex SDK uses its own auth (codex auth login), API key is optional
-            break;
-          case 'opencode':
-            // OpenCode uses its own config, API key is optional
-            break;
-          case 'copilot-cli':
-            // Copilot uses its own CLI auth (copilot auth login), no API key needed
-            break;
-          case 'grok-build':
-          case 'cursor-agent':
-            // Both authenticate through their own CLI login (`grok login`,
-            // `cursor-agent login`). No API key, and deliberately no env-var
-            // fallback -- see the standing rule in CLAUDE.md.
-            break;
-          case 'antigravity-gemini-agent':
-            // Signs in through the Antigravity app; the language server
-            // consumes that login. No API key, no env fallback.
-            break;
-          case 'lmstudio':
-            // LMStudio doesn't need an API key, just the base URL
-            break;
-          default:
-            throw new Error(`Unknown provider: ${provider}`);
+        // Shared with the send path in MessageStreamingHandler — see
+        // providerAuthRequirement.ts for why this is not an inline switch.
+        const authRequirement = resolveProviderAuthRequirement(provider as AIProviderType);
+        if (!authRequirement) {
+          throw new Error(`Unknown provider: ${provider}`);
+        }
+        if (authRequirement.requiresApiKey && !apiKey) {
+          throw new Error(authRequirement.missingKeyMessage);
         }
       }
 

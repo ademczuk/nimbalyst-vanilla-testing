@@ -22,6 +22,11 @@ import {
   withGitOperationLog,
 } from '../services/GitOperationLogService';
 import type { GitOperationLogService } from '../services/GitOperationLogService';
+import {
+  GitStatusRefreshCoordinator,
+  setGitStatusRefreshCoordinator,
+} from '../services/GitStatusRefreshCoordinator';
+import { isReadOnlyGitCommandLine } from '../services/gitCommandClassifier';
 
 function isGitRepository(workspacePath: string): boolean {
   try {
@@ -305,10 +310,46 @@ export async function discardGitChanges(
 }
 
 /**
+ * Read the branch/ahead-behind snapshot the title bar and Git panel both render.
+ *
+ * `core.optionalLocks=false` tells git to skip the index refresh that would
+ * create `.git/index.lock`, so this read can run concurrently with writes
+ * (commit/rebase/etc.) without queueing behind them on `gitOperationLock`.
+ */
+export async function readBranchStatus(workspacePath: string): Promise<GitStatusResult> {
+  const git: SimpleGit = simpleGit(workspacePath, { config: ['core.optionalLocks=false'] });
+  const status = await git.status();
+  return {
+    branch: normalizeCurrentBranch(status.current) || 'HEAD',
+    ahead: status.ahead || 0,
+    behind: status.behind || 0,
+    hasUncommitted: !status.isClean(),
+  };
+}
+
+/**
  * Register all git-related IPC handlers
  */
 export function registerGitHandlers(): void {
   const operationLog = getGitOperationLogService();
+
+  // Every foreground Git operation converges on the journal, so its terminal
+  // event is the one signal that covers app-owned and agent-observed commands
+  // alike -- including a fetch, which moves `refs/remotes/*` and so never
+  // reaches the branch-ref or index watchers.
+  const statusRefresh = new GitStatusRefreshCoordinator({
+    readStatus: async (workspacePath) =>
+      isGitRepository(workspacePath) ? readBranchStatus(workspacePath) : null,
+  });
+  setGitStatusRefreshCoordinator(statusRefresh);
+  operationLog.onOperationTerminal((workspacePath, entry) => {
+    // An observed read-only command (an agent's `git status`, `git log`) cannot
+    // have moved refs, the index, or the worktree. Refreshing after each one
+    // would re-read status and reload the Git panel for nothing, and agents run
+    // these constantly. App-owned operations always refresh.
+    if (entry.executor === 'shell' && isReadOnlyGitCommandLine(entry.command)) return;
+    void statusRefresh.request(workspacePath);
+  });
 
   safeHandle('git:operation-log:get', async (_event, workspacePath: string) => {
     if (!workspacePath) throw new Error('workspacePath is required');
@@ -333,20 +374,8 @@ export function registerGitHandlers(): void {
       return { branch: '', ahead: 0, behind: 0, hasUncommitted: false };
     }
 
-    // core.optionalLocks=false tells git to skip the index refresh that would
-    // create .git/index.lock, so this read can run concurrently with writes
-    // (commit/rebase/etc.) without queueing behind them on gitOperationLock.
     try {
-      const git: SimpleGit = simpleGit(workspacePath, { config: ['core.optionalLocks=false'] });
-      const status = await git.status();
-      const branch = normalizeCurrentBranch(status.current) || 'HEAD';
-
-      return {
-        branch,
-        ahead: status.ahead || 0,
-        behind: status.behind || 0,
-        hasUncommitted: !status.isClean(),
-      };
+      return await readBranchStatus(workspacePath);
     } catch (error) {
       log.error('Failed to get git status:', error);
       throw error;

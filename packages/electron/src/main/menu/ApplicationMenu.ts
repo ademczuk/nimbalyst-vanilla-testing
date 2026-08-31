@@ -309,6 +309,23 @@ export async function createApplicationMenu() {
                     }
                 },
                 {
+                    id: 'file-new-tracker-item',
+                    label: 'New Tracker Item...',
+                    accelerator: KeyboardShortcuts.file.trackerQuickCreate,
+                    click: async () => {
+                        const focusedWindow = getFocusedWindow();
+                        if (!focusedWindow) return;
+
+                        const windowId = getWindowId(focusedWindow);
+                        if (windowId === null) return;
+
+                        const state = windowStates.get(windowId);
+                        if (state?.mode !== 'workspace' || !state.workspacePath) return;
+
+                        focusedWindow.webContents.send('tracker-quick-create-open');
+                    }
+                },
+                {
                     id: 'file-new-browser-tab',
                     label: 'New Browser Tab',
                     accelerator: KeyboardShortcuts.file.newBrowserTab,

@@ -198,19 +198,25 @@ export function ContextUsageDisplay({
     return 'usage-normal';
   };
 
-  // Build display text
+  // Build display text.
+  //
+  // The two supported states read as different quantities and must not look
+  // alike at a glance: `context-window` is a gauge (fill over a denominator),
+  // `token-counts` is an odometer (what the session has spent, with no
+  // denominator in existence). Bare "29k tokens" next to another session's
+  // "124k/1M (12%)" reads as a fill, so the count-only chip says "used".
   const getDisplayText = (): string => {
     if (!hasTokenData) return '--';
     if (hasContextWindow) {
       return `${formatTokensShort(displayTokens)}/${formatTokensShort(displayContextWindow)} (${percentage}%)`;
     }
-    return `${formatTokensShort(displayTokens)} tokens`;
+    return `${formatTokensShort(displayTokens)} tokens used`;
   };
 
   const label = hasTokenData
     ? hasContextWindow
       ? `Context usage ${formatTokensShort(displayTokens)} of ${formatTokensShort(displayContextWindow)} tokens (${percentage}%)`
-      : `Token usage: ${formatTokensShort(displayTokens)} total tokens`
+      : `Session token usage: ${displayTokens.toLocaleString()} tokens used; this agent reports no context window size`
     : 'Token usage data not available yet';
 
   // Usage level styling
@@ -235,7 +241,7 @@ export function ContextUsageDisplay({
   return (
     <div
       ref={rootRef}
-      className={`context-usage-display ${usageClass} relative inline-flex items-center py-0.5 px-2 rounded-md text-[11px] font-medium whitespace-nowrap bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] ml-auto ${enableTooltip ? 'cursor-pointer' : 'cursor-default'} gap-1 focus:outline-2 focus:outline-[var(--nim-primary)] focus:outline-offset-2 max-[400px]:hidden ${usageStyles[usageClass as keyof typeof usageStyles]}`}
+      className={`context-usage-display ${hasContextWindow ? 'usage-context-window' : 'usage-token-counts'} ${usageClass} relative inline-flex items-center py-0.5 px-2 rounded-md text-[11px] font-medium whitespace-nowrap bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] ml-auto ${enableTooltip ? 'cursor-pointer' : 'cursor-default'} gap-1 focus:outline-2 focus:outline-[var(--nim-primary)] focus:outline-offset-2 max-[400px]:hidden ${usageStyles[usageClass as keyof typeof usageStyles]}`}
       tabIndex={hasTokenData ? 0 : -1}
       aria-label={label}
       aria-describedby={shouldShowTooltip ? tooltipId : undefined}
@@ -255,7 +261,7 @@ export function ContextUsageDisplay({
         >
           <div className="tooltip-header flex justify-between items-center text-xs mb-2 text-[var(--nim-text-muted)]">
             <div className="tooltip-header-left flex items-center gap-1.5">
-              <span>{hasContextWindow ? 'Context Breakdown' : 'Token Usage'}</span>
+              <span>{hasContextWindow ? 'Context Breakdown' : 'Session Token Usage'}</span>
               {helpContent && (
                 <button
                   className="tooltip-help-button inline-flex items-center justify-center w-[18px] h-[18px] p-0 border-none rounded-full bg-[var(--nim-bg-tertiary)] text-[var(--nim-text-faint)] cursor-pointer transition-all duration-150 hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text-muted)]"
@@ -282,6 +288,16 @@ export function ContextUsageDisplay({
             <div className="tooltip-help-section bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded-md p-2.5 mb-2.5 overflow-hidden box-border whitespace-normal">
               <div className="tooltip-help-title text-xs font-semibold text-[var(--nim-text)] mb-1 whitespace-normal">{helpContent.title}</div>
               <div className="tooltip-help-body text-[11px] text-[var(--nim-text-muted)] leading-[1.4] whitespace-normal break-words">{helpContent.body}</div>
+            </div>
+          )}
+
+          {/* The absence of a percentage is itself information: the agent
+              measured its spend and never reported a window size. Say so,
+              rather than leaving the user to read the missing gauge as a bug
+              (#914 forbids manufacturing the denominator to fill the gap). */}
+          {!hasContextWindow && (
+            <div className="tooltip-no-window-note text-[11px] text-[var(--nim-text-muted)] leading-[1.4] whitespace-normal mb-2">
+              Cumulative spend for this session. This agent reports no context window size, so there is no fill percentage to show.
             </div>
           )}
 

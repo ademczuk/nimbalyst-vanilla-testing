@@ -131,16 +131,46 @@ describe('GitRefWatcher.start - empty repo handling', () => {
     const watcher = new GitRefWatcher();
     await watcher.start('/fake/workspace');
 
-    expect(mockWatchFile).toHaveBeenCalledTimes(2);
-    expect(mockWatchFile.mock.calls[0]?.[0]).toBe(path.join('/fake/workspace', '.git', 'refs', 'heads', 'master'));
-    expect(mockWatchFile.mock.calls[1]?.[0]).toBe(path.join('/fake/workspace', '.git', 'index'));
+    // HEAD is watched alongside the branch ref: without it the ref watcher
+    // stays pinned to whichever branch was current at start(), so after a
+    // checkout no commit on the new branch is ever detected (#1403).
+    const watched = [
+      path.join('/fake/workspace', '.git', 'refs', 'heads', 'master'),
+      path.join('/fake/workspace', '.git', 'index'),
+      path.join('/fake/workspace', '.git', 'HEAD'),
+    ];
+    expect(mockWatchFile.mock.calls.map((call) => call[0])).toEqual(watched);
     expect(watcher.getStats().activeWatchers).toBe(1);
 
     await watcher.stop('/fake/workspace');
 
-    expect(mockUnwatchFile).toHaveBeenCalledTimes(2);
-    expect(mockUnwatchFile.mock.calls[0]?.[0]).toBe(path.join('/fake/workspace', '.git', 'refs', 'heads', 'master'));
-    expect(mockUnwatchFile.mock.calls[1]?.[0]).toBe(path.join('/fake/workspace', '.git', 'index'));
+    expect(mockUnwatchFile.mock.calls.map((call) => call[0])).toEqual(watched);
     expect(watcher.getStats().activeWatchers).toBe(0);
+  });
+
+  it('re-points the ref watcher at the new branch when HEAD moves', async () => {
+    mockStatus.mockResolvedValue({ current: 'master' });
+    mockLog.mockResolvedValue({ latest: { hash: 'abc123', message: 'Initial commit' } });
+
+    const watcher = new GitRefWatcher();
+    await watcher.start('/fake/workspace');
+
+    const headListener = mockWatchFile.mock.calls.find(
+      (call) => call[0] === path.join('/fake/workspace', '.git', 'HEAD'),
+    )?.[2];
+    expect(headListener).toBeTypeOf('function');
+
+    mockStatus.mockResolvedValue({ current: 'feature' });
+    mockLog.mockResolvedValue({ latest: { hash: 'def456', message: 'On feature' } });
+
+    // fs.watchFile hands the listener (curr, prev) stats; only a real change counts.
+    await headListener!({ mtimeMs: 2, ctimeMs: 2, size: 1, ino: 1, nlink: 1 }, { mtimeMs: 1, ctimeMs: 1, size: 1, ino: 1, nlink: 1 });
+
+    expect(mockUnwatchFile.mock.calls.map((call) => call[0])).toContain(
+      path.join('/fake/workspace', '.git', 'refs', 'heads', 'master'),
+    );
+    expect(mockWatchFile.mock.calls.map((call) => call[0])).toContain(
+      path.join('/fake/workspace', '.git', 'refs', 'heads', 'feature'),
+    );
   });
 });

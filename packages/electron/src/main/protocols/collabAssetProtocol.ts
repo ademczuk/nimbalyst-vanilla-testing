@@ -31,7 +31,7 @@ import {
   COLLAB_ASSET_UNREADABLE_FORMAT_CODE,
   COLLAB_ASSET_WIRE_FORMAT_PLAINTEXT,
   collabAssetUnreadableFormatMessage,
-} from "../../shared/collabAssetFormat";
+} from "@nimbalyst/runtime/sync/collabAssetFormat";
 
 export const COLLAB_ASSET_SCHEME = "collab-asset";
 export const COLLAB_ASSET_HOST = "doc";
