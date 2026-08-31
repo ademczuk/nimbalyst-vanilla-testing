@@ -24,6 +24,11 @@ const mocks = vi.hoisted(() => ({
   showError: vi.fn(),
   showInfo: vi.fn(),
   showWarning: vi.fn(),
+  shareFolderToTeamFromContextMenu: vi.fn(async () => {}),
+}));
+
+vi.mock('../../services/shareFolderToTeamFlow', () => ({
+  shareFolderToTeamFromContextMenu: mocks.shareFolderToTeamFromContextMenu,
 }));
 
 vi.mock('@nimbalyst/runtime', () => ({
@@ -273,6 +278,41 @@ describe('CommonFileActions Share to Team catalog eligibility', () => {
     expect(action.getAttribute('aria-disabled')).toBe('true');
     expect(action.textContent).toContain(reason);
     fireEvent.click(action);
+    expect(mocks.openDialog).not.toHaveBeenCalled();
+  });
+
+  it('offers a folder the folder promote instead of a file-extension verdict', async () => {
+    // A folder has no document type, so the catalog's "no collaborative
+    // document type is registered for X" is a file message about a non-file.
+    // It used to be the reason the action was greyed out on every folder.
+    mocks.resolveShareability.mockReturnValue({
+      state: 'unsupported',
+      reason: 'No collaborative document type is registered for "design".',
+    });
+    render(
+      <CommonFileActions
+        filePath="/workspace/design"
+        fileName="design"
+        onClose={() => {}}
+        menuItemClass="menu-item"
+        separatorClass="separator"
+        useButtons
+        isDirectory
+      />,
+    );
+
+    const action = screen.getByRole('button', { name: /Share Folder to Team/ });
+    expect(action.getAttribute('aria-disabled')).toBe('false');
+    expect(action.textContent).not.toContain('No collaborative document type');
+
+    fireEvent.click(action);
+    await vi.waitFor(() => {
+      expect(mocks.shareFolderToTeamFromContextMenu).toHaveBeenCalledWith({
+        folderPath: '/workspace/design',
+        folderName: 'design',
+      });
+    });
+    // The single-file dialog is not the folder path.
     expect(mocks.openDialog).not.toHaveBeenCalled();
   });
 

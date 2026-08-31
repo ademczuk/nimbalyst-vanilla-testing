@@ -99,7 +99,14 @@ export interface ShareToTeamAskOptions {
 }
 
 export type ShareFileToTeamResult =
-  | { status: "shared"; documentId: string; orgId: string; title: string }
+  | {
+      status: "shared";
+      documentId: string;
+      orgId: string;
+      title: string;
+      /** Degradations that did not fail the share (lost embeds, lost assets). */
+      warnings?: string[];
+    }
   | { status: "failed"; error: string };
 
 export interface ShareToTeamTarget {
@@ -301,8 +308,16 @@ export async function shareFileToTeam(params: {
    * the previous one's write with the same value.
    */
   persistLastSharedFolder?: boolean;
+  /**
+   * Defaults to true. A folder promote turns this off: one toast per file is a
+   * notification storm for the author and hides the only number that matters,
+   * which is how many of the N files actually landed. That caller reports the
+   * batch once from the results.
+   */
+  showNotifications?: boolean;
 }): Promise<ShareFileToTeamResult> {
   const { filePath, fileName, answers } = params;
+  const showNotifications = params.showNotifications !== false;
   const {
     folderId,
     folderPath,
@@ -319,13 +334,16 @@ export async function shareFileToTeam(params: {
     message: string,
     options?: { details?: string; duration?: number }
   ): ShareFileToTeamResult => {
-    if (options)
-      errorNotificationService.showError(
-        "Could not share to team",
-        message,
-        options
-      );
-    else errorNotificationService.showError("Could not share to team", message);
+    if (showNotifications) {
+      if (options)
+        errorNotificationService.showError(
+          "Could not share to team",
+          message,
+          options
+        );
+      else
+        errorNotificationService.showError("Could not share to team", message);
+    }
     return { status: "failed", error: message };
   };
   const trackShareFailure = (error: unknown) => {
@@ -685,6 +703,33 @@ export async function shareFileToTeam(params: {
           .join("\n")
       : undefined;
 
+  // A share can succeed and still lose something. A caller that suppressed the
+  // toasts has no other way to learn that, so the degradations ride back on the
+  // result rather than only existing as pixels.
+  const warnings: string[] = [];
+  if (linkedFailureCount > 0) {
+    warnings.push(
+      `${linkedFailureCount} linked document${
+        linkedFailureCount === 1 ? "" : "s"
+      } could not be shared`
+    );
+  }
+  if (migrationToast.kind === "partial") {
+    warnings.push(`${migrationToast.failedCount} attachment(s) failed to upload`);
+  } else if (migrationToast.kind === "unavailable") {
+    warnings.push("attachments could not be migrated");
+  }
+
+  if (!showNotifications) {
+    return {
+      status: "shared",
+      documentId: createdDocument.documentId,
+      orgId: scope.orgId,
+      title: finalTitle,
+      warnings,
+    };
+  }
+
   switch (migrationToast.kind) {
     case "ok":
     case "no-assets":
@@ -738,5 +783,6 @@ export async function shareFileToTeam(params: {
     documentId: createdDocument.documentId,
     orgId: scope.orgId,
     title: finalTitle,
+    warnings,
   };
 }

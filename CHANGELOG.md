@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- New features go here -->
 - The macOS menu bar shows your session fleet at a glance: it names a session for a few seconds as it starts, finishes, blocks or fails, flags one that has stopped responding, and quiets to a single mark when nothing is running. It takes the place of the menu bar icon rather than sitting beside it, and a row along the bottom of the panel switches back to the plain icon, hides the fleet status, or turns system notifications off if the two feel duplicative. Drag it onto whichever display's menu bar you want, where it sits clear of a MacBook's camera notch. The same view reaches your iPhone as a Live Activity on the Lock Screen and in the Dynamic Island, with the sessions waiting on you ranked by how long they have been waiting; tap one to open it. The phone card stands down while you are sitting at the Mac, so you never see the same counts twice.
 - Quick Track (Cmd+Shift+I) files a tracker item of any type from anywhere in the app without leaving what you were on: type a few letters to pick the type, fill the fields from the keyboard, then Enter to file another or Cmd+Enter to open the one you just made, with similar existing items offered before you add a duplicate.
+- Right-click a folder and choose "Share Folder to Team" to publish everything shareable inside it at once, mirroring its subfolders in the team space, with the files that cannot be shared listed before you confirm.
 - Animations can show a spinning indicator for a running or loading state.
 - The title bar names the Git command running right now, whether you started it, the Git panel did or an agent session did, and the Git panel's Output tab marks the ones an agent ran.
 
@@ -23,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Extensions can store secrets on Windows again; secrets saved on macOS and Linux by earlier versions are picked up automatically.
 - Sessions that were already unread when Nimbalyst started now appear in the menu bar again, up to the 25 most recent.
 - Files whose AI edits have already been committed no longer open with a leftover change count and review dot.
 - Images in a shared document now render in the web console instead of showing a broken-image placeholder.
@@ -33,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A tracker item's body is no longer cleared when the item's metadata syncs with your team.
 - A tracker item can no longer drift onto an issue key that belongs to a different item.
 - An API key left in your shell environment is no longer handed to the Codex or Copilot coding agents; only a key you configured in Nimbalyst settings is used.
+- The Git panel's Refresh button now reloads the Changes tab's file list, instead of refreshing only the commit log and branch.
 
 ### Removed
 <!-- Removed features go here -->
@@ -54,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reopening a Gemini session shows the tool calls it made instead of only the conversation.
 - "Accept all" no longer refuses an AI edit by claiming the file changed on disk.
 - Documents with a scalar status key in frontmatter render the frontmatter card instead of falling back to the raw text editor (#1392).
+- Time trackers, screen readers, and other macOS accessibility tools now see the document you are actually viewing, instead of the last file you happened to open (#1375).
 
 ### Removed
 <!-- Removed features go here -->

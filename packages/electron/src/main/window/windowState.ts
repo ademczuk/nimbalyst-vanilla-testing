@@ -105,3 +105,31 @@ export function anyWindowReferencesWorkspace(path: string, excludeWindowId?: num
     }
     return false;
 }
+
+/**
+ * #1375: Keep the window's represented file in lockstep with the document on
+ * screen.
+ *
+ * Our windows use `titleBarStyle: 'hiddenInset'`, so the proxy icon this
+ * normally draws is never rendered. What it still feeds is AXDocument, which
+ * macOS hands to every accessibility client -- screen readers, automation,
+ * time trackers -- as "the document this window is showing". That is the whole
+ * payload here; there is nothing visual to check.
+ *
+ * Pass null when no document is visible. `setRepresentedFilename` has no
+ * implicit clear, so without this the window keeps advertising the last file it
+ * ever represented -- possibly one the user has since deleted, since clearing
+ * window state on delete does not touch the OS-level value.
+ *
+ * No-ops off darwin, where represented filenames do not exist.
+ */
+export function syncRepresentedFilename(
+    window: BrowserWindow | null | undefined,
+    filePath: string | null,
+): void {
+    if (process.platform !== 'darwin') return;
+    if (!window || window.isDestroyed()) return;
+
+    window.setRepresentedFilename(filePath ?? '');
+    if (!filePath) window.setDocumentEdited(false);
+}

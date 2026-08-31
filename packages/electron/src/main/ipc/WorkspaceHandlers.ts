@@ -17,8 +17,10 @@ const { writeFile, mkdir, rename, unlink, rmdir, copyFile, readFile, rm, stat, c
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 import { windowStates, getWindowId, createWindow, markRecentlyDeleted, clearRecentlyDeleted } from '../window/WindowManager';
+// Aliased: this module has a local `windows` (BrowserWindow[]) further down.
+import { syncRepresentedFilename, windows as windowsById } from '../window/windowState';
 import { startFileWatcher, stopFileWatcher } from '../file/FileWatcher';
-import { getFolderContents } from '../utils/FileTree';
+import { getFolderContents, listFolderFilesRecursive } from '../utils/FileTree';
 import { decodeTextFileBuffer } from '../utils/textEncoding';
 import { RIPGREP_EXCLUDE_ARGS_ARRAY, QUICKOPEN_FILE_TYPE_ARGS } from '../utils/fileFilters';
 import {
@@ -244,6 +246,11 @@ export function registerWorkspaceHandlers() {
     // Refresh folder contents (for when user expands a folder)
     safeHandle('refresh-folder-contents', async (event, folderPath: string) => {
         return await getFolderContents(folderPath);
+    });
+
+    // Every file under a folder, uncapped per-directory, for "Share Folder to Team".
+    safeHandle('get-folder-files-recursive', async (event, folderPath: string) => {
+        return await listFolderFilesRecursive(folderPath);
     });
 
     // Create new file
@@ -932,6 +939,10 @@ export function registerWorkspaceHandlers() {
                 if (state?.filePath === filePath) {
                     state.filePath = null;
                     state.documentEdited = false;
+                    // #1375: Clearing window state is not enough — the
+                    // represented file is OS-level and would keep pointing at
+                    // a file that is now in the trash.
+                    syncRepresentedFilename(windowsById.get(windowId), null);
                 }
             }
 

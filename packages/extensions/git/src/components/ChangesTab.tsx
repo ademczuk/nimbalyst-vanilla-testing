@@ -40,6 +40,11 @@ interface ChangesTabProps {
   fileMaskEnabled: boolean;
   /** Comma-separated glob patterns for the file mask */
   fileMaskInput: string;
+  /**
+   * Bumped by the panel's Refresh button. The button lives in the shared header,
+   * so this counter is the only way it can reach the file list. (#1400)
+   */
+  refreshToken: number;
 }
 
 interface SuccessResult {
@@ -207,6 +212,7 @@ export function ChangesTab({
   onShowOutput,
   fileMaskEnabled,
   fileMaskInput,
+  refreshToken,
 }: ChangesTabProps) {
   // One flat list of changes: staged/unstaged/untracked are merged, since the
   // selection (not the index) is what gets committed.
@@ -331,6 +337,10 @@ export function ChangesTab({
       setChanges(mergeWorkingChanges(result));
       setConflicted(result.conflicted.map(f => ({ path: f.path, status: 'C' })));
       setLoadError(null);
+      // Cached diffs describe the working tree we just re-read, so they expire
+      // with it. Bumping here covers every caller -- discard and commit both
+      // reloaded without invalidating, and served diffs for deleted content.
+      setDiffInvalidationToken(t => t + 1);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[ChangesTab] Failed to load changes:', message);
@@ -342,12 +352,11 @@ export function ChangesTab({
 
   useEffect(() => {
     loadChanges();
-  }, [loadChanges]);
+  }, [loadChanges, refreshToken]);
 
   useEffect(() => {
     return onWorkspaceEvent('git:status-changed', () => {
       loadChanges();
-      setDiffInvalidationToken(t => t + 1);
     });
   }, [onWorkspaceEvent, loadChanges]);
 

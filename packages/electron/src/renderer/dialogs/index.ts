@@ -43,6 +43,7 @@ export {
 export {
   registerTeamDialogs,
   type ShareToTeamData,
+  type ShareFolderToTeamData,
   type OrgCreationWizardData,
   type OrgManagementDialogData,
   type OrgProjectWalkData,

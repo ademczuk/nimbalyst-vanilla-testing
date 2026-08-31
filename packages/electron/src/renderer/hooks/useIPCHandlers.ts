@@ -59,37 +59,10 @@ import {
   trackFolderRenamed,
 } from '../utils/collabIndexAnalytics';
 import { registerMcpCollabReadHandlers } from '../services/mcpCollabReadHandlers';
+import { resolveSharedFolderPath } from '../services/sharedFolderPath';
 
 // Tracker field updates now go through the generic trackerStatus frontmatter format.
 // No hardcoded plan-specific field list needed.
-
-/**
- * Resolve a human folder path (e.g. "A/B") to a folderId, walking the shared
- * folder tree by name and creating any missing segments via createSharedFolder
- * (the same path a person uses). Empty/blank path resolves to the root (null).
- * Used by the shared-index MCP tool listeners below.
- */
-async function resolveSharedFolderPath(
-  scope: CollabScope,
-  folderPath: string | undefined,
-): Promise<string | null> {
-  const trimmed = (folderPath ?? '').trim();
-  if (!trimmed) return null;
-  const segments = trimmed.split('/').map((s) => s.trim()).filter(Boolean);
-  let parentId: string | null = null;
-  for (const segment of segments) {
-    const folders = store.get(sharedFoldersAtom);
-    const existing = folders.find(
-      (f) => (f.parentFolderId ?? null) === parentId && f.name === segment,
-    );
-    if (existing) {
-      parentId = existing.folderId;
-    } else {
-      parentId = await createSharedFolder(scope, segment, parentId);
-    }
-  }
-  return parentId;
-}
 
 function requireActiveCollabScope(): CollabScope {
   const scope = store.get(activeCollabScopeAtom);

@@ -1,15 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAtomValue } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
-import {
-  createSharedFolder,
-  activeCollabScopeAtom,
-} from '../../store/atoms/collabDocuments';
-import { activeWorkspacePathAtom } from '../../store/atoms/openProjects';
-import { normalizeCollabPath } from '../CollabMode/collabTree';
 import type { CollaborativeDocumentTypeDescriptor } from '../../services/CollaborativeDocumentTypeCatalog';
 import type { EmbeddedDocumentCandidate } from '../../services/embeddedDocumentShare';
-import { SharedFolderTree } from './SharedFolderTree';
+import { SharedFolderPickerPanel } from './SharedFolderPickerPanel';
+import { useLastSharedFolder } from './useLastSharedFolder';
 import { useSharedFolderTree } from './useSharedFolderTree';
 
 export interface ShareToTeamDialogProps {
@@ -64,32 +58,20 @@ export function ShareToTeamDialog({
   initialFolderId,
   onConfirm,
 }: ShareToTeamDialogProps) {
-  const workspacePath = useAtomValue(activeWorkspacePathAtom);
-  const collabScope = useAtomValue(activeCollabScopeAtom);
   const folderTree = useSharedFolderTree(isOpen);
   const {
     isRefreshing: isRefreshingFolders,
     refreshFailed: folderRefreshFailed,
-    expandedFolders,
-    toggleFolder,
     revealFolder,
-    expandFolder,
   } = folderTree;
 
-  const [lastSharedFolderId, setLastSharedFolderId] = useState<string | null | undefined>(undefined);
-  const [legacyLastSharedFolderPath, setLegacyLastSharedFolderPath] = useState<string>('');
-  const [hasLastSharedFolder, setHasLastSharedFolder] = useState(false);
-  const [hasLoadedState, setHasLoadedState] = useState(false);
   const [hasInitializedSelection, setHasInitializedSelection] = useState(false);
-
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const fileNameParts = useMemo(
     () => splitShareFileName(fileName, descriptor),
     [descriptor, fileName],
   );
   const [sharedBaseName, setSharedBaseName] = useState<string>(fileNameParts.baseName);
-  const [newFolderParentId, setNewFolderParentId] = useState<string | null | undefined>(undefined);
-  const [newFolderName, setNewFolderName] = useState<string>('');
   const [selectedEmbeddedDocumentPaths, setSelectedEmbeddedDocumentPaths] = useState<Set<string>>(
     () => new Set(embeddedDocuments.map(document => document.absolutePath)),
   );
@@ -98,52 +80,11 @@ export function ShareToTeamDialog({
   useEffect(() => {
     if (!isOpen) return;
     setSharedBaseName(fileNameParts.baseName);
-    setNewFolderParentId(undefined);
-    setNewFolderName('');
     setHasInitializedSelection(false);
     setSelectedEmbeddedDocumentPaths(
       new Set(embeddedDocuments.map(document => document.absolutePath)),
     );
   }, [embeddedDocuments, fileNameParts.baseName, isOpen]);
-
-  // Load workspace-persisted state for the last-used destination. Folder rows
-  // themselves come only from TeamRoom, never workspace/PGLite state.
-  useEffect(() => {
-    if (!isOpen) return;
-    setHasLoadedState(false);
-    if (!workspacePath || !window.electronAPI?.invoke) {
-      setHasLoadedState(true);
-      return;
-    }
-    let cancelled = false;
-    window.electronAPI.invoke('workspace:get-state', workspacePath)
-      .then((state: any) => {
-        if (cancelled) return;
-        const collabTree = state?.collabTree;
-        const hasPersistedId = Boolean(
-          collabTree && Object.prototype.hasOwnProperty.call(collabTree, 'lastSharedFolderId'),
-        );
-        const hasPersistedPath = typeof collabTree?.lastSharedFolder === 'string';
-        const persistedId = typeof collabTree?.lastSharedFolderId === 'string'
-          ? collabTree.lastSharedFolderId
-          : null;
-        const persistedPath = hasPersistedPath
-          ? normalizeCollabPath(collabTree.lastSharedFolder)
-          : '';
-        setLastSharedFolderId(hasPersistedId ? persistedId : undefined);
-        setLegacyLastSharedFolderPath(persistedPath);
-        setHasLastSharedFolder(hasPersistedId || hasPersistedPath);
-        setHasLoadedState(true);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setHasLastSharedFolder(false);
-        setHasLoadedState(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen, workspacePath]);
 
   const folderLookups = useMemo(
     () => ({
@@ -154,17 +95,9 @@ export function ShareToTeamDialog({
     [folderTree.ids, folderTree.pathById, folderTree.idByPath],
   );
 
-  const resolvedLastSharedFolderId = useMemo<string | null | undefined>(() => {
-    if (!hasLastSharedFolder) return undefined;
-    if (lastSharedFolderId !== undefined) {
-      return lastSharedFolderId && folderLookups.ids.has(lastSharedFolderId)
-        ? lastSharedFolderId
-        : null;
-    }
-    return legacyLastSharedFolderPath
-      ? (folderLookups.idByPath.get(legacyLastSharedFolderPath) ?? null)
-      : null;
-  }, [folderLookups, hasLastSharedFolder, lastSharedFolderId, legacyLastSharedFolderPath]);
+  // Folder rows themselves come only from TeamRoom, never workspace/PGLite state.
+  const { hasLoaded: hasLoadedState, folderId: resolvedLastSharedFolderId } =
+    useLastSharedFolder(isOpen, folderLookups);
 
   // After both local preference state and the authoritative refresh finish,
   // seed selection exactly once for this open.
@@ -207,51 +140,6 @@ export function ShareToTeamDialog({
     }
   }, [folderLookups, hasInitializedSelection, selectedFolderId]);
 
-  // New folders are first-class TeamRoom rows immediately, never local path
-  // drafts that can leak into a later dialog open.
-  const beginNewFolder = useCallback((parentFolderId: string | null) => {
-    setNewFolderParentId(parentFolderId);
-    setNewFolderName('');
-    if (parentFolderId) expandFolder(parentFolderId);
-  }, [expandFolder]);
-
-  const commitNewFolder = useCallback(async () => {
-    const trimmed = newFolderName.trim();
-    if (!trimmed) {
-      setNewFolderParentId(undefined);
-      setNewFolderName('');
-      return;
-    }
-    if (trimmed.includes('/') || trimmed.includes('\\')) {
-      // Reject path separators; folder names are single segments.
-      return;
-    }
-    const parentFolderId = newFolderParentId ?? null;
-    const parentPath = parentFolderId ? (folderLookups.pathById.get(parentFolderId) ?? '') : '';
-    const fullPath = normalizeCollabPath(parentPath ? `${parentPath}/${trimmed}` : trimmed);
-    const existingFolderId = folderLookups.idByPath.get(fullPath);
-    setNewFolderParentId(undefined);
-    setNewFolderName('');
-    if (existingFolderId) {
-      setSelectedFolderId(existingFolderId);
-      return;
-    }
-    try {
-      if (!collabScope) return;
-      const folderId = await createSharedFolder(collabScope, trimmed, parentFolderId);
-      setSelectedFolderId(folderId);
-      expandFolder(folderId);
-      if (parentFolderId) expandFolder(parentFolderId);
-    } catch (error) {
-      console.error('[ShareToTeamDialog] Failed to create shared folder:', error);
-    }
-  }, [collabScope, expandFolder, folderLookups, newFolderName, newFolderParentId]);
-
-  const cancelNewFolder = useCallback(() => {
-    setNewFolderParentId(undefined);
-    setNewFolderName('');
-  }, []);
-
   const handleConfirm = useCallback(() => {
     const trimmedName = sharedBaseName.trim();
     if (
@@ -290,7 +178,6 @@ export function ShareToTeamDialog({
     ? `${selectedFolderPath.split('/').join(' / ')} /`
     : 'Team root /';
 
-  const isRootCreateOpen = newFolderParentId === null;
   const canConfirm = Boolean(sharedBaseName.trim())
     && !isRefreshingFolders
     && !folderRefreshFailed
@@ -384,109 +271,13 @@ export function ShareToTeamDialog({
             </span>
           </div>
 
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="text-[11px] uppercase tracking-wider font-semibold text-[var(--nim-text-faint)]">
-              Destination folder
-            </div>
-            <button
-              type="button"
-              onClick={() => beginNewFolder(selectedFolderId)}
-              disabled={isRefreshingFolders || folderRefreshFailed || !hasInitializedSelection}
-              className="text-[11px] text-[var(--nim-primary)] hover:underline inline-flex items-center gap-1 disabled:opacity-50 disabled:no-underline"
-            >
-              <MaterialSymbol icon="create_new_folder" size={13} />
-              New folder
-            </button>
-          </div>
-          <div className="share-to-team-tree bg-[var(--nim-bg-secondary)] border border-[var(--nim-border-subtle,var(--nim-border))] rounded-md p-1 mb-3 max-h-[240px] overflow-y-auto">
-            {isRefreshingFolders ? (
-              <div className="flex items-center justify-center gap-2 px-3 py-6 text-[12px] text-[var(--nim-text-muted)]">
-                <MaterialSymbol icon="progress_activity" size={16} className="animate-spin" />
-                Refreshing shared folders…
-              </div>
-            ) : folderRefreshFailed ? (
-              <div className="px-3 py-6 text-center text-[12px] text-[var(--nim-text-muted)]">
-                Shared folders could not be refreshed. Close this dialog and try again.
-              </div>
-            ) : (
-              <>
-            {/* Team root row */}
-            <div
-              role="treeitem"
-              aria-selected={selectedFolderId === null}
-              tabIndex={0}
-              onClick={() => setSelectedFolderId(null)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  setSelectedFolderId(null);
-                }
-              }}
-              className={`relative flex items-center gap-1 px-2 py-1.5 rounded text-[13px] cursor-pointer select-none ${
-                selectedFolderId === null
-                  ? 'bg-[var(--nim-primary)]/20 text-[var(--nim-text)]'
-                  : 'text-[var(--nim-text)] hover:bg-[var(--nim-bg-tertiary)]'
-              }`}
-              style={{ paddingLeft: 8 }}
-            >
-              {selectedFolderId === null && (
-                <span aria-hidden className="absolute left-0 top-1 bottom-1 w-0.5 rounded bg-[var(--nim-primary)]" />
-              )}
-              <span className="w-4 h-4 inline-flex items-center justify-center text-[var(--nim-text-faint)] invisible">
-                <MaterialSymbol icon="chevron_right" size={16} />
-              </span>
-              <span className={`inline-flex items-center justify-center ${selectedFolderId === null ? 'text-[var(--nim-primary)]' : 'text-[var(--nim-text-muted)]'}`}>
-                <MaterialSymbol icon="workspaces" size={18} />
-              </span>
-              <span className="flex-1 truncate">Team root</span>
-              {resolvedLastSharedFolderId === null && (
-                <span className="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-[var(--nim-primary)]/15 text-[var(--nim-primary)]">
-                  last used
-                </span>
-              )}
-            </div>
-
-            <SharedFolderTree
-              nodes={folderTree.tree}
-              selectedFolderId={selectedFolderId}
-              onSelect={setSelectedFolderId}
-              expandedFolders={expandedFolders}
-              onToggleFolder={toggleFolder}
-              highlightFolderId={resolvedLastSharedFolderId}
-              newFolderParentId={newFolderParentId}
-              newFolderName={newFolderName}
-              onNewFolderNameChange={setNewFolderName}
-              onCommitNewFolder={() => { void commitNewFolder(); }}
-              onCancelNewFolder={cancelNewFolder}
-            />
-
-            {/* Inline new-folder input at root level */}
-            {isRootCreateOpen && (
-              <div className="flex items-center gap-2 py-1 px-2">
-                <MaterialSymbol icon="create_new_folder" size={14} className="text-[var(--nim-primary)]" />
-                <input
-                  autoFocus
-                  type="text"
-                  value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      void commitNewFolder();
-                    } else if (e.key === 'Escape') {
-                      e.preventDefault();
-                      cancelNewFolder();
-                    }
-                  }}
-                  onBlur={() => { void commitNewFolder(); }}
-                  placeholder="Folder name"
-                  className="flex-1 bg-[var(--nim-bg)] border border-[var(--nim-primary)] rounded text-[13px] text-[var(--nim-text)] px-2 py-1 outline-none"
-                />
-              </div>
-            )}
-              </>
-            )}
-          </div>
+          <SharedFolderPickerPanel
+            folderTree={folderTree}
+            selectedFolderId={selectedFolderId}
+            onSelectFolder={setSelectedFolderId}
+            highlightFolderId={resolvedLastSharedFolderId}
+            canCreateFolder={hasInitializedSelection}
+          />
 
           <div className="flex items-center gap-2 px-3 py-2 bg-[var(--nim-bg-secondary)] border border-[var(--nim-border-subtle,var(--nim-border))] rounded-md mb-3 text-[12px] text-[var(--nim-text-muted)]">
             <MaterialSymbol icon="place" size={14} className="text-[var(--nim-text-faint)]" />

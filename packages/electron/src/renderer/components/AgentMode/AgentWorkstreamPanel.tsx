@@ -38,6 +38,8 @@ import {
 import { ModelIdentifier } from '@nimbalyst/runtime/ai/server/types';
 import type { TranscriptFileLocation } from '@nimbalyst/runtime/ui/AgentTranscript/components/MarkdownRenderer';
 import { WorkstreamEditorTabs, type WorkstreamEditorTabsRef } from './WorkstreamEditorTabs';
+import { usePushRepresentedFile } from '../../hooks/useRepresentedFileSync';
+import { resolveRepresentedFile } from '../../utils/representedFile';
 import { WorkstreamSessionTabs } from './WorkstreamSessionTabs';
 import { FilesEditedSidebar } from './FilesEditedSidebar';
 import { AgentReviewPanel } from './AgentReviewPanel';
@@ -1350,6 +1352,14 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
   const sessionDocumentContext = React.useMemo(
     () => ({ filePath: showEditorTabs ? (activeEditorFile ?? '') : '' }),
     [showEditorTabs, activeEditorFile]
+  );
+
+  // #1375: report the visible document to macOS as this window's AXDocument.
+  // Lives here, not in WorkstreamEditorTabs, because that unmounts entirely in
+  // the transcript-only layout and so could never clear what it had set.
+  usePushRepresentedFile(
+    isActive,
+    showEditorTabs ? resolveRepresentedFile(activeEditorFile) : null
   );
 
   // Open pending file once editor mounts after layout mode change

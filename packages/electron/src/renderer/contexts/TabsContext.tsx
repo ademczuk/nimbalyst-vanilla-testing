@@ -65,7 +65,7 @@ export function isTrackerTabPath(filePath: string): boolean {
 }
 
 /** True when a tab represents a non-filesystem resource (virtual/collab/tracker). */
-function isNonFilesystemTab(filePath: string): boolean {
+export function isNonFilesystemTab(filePath: string): boolean {
   return (
     filePath.startsWith('virtual://') ||
     isCollabUri(filePath) ||

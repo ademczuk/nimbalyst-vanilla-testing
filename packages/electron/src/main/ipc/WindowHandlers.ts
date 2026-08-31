@@ -1,6 +1,7 @@
 import { BrowserWindow, shell, nativeImage, app, powerMonitor } from 'electron';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import { windowStates, windows, getWindowId } from '../window/WindowManager';
+import { syncRepresentedFilename } from '../window/windowState';
 import { basename, join } from 'path';
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
@@ -102,6 +103,16 @@ export function registerWindowHandlers() {
         if (window) {
             window.setTitle(title);
         }
+    });
+
+    // Keep the window's represented file (AXDocument) on the visible document.
+    // The renderer sends null when none is visible, which clears it instead of
+    // leaving a stale path behind.
+    safeOn('set-represented-file', (event, filePath: string | null) => {
+        const window = BrowserWindow.fromWebContents(event.sender);
+        if (!window) return;
+
+        syncRepresentedFilename(window, filePath);
     });
 
 

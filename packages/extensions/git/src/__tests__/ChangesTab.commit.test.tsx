@@ -22,6 +22,7 @@ function renderTab() {
       onShowOutput={() => {}}
       fileMaskEnabled={false}
       fileMaskInput=""
+      refreshToken={0}
     />,
   );
 }

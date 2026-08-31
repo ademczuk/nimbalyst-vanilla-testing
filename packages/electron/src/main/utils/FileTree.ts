@@ -64,6 +64,67 @@ function sortItems(items: FileTreeItem[]): void {
     });
 }
 
+/**
+ * Every file under `dirPath`, as folder-relative POSIX paths.
+ *
+ * Deliberately NOT `getFolderContents`: that function's MAX_DEPTH and
+ * MAX_ITEMS_PER_DIR exist so the sidebar stays cheap to paint, and silently
+ * dropping the 201st file is fine for a tree a human is scrolling. It is not
+ * fine for "share this folder with my team", where a dropped file is a file the
+ * team never gets and nobody is told about. This walk has one global cap and
+ * reports when it hits it, so the caller can say so out loud.
+ */
+export async function listFolderFilesRecursive(
+    dirPath: string,
+    options: { limit?: number } = {}
+): Promise<{ files: string[]; truncated: boolean }> {
+    const limit = options.limit ?? 5000;
+    const files: string[] = [];
+    let truncated = false;
+
+    const walk = async (currentPath: string, relativePrefix: string): Promise<void> => {
+        if (truncated) return;
+        let entries: Dirent[];
+        try {
+            entries = await readdir(currentPath, { withFileTypes: true });
+        } catch (error: any) {
+            if (error.code !== 'ENOENT') {
+                console.error('Error listing folder files:', error);
+            }
+            return;
+        }
+
+        const subdirectories: Array<{ path: string; prefix: string }> = [];
+        for (const entry of entries) {
+            if (entry.name === '.DS_Store') continue;
+            const fullPath = join(currentPath, entry.name);
+            const resolved = await resolveEntryType(entry, fullPath);
+            if (!resolved) continue; // Broken symlink
+            const relativePath = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
+
+            if (resolved.isDir) {
+                if (shouldExcludeDir(entry.name) || shouldExcludePath(fullPath)) continue;
+                subdirectories.push({ path: fullPath, prefix: relativePath });
+            } else if (resolved.isFile) {
+                if (files.length >= limit) {
+                    truncated = true;
+                    return;
+                }
+                files.push(relativePath);
+            }
+        }
+
+        for (const subdirectory of subdirectories) {
+            await walk(subdirectory.path, subdirectory.prefix);
+            if (truncated) return;
+        }
+    };
+
+    await walk(dirPath, '');
+    files.sort((left, right) => naturalCollator.compare(left, right));
+    return { files, truncated };
+}
+
 export async function getFolderContents(dirPath: string, depth: number = 0): Promise<FileTreeItem[]> {
     const result: FileTreeItem[] = [];
     const directoriesToPopulate: FileTreeItem[] = [];

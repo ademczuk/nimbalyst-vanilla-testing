@@ -183,6 +183,14 @@ export function GitLogPanel({ host }: PanelHostProps) {
     (event: string, callback: (data: unknown) => void) => host.onWorkspaceEvent(event, callback),
     [host],
   );
+  // ChangesTab keys its git:status-changed subscription off this, so it has to be
+  // stable -- an inline lambda re-subscribed on every render of this panel, and
+  // the panel re-renders on a 1s clock while an operation runs. (#1400)
+  const subscribeToWorkspaceEvents = useCallback(
+    (event: string, handler: () => void) => host.onWorkspaceEvent(event, handler),
+    [host],
+  );
+  const [changesRefreshToken, setChangesRefreshToken] = useState(0);
   const { entries: logEntries, clearLog, withLog } = useOperationLog(
     workspacePath,
     subscribeToGitEvents,
@@ -547,6 +555,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
     loadStatus();
     loadBranches();
     loadCommits();
+    setChangesRefreshToken(t => t + 1);
   }, [loadStatus, loadBranches, loadCommits]);
 
   const clearHideTimer = useCallback(() => {
@@ -1004,10 +1013,11 @@ export function GitLogPanel({ host }: PanelHostProps) {
         <ChangesTab
           workspacePath={workspacePath}
           withLog={withLog}
-          onWorkspaceEvent={(event, handler) => host.onWorkspaceEvent(event, handler)}
+          onWorkspaceEvent={subscribeToWorkspaceEvents}
           onShowOutput={() => setActiveTab('output')}
           fileMaskEnabled={fileMaskEnabled}
           fileMaskInput={fileMaskInput}
+          refreshToken={changesRefreshToken}
         />
       )}
 

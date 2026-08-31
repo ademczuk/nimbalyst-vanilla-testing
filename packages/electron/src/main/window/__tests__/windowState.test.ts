@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   windowStates,
   resolveActiveWorkspacePath,
@@ -6,6 +6,7 @@ import {
   resolveDocumentServicePath,
   windowReferencesWorkspace,
   anyWindowReferencesWorkspace,
+  syncRepresentedFilename,
 } from '../windowState';
 import type { WindowState } from '../../types';
 
@@ -177,6 +178,83 @@ describe('windowState helpers', () => {
     it('returns false when the only references are excluded', () => {
       windowStates.set(1, makeState({ workspacePath: '/ws/lone' }));
       expect(anyWindowReferencesWorkspace('/ws/lone', 1)).toBe(false);
+    });
+  });
+
+  describe('syncRepresentedFilename', () => {
+    const originalPlatform = process.platform;
+
+    function setPlatform(platform: string) {
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+    }
+
+    function makeFakeWindow(destroyed = false) {
+      const represented: string[] = [];
+      const edited: boolean[] = [];
+      return {
+        represented,
+        edited,
+        isDestroyed: () => destroyed,
+        setRepresentedFilename: (path: string) => represented.push(path),
+        setDocumentEdited: (value: boolean) => edited.push(value),
+      };
+    }
+
+    beforeEach(() => setPlatform('darwin'));
+    afterEach(() => setPlatform(originalPlatform));
+
+    it('points the represented filename at the active file', () => {
+      const win = makeFakeWindow();
+      syncRepresentedFilename(win as never, '/ws/notes.md');
+      expect(win.represented).toEqual(['/ws/notes.md']);
+    });
+
+    it('leaves the edited indicator alone when setting a real path', () => {
+      const win = makeFakeWindow();
+      syncRepresentedFilename(win as never, '/ws/notes.md');
+      expect(win.edited).toEqual([]);
+    });
+
+    // The regression this helper exists for: setRepresentedFilename has no
+    // implicit clear, so a null path must explicitly write '' or the window
+    // keeps advertising the last file it ever represented via AXDocument.
+    it('clears the represented filename when no file is active', () => {
+      const win = makeFakeWindow();
+      syncRepresentedFilename(win as never, null);
+      expect(win.represented).toEqual(['']);
+    });
+
+    it('also clears the edited indicator when clearing the file', () => {
+      const win = makeFakeWindow();
+      syncRepresentedFilename(win as never, null);
+      expect(win.edited).toEqual([false]);
+    });
+
+    it('clears a previously set path when the file goes away', () => {
+      const win = makeFakeWindow();
+      syncRepresentedFilename(win as never, '/ws/notes.md');
+      syncRepresentedFilename(win as never, null);
+      expect(win.represented).toEqual(['/ws/notes.md', '']);
+    });
+
+    it('no-ops off darwin, where represented filenames do not exist', () => {
+      setPlatform('win32');
+      const win = makeFakeWindow();
+      syncRepresentedFilename(win as never, '/ws/notes.md');
+      syncRepresentedFilename(win as never, null);
+      expect(win.represented).toEqual([]);
+      expect(win.edited).toEqual([]);
+    });
+
+    it('no-ops for a destroyed window', () => {
+      const win = makeFakeWindow(true);
+      syncRepresentedFilename(win as never, null);
+      expect(win.represented).toEqual([]);
+    });
+
+    it('tolerates a missing window', () => {
+      expect(() => syncRepresentedFilename(null, null)).not.toThrow();
+      expect(() => syncRepresentedFilename(undefined, '/ws/notes.md')).not.toThrow();
     });
   });
 });

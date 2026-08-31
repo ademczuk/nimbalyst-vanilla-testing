@@ -56,6 +56,7 @@ export const DIALOG_IDS = {
 
   // Collaboration group
   SHARE_TO_TEAM: 'share-to-team',
+  SHARE_FOLDER_TO_TEAM: 'share-folder-to-team',
   FEEDBACK_DESTINATION: 'feedback-destination',
   ORG_CREATION_WIZARD: 'org-creation-wizard',
   ORG_MANAGEMENT: 'org-management',

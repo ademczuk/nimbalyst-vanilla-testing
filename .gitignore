@@ -172,6 +172,13 @@ nimbalyst-local/
 .claude/plugins/.nimbalyst-generated/
 **/.nimbalyst-generated/
 
+# Local design-system sync scratch dirs (component docs, previews, storybook
+# packaging). Regenerated on demand; never source.
+.design-sync/
+.ds-sync/
+**/.ds-sync-*
+ds-bundle/*
+
 # Personal/agent plan documents (Nimbalyst planning feature stores these at
 # workspace root; they're personal working files, not source).
 plans/

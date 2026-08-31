@@ -253,6 +253,7 @@ export function FileContextMenu({
           onClose={onClose}
           menuItemClass={menuItemClasses}
           separatorClass={separatorClasses}
+          isDirectory={fileType === 'directory'}
         />
 
         <div className={separatorClasses} />

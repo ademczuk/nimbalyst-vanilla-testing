@@ -1,6 +1,7 @@
 import { BrowserWindow, safeStorage, session, dialog } from 'electron';
 import { applyAnalyticsEnabled } from '../services/analytics/applyAnalyticsEnabled';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
+import { deleteSecretFile, readSecretFile, writeSecretFile } from '../utils/fileUtils';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -250,34 +251,24 @@ export function registerSettingsHandlers() {
         return secretsDir;
     }
 
-    function getSecretFilePath(key: string): string {
-        // Sanitize key to be filesystem-safe
-        const safeKey = key.replace(/[^a-zA-Z0-9_:-]/g, '_');
-        return path.join(getSecretsDir(), `${safeKey}.enc`);
-    }
-
     safeHandle('secrets:get', async (_event, key: string) => {
         if (!key) {
             throw new Error('Key is required for secrets:get');
         }
 
-        const filePath = getSecretFilePath(key);
-
-        if (!fs.existsSync(filePath)) {
-            return null;
-        }
+        const decrypt = (data: Buffer) =>
+            safeStorage.isEncryptionAvailable()
+                ? safeStorage.decryptString(data)
+                : data.toString('utf8');
 
         try {
-            const fileData = fs.readFileSync(filePath);
-
-            if (safeStorage.isEncryptionAvailable()) {
-                return safeStorage.decryptString(fileData);
-            } else {
-                // Fallback: read as plain text
-                return fileData.toString('utf8');
-            }
+            return readSecretFile(getSecretsDir(), key, decrypt);
         } catch (error) {
-            logger.main.error(`[secrets:get] Failed to read secret for key ${key}:`, error);
+            // A file exists but will not read back, which is a different
+            // situation from "no secret stored" - that path returns null
+            // without ever reaching here. Log it so a corrupt or undecryptable
+            // secret is greppable rather than silently indistinguishable.
+            logger.main.error(`[secrets:get] Failed to read existing secret for key ${key}:`, error);
             return null;
         }
     });
@@ -290,16 +281,13 @@ export function registerSettingsHandlers() {
             throw new Error('Value is required for secrets:set');
         }
 
-        const filePath = getSecretFilePath(key);
-
         try {
             if (safeStorage.isEncryptionAvailable()) {
-                const encrypted = safeStorage.encryptString(value);
-                fs.writeFileSync(filePath, encrypted);
+                writeSecretFile(getSecretsDir(), key, safeStorage.encryptString(value));
             } else {
                 // Fallback: save as plain text (with warning)
                 logger.main.warn(`[secrets:set] safeStorage not available - saving secret without encryption`);
-                fs.writeFileSync(filePath, value, 'utf8');
+                writeSecretFile(getSecretsDir(), key, value);
             }
             logger.main.info(`[secrets:set] Secret saved for key: ${key}`);
         } catch (error) {
@@ -313,13 +301,9 @@ export function registerSettingsHandlers() {
             throw new Error('Key is required for secrets:delete');
         }
 
-        const filePath = getSecretFilePath(key);
-
         try {
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-                logger.main.info(`[secrets:delete] Secret deleted for key: ${key}`);
-            }
+            deleteSecretFile(getSecretsDir(), key);
+            logger.main.info(`[secrets:delete] Secret deleted for key: ${key}`);
         } catch (error) {
             logger.main.error(`[secrets:delete] Failed to delete secret for key ${key}:`, error);
             throw error;
