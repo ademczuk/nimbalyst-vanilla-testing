@@ -23,6 +23,7 @@ import {
   type HoverState,
   type IslandPlacement,
 } from './islandGeometry';
+import { markWindowTransparent } from './transparentWindows';
 
 /**
  * The menu bar island: the second render style for the fleet strip.
@@ -165,6 +166,10 @@ function createIslandWindow(): BrowserWindow {
       webviewTag: false,
     },
   });
+
+  // Keeps the theme sweep from painting this window opaque, which is what put a
+  // dark 760x460 slab over the top of the screen on every theme change (#4817).
+  markWindowTransparent(window);
 
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   window.setIgnoreMouseEvents(true, { forward: true });

@@ -10,6 +10,7 @@ import {
   emptyTrayPanelFeed,
   type TrayPanelFeed,
 } from '../../shared/traySessions';
+import { markWindowTransparent } from './transparentWindows';
 
 /**
  * Tray sessions panel.
@@ -145,6 +146,10 @@ function createTrayPanelWindow(bounds: Rectangle): BrowserWindow {
       webviewTag: false,
     },
   });
+
+  // Keeps the theme sweep from calling setBackgroundColor here, which would
+  // replace the `popover` vibrancy with a flat opaque colour (#4817).
+  markWindowTransparent(window);
 
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   window.setAlwaysOnTop(true, 'floating');

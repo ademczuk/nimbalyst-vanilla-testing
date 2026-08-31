@@ -80,6 +80,8 @@ export interface CollabModeRef {
   toggleChatCollapsed: () => void;
   toggleEditorMaximized: () => void;
   createNewChatSession: () => Promise<void>;
+  /** Opens the shared-document type menu against the caller's anchor. */
+  createNewDocument: (anchor?: HTMLElement | null) => void;
 }
 
 export const CollabMode = forwardRef<CollabModeRef, CollabModeProps>(function CollabMode({
@@ -215,6 +217,17 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const chatSidebarRef = useRef<ChatSidebarRef>(null);
+  /**
+   * The sidebar owns the shared-document type menu; it hands the opener up so
+   * the title bar's create control can anchor that same menu to itself.
+   */
+  const createDocumentTriggerRef = useRef<((anchor: HTMLElement) => void) | null>(null);
+  const registerCreateDocumentTrigger = useCallback(
+    (open: ((anchor: HTMLElement) => void) | null) => {
+      createDocumentTriggerRef.current = open;
+    },
+    []
+  );
 
   useEffect(() => {
     onPanelStateChange?.({ sidebarCollapsed, chatCollapsed });
@@ -753,6 +766,11 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
       }
       await chatSidebarRef.current?.createNewSession();
     },
+    createNewDocument: (anchor?: HTMLElement | null) => {
+      const open = createDocumentTriggerRef.current;
+      if (!open || !anchor) return;
+      open(anchor);
+    },
   }), [
     activeTabId,
     tabs,
@@ -781,6 +799,7 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
               activeDocumentId={activeCollabDocumentId}
               onShowHome={() => openSharedHomeTab(true)}
               homeActive={activeTabIsHome}
+              registerCreateDocumentTrigger={registerCreateDocumentTrigger}
             />
           </div>
 

@@ -13,6 +13,12 @@
 
 export interface SubagentTaskLike {
   status: string;
+  /**
+   * SDK task type. 'local_bash' is a backgrounded shell command; anything else
+   * (or absent) is treated as a sub-agent. Only `resolvePromptEndDelay` reads
+   * it — the other helpers key off status alone.
+   */
+  taskType?: string;
 }
 
 /** A tracked task as `activeTasks` holds it — status is written in place. */
@@ -289,6 +295,59 @@ export function countRunningTasks(tasks: Iterable<SubagentTaskLike>): number {
  */
 export function shouldDeferTeardownForSubagents(hasRunning: boolean): boolean {
   return hasRunning;
+}
+
+/**
+ * Default bound on how long a backgrounded shell holds the prompt stream open
+ * after its turn ended.
+ *
+ * The grace timer this feeds is a NO-ACTIVITY stall detector: any SDK chunk
+ * resets it. That works for a sub-agent, which streams `task_progress` while it
+ * runs — silence from one really is a stall. A `local_bash` task streams nothing
+ * at all until it settles, so silence from one carries no information, and the
+ * 5-minute sub-agent window killed every background shell that ran longer than
+ * it. See GitHub #1355.
+ *
+ * 30 minutes covers CI waits and long builds while still bounding a runaway; on
+ * expiry the existing `killedByTeardown` path reports the kill honestly rather
+ * than letting it look like a user stop.
+ */
+export const DEFAULT_SHELL_DRAIN_MS = 1_800_000;
+
+/**
+ * Resolve the background-shell window, allowing an env override so tests can use
+ * a short window instead of waiting out half an hour. Invalid / non-positive
+ * values fall back to the default. Mirrors `resolveStreamStallMs`.
+ */
+export function resolveShellDrainMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env.NIMBALYST_CC_SHELL_DRAIN_MS;
+  const n = raw !== undefined ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_SHELL_DRAIN_MS;
+}
+
+/**
+ * How long to leave the prompt stream open after a turn ends, given what is
+ * still running. Ending it closes the CLI's stdin, which kills every live
+ * background task with the subprocess — so the window has to be sized by what
+ * silence MEANS for each kind of task, not by one number for all of them.
+ *
+ * Takes the max over the running set: a stalled sub-agent must not cut short a
+ * live shell. Terminal tasks are ignored, so a settled shell stops holding the
+ * stream open. With nothing running, the short idle window applies.
+ */
+export function resolvePromptEndDelay(
+  tasks: Iterable<SubagentTaskLike>,
+  windows: { idle: number; subagent: number; shell: number },
+): number {
+  let delay = windows.idle;
+  for (const task of tasks) {
+    if (task.status !== 'running') continue;
+    const window = task.taskType === 'local_bash' ? windows.shell : windows.subagent;
+    if (window > delay) delay = window;
+  }
+  return delay;
 }
 
 /**

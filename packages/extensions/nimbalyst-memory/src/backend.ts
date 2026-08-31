@@ -3,16 +3,15 @@
  *
  * Runs in an Electron utility-process (outside main and the renderer). It hosts
  * the host-agnostic `MemoryEngine` directly (NOT over the engine's stdio MCP
- * server): better-sqlite3 shadow store, fs walk, and OpenAI fetch embeddings.
+ * server): better-sqlite3 shadow store, fs walk, and optional embeddings.
  * It exposes the engine's capabilities as backend RPC methods and registers
  * them with the host's unified MCP surface via `services.registerMcpTools`, so
  * the coding agent and (for voice-flagged tools) the voice agent reach the
  * engine in-process — sub-second, no 60s `ask_coding_agent` round-trip.
  *
- * The OpenAI key comes ONLY from the `getApiKey` broker (the user's explicitly
- * configured Nimbalyst AI key) — never `process.env` (CLAUDE.md rule). With no
- * key configured the module still loads and advertises its tools; they return a
- * clear "configure your OpenAI key" error until one is set.
+ * Optional provider state comes ONLY from the `getApiKey` broker (explicit
+ * Nimbalyst configuration), never `process.env` (CLAUDE.md rule). Without it,
+ * the engine starts in local keyword-only mode.
  *
  * The method-name keys below MUST match the `name`s passed to registerMcpTools:
  * the host advertises `<ext-short>.<name>` and routes a call back to the RPC
@@ -21,14 +20,28 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { MemoryEngine } from '../engine/dist/index.js';
-import { createEmbedder } from '../engine/dist/index.js';
-import type { EngineConfig, SearchHit, SourceSet, VirtualRecord } from '../engine/dist/index.js';
+import {
+  buildProjectSearchResponse,
+  buildPublicEngineStatus,
+  createEmbedder,
+} from '../engine/dist/index.js';
+import type {
+  EmbedderConfig,
+  EngineConfig,
+  SearchHit,
+  SourceSet,
+  VirtualRecord,
+} from '../engine/dist/index.js';
 import {
   buildDistillMessages,
   parseDistillResponse,
   type ChatMessage,
   type FactCandidate,
 } from './distill';
+import {
+  buildOptionalAiUnavailableResult,
+  retrievalKindForOptionalProvider,
+} from './capabilityResults';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -185,7 +198,8 @@ const TOOL_DESCRIPTORS = [
   {
     name: 'search_project_knowledge',
     description:
-      'Hybrid semantic + keyword search over the indexed project markdown ' +
+      'Search the indexed project markdown with local keyword retrieval and ' +
+      'semantic matching when available ' +
       '(design docs, plans, CLAUDE.md, trackers, voice-memory). Returns the top ' +
       'matching chunks with source + heading citations. Use this to ground ' +
       'answers in how the project actually works.',
@@ -372,45 +386,55 @@ export async function activate(ctx: ActivateCtx) {
     onLog: (level, message) => log(level, message),
   };
 
-  // Build the engine if (and only if) we have a key. OpenAIEmbedder throws on a
-  // missing key at construction, so we guard the methods instead of crashing
-  // activate — the tools register either way and report the missing key.
   let engine: MemoryEngine | null = null;
-  let startupError: string | null = null;
+  let embedderConfig: EmbedderConfig = { kind: 'sparse' };
+
   try {
     const { key } = await getApiKey('openai');
-    if (!key) {
-      startupError =
-        'OpenAI API key not configured. Add an OpenAI key in Nimbalyst AI settings, then re-enable this extension.';
-      log('warn', `[memory] ${startupError}`);
+    const retrievalKind = retrievalKindForOptionalProvider(Boolean(key));
+    if (retrievalKind === 'openai' && key) {
+      embedderConfig = { kind: 'openai', apiKey: key };
     } else {
-      const embedder = await createEmbedder({ kind: 'openai', apiKey: key });
-      engine = MemoryEngine.create(config, embedder);
-      log('info', `[memory] engine ready: root=${config.root} db=${config.dbPath}`);
-
-      // Background initial index + live watch. Never blocks activation; the
-      // tools serve a partial/empty index until the first pass completes.
-      void (async () => {
-        try {
-          const status = engine!.status();
-          if (status.embedderChanged) log('info', '[memory] embedder changed — full re-index');
-          const result = await engine!.indexAll();
-          log('info', `[memory] indexed ${result.indexed} chunk(s) across ${result.files} file(s)`);
-          engine!.startWatching();
-          log('info', '[memory] watching for changes');
-        } catch (err) {
-          log('error', `[memory] initial index failed: ${(err as Error).message}`);
-        }
-      })();
+      log('info', '[memory] optional semantic matching unavailable; local keyword retrieval active');
     }
+  } catch {
+    log('warn', '[memory] optional semantic matching unavailable; local keyword retrieval active');
+  }
+
+  try {
+    let embedder;
+    try {
+      embedder = await createEmbedder(embedderConfig);
+    } catch (err) {
+      if (embedderConfig.kind !== 'openai') throw err;
+      log('warn', '[memory] optional semantic matching unavailable; local keyword retrieval active');
+      embedder = await createEmbedder({ kind: 'sparse' });
+    }
+
+    engine = MemoryEngine.create(config, embedder);
+    log('info', `[memory] engine ready: root=${config.root} db=${config.dbPath}`);
+
+    // Background initial index + live watch. Never blocks activation; the
+    // tools serve a partial/empty index until the first pass completes.
+    void (async () => {
+      try {
+        const status = engine!.status();
+        if (status.embedderChanged) log('info', '[memory] embedder changed — full re-index');
+        const result = await engine!.indexAll();
+        log('info', `[memory] indexed ${result.indexed} chunk(s) across ${result.files} file(s)`);
+        engine!.startWatching();
+        log('info', '[memory] watching for changes');
+      } catch (err) {
+        log('error', `[memory] initial index failed: ${(err as Error).message}`);
+      }
+    })();
   } catch (err) {
-    startupError = (err as Error).message;
-    log('error', `[memory] engine init failed: ${startupError}`);
+    log('error', `[memory] engine init failed: ${(err as Error).message}`);
   }
 
   function requireEngine(): MemoryEngine {
     if (!engine) {
-      throw new Error(startupError ?? 'Memory engine is not ready.');
+      throw new Error('Local project index is unavailable.');
     }
     return engine;
   }
@@ -431,7 +455,9 @@ export async function activate(ctx: ActivateCtx) {
         const query = String(params?.query ?? '');
         if (!query) throw new Error('query is required');
         const k = typeof params?.k === 'number' ? params.k : 5;
-        return { chunks: await requireEngine().search(query, k) };
+        const eng = requireEngine();
+        const chunks = await eng.search(query, k);
+        return buildProjectSearchResponse(chunks, eng.status().retrieval);
       },
 
       // --- Host-only RPC methods (not MCP tools) -----------------------------
@@ -464,18 +490,31 @@ export async function activate(ctx: ActivateCtx) {
         k?: number;
         sourceClasses?: string[];
       }) => {
+        const eng = requireEngine();
         const query = String(params?.query ?? '').trim();
-        if (!query) return { results: [] as GlobalSearchResult[] };
+        if (!query) {
+          const searchResponse = buildProjectSearchResponse([], eng.status().retrieval);
+          return {
+            results: [] as GlobalSearchResult[],
+            capabilities: searchResponse.capabilities,
+            fallback: searchResponse.fallback,
+          };
+        }
         const k = typeof params?.k === 'number' ? params.k : 20;
         const sourceClasses = Array.isArray(params?.sourceClasses)
           ? params.sourceClasses.map(String).filter(Boolean)
           : undefined;
-        const hits = await requireEngine().search(
+        const hits = await eng.search(
           query,
           Math.max(k * 4, 40),
           sourceClasses?.length ? { sourceClasses } : undefined,
         );
-        return { results: collapseToEntities(hits, k) };
+        const searchResponse = buildProjectSearchResponse(hits, eng.status().retrieval);
+        return {
+          results: collapseToEntities(hits, k),
+          capabilities: searchResponse.capabilities,
+          fallback: searchResponse.fallback,
+        };
       },
 
       recall: async (params: { query?: string; category?: string; scope?: string; limit?: number }) => {
@@ -541,9 +580,20 @@ export async function activate(ctx: ActivateCtx) {
 
       status: async () => {
         if (!engine) {
-          return { ready: false, error: startupError, root: config.root };
+          return {
+            ready: false,
+            capability: {
+              available: false,
+              reason: 'local-project-index-unavailable',
+            },
+            root: config.root,
+          };
         }
-        return { ready: true, ...engine.status(), indexSizeBytes: await engine.indexSizeBytes() };
+        return {
+          ready: true,
+          ...buildPublicEngineStatus(engine.status()),
+          indexSizeBytes: await engine.indexSizeBytes(),
+        };
       },
 
       list_facts: async (params: { limit?: number }) => {
@@ -569,9 +619,14 @@ export async function activate(ctx: ActivateCtx) {
         const sourceClass = params?.sourceClass ? String(params.sourceClass) : 'plans';
         const maxDocs = typeof params?.maxDocs === 'number' ? params.maxDocs : 3;
 
-        const { key } = await getApiKey('openai');
+        let key: string | null = null;
+        try {
+          ({ key } = await getApiKey('openai'));
+        } catch {
+          return buildOptionalAiUnavailableResult(sourceClass);
+        }
         if (!key) {
-          throw new Error('OpenAI API key not configured. Add one in Nimbalyst AI settings.');
+          return buildOptionalAiUnavailableResult(sourceClass);
         }
 
         const docs = await eng.recentDocs(sourceClass, maxDocs);
@@ -581,7 +636,13 @@ export async function activate(ctx: ActivateCtx) {
 
         const existing = (await eng.recall({ limit: 500 })).map((f) => f.text);
         const messages = buildDistillMessages(docs.map((d) => ({ path: d.path, content: d.content })));
-        const responseText = await chatComplete(messages, key);
+        let responseText: string;
+        try {
+          responseText = await chatComplete(messages, key);
+        } catch {
+          log('warn', '[memory] optional fact distillation unavailable');
+          return buildOptionalAiUnavailableResult(sourceClass);
+        }
         const candidates = parseDistillResponse(responseText, existing);
         const sources = docs.map((d) => d.path);
         log('info', `[memory] distilled ${candidates.length} candidate fact(s) from ${sources.length} ${sourceClass} doc(s)`);

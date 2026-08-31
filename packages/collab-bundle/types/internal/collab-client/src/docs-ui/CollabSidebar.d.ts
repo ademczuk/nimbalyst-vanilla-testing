@@ -16,5 +16,12 @@ export interface CollabSidebarProps {
      * stays a pure expand/select there.
      */
     onSelectFolder?: (folderId: string | null) => void;
+    /**
+     * Lets a host outside this tree (the desktop title bar's create control) open
+     * the shared-document type menu against its own anchor. The menu stays here
+     * because the catalog filtering that decides which types are shareable at all
+     * lives here; a second copy in the host would drift from it.
+     */
+    registerCreateDocumentTrigger?: (open: ((anchor: HTMLElement) => void) | null) => void;
 }
 export declare const CollabSidebar: React.FC<CollabSidebarProps>;

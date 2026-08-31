@@ -94,6 +94,13 @@ export interface CollabSidebarProps {
    * stays a pure expand/select there.
    */
   onSelectFolder?: (folderId: string | null) => void;
+  /**
+   * Lets a host outside this tree (the desktop title bar's create control) open
+   * the shared-document type menu against its own anchor. The menu stays here
+   * because the catalog filtering that decides which types are shareable at all
+   * lives here; a second copy in the host would drift from it.
+   */
+  registerCreateDocumentTrigger?: (open: ((anchor: HTMLElement) => void) | null) => void;
 }
 
 export const CollabSidebar: React.FC<CollabSidebarProps> = ({
@@ -104,6 +111,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
   scopePath,
   headerActions,
   onSelectFolder,
+  registerCreateDocumentTrigger,
 }) => {
   const { scope, host, session, controller } = useCollabDocsUI();
   const documentTypesRevision = useSyncExternalStore(
@@ -654,6 +662,12 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
     newDocumentMenu.setIsOpen(true);
     setContextMenu(null);
   }, [getCreationBaseFolderId, newDocumentMenu.refs, newDocumentMenu.setIsOpen]);
+
+  useEffect(() => {
+    if (!registerCreateDocumentTrigger) return undefined;
+    registerCreateDocumentTrigger(openCreateDocumentMenu);
+    return () => registerCreateDocumentTrigger(null);
+  }, [registerCreateDocumentTrigger, openCreateDocumentMenu]);
 
   const selectCreateDocumentType = useCallback((descriptor: CollabDocumentTypeDescriptor) => {
     if (!descriptor.capabilities.sharedCreate) return;

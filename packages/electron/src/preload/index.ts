@@ -136,6 +136,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('agent-new-session', callback);
     return () => ipcRenderer.removeListener('agent-new-session', callback);
   },
+  onCreateInTree: (callback: (kind: string) => void) => {
+    const handler = (_event: unknown, kind: string) => callback(kind);
+    ipcRenderer.on('create-in-tree', handler);
+    return () => ipcRenderer.removeListener('create-in-tree', handler);
+  },
   onFileOpen: (callback: () => void) => {
     ipcRenderer.on('file-open', callback);
     return () => ipcRenderer.removeListener('file-open', callback);

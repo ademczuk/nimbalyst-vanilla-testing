@@ -32,6 +32,13 @@ vi.mock('../../window/windowChrome', () => ({
 }));
 
 import { getBackgroundColor, updateWindowTitleBars } from '../ThemeManager';
+import { markWindowTransparent } from '../../window/transparentWindows';
+
+function fakeWindow() {
+  const window = { setBackgroundColor: vi.fn(), webContents: { send: vi.fn() } };
+  windows.push(window);
+  return window;
+}
 
 beforeEach(() => {
   store.theme = 'light';
@@ -83,5 +90,26 @@ describe('getBackgroundColor', () => {
     updateWindowTitleBars();
 
     expect(getBackgroundColor()).toBe('#2d2d2d');
+  });
+});
+
+describe('updateWindowTitleBars', () => {
+  it('leaves a transparent window unpainted while still telling it the theme', () => {
+    // setBackgroundColor on a `transparent: true` window paints it opaque edge
+    // to edge and cannot be undone without recreating it, which is how a theme
+    // change turned the menu bar island into a dark slab over the top of the
+    // screen (#4817). The renderer still needs the event to re-derive its
+    // CSS variables.
+    const ordinary = fakeWindow();
+    const transparent = fakeWindow();
+    markWindowTransparent(transparent as never);
+
+    store.theme = 'dark';
+    store.themeIsDark = true;
+    updateWindowTitleBars();
+
+    expect(ordinary.setBackgroundColor).toHaveBeenCalledWith('#2d2d2d');
+    expect(transparent.setBackgroundColor).not.toHaveBeenCalled();
+    expect(transparent.webContents.send).toHaveBeenCalledWith('theme-change', 'dark');
   });
 });

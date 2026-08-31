@@ -114,6 +114,8 @@ import {
   hasRunningTasks as computeHasRunningTasks,
   countRunningTasks,
   reapRunningTasks,
+  resolvePromptEndDelay,
+  resolveShellDrainMs,
   shouldDeferTeardownForSubagents,
   shouldExitDrain,
   classifyDrainOutcome,
@@ -1074,11 +1076,19 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // gaps up to ~589s), NOT a ~1Hz keepalive -- so the window is sized generously
       // above that jitter to avoid reaping legitimate long rewrites (#802).
       const streamStallMs = resolveStreamStallMs();
+      // A backgrounded shell (local_bash) streams no chunks while it runs, so it
+      // can never reset the timer below and the 5-minute sub-agent window killed
+      // every one that outran it. Silence from a shell is not a stall. See #1355.
+      const shellDrainMs = resolveShellDrainMs();
       const armPromptEndTimer = (reason: string) => {
         if (this.promptEndTimer) {
           clearTimeout(this.promptEndTimer);
         }
-        const delay = this.hasRunningTasks() ? SUBAGENT_DRAIN_GRACE_MS : PROMPT_GRACE_MS;
+        const delay = resolvePromptEndDelay(this.activeTasks.values(), {
+          idle: PROMPT_GRACE_MS,
+          subagent: SUBAGENT_DRAIN_GRACE_MS,
+          shell: shellDrainMs,
+        });
         this.promptEndTimer = setTimeout(() => {
           this.promptEndTimer = null;
           // Record that WE ended the stream on a still-running task. Ending it

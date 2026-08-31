@@ -55,6 +55,7 @@ export interface EditorModeRef {
   toggleAIChatCollapsed: () => void;
   toggleEditorMaximized: () => void;
   createNewChatSession: () => Promise<void>;
+  createNewFile: (initialType?: NewFileType) => void;
   tabs: {
     addTab: (filePath: string, content?: string) => string | undefined;
     removeTab: (tabId: string) => void;
@@ -1025,6 +1026,16 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
         setIsAIChatCollapsed(false);
       }
       await chatSidebarRef.current?.createNewSession();
+    },
+    // Same path the Cmd+N accelerator takes, so the title bar's left control
+    // and the keyboard land the file in the same place: the selected folder if
+    // the tree has one, else the workspace root.
+    createNewFile: (initialType: NewFileType = 'markdown') => {
+      if (selectedFolderPath) {
+        setNewFileDirectory(selectedFolderPath);
+      }
+      setNewFileInitialType(initialType);
+      setIsNewFileDialogOpen(true);
     },
     tabs: {
       addTab: (filePath: string, content?: string) => {

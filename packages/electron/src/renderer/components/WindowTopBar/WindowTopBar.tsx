@@ -74,10 +74,44 @@ export interface WindowTopBarGitActions {
   } | null;
 }
 
-export interface WindowTopBarNewSessionControl {
+export interface WindowTopBarCreateMenuItem {
+  id: string;
   label: string;
-  onCreate: () => void;
+  icon: string;
+  onSelect: () => void;
+  disabled?: boolean;
+  /** Draws a divider above this item, for grouping types vs. containers. */
+  separatorBefore?: boolean;
 }
+
+export interface WindowTopBarCreateControl {
+  /**
+   * Names the noun this control makes ("New file", "New session"). The bar's
+   * two create controls are told apart by position and label, never by mode
+   * memory, so a bare "New" is not a valid label here.
+   */
+  label: string;
+  /**
+   * Receives the button element so a mode that already owns a correct type
+   * menu (Shared Docs) can anchor it here instead of the list rebuilding it.
+   */
+  onCreate: (anchor?: HTMLElement | null) => void;
+  /** Where the new thing lands, surfaced at the top of the menu. */
+  destination?: string | null;
+  /** Optional section header above the type list, e.g. "Shared with team". */
+  menuHeading?: { label: string; icon: string };
+  /**
+   * Type variants within the same destination. When present the control renders
+   * as a split button; the first entry is generated from `label`/`onCreate` so
+   * the visible label and menu item #1 cannot disagree.
+   */
+  menuItems?: WindowTopBarCreateMenuItem[];
+  /** Icon for the mirrored primary entry in the menu. Default: description. */
+  primaryIcon?: string;
+}
+
+/** @deprecated Use {@link WindowTopBarCreateControl}. */
+export type WindowTopBarNewSessionControl = WindowTopBarCreateControl;
 
 export interface WindowTopBarProps {
   workspaceName: string;
@@ -85,7 +119,10 @@ export interface WindowTopBarProps {
   gitStatus: WindowTopBarGitStatus | null;
   gitActions: WindowTopBarGitActions;
   panelControls?: WindowTopBarPanelControls;
-  newSessionControl?: WindowTopBarNewSessionControl;
+  /** Right end of the bar. Starts a session; identical in every mode. */
+  newSessionControl?: WindowTopBarCreateControl;
+  /** Left end of the bar, over the tree column. Makes a thing in that tree. */
+  newInTreeControl?: WindowTopBarCreateControl;
 }
 
 const GIT_FEEDBACK_MAX_LINES = 6;
@@ -103,7 +140,6 @@ const FOCUS_RING =
 /** Shape shared by every control in the bar; colors are layered per variant. */
 const CONTROL_BASE = `inline-flex items-center justify-center h-7 m-0 border-0 rounded-[5px] font-[inherit] cursor-pointer ${FOCUS_RING}`;
 const CONTROL_GHOST = 'text-nim-muted bg-transparent hover:text-nim hover:bg-nim-hover';
-const CONTROL_PRIMARY = 'text-nim-on-primary bg-nim-primary hover:bg-nim-primary-hover';
 /**
  * Open panels tint primary, hover included. The hover pair is not redundant: a
  * bare `data-[collapsed=false]:` ties `hover:text-nim` on specificity, so which
@@ -496,6 +532,153 @@ function GitStatusMenu({
  * custom traffic-light position. Without this the only exits are the menu bar
  * and the accelerator, so the window reads as stuck.
  */
+/**
+ * The bar's create control, used at both ends.
+ *
+ * Both ends get the same quiet, chrome-weight treatment on purpose: they are
+ * peers in a chrome bar, and a saturated primary pill here competes with the
+ * editor for attention. Asymmetry between them would read as a mistake rather
+ * than as meaning — the left/right split already carries the meaning.
+ */
+function CreateSplitButton({
+  control,
+  side,
+}: {
+  control: WindowTopBarCreateControl;
+  side: 'left' | 'right';
+}) {
+  const menu = useFloatingMenu({ placement: side === 'left' ? 'bottom-start' : 'bottom-end' });
+  const hasMenu = Boolean(control.menuItems && control.menuItems.length > 0);
+  const primaryRef = React.useRef<HTMLButtonElement>(null);
+
+  const primaryButton = (
+    <button
+      ref={primaryRef}
+      type="button"
+      className={`window-top-bar__create-primary gap-[3px] px-2 text-[11px] font-semibold ${
+        hasMenu ? 'rounded-r-none' : ''
+      } ${CONTROL_BASE} ${CONTROL_GHOST} ${NO_DRAG_REGION}`}
+      data-testid={`window-top-bar-create-${side}`}
+      title={control.label}
+      aria-label={control.label}
+      onClick={() => control.onCreate(primaryRef.current)}
+    >
+      <MaterialSymbol icon="add" size={17} />
+      <span>{control.label}</span>
+    </button>
+  );
+
+  if (!hasMenu) {
+    return (
+      <div
+        className={`window-top-bar__create inline-flex items-center h-7 rounded-[5px] ${NO_DRAG_REGION}`}
+        data-side={side}
+      >
+        {primaryButton}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div
+        className={`window-top-bar__create window-top-bar__create-split inline-flex items-center h-7 rounded-[5px] ${NO_DRAG_REGION}`}
+        data-side={side}
+      >
+        {primaryButton}
+        <span
+          className="window-top-bar__create-split-divider flex-none w-px h-4 bg-[var(--nim-border)]"
+          aria-hidden="true"
+        />
+        <button
+          ref={menu.refs.setReference}
+          {...menu.getReferenceProps()}
+          type="button"
+          className={`window-top-bar__create-caret w-6 px-1 rounded-l-none ${CONTROL_BASE} ${CONTROL_GHOST} ${NO_DRAG_REGION}`}
+          data-testid={`window-top-bar-create-${side}-menu-button`}
+          aria-label={`Choose what to create: ${control.label}`}
+          aria-haspopup="menu"
+          aria-expanded={menu.isOpen}
+          title="Choose what to create"
+          onClick={() => menu.setIsOpen(!menu.isOpen)}
+        >
+          <MaterialSymbol icon="arrow_drop_down" size={16} />
+        </button>
+      </div>
+      {menu.isOpen && (
+        <FloatingPortal>
+          <div
+            ref={menu.refs.setFloating}
+            style={menu.floatingStyles}
+            {...menu.getFloatingProps()}
+            className={`window-top-bar__menu window-top-bar__create-menu min-w-[220px] max-w-[min(420px,calc(100vw-24px))] ${MENU_SURFACE} ${NO_DRAG_REGION}`}
+            data-testid={`window-top-bar-create-${side}-menu`}
+          >
+            {control.destination && (
+              <div
+                className="window-top-bar__create-destination flex items-center gap-1.5 px-2 py-1.5 mb-0.5 text-[10px] text-nim-faint border-b border-nim"
+                data-testid={`window-top-bar-create-${side}-destination`}
+              >
+                <MaterialSymbol icon="folder_open" size={13} />
+                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                  in {control.destination}
+                </span>
+              </div>
+            )}
+            {control.menuHeading && (
+              <div className="window-top-bar__create-heading flex items-center gap-1.5 px-2 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-nim-muted">
+                <MaterialSymbol icon={control.menuHeading.icon} size={13} />
+                <span>{control.menuHeading.label}</span>
+              </div>
+            )}
+            {/* Menu item #1 is generated from the button's own label and
+                handler, not authored separately. The split-button contract is
+                that the visible label and the first entry are the same action;
+                deriving it is the only way that cannot rot. */}
+            <button
+              type="button"
+              role="menuitem"
+              className={`window-top-bar__menu-item ${MENU_ITEM}`}
+              data-selected={true}
+              data-testid={`window-top-bar-create-${side}-menu-primary`}
+              onClick={() => {
+                control.onCreate(primaryRef.current);
+                menu.setIsOpen(false);
+              }}
+            >
+              <MaterialSymbol icon={control.primaryIcon ?? 'description'} size={17} />
+              <span>{control.label}</span>
+            </button>
+            {control.menuItems!.map((item) => (
+              <React.Fragment key={item.id}>
+                {item.separatorBefore && (
+                  <span
+                    className="window-top-bar__create-menu-divider flex-none h-px my-1 mx-1.5 bg-[var(--nim-border)]"
+                    aria-hidden="true"
+                  />
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={`window-top-bar__menu-item ${MENU_ITEM}`}
+                  disabled={item.disabled}
+                  onClick={() => {
+                    item.onSelect();
+                    menu.setIsOpen(false);
+                  }}
+                >
+                  <MaterialSymbol icon={item.icon} size={17} />
+                  <span>{item.label}</span>
+                </button>
+              </React.Fragment>
+            ))}
+          </div>
+        </FloatingPortal>
+      )}
+    </>
+  );
+}
+
 function ExitFullScreenButton() {
   const fullScreen = useAtomValue(windowFullScreenAtom);
   if (!fullScreen) return null;
@@ -521,6 +704,7 @@ export function WindowTopBar({
   gitActions,
   panelControls,
   newSessionControl,
+  newInTreeControl,
 }: WindowTopBarProps) {
   const trackerDocumentItemId = useAtomValue(trackerModeDocumentItemIdAtom);
   const trackerLayout = useAtomValue(trackerModeLayoutAtom);
@@ -578,6 +762,9 @@ export function WindowTopBar({
         <div className="window-top-bar__left flex items-center gap-1 min-w-0 overflow-hidden">
           <ExitFullScreenButton />
           <WindowMenuBar />
+          {/* Sits over the tree column, so what it makes is whatever that tree
+              is made of. Absent in modes with no tree of creatable things. */}
+          {newInTreeControl && <CreateSplitButton control={newInTreeControl} side="left" />}
         </div>
 
         <div className="window-top-bar__identity flex items-baseline justify-center gap-1.5 min-w-0 max-w-[min(42vw,520px)] whitespace-nowrap pointer-events-none">
@@ -612,17 +799,7 @@ export function WindowTopBar({
             data-testid="window-top-bar-right-actions"
           >
             {newSessionControl && (
-              <button
-                type="button"
-                className={`window-top-bar__new-session gap-[3px] px-2 text-[11px] font-semibold ${CONTROL_BASE} ${CONTROL_PRIMARY} ${NO_DRAG_REGION}`}
-                data-testid="window-top-bar-new-session"
-                title={newSessionControl.label}
-                aria-label={newSessionControl.label}
-                onClick={newSessionControl.onCreate}
-              >
-                <MaterialSymbol icon="add" size={17} />
-                <span>New</span>
-              </button>
+              <CreateSplitButton control={newSessionControl} side="right" />
             )}
             {visiblePanelControls?.left && (
               <PanelButton side="left" control={visiblePanelControls.left} />

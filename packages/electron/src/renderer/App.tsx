@@ -180,6 +180,7 @@ import {
   type WindowTopBarGitActivityEntry,
   type WindowTopBarPanelControls,
 } from './components/WindowTopBar';
+import { resolveCreateAction, type CreateKind } from '../shared/createActions';
 import { AccountExpiryBanner } from './components/Accounts/AccountExpiryBanner';
 import { organizationDirectoryAtom, personalAccountsAtom } from './store/atoms/settingsDomains';
 import {
@@ -1295,41 +1296,85 @@ export default function App() {
     trackerSidebarCollapsed,
   ]);
 
+  /**
+   * The right end of the title bar. Always present, always a session — the
+   * button's value is that it has no exceptions, so there is deliberately no
+   * `return undefined` branch here. Each mode routes to whichever surface owns
+   * its chat rail; modes with no rail switch to Agent first, which is what
+   * "new session" means from a tracker or the org view anyway.
+   */
   const windowTopBarNewSessionControl = useMemo(() => {
-    if (isFullscreenPanelActive && activeFullscreenPanel?.aiSupported) {
-      return {
-        label: 'New AI session',
-        onCreate: () => {
-          void chatSidebarRef.current?.createNewSession();
-        },
-      };
-    }
-    if (activeMode === 'files') {
-      return {
-        label: 'New AI session',
-        onCreate: () => {
+    const startSession = () => {
+      if (isFullscreenPanelActive && activeFullscreenPanel?.aiSupported) {
+        void chatSidebarRef.current?.createNewSession();
+        return;
+      }
+      switch (activeMode) {
+        case 'files':
           void editorModeRef.current?.createNewChatSession();
-        },
-      };
-    }
-    if (activeMode === 'collab') {
-      return {
-        label: 'New AI session',
-        onCreate: () => {
+          return;
+        case 'collab':
           void collabModeRef.current?.createNewChatSession();
-        },
-      };
-    }
-    if (activeMode === 'pr-review') {
-      return {
-        label: 'New AI session',
-        onCreate: () => {
+          return;
+        case 'pr-review':
           void pullRequestModeRef.current?.createNewChatSession();
-        },
-      };
+          return;
+        case 'agent':
+          void agentModeRef.current?.createNewSession();
+          return;
+        default:
+          // Tracker, Organization and Settings have no chat rail of their own.
+          setActiveMode('agent');
+          setTimeout(() => void agentModeRef.current?.createNewSession(), 0);
+      }
+    };
+
+    return { label: 'New session', onCreate: startSession, primaryIcon: 'forum' };
+  }, [activeFullscreenPanel?.aiSupported, activeMode, isFullscreenPanelActive, setActiveMode]);
+
+  /**
+   * The left end of the title bar, sitting over the tree column. What it makes
+   * is whatever that tree is made of; `resolveCreateAction` is the single place
+   * that decides, shared with the Cmd+N accelerator so the two cannot drift.
+   */
+  const runCreateInTree = useCallback((kind: CreateKind, anchor?: HTMLElement | null) => {
+    switch (kind) {
+      case 'file':
+        editorModeRef.current?.createNewFile();
+        return;
+      case 'sharedDoc':
+        // The shared-type menu needs something to hang off. The keyboard path
+        // has no anchor of its own, so it borrows the title bar's own control.
+        collabModeRef.current?.createNewDocument(
+          anchor ??
+            document.querySelector<HTMLElement>('[data-testid="window-top-bar-create-left"]')
+        );
+        return;
+      case 'session':
+        void agentModeRef.current?.createNewSession();
+        return;
+      case 'trackerItem':
+        window.dispatchEvent(new CustomEvent('tracker-quick-create-open'));
     }
-    return undefined;
-  }, [activeFullscreenPanel?.aiSupported, activeMode, isFullscreenPanelActive]);
+  }, []);
+
+  const windowTopBarNewInTreeControl = useMemo(() => {
+    const action = resolveCreateAction(activeMode);
+    if (!action) return undefined;
+
+    return {
+      label: action.label,
+      primaryIcon: action.kind === 'session' ? 'forum' : 'description',
+      onCreate: (anchor?: HTMLElement | null) => runCreateInTree(action.kind, anchor),
+    };
+  }, [activeMode, runCreateInTree]);
+
+  // Cmd+N for the modes whose noun is neither a local file nor a session. Main
+  // resolves the kind with the same function the button uses.
+  useEffect(() => {
+    if (!window.electronAPI?.onCreateInTree) return undefined;
+    return window.electronAPI.onCreateInTree((kind) => runCreateInTree(kind as CreateKind));
+  }, [runCreateInTree]);
 
   const activeModeLabel = useMemo(() => {
     const labels: Record<ContentMode, string> = {
@@ -2777,6 +2822,7 @@ export default function App() {
           }}
           panelControls={windowTopBarPanelControls}
           newSessionControl={windowTopBarNewSessionControl}
+          newInTreeControl={windowTopBarNewInTreeControl}
         />
       )}
       <div data-layout="workspace-row" className="flex flex-row flex-1 min-h-0">

@@ -4,6 +4,7 @@ import {
     getTitleBarOverlayColors,
     resetTitleBarOverlayColors,
 } from '../window/windowChrome';
+import { isWindowTransparent } from '../window/transparentWindows';
 
 /**
  * Determine if the current theme is dark.
@@ -75,8 +76,11 @@ export function updateWindowTitleBars() {
 
     // Update all windows
     BrowserWindow.getAllWindows().forEach(window => {
-        // Update background color
-        window.setBackgroundColor(backgroundColor);
+        // Update background color -- except on a window created transparent,
+        // where this would paint it opaque permanently. See transparentWindows.
+        if (!isWindowTransparent(window)) {
+            window.setBackgroundColor(backgroundColor);
+        }
 
         // Send theme-change event to all windows
         // Each window's renderer listens to this and updates its own UI
