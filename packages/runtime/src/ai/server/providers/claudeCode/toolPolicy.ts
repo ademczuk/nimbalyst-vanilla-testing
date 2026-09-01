@@ -59,3 +59,43 @@ export const TEAM_TOOLS: readonly string[] = [
   'TodoRead',
   'TodoWrite',
 ];
+
+/**
+ * SDK-native tools that are executed by the Claude Code SDK itself (not by Nimbalyst).
+ * AskUserQuestion is included because we handle it in canUseTool (user input, not local execution).
+ * This list is the single source of truth — used for tool_use logging and tool_result logging.
+ */
+export const SDK_NATIVE_TOOLS: readonly string[] = [
+  'Read', 'Write', 'Edit', 'MultiEdit',
+  'Glob', 'Grep', 'LS',
+  'Bash',
+  'WebFetch', 'WebSearch',
+  'Task', 'Agent',  // Agent is the renamed Task tool (SDK 0.2.x+)
+  'TaskOutput', 'TaskStop', 'ExitPlanMode', 'AskUserQuestion',
+  'EnterPlanMode', 'EnterWorktree', 'ExitWorktree', 'Skill',
+  'NotebookRead', 'NotebookEdit',
+  'TodoRead', 'TodoWrite',
+  'ToolSearch',
+  // Task management tools (SDK-internal)
+  'TaskCreate', 'TaskGet', 'TaskUpdate', 'TaskList',
+  // Agent Teams tools (SDK-internal, executed by CLI subprocess)
+  'TeammateTool', 'SendMessage', 'TeamCreate', 'TeamDelete',
+  // Claude Code 2.1.116+ additions (CLI-native, do NOT route through our toolHandler)
+  'Monitor', 'PushNotification', 'RemoteTrigger',
+  'CronCreate', 'CronDelete', 'CronList',
+  'ListMcpResources', 'ListMcpResourcesTool',
+  'ReadMcpResource', 'ReadMcpResourceTool',
+  'Config', 'Mcp',
+  // claude-agent-sdk 0.3.x additions (CLI-native multi-agent orchestration)
+  'Workflow', 'REPL',
+];
+
+/**
+ * Tools the CLI emits as tool_use but Nimbalyst services handle as a side effect
+ * inside this provider (see the `tool_use` switch). Their tool_result from the CLI
+ * is informational only -- routing them through `this.toolHandler` would throw
+ * "Unknown tool", so we treat them like SDK_NATIVE_TOOLS for the warn/route check.
+ */
+export const NIMBALYST_HANDLED_TOOLS: readonly string[] = [
+  'ScheduleWakeup',
+];

@@ -42,6 +42,10 @@ export { diffHandlerRegistry } from '../handlers';
 export { NoopDiffHandler } from '../handlers/NoopDiffHandler';
 
 export { DiffError } from './DiffError';
+export {
+  DEFAULT_MAX_PAIR_EVALUATIONS,
+  DiffBudgetExceededError,
+} from './ThresholdedOrderPreservingTree';
 
 // Change grouping for approval bar
 export { groupDiffChanges, scrollToChangeGroup } from './diffChangeGroups';

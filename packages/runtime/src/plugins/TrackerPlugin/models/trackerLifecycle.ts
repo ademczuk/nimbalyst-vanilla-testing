@@ -18,64 +18,13 @@
 
 import type { TrackerDataModel } from './TrackerDataModel';
 
-/**
- * The settled wording for an item that has no key yet. An unkeyed draft is
- * normal and intentional, not a failure -- this sentence is what says so.
- *
- * This module is the single source for the sentences below. The agent
- * tools import them directly; the CLI cannot (it vendors rather than depending
- * on the runtime, see `packages/cli/src/vendor/trackerRecord.ts`) and carries a
- * marked copy. Two hand-copies previously drifted here: only this file grew
- * `TRACKER_LOCAL_ISSUE_KEY_MESSAGE`, so the tools and the CLI kept telling a
- * numbered personal item it had "no key until it is published" -- on trackers
- * where publishing is refused outright (#1346, #1243).
- */
-export const TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE = 'This item has no key until it is published.';
-
-/**
- * The settled wording for a workspace that has no team to mint keys.
- *
- * "Publish it" is the advice the other messages imply, and it is a dead end
- * here: publication succeeds locally and then waits on a room that does not
- * exist. Saying so is the whole point -- #1346 sat for nine days because the
- * app reported a pending key instead of an absent room.
- */
-export const TRACKER_NO_TEAM_ISSUE_KEY_MESSAGE =
-  'This workspace has no team, so no shared issue key can be issued — publishing will not produce one.';
-
-/**
- * The settled wording for this machine's private number. The point it has to
- * land is that the number is not shareable: the same value on a colleague's
- * machine is a different item, so pasting it into a commit or a message sends
- * them somewhere else or nowhere at all.
- */
-export const TRACKER_LOCAL_ISSUE_KEY_MESSAGE =
-  'This number is private to this project on this machine. It is not a shared key — '
-  + 'do not use it in commit messages or anywhere another person will read it.';
-
-/**
- * The same point in one line, for a diagnostic surface that lists several refs
- * at once and would be drowned by the full sentence. Lifted verbatim from the
- * wording `TrackerBlockedChip` states inline; that component should import this
- * rather than restate it, so the two never drift into different advice.
- */
-export const TRACKER_LOCAL_ISSUE_KEY_BRIEF_MESSAGE =
-  'Dotted refs are numbered on this machine only — they will not resolve for anyone else.';
-
-/**
- * What a dependency cycle means and what to do about it. Two surfaces explain
- * this one deadlock -- `TrackerDependencyCycleBanner` and the hover card in
- * `TrackerBlockedChip` -- and hand-maintained copies of an explanation are how
- * two surfaces end up giving different advice about the same hazard.
- *
- * Verbatim from the chip, so adopting it there is a no-op: that component still
- * states the sentence inline and should import this instead. It reads correctly
- * in both placements -- the banner introduces the cycle in the sentence before,
- * and the chip's card has no antecedent, which is why the subject is named
- * rather than pronominal.
- */
-export const TRACKER_DEPENDENCY_CYCLE_MESSAGE =
-  'These items depend on each other, so none of them can become ready until one of the links is removed.';
+export {
+  TRACKER_DEPENDENCY_CYCLE_MESSAGE,
+  TRACKER_LOCAL_ISSUE_KEY_BRIEF_MESSAGE,
+  TRACKER_LOCAL_ISSUE_KEY_MESSAGE,
+  TRACKER_NO_TEAM_ISSUE_KEY_MESSAGE,
+  TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE,
+} from '@nimbalyst/tracker-core';
 
 /** Whether a tracker has been retired. Absent means active. */
 export function isTrackerArchived(model: Pick<TrackerDataModel, 'archived'> | null | undefined): boolean {

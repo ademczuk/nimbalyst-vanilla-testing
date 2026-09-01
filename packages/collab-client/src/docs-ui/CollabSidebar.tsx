@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { CollabDocumentTypeDescriptor } from '@nimbalyst/collab-client/core';
 import { useAtomValue } from 'jotai';
 import { store } from '@nimbalyst/runtime/store';
@@ -95,12 +95,23 @@ export interface CollabSidebarProps {
    */
   onSelectFolder?: (folderId: string | null) => void;
   /**
-   * Lets a host outside this tree (the desktop title bar's create control) open
-   * the shared-document type menu against its own anchor. The menu stays here
-   * because the catalog filtering that decides which types are shareable at all
-   * lives here; a second copy in the host would drift from it.
+   * Publishes this tree's create menu to a host outside it (the desktop title
+   * bar's create control). The list is built here because the catalog filtering
+   * that decides which types are shareable at all lives here; a second copy in
+   * the host would drift from it.
    */
-  registerCreateDocumentTrigger?: (open: ((anchor: HTMLElement) => void) | null) => void;
+  registerCreateMenu?: (menu: CollabSidebarCreateMenu | null) => void;
+}
+
+export interface CollabSidebarCreateMenu {
+  items: Array<{ id: string; label: string; icon: string; onSelect: () => void }>;
+  /** Folder the new document lands in, or null for the space root. */
+  destination: string | null;
+  /** Default action: a shared Markdown doc. */
+  onPrimary: () => void;
+  /** Extension the default action produces, shown beside it. */
+  primaryTrailing?: string;
+  onNewFolder: () => void;
 }
 
 export const CollabSidebar: React.FC<CollabSidebarProps> = ({
@@ -111,7 +122,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
   scopePath,
   headerActions,
   onSelectFolder,
-  registerCreateDocumentTrigger,
+  registerCreateMenu,
 }) => {
   const { scope, host, session, controller } = useCollabDocsUI();
   const documentTypesRevision = useSyncExternalStore(
@@ -663,11 +674,49 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
     setContextMenu(null);
   }, [getCreationBaseFolderId, newDocumentMenu.refs, newDocumentMenu.setIsOpen]);
 
+  // Handlers via ref, effect keyed on a content signature. Depending on the
+  // callbacks directly republishes on every render, and the host turns that
+  // into a re-render, which loops.
+  const createHandlersRef = useRef({ getCreationBaseFolderId, openCreateFolderDialog });
+  createHandlersRef.current = { getCreationBaseFolderId, openCreateFolderDialog };
+
+  const sharedTypeSignature = sharedNewDocumentMenuItems
+    .map(({ descriptor }) => `${descriptor.documentType}:${descriptor.defaultExtension}`)
+    .join('|');
+
   useEffect(() => {
-    if (!registerCreateDocumentTrigger) return undefined;
-    registerCreateDocumentTrigger(openCreateDocumentMenu);
-    return () => registerCreateDocumentTrigger(null);
-  }, [registerCreateDocumentTrigger, openCreateDocumentMenu]);
+    if (!registerCreateMenu) return undefined;
+
+    const markdown = sharedNewDocumentMenuItems.find(
+      ({ descriptor }) => descriptor.documentType === 'markdown'
+    );
+
+    registerCreateMenu({
+      destination: selectedFolderPath,
+      primaryTrailing: markdown?.descriptor.defaultExtension,
+      onPrimary: () => {
+        setCreateTargetFolderId(createHandlersRef.current.getCreationBaseFolderId());
+        if (markdown) setCreateDocumentDescriptor(markdown.descriptor);
+      },
+      onNewFolder: () => createHandlersRef.current.openCreateFolderDialog(),
+      // Markdown is the primary action, so it is not repeated in the list.
+      items: sharedNewDocumentMenuItems
+        .filter(({ descriptor }) => descriptor.documentType !== 'markdown')
+        .map(({ descriptor }) => ({
+          id: `${descriptor.documentType}:${descriptor.defaultExtension}`,
+          label: descriptor.displayName,
+          icon: descriptor.icon,
+          trailing: descriptor.defaultExtension,
+          onSelect: () => {
+            setCreateTargetFolderId(createHandlersRef.current.getCreationBaseFolderId());
+            setCreateDocumentDescriptor(descriptor);
+          },
+        })),
+    });
+    return () => registerCreateMenu(null);
+    // sharedNewDocumentMenuItems is read through its signature.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerCreateMenu, sharedTypeSignature, selectedFolderPath]);
 
   const selectCreateDocumentType = useCallback((descriptor: CollabDocumentTypeDescriptor) => {
     if (!descriptor.capabilities.sharedCreate) return;
@@ -1130,24 +1179,9 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
                 <MaterialSymbol icon="grid_view" size={16} />
               </button>
             )}
-            <button
-              ref={newDocumentMenu.refs.setReference}
-              {...newDocumentMenu.getReferenceProps()}
-              type="button"
-              className="workspace-action-button bg-transparent border-none p-1.5 cursor-pointer rounded text-[var(--nim-text-faint)] flex items-center justify-center transition-all duration-200 relative hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)]"
-              title="New document"
-              onClick={event => openCreateDocumentMenu(event.currentTarget)}
-            >
-              <MaterialSymbol icon="note_add" size={16} />
-            </button>
-            <button
-              type="button"
-              className="workspace-action-button bg-transparent border-none p-1.5 cursor-pointer rounded text-[var(--nim-text-faint)] flex items-center justify-center transition-all duration-200 relative hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)]"
-              title="New folder"
-              onClick={openCreateFolderDialog}
-            >
-              <MaterialSymbol icon="create_new_folder" size={16} />
-            </button>
+            {/* New document / New folder moved to the host's title-bar create
+                control, which sits directly over this tree. The folder context
+                menu still covers "create here". */}
             {readReceiptsAvailable && (
               <button
                 ref={overflowMenu.refs.setReference}

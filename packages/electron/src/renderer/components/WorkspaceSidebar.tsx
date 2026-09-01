@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback, useSyncExternalStore } from 'react';
-import { useAtomValue } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
+import { setTitleBarCreateMenuAtom } from '../store/atoms/titleBarCreate';
 import { FlatFileTree } from './FlatFileTree';
 import type { RendererFileTreeItem } from '../store';
 import { InputModal } from './InputModal';
@@ -11,7 +12,7 @@ import { NewFileMenu, NewFileType, ExtensionFileType, contributionToExtensionFil
 import { createInitialFileContent, createMockupContent } from '../utils/fileUtils';
 import { getFileName } from '../utils/pathUtils';
 import { getExtensionLoader } from '@nimbalyst/runtime';
-import { KeyboardShortcuts } from '../../shared/KeyboardShortcuts';
+import { KeyboardShortcuts, getShortcutDisplay } from '../../shared/KeyboardShortcuts';
 import { HelpTooltip } from '../help';
 import { store, gitStatusMapAtom, revealRequestAtom, rawFileTreeAtom, fileTreeLoadedAtom, type FileGitStatus as AtomFileGitStatus } from '../store';
 import { sessionFileEditsAtom } from '../store/atoms/sessionFiles';
@@ -362,6 +363,60 @@ export function WorkspaceSidebar({
     }
     setIsFolderModalOpen(true);
   };
+
+  // Publish this tree's create menu for the title bar. Markdown is pinned and
+  // the rest sorted, matching NewFileMenu — the ordering rule lives with the
+  // list either way, and the bar stays a dumb renderer.
+  const setTitleBarCreateMenu = useSetAtom(setTitleBarCreateMenuAtom);
+  // Handlers via ref, effect keyed on primitives only — republishing on every
+  // render feeds an atom write back into a re-render and loops.
+  const createHandlersRef = useRef({ handleNewFileTypeSelect, handleNewFolder });
+  createHandlersRef.current = { handleNewFileTypeSelect, handleNewFolder };
+
+  const extensionTypeSignature = extensionFileTypes
+    .map((type) => `${type.extension}:${type.displayName}:${type.icon}`)
+    .sort()
+    .join('|');
+
+  useEffect(() => {
+    if (currentView !== 'files') return undefined;
+
+    const typeItems = [...extensionFileTypes]
+      .sort((a, b) => a.displayName.localeCompare(b.displayName))
+      .map((extType) => ({
+        id: `ext:${extType.extension}`,
+        label: extType.displayName,
+        icon: extType.icon,
+        onSelect: () => createHandlersRef.current.handleNewFileTypeSelect(`ext:${extType.extension}`),
+      }));
+
+    setTitleBarCreateMenu('files', {
+      mode: 'files',
+      destination: selectedFolder ? getFileName(selectedFolder) : null,
+      primaryTrailing: getShortcutDisplay(KeyboardShortcuts.file.newFile),
+      onPrimary: () => createHandlersRef.current.handleNewFileTypeSelect('markdown'),
+      items: [
+        ...typeItems,
+        {
+          id: 'any',
+          label: 'New File…',
+          icon: 'note_add',
+          onSelect: () => createHandlersRef.current.handleNewFileTypeSelect('any'),
+        },
+        {
+          id: 'folder',
+          label: 'New folder',
+          icon: 'create_new_folder',
+          separatorBefore: true,
+          onSelect: () => createHandlersRef.current.handleNewFolder(),
+        },
+      ],
+    });
+    return () => setTitleBarCreateMenu('files', null);
+    // extensionFileTypes is read through its signature; adding the array itself
+    // would republish on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentView, extensionTypeSignature, selectedFolder, setTitleBarCreateMenu]);
 
   const [targetFolder, setTargetFolder] = useState<string | null>(null);
 
@@ -1131,17 +1186,9 @@ export function WorkspaceSidebar({
           <>
             {currentView === 'files' && (
               <>
-                <button
-                  ref={newFileButtonRef}
-                  className="workspace-action-button bg-transparent border-none p-1.5 cursor-pointer rounded text-[var(--nim-text-faint)] flex items-center justify-center transition-all duration-200 relative hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)]"
-                  onClick={handleNewFileButtonClick}
-                  title="New file"
-                  aria-label="New file"
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>
-                    edit_square
-                  </span>
-                </button>
+                {/* New file / New folder moved to the title bar's left create
+                    control, which sits directly over this tree. The folder
+                    context menu still covers "create here". */}
                 <HelpTooltip testId="file-tree-refresh-button">
                   <button
                     data-testid="file-tree-refresh-button"
@@ -1155,16 +1202,6 @@ export function WorkspaceSidebar({
                     </span>
                   </button>
                 </HelpTooltip>
-                <button
-                  className="workspace-action-button bg-transparent border-none p-1.5 cursor-pointer rounded text-[var(--nim-text-faint)] flex items-center justify-center transition-all duration-200 relative hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text)]"
-                  onClick={handleNewFolder}
-                  title="New folder"
-                  aria-label="New folder"
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>
-                    create_new_folder
-                  </span>
-                </button>
                 {onOpenQuickSearch && (
                   <HelpTooltip testId="file-tree-quick-open-button">
                     <button

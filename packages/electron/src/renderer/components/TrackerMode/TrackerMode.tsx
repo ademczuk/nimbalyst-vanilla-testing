@@ -13,6 +13,8 @@ import type { TrackerIdentity, TrackerItemType } from '@nimbalyst/runtime';
 import {
   trackerModeLayoutAtom,
   setTrackerModeLayoutAtom,
+  trackerActiveViewSettingsAtom,
+  setTrackerTypeViewSettingsAtom,
   trackerModeDocumentItemIdAtom,
   allTrackerSavedViewsAtom,
   saveTrackerViewAtom,
@@ -26,6 +28,11 @@ import {
   type SavedView,
   type SavedViewDefinition,
 } from './trackerSavedViews';
+import {
+  applySavedViewToLayout,
+  buildCurrentViewDefinition,
+  savedViewMatchesCurrent,
+} from './trackerViewDefinition';
 import { withBuiltInSavedViews } from './trackerReadyQueue';
 import type { TrackerNavigationEntry } from '@nimbalyst/runtime/sync';
 import {
@@ -49,32 +56,6 @@ interface TrackerModeProps {
   workspaceName?: string;
   isActive: boolean;
   onSwitchToFilesMode?: () => void;
-}
-
-function savedViewMatchesCurrent(
-  saved: SavedViewDefinition,
-  current: SavedViewDefinition,
-): boolean {
-  const scalarKeys = [
-    'selectedType',
-    'viewMode',
-    'groupBy',
-    'ordering',
-    'sortBy',
-    'sortDirection',
-    'recentlyViewedDays',
-  ] as const;
-  if (scalarKeys.some(key => saved[key] !== current[key])) return false;
-  if (JSON.stringify(saved.activeFilters) !== JSON.stringify(current.activeFilters)) return false;
-  if (JSON.stringify(saved.tagFilter) !== JSON.stringify(current.tagFilter)) return false;
-  // Null marks a legacy view that did not capture the field, so applying it
-  // intentionally leaves the current value alone and must not look dirty.
-  if (saved.columnConfig !== null
-    && JSON.stringify(saved.columnConfig) !== JSON.stringify(current.columnConfig)) return false;
-  if (saved.columnFilters !== null
-    && JSON.stringify(saved.columnFilters) !== JSON.stringify(current.columnFilters)) return false;
-  if (saved.inboxScope !== null && saved.inboxScope !== current.inboxScope) return false;
-  return true;
 }
 
 export const TrackerMode: React.FC<TrackerModeProps> = ({
@@ -119,12 +100,16 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
   // Persisted layout state from atoms
   const modeLayout = useAtomValue(trackerModeLayoutAtom);
   const setModeLayout = useSetAtom(setTrackerModeLayoutAtom);
+  // Display Settings for the selected type, with the workspace-wide values as
+  // the fallback -- never read `modeLayout.viewMode` and friends directly.
+  const viewSettings = useAtomValue(trackerActiveViewSettingsAtom);
+  const setTypeViewSettings = useSetAtom(setTrackerTypeViewSettingsAtom);
   const documentItemId = useAtomValue(trackerModeDocumentItemIdAtom);
   const [activeSavedViewId, setActiveSavedViewId] = React.useState<string | null>(null);
 
   const selectedType = modeLayout.selectedType;
   const activeFilters = modeLayout.activeFilters;
-  const viewMode = modeLayout.viewMode;
+  const viewMode = viewSettings.viewMode;
   const sidebarWidth = modeLayout.sidebarWidth;
   const [tagFilter, setTagFilter] = React.useState<string[]>([]);
   const [sourceFilter, setSourceFilter] = React.useState<string[]>([]);
@@ -199,8 +184,8 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
   }, [setModeLayout]);
 
   const handleViewModeChange = useCallback((mode: TrackerViewMode) => {
-    setModeLayout({ viewMode: mode });
-  }, [setModeLayout]);
+    setTypeViewSettings({ typeKey: selectedType, viewMode: mode });
+  }, [setTypeViewSettings, selectedType]);
 
   // Saved views (NIM-788)
   const persistedSavedViews = useAtomValue(allTrackerSavedViewsAtom);
@@ -216,22 +201,10 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
     setActiveSavedViewId(null);
   }, [workspacePath]);
 
-  const currentViewDefinition = useMemo<SavedViewDefinition>(() => ({
-    selectedType: modeLayout.selectedType,
-    activeFilters: modeLayout.activeFilters,
-    viewMode: modeLayout.viewMode,
-    tagFilter,
-    groupBy: modeLayout.groupBy,
-    ordering: modeLayout.ordering,
-    sortBy: modeLayout.sortBy,
-    sortDirection: modeLayout.sortDirection,
-    recentlyViewedDays: modeLayout.recentlyViewedDays,
-    columnConfig: modeLayout.typeColumnConfigs[modeLayout.selectedType] ?? null,
-    columnFilters: modeLayout.typeColumnFilters[modeLayout.selectedType]
-      ?? { combinator: 'and', clauses: [] },
-    inboxScope: modeLayout.inboxScope,
-    statusScope: modeLayout.statusScope,
-  }), [modeLayout, tagFilter]);
+  const currentViewDefinition = useMemo<SavedViewDefinition>(
+    () => buildCurrentViewDefinition(modeLayout, viewSettings, tagFilter),
+    [modeLayout, viewSettings, tagFilter],
+  );
 
   const activeSavedView = useMemo(
     () => savedViews.find(view => view.id === activeSavedViewId) ?? null,
@@ -282,31 +255,10 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
   }, [activeSavedView, saveView, shareView]);
 
   const handleApplyView = useCallback((view: SavedView) => {
-    const def = view.definition;
-    setModeLayout({
-      selectedType: def.selectedType,
-      activeFilters: def.activeFilters,
-      viewMode: def.viewMode,
-      groupBy: def.groupBy,
-      ordering: def.ordering,
-      sortBy: def.sortBy,
-      sortDirection: def.sortDirection,
-      recentlyViewedDays: def.recentlyViewedDays,
-      statusScope: def.statusScope,
-      ...(def.inboxScope ? { inboxScope: def.inboxScope } : {}),
-      selectedItemId: null,
-      // Only overwrite the column layout/filters when the view actually
-      // captured them; older views leave the current table state alone.
-      ...(def.columnConfig
-        ? { typeColumnConfigs: { ...modeLayout.typeColumnConfigs, [def.selectedType]: def.columnConfig } }
-        : {}),
-      ...(def.columnFilters
-        ? { typeColumnFilters: { ...modeLayout.typeColumnFilters, [def.selectedType]: def.columnFilters } }
-        : {}),
-    });
-    setTagFilter(def.tagFilter);
+    setModeLayout(applySavedViewToLayout(modeLayout, view.definition));
+    setTagFilter(view.definition.tagFilter);
     setActiveSavedViewId(view.id);
-  }, [setModeLayout, modeLayout.typeColumnConfigs, modeLayout.typeColumnFilters]);
+  }, [setModeLayout, modeLayout]);
 
   const handleDeleteView = useCallback((view: SavedView) => {
     if (view.builtIn) return;

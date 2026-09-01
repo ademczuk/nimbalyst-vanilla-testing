@@ -373,6 +373,17 @@ async function doInitializeTrackerSync(workspacePath: string): Promise<void> {
     presenceIdentity,
     persistence,
     initializeIssueKeyPrefix: getWorkspaceState(workspacePath).issueKeyPrefix,
+    identityRecovery: {
+      getFacts: async () => ({
+        ...(await persistence.getStrandedIdentityFacts()),
+        alreadyAttempted: getWorkspaceState(workspacePath).trackerIdentityRecoveryAttempted === true,
+      }),
+      markAttempted: async () => {
+        updateWorkspaceState(workspacePath, (state) => {
+          state.trackerIdentityRecoveryAttempted = true;
+        });
+      },
+    },
     schemaSync: {
       // An override of a builtin goes out as a DELTA so each peer resolves it
       // against its own builtin and keeps receiving shipped fields (#1178).

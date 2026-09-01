@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { MCPServerConfig } from '@nimbalyst/runtime/types/MCPServerConfig';
-import { getEnhancedPath } from './CLIManager';
+import { getEnhancedPath } from './shellEnvironment';
 import { logger } from '../utils/logger';
 
 export interface MCPRemoteConfigDescriptor {

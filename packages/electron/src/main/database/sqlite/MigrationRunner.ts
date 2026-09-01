@@ -231,6 +231,11 @@ export function getMigrations(schemaDir: string): Migration[] {
       name: 'repair_double_quoted_review_status',
       sqlFile: path.join(schemaDir, '0038_repair_double_quoted_review_status.sql'),
     },
+    {
+      version: 39,
+      name: 'drop_unique_issue_number_index',
+      sqlFile: path.join(schemaDir, '0039_drop_unique_issue_number_index.sql'),
+    },
   ];
 }
 

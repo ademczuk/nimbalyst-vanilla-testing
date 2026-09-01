@@ -9,11 +9,12 @@
  */
 
 import React, { useCallback, useState, useEffect, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
-import { useAtomValue } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
+import { setTitleBarCreateMenuAtom } from '../../store/atoms/titleBarCreate';
 import type { CollabScope } from '@nimbalyst/collab-client/core';
 import { createCollabDocsScopeLifecycle } from '@nimbalyst/collab-client/docs';
 import { store } from '@nimbalyst/runtime/store';
-import { CollabSidebar } from '@nimbalyst/collab-client/docs-ui';
+import { CollabSidebar, type CollabSidebarCreateMenu } from '@nimbalyst/collab-client/docs-ui';
 import { ElectronCollabDocsUIProvider } from './ElectronCollabDocsUIProvider';
 import { TabsProvider, useTabsActions, useTabs, useTabNavigationShortcuts, type TabData } from '../../contexts/TabsContext';
 import { TabManager } from '../TabManager/TabManager';
@@ -80,8 +81,8 @@ export interface CollabModeRef {
   toggleChatCollapsed: () => void;
   toggleEditorMaximized: () => void;
   createNewChatSession: () => Promise<void>;
-  /** Opens the shared-document type menu against the caller's anchor. */
-  createNewDocument: (anchor?: HTMLElement | null) => void;
+  /** Creates a shared Markdown doc in the sidebar's current target folder. */
+  createNewDocument: () => void;
 }
 
 export const CollabMode = forwardRef<CollabModeRef, CollabModeProps>(function CollabMode({
@@ -218,15 +219,37 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const chatSidebarRef = useRef<ChatSidebarRef>(null);
   /**
-   * The sidebar owns the shared-document type menu; it hands the opener up so
-   * the title bar's create control can anchor that same menu to itself.
+   * The sidebar builds the shared-document type list (it owns the catalog
+   * filtering); this republishes it for the title bar's create control.
    */
-  const createDocumentTriggerRef = useRef<((anchor: HTMLElement) => void) | null>(null);
-  const registerCreateDocumentTrigger = useCallback(
-    (open: ((anchor: HTMLElement) => void) | null) => {
-      createDocumentTriggerRef.current = open;
+  const setTitleBarCreateMenu = useSetAtom(setTitleBarCreateMenuAtom);
+  const createPrimaryRef = useRef<(() => void) | null>(null);
+  const registerCreateMenu = useCallback(
+    (menu: CollabSidebarCreateMenu | null) => {
+      createPrimaryRef.current = menu?.onPrimary ?? null;
+      if (!menu) {
+        setTitleBarCreateMenu('collab', null);
+        return;
+      }
+      setTitleBarCreateMenu('collab', {
+        mode: 'collab',
+        destination: menu.destination,
+        heading: { label: 'Shared with team', icon: 'groups' },
+        onPrimary: menu.onPrimary,
+        primaryTrailing: menu.primaryTrailing,
+        items: [
+          ...menu.items,
+          {
+            id: 'folder',
+            label: 'New folder',
+            icon: 'create_new_folder',
+            separatorBefore: true,
+            onSelect: menu.onNewFolder,
+          },
+        ],
+      });
     },
-    []
+    [setTitleBarCreateMenu]
   );
 
   useEffect(() => {
@@ -766,10 +789,8 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
       }
       await chatSidebarRef.current?.createNewSession();
     },
-    createNewDocument: (anchor?: HTMLElement | null) => {
-      const open = createDocumentTriggerRef.current;
-      if (!open || !anchor) return;
-      open(anchor);
+    createNewDocument: () => {
+      createPrimaryRef.current?.();
     },
   }), [
     activeTabId,
@@ -799,7 +820,7 @@ export const CollabModeInner = forwardRef<CollabModeRef, CollabModeInnerProps>(f
               activeDocumentId={activeCollabDocumentId}
               onShowHome={() => openSharedHomeTab(true)}
               homeActive={activeTabIsHome}
-              registerCreateDocumentTrigger={registerCreateDocumentTrigger}
+              registerCreateMenu={registerCreateMenu}
             />
           </div>
 

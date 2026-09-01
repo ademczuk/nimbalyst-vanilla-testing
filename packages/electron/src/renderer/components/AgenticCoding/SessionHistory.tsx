@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
+import {
+  setTitleBarCreateMenuAtom,
+  type TitleBarCreateMenuItem,
+} from '../../store/atoms/titleBarCreate';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { CollapsibleGroup } from './CollapsibleGroup';
 import { WorktreeBaseBranchPicker } from './WorktreeBaseBranchPicker';
@@ -33,10 +37,10 @@ import {
 } from '../../store';
 import { alphaFeatureEnabledAtom, worktreesFeatureAvailableAtom } from '../../store/atoms/appSettings';
 import { activeWorkspacePathAtom } from '../../store/atoms/openProjects';
+import { useGitRepoProbe } from '../../hooks/useGitRepoProbe';
 import { activeSessionIdAtom as globalActiveSessionIdAtom, sessionPinnedUpdateAtom } from '../../store/atoms/sessions';
 import { collapsedGroupsAtom, sortOrderAtom, setCollapsedGroupsAtom, setSortOrderAtom } from '../../store/atoms/agentMode';
 import {
-  isGitRepoAtom,
   recentlyRenamedSessionAtom,
   selectSessionActionAtom,
   selectChildSessionActionAtom,
@@ -200,7 +204,7 @@ function compareNumbersAsc(a: number, b: number): number {
  *   - `activeWorkspacePathAtom` for the current workspace
  *   - `globalActiveSessionIdAtom` for the selected session
  *   - `collapsedGroupsAtom` / `sortOrderAtom` for user preferences
- *   - `isGitRepoAtom(workspacePath)` for the New Worktree button
+ *   - `useGitRepoProbe(workspacePath)` for the New Worktree button
  *   - `recentlyRenamedSessionAtom` for the rename-cache patch signal
  *   - The action atoms in `sessionHistoryActions.ts` for every handler
  *
@@ -217,7 +221,10 @@ const SessionHistoryComponent: React.FC = () => {
   const setSortOrderAction = useSetAtom(setSortOrderAtom);
   const onCollapsedGroupsChange = setCollapsedGroupsAction;
   const onSortOrderChange = setSortOrderAction;
-  const isGitRepo = useAtomValue(isGitRepoAtom(workspacePath));
+  // `undefined` until the probe resolves. Gate on an explicit `false` so a
+  // not-yet-answered probe never reads as "not a git repository".
+  const isGitRepo = useGitRepoProbe(workspacePath);
+  const isNotGitRepo = isGitRepo === false;
   const isWorktreesFeatureAvailable = useAtomValue(worktreesFeatureAvailableAtom);
   const isBlitzAlphaAvailable = useAtomValue(alphaFeatureEnabledAtom('blitz'));
 
@@ -318,7 +325,7 @@ const SessionHistoryComponent: React.FC = () => {
   const isSuperLoopsAlphaEnabled = useAtomValue(alphaFeatureEnabledAtom('super-loops'));
   // Super Loops is gated by its alpha feature alone (like Meta Agent), not by
   // developer mode. The worktree it creates still requires a git repo, which is
-  // enforced on the New Super Loop button (disabled when !isGitRepo).
+  // enforced on the New Super Loop button (disabled when isNotGitRepo).
   const isSuperLoopsAvailable = isSuperLoopsAlphaEnabled;
   const isMetaAgentEnabled = useAtomValue(alphaFeatureEnabledAtom('meta-agent'));
 
@@ -2088,10 +2095,113 @@ const SessionHistoryComponent: React.FC = () => {
   // Open the worktree picker modal. It drives creation by calling
   // onNewWorktreeSession({ baseBranch, name }).
   const openWorktreeBaseBranchPicker = useCallback(() => {
-    if (!isGitRepo || !onNewWorktreeSession) return;
+    if (isNotGitRepo || !onNewWorktreeSession) return;
     newDropdownMenu.setIsOpen(false);
     setWorktreeBaseBranchPickerOpen(true);
-  }, [isGitRepo, onNewWorktreeSession, newDropdownMenu]);
+  }, [isNotGitRepo, onNewWorktreeSession, newDropdownMenu]);
+
+  // Publish the session variants for the title bar's left create control. The
+  // gating (git availability, alpha flags) stays here with the handlers it
+  // guards; the bar only renders what this hands it.
+  const setTitleBarCreateMenu = useSetAtom(setTitleBarCreateMenuAtom);
+  // Handlers go through a ref and the effect depends only on primitives.
+  // Depending on the callbacks directly re-published on every render --
+  // openWorktreeBaseBranchPicker closes over useFloatingMenu's return value,
+  // which is a fresh object each time -- and writing the atom re-rendered App,
+  // which re-rendered this, which republished: "Maximum update depth exceeded".
+  const createHandlersRef = useRef({
+    onNewSession,
+    onNewBlitz,
+    onNewTerminal,
+    openWorktreeBaseBranchPicker,
+    openSuperLoopDialog,
+    handleNewMetaAgent,
+  });
+  createHandlersRef.current = {
+    onNewSession,
+    onNewBlitz,
+    onNewTerminal,
+    openWorktreeBaseBranchPicker,
+    openSuperLoopDialog,
+    handleNewMetaAgent,
+  };
+
+  const hasWorktreeOption = Boolean(onNewWorktreeSession);
+  const hasBlitzOption = Boolean(onNewBlitz);
+  const hasTerminalOption = Boolean(onNewTerminal);
+
+  useEffect(() => {
+    const items: TitleBarCreateMenuItem[] = [];
+    if (hasWorktreeOption) {
+      items.push({
+        id: 'worktree',
+        label: 'New Worktree',
+        icon: 'account_tree',
+        testId: 'new-worktree-session-button',
+        trailing: getShortcutDisplay(KeyboardShortcuts.window.newWorktree),
+        disabled: isNotGitRepo,
+        disabledReason: 'Worktrees require a git repository',
+        onSelect: () => createHandlersRef.current.openWorktreeBaseBranchPicker(),
+      });
+    }
+    if (hasBlitzOption) {
+      items.push({
+        id: 'blitz',
+        label: 'New Blitz',
+        icon: 'bolt',
+        testId: 'new-blitz-button',
+        disabled: isNotGitRepo,
+        disabledReason: 'Blitz requires a git repository',
+        onSelect: () => createHandlersRef.current.onNewBlitz?.(),
+      });
+    }
+    if (hasTerminalOption) {
+      items.push({
+        id: 'terminal',
+        label: 'New Terminal',
+        icon: 'terminal',
+        testId: 'new-terminal-button',
+        onSelect: () => createHandlersRef.current.onNewTerminal?.(),
+      });
+    }
+    if (isSuperLoopsAvailable) {
+      items.push({
+        id: 'super-loop',
+        label: 'New Super Loop',
+        icon: 'all_inclusive',
+        testId: 'new-super-loop-button',
+        disabled: isNotGitRepo,
+        disabledReason: 'Super Loops require a git repository',
+        onSelect: () => createHandlersRef.current.openSuperLoopDialog(),
+      });
+    }
+    if (isMetaAgentEnabled) {
+      items.push({
+        id: 'meta-agent',
+        label: 'New Meta Agent',
+        icon: 'hub',
+        testId: 'new-meta-agent-button',
+        onSelect: () => { void createHandlersRef.current.handleNewMetaAgent(); },
+      });
+    }
+
+    setTitleBarCreateMenu('agent', {
+      mode: 'agent',
+      menuTestId: 'new-dropdown-button',
+      primaryTrailing: getShortcutDisplay(KeyboardShortcuts.file.newSession),
+      items,
+      onPrimary: () => createHandlersRef.current.onNewSession?.(),
+    });
+    return () => setTitleBarCreateMenu('agent', null);
+  }, [
+    setTitleBarCreateMenu,
+    hasWorktreeOption,
+    hasBlitzOption,
+    hasTerminalOption,
+    isSuperLoopsAvailable,
+    isMetaAgentEnabled,
+    isNotGitRepo,
+  ]);
 
   // Handle new button click - if only one option available, trigger it directly
   const handleNewButtonClick = () => {
@@ -2780,22 +2890,6 @@ const SessionHistoryComponent: React.FC = () => {
                 </svg>
               </button>
             )}
-            {(
-              <div className="session-history-new-dropdown relative z-10">
-                <button
-                  ref={newDropdownMenu.refs.setReference}
-                  className="session-history-new-button flex items-center justify-center p-1.5 bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded text-[var(--nim-text)] cursor-pointer transition-colors duration-150 shrink-0 hover:bg-[var(--nim-bg-hover)] hover:border-[var(--nim-primary)] active:bg-[var(--nim-bg-tertiary)] [&_svg]:block"
-                  data-testid="new-dropdown-button"
-                  onClick={handleNewButtonClick}
-                  title="Create new..."
-                  aria-label="Create new session, worktree, or terminal"
-                >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                </button>
-              </div>
-            )}
             </>
           }
         />
@@ -2880,22 +2974,6 @@ const SessionHistoryComponent: React.FC = () => {
           showAccent={false}
           actions={
             <>
-            {(
-              <div className="session-history-new-dropdown relative z-10">
-                <button
-                  ref={newDropdownMenu.refs.setReference}
-                  className="session-history-new-button flex items-center justify-center p-1.5 bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded text-[var(--nim-text)] cursor-pointer transition-colors duration-150 shrink-0 hover:bg-[var(--nim-bg-hover)] hover:border-[var(--nim-primary)] active:bg-[var(--nim-bg-tertiary)] [&_svg]:block"
-                  data-testid="new-dropdown-button"
-                  onClick={handleNewButtonClick}
-                  title="Create new..."
-                  aria-label="Create new session, worktree, or terminal"
-                >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                </button>
-              </div>
-            )}
             </>
           }
         />
@@ -2918,105 +2996,6 @@ const SessionHistoryComponent: React.FC = () => {
   // dropdown state but the JSX never rendered, and the user saw nothing happen
   // unless they used Ctrl+N. Rendering the menu through FloatingPortal keeps the
   // placement stable across either return path while escaping clipped ancestors.
-  const newDropdownPortal = newDropdownMenu.isOpen && (
-    <FloatingPortal>
-      <div
-        ref={newDropdownMenu.refs.setFloating}
-        className="session-history-new-menu min-w-40 bg-[var(--nim-bg)] border border-[var(--nim-border)] rounded overflow-hidden z-[1000] shadow-[0_4px_12px_rgba(0,0,0,0.15)] whitespace-nowrap"
-        style={newDropdownMenu.floatingStyles}
-        {...newDropdownMenu.getFloatingProps()}
-      >
-      {onNewSession && (
-        <button
-          className="session-history-new-option flex items-center w-full px-3 py-2 text-[13px] bg-transparent border-none text-[var(--nim-text)] cursor-pointer transition-colors duration-150 text-left gap-2 hover:bg-[var(--nim-bg-hover)] [&_svg]:shrink-0 [&_svg]:text-[var(--nim-text-muted)] [&>span]:flex-1"
-          data-testid="new-session-button"
-          onClick={() => { onNewSession(); newDropdownMenu.setIsOpen(false); }}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-          <span>New Session</span>
-          <span className="session-history-new-option-shortcut flex-none text-[11px] text-[var(--nim-text-muted)] opacity-70">{getShortcutDisplay(KeyboardShortcuts.file.newSession)}</span>
-        </button>
-      )}
-      {onNewWorktreeSession && (
-        <button
-          className={`session-history-new-option flex items-center w-full px-3 py-2 text-[13px] bg-transparent border-none text-[var(--nim-text)] cursor-pointer transition-colors duration-150 text-left gap-2 hover:bg-[var(--nim-bg-hover)] [&_svg]:shrink-0 [&_svg]:text-[var(--nim-text-muted)] [&>span]:flex-1 ${!isGitRepo ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
-          data-testid="new-worktree-session-button"
-          onClick={() => { if (isGitRepo) { openWorktreeBaseBranchPicker(); } }}
-          disabled={!isGitRepo}
-          title={!isGitRepo ? 'Worktrees require a git repository' : undefined}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M5 13v-2.5a1.5 1.5 0 0 1 1.5-1.5h3"/>
-            <path d="M9.5 9V4.5"/>
-            <circle cx="5" cy="4.5" r="1.5"/>
-            <circle cx="9.5" cy="4.5" r="1.5"/>
-            <path d="M5 6v2.5a1.5 1.5 0 0 0 1.5 1.5"/>
-            <path d="M12 7v4M10 9h4"/>
-          </svg>
-          <span>New Worktree</span>
-          <span className="session-history-new-option-shortcut flex-none text-[11px] text-[var(--nim-text-muted)] opacity-70">{getShortcutDisplay(KeyboardShortcuts.window.newWorktree)}</span>
-        </button>
-      )}
-      {onNewBlitz && (
-        <button
-          className={`session-history-new-option flex items-center w-full px-3 py-2 text-[13px] bg-transparent border-none text-[var(--nim-text)] cursor-pointer transition-colors duration-150 text-left gap-2 hover:bg-[var(--nim-bg-hover)] [&_svg]:shrink-0 [&_svg]:text-[var(--nim-text-muted)] ${!isGitRepo ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
-          data-testid="new-blitz-button"
-          onClick={() => { if (isGitRepo) { onNewBlitz(); newDropdownMenu.setIsOpen(false); } }}
-          disabled={!isGitRepo}
-          title={!isGitRepo ? 'Blitz requires a git repository' : undefined}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M9 2L4 9h4l-1 5 5-7H8l1-5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          <span className="flex-1">New Blitz</span>
-          <AlphaBadge size="xs" />
-        </button>
-      )}
-      {onNewTerminal && (
-        <button
-          className="session-history-new-option flex items-center w-full px-3 py-2 text-[13px] bg-transparent border-none text-[var(--nim-text)] cursor-pointer transition-colors duration-150 text-left gap-2 hover:bg-[var(--nim-bg-hover)] [&_svg]:shrink-0 [&_svg]:text-[var(--nim-text-muted)] [&>span]:flex-1"
-          data-testid="new-terminal-button"
-          onClick={() => { onNewTerminal(); newDropdownMenu.setIsOpen(false); }}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 5L7 9L3 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M9 13H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-          <span>New Terminal</span>
-        </button>
-      )}
-      {isSuperLoopsAvailable && (
-        <button
-          className={`session-history-new-option flex items-center w-full px-3 py-2 text-[13px] bg-transparent border-none text-[var(--nim-text)] cursor-pointer transition-colors duration-150 text-left gap-2 hover:bg-[var(--nim-bg-hover)] [&_svg]:shrink-0 [&_svg]:text-[var(--nim-text-muted)] ${!isGitRepo ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
-          data-testid="new-super-loop-button"
-          onClick={() => { if (isGitRepo) { openSuperLoopDialog(); newDropdownMenu.setIsOpen(false); } }}
-          disabled={!isGitRepo}
-          title={!isGitRepo ? 'Super Loops require a git repository' : undefined}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M13 5.5H9.5M13 5.5L10.5 3M13 5.5L10.5 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M3 10.5H6.5M3 10.5L5.5 8M3 10.5L5.5 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          <span className="flex-1">New Super Loop</span>
-          <AlphaBadge size="xs" />
-        </button>
-      )}
-      {isMetaAgentEnabled && (
-        <button
-          className="session-history-new-option flex items-center w-full px-3 py-2 text-[13px] bg-transparent border-none text-[var(--nim-text)] cursor-pointer transition-colors duration-150 text-left gap-2 hover:bg-[var(--nim-bg-hover)] [&_svg]:shrink-0 [&_svg]:text-[var(--nim-text-muted)]"
-          data-testid="new-meta-agent-button"
-          onClick={() => { void handleNewMetaAgent(); newDropdownMenu.setIsOpen(false); }}
-        >
-          <MaterialSymbol icon="hub" size={14} />
-          <span className="flex-1">New Meta Agent</span>
-          <AlphaBadge size="xs" />
-        </button>
-      )}
-      </div>
-    </FloatingPortal>
-  );
 
   const worktreeBaseBranchPickerPortal = onNewWorktreeSession && (
     <WorktreeBaseBranchPicker
@@ -3061,22 +3040,6 @@ const SessionHistoryComponent: React.FC = () => {
                   </svg>
                 </button>
               )}
-              {(
-                <div className="session-history-new-dropdown relative z-10">
-                  <button
-                    ref={newDropdownMenu.refs.setReference}
-                    className="session-history-new-button flex items-center justify-center p-1.5 bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded text-[var(--nim-text)] cursor-pointer transition-colors duration-150 shrink-0 hover:bg-[var(--nim-bg-hover)] hover:border-[var(--nim-primary)] active:bg-[var(--nim-bg-tertiary)] [&_svg]:block"
-                    data-testid="new-dropdown-button"
-                    onClick={handleNewButtonClick}
-                    title="Create new..."
-                    aria-label="Create new session or worktree"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                    </svg>
-                  </button>
-                </div>
-              )}
               {onNewTerminal && (
                 <button
                   className="session-history-new-terminal-button flex items-center justify-center p-1.5 bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded text-[var(--nim-text)] cursor-pointer transition-colors duration-150 shrink-0 hover:bg-[var(--nim-bg-hover)] hover:border-[var(--nim-primary)] active:bg-[var(--nim-bg-tertiary)] [&_svg]:block"
@@ -3105,7 +3068,6 @@ const SessionHistoryComponent: React.FC = () => {
             in the empty state opens the dropdown state but the JSX is missing
             from this return path - the previous render site was only in the
             main return below. See #306. */}
-        {newDropdownPortal}
         {worktreeBaseBranchPickerPortal}
       </div>
     );
@@ -3169,22 +3131,6 @@ const SessionHistoryComponent: React.FC = () => {
                 <path d="M13.5 8.5V12.5C13.5 13.0523 13.0523 13.5 12.5 13.5H3.5C2.94772 13.5 2.5 13.0523 2.5 12.5V8.5M8 2.5V10.5M8 10.5L5.5 8M8 10.5L10.5 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
-          )}
-          {(
-            <div className="session-history-new-dropdown relative z-10">
-              <button
-                ref={newDropdownMenu.refs.setReference}
-                className="session-history-new-button flex items-center justify-center p-1.5 bg-[var(--nim-bg-secondary)] border border-[var(--nim-border)] rounded text-[var(--nim-text)] cursor-pointer transition-colors duration-150 shrink-0 hover:bg-[var(--nim-bg-hover)] hover:border-[var(--nim-primary)] active:bg-[var(--nim-bg-tertiary)] [&_svg]:block"
-                data-testid="new-dropdown-button"
-                onClick={handleNewButtonClick}
-                title="Create new..."
-                aria-label="Create new session, worktree, or terminal"
-              >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-              </button>
-            </div>
           )}
           </>
         }
@@ -3838,10 +3784,6 @@ const SessionHistoryComponent: React.FC = () => {
 
       {/* New Super Loop dialog */}
       <NewSuperLoopDialog workspacePath={workspacePath} />
-
-      {/* New dropdown menu - extracted to `newDropdownPortal` above so the
-          empty-state early-return can also mount it. See #306. */}
-      {newDropdownPortal}
       {worktreeBaseBranchPickerPortal}
     </div>
   );

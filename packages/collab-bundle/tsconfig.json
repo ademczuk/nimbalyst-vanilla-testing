@@ -16,6 +16,8 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
+      "@nimbalyst/tracker-core": ["../tracker-core/src/index.ts"],
+      "@nimbalyst/tracker-core/*": ["../tracker-core/src/*"],
       "@nimbalyst/collab-client": ["../collab-client/src/core/index.ts"],
       "@nimbalyst/collab-client/*": ["../collab-client/src/*/index.ts"],
       "@nimbalyst/runtime/*": ["../runtime/src/*"],

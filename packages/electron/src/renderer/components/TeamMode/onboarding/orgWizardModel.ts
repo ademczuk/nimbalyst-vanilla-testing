@@ -71,6 +71,17 @@ export interface OrgWizardState {
   emails: string[];
   /** Addresses the invite API has already accepted. */
   invitedEmails: string[];
+  /**
+   * Local folders to publish into the new team once the invitations are sent.
+   *
+   * The first team a user creates is the one most likely to start empty —
+   * there is nothing shared yet by definition — so this is where an invitee is
+   * most likely to arrive with nothing to open. Absolute paths, since the
+   * publish flow reads them off disk.
+   */
+  publishFolders: string[];
+  /** Folders the publish step actually landed, so a retry does not re-copy. */
+  publishedFolders: string[];
   pendingInvitation: PendingOrgInvitation | null;
   inviteLookupStatus: 'idle' | 'checking' | 'complete';
   busy: boolean;
@@ -92,6 +103,8 @@ export function createOrgWizardState(
     createdOrgId: null,
     emails: [],
     invitedEmails: [],
+    publishFolders: [],
+    publishedFolders: [],
     pendingInvitation: null,
     inviteLookupStatus: 'idle',
     busy: false,
@@ -381,6 +394,40 @@ export function removeEmail(
 export function pendingInvites(state: OrgWizardState): string[] {
   const sent = new Set(state.invitedEmails);
   return state.emails.filter((email) => !sent.has(email));
+}
+
+/** Toggle a folder in the publish selection. */
+export function toggleFolderToPublish(
+  state: OrgWizardState,
+  folderPath: string,
+): OrgWizardState {
+  return {
+    ...state,
+    publishFolders: state.publishFolders.includes(folderPath)
+      ? state.publishFolders.filter((entry) => entry !== folderPath)
+      : [...state.publishFolders, folderPath],
+  };
+}
+
+/**
+ * Folders still to publish. Mirrors `pendingInvites`: a retry after a partial
+ * failure must not copy the folders that already landed, because a publish is
+ * a one-time copy and running it twice creates a second set of documents.
+ */
+export function pendingFolderPublishes(state: OrgWizardState): string[] {
+  const done = new Set(state.publishedFolders);
+  return state.publishFolders.filter((folderPath) => !done.has(folderPath));
+}
+
+export function markFoldersPublished(
+  state: OrgWizardState,
+  folderPaths: readonly string[],
+): OrgWizardState {
+  if (folderPaths.length === 0) return state;
+  const done = new Set(state.publishedFolders);
+  const additions = folderPaths.filter((folderPath) => !done.has(folderPath));
+  if (additions.length === 0) return state;
+  return { ...state, publishedFolders: [...state.publishedFolders, ...additions] };
 }
 
 export function markInvited(

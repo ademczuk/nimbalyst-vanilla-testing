@@ -21,6 +21,37 @@
  * @param known  keys already mapped onto first-class TrackerItem properties
  * @returns the flattened customFields bag, or undefined if empty
  */
+/**
+ * Identity keys that live in indexed columns and only there.
+ *
+ * Rows written before the identity keys became column-only still carry a second
+ * copy inside `data`, and that copy is exactly the one that drifted against the
+ * columns -- on this workspace 245 of them named a different item than their own
+ * row did. Every converter reads the columns, so a blob copy can only ever be a
+ * wrong shadow of them; sweeping one into `customFields` launders a known-wrong
+ * key into a payload that already carries the right one.
+ *
+ * Every known-set passed to `extractItemCustomFields` must include these. The
+ * write paths in TrackerPGLiteStore delete them from `data` on the way in, and
+ * `stripColumnOnlyIdentityKeys` clears the ones already on disk.
+ */
+export const COLUMN_ONLY_IDENTITY_KEYS = ['issueNumber', 'issueKey', 'typeTags'] as const;
+
+/**
+ * Remove the column-only identity keys from a parsed `data` blob in place.
+ * Returns true if anything was removed.
+ */
+export function stripColumnOnlyIdentityKeys(data: Record<string, unknown>): boolean {
+  let changed = false;
+  for (const key of COLUMN_ONLY_IDENTITY_KEYS) {
+    if (key in data) {
+      delete data[key];
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 export function extractItemCustomFields(
   data: Record<string, unknown> | null | undefined,
   known: Set<string>,

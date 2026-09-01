@@ -9,7 +9,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { store } from '@nimbalyst/runtime/store';
 import {
   initTrackerPanelLayout,
+  setTrackerModeLayoutAtom,
+  setTrackerTypeViewSettingsAtom,
   toggleTrackerSidebarCollapsedAtom,
+  trackerActiveViewSettingsAtom,
   trackerModeLayoutAtom,
   trackerSidebarCollapsedAtom,
   type TrackerModeLayout,
@@ -92,6 +95,113 @@ describe('tracker view state migration', () => {
       },
     });
     expect(layout).toMatchObject({ groupBy: 'goal', ordering: 'priority' });
+  });
+});
+
+/**
+ * Display Settings are remembered per tracker type (#1412). The root-level
+ * fields survive as the fallback for a type that has never been configured,
+ * which is what lets an upgrading workspace open on the view it was left in.
+ */
+describe('per-type Display Settings', () => {
+  const ROOT_VIEW = {
+    viewMode: 'kanban',
+    viewModeMigrated: true,
+    groupBy: 'milestone',
+    ordering: 'priority',
+    sortBy: 'created',
+    sortDirection: 'asc',
+  } as const;
+
+  it('reads through to the workspace values for a type with no settings of its own', async () => {
+    await loadLayoutWith({ ...ROOT_VIEW, selectedType: 'bug' });
+
+    expect(store.get(trackerActiveViewSettingsAtom)).toEqual({
+      viewMode: 'kanban',
+      groupBy: 'milestone',
+      ordering: 'priority',
+      sortBy: 'created',
+      sortDirection: 'asc',
+    });
+  });
+
+  it('keeps one type\'s grouping out of every other type', async () => {
+    await loadLayoutWith({ ...ROOT_VIEW, selectedType: 'bug' });
+
+    store.set(setTrackerTypeViewSettingsAtom, { typeKey: 'bug', groupBy: 'status' });
+    expect(store.get(trackerActiveViewSettingsAtom).groupBy).toBe('status');
+
+    store.set(setTrackerModeLayoutAtom, { selectedType: 'plan' });
+    expect(store.get(trackerActiveViewSettingsAtom).groupBy).toBe('milestone');
+
+    // ...and the fallback itself is untouched, so a type configured later still
+    // inherits the workspace value rather than the last type someone edited.
+    expect(store.get(trackerModeLayoutAtom).groupBy).toBe('milestone');
+  });
+
+  it('restores each type to its own settings and leaves the others alone', async () => {
+    await loadLayoutWith({
+      ...ROOT_VIEW,
+      selectedType: 'bug',
+      typeViewSettings: {
+        bug: { viewMode: 'table', groupBy: 'status', sortBy: 'updated', sortDirection: 'desc' },
+        plan: { viewMode: 'timeline' },
+      },
+    });
+
+    expect(store.get(trackerActiveViewSettingsAtom)).toEqual({
+      viewMode: 'table',
+      groupBy: 'status',
+      // Never set for bugs, so it still reads the workspace fallback.
+      ordering: 'priority',
+      sortBy: 'updated',
+      sortDirection: 'desc',
+    });
+
+    store.set(setTrackerModeLayoutAtom, { selectedType: 'plan' });
+    expect(store.get(trackerActiveViewSettingsAtom)).toMatchObject({
+      viewMode: 'timeline',
+      groupBy: 'milestone',
+    });
+  });
+
+  it('treats an unusable persisted field as absent rather than as a default', async () => {
+    const layout = await loadLayoutWith({
+      ...ROOT_VIEW,
+      selectedType: 'bug',
+      typeViewSettings: {
+        bug: {
+          viewMode: 'spreadsheet',
+          groupBy: 'phase-of-moon',
+          sortDirection: 'sideways',
+          sortBy: 'updated',
+        },
+        // The retired 'grid' literal still means the RevoGrid table.
+        task: { viewMode: 'grid', groupBy: 'owner' },
+        idea: 'not-an-object',
+      },
+    });
+
+    expect(layout.typeViewSettings).toEqual({
+      bug: { sortBy: 'updated' },
+      task: { viewMode: 'table', groupBy: 'assignee' },
+    });
+    // The garbage fields fall through to the workspace view, not to 'list'/'none'.
+    expect(store.get(trackerActiveViewSettingsAtom)).toMatchObject({
+      viewMode: 'kanban',
+      groupBy: 'milestone',
+      sortDirection: 'asc',
+    });
+  });
+
+  it('keeps a stable identity while unrelated layout state churns', async () => {
+    await loadLayoutWith({ ...ROOT_VIEW, selectedType: 'bug' });
+
+    const before = store.get(trackerActiveViewSettingsAtom);
+    store.set(setTrackerModeLayoutAtom, { selectedItemId: 'item-1' });
+
+    // Selecting an item must not re-render every consumer of Display Settings.
+    expect(store.get(trackerActiveViewSettingsAtom)).toBe(before);
   });
 });
 

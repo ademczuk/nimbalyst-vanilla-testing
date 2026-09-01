@@ -188,6 +188,44 @@ describe('DirectGateway reads', () => {
     gw.close();
   });
 
+  it('keeps system metadata out of custom fields in records and JSON output', async () => {
+    const workspace = '/tmp/system-key-workspace';
+    const db = openDatabase(dbPath);
+    insert(db, {
+      id: 'system-keys',
+      issueKey: 'BUG-4841',
+      type: 'bug',
+      workspace,
+      updated: new Date().toISOString(),
+      data: {
+        title: 'System-key classification',
+        severity: 'high',
+        linkedPullRequests: [{ remote: 'nimbalyst/nimbalyst', number: 42 }],
+        linkedIssues: [{ remote: 'nimbalyst/nimbalyst', number: 41 }],
+        triagedAt: '2026-08-31T13:00:00.000Z',
+        triagedBy: { email: 'reviewer@example.com', displayName: 'Reviewer' },
+        derivedSignals: [{ kind: 'stale-input-must-not-be-a-field' }],
+      },
+    });
+    db.close();
+
+    const gateway = new DirectGateway(dbPath);
+    const record = await gateway.getTracker(workspace, 'BUG-4841');
+    gateway.close();
+    expect(record?.fields).toEqual({ title: 'System-key classification', severity: 'high' });
+    expect(record?.system).toMatchObject({
+      linkedPullRequests: [{ remote: 'nimbalyst/nimbalyst', number: 42 }],
+      linkedIssues: [{ remote: 'nimbalyst/nimbalyst', number: 41 }],
+      triagedAt: '2026-08-31T13:00:00.000Z',
+      triagedBy: { email: 'reviewer@example.com', displayName: 'Reviewer' },
+    });
+
+    const rendered = JSON.parse((await captureCli([
+      'tracker', 'show', 'BUG-4841', '--db', dbPath, '--workspace', workspace, '--json',
+    ])).out);
+    expect(rendered.fields).toEqual({ title: 'System-key classification', severity: 'high' });
+  });
+
   it('resolves by URN and reads the body cache', async () => {
     const gw = new DirectGateway(dbPath);
     const rec = await gw.getTrackerByUrn(WORKSPACE, 'github://acme/app#42');

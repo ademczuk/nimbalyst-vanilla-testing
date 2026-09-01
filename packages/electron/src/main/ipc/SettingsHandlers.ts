@@ -44,7 +44,7 @@ import {
     getAgentWorkflowSourceSettings, getAgentWorkflowExportSettings,
     setAgentWorkflowSourceSettings, setAgentWorkflowExportSettings,
 } from '../utils/store';
-import { getEnhancedPath } from '../services/CLIManager';
+import { getEnhancedPath } from '../services/shellEnvironment';
 import { logger } from '../utils/logger';
 import { getSettingsService, isSettingKey } from '../services/SettingsService';
 import { SessionNamingService } from '../services/SessionNamingService';

@@ -2,7 +2,7 @@
  * The single interface both access modes implement. Command code is written
  * against `TrackerGateway` and never branches on mode.
  */
-import type { TrackerRecord } from '../vendor/trackerRecord.js';
+import type { TrackerRecord } from '@nimbalyst/tracker-core';
 
 export type GatewayMode = 'live' | 'direct';
 

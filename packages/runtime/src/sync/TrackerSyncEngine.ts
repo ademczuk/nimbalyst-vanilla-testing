@@ -76,6 +76,11 @@ import {
 } from './trackerEnvelopeCodec';
 import { classifyTrackerClose, type TrackerAccessTermination } from './trackerAccessTermination';
 import {
+  planTrackerIdentityRecovery,
+  type StrandedIdentityFacts,
+  type TrackerIdentityRecoveryPlan,
+} from './trackerIdentityRecovery';
+import {
   isPermanentTrackerRejection,
   type PersistedTrackerTransactionRow,
   type TrackerPersistence,
@@ -177,6 +182,13 @@ export interface TrackerSchemaSyncHooks {
    * no notion of a retired row simply keeps the old behaviour.
    */
   markRejected?: (type: string, code: string) => Promise<unknown>;
+}
+
+export interface TrackerIdentityRecoveryHooks {
+  /** Everything the plan needs except the bootstrap cursor, which the engine holds. */
+  getFacts: () => Promise<Omit<StrandedIdentityFacts, 'localMaxSyncId'>>;
+  /** Record that this workspace has had its one attempt. */
+  markAttempted: () => Promise<void>;
 }
 
 export interface TrackerNavigationLocalChange {
@@ -305,6 +317,12 @@ export interface TrackerSyncEngineConfig {
    * decide to force a reconnect.
    */
   onBootstrapError?: (err: unknown) => void;
+
+  /**
+   * Repair for rows the old issue-key collision branch stranded. Optional: a
+   * host that does not track stranded rows simply never runs the pass.
+   */
+  identityRecovery?: TrackerIdentityRecoveryHooks;
 
   /**
    * Epic H3 P1: fires when the server reports this tracker room was relocated
@@ -773,6 +791,8 @@ export class TrackerSyncEngine {
         }
       }
 
+      await this.runIdentityRecovery(cursor);
+
       await this.runNavigationBootstrap();
       await this.runSavedViewBootstrap();
 
@@ -792,6 +812,55 @@ export class TrackerSyncEngine {
       // -- without this hook the engine sits at `syncing` forever with no
       // symptom an operator can see.
       this.config.onBootstrapError?.(err);
+    }
+  }
+
+  /**
+   * Re-request a span of the changelog for rows the old collision branch
+   * stranded without an issue key.
+   *
+   * Those rows are `synced` and carry a `sync_id`, so the ordinary bootstrap
+   * -- which starts at `MAX(sync_id)` -- can never reach them again. See
+   * `trackerIdentityRecovery.ts` for why, and for the pure decision this only
+   * executes.
+   *
+   * The attempt is marked whether or not it succeeds. The alternative, marking
+   * only on success, retries a multi-thousand-row rewind on every launch for
+   * any workspace whose rows the room cannot re-assert, which is a worse
+   * failure than one repair that did not take. A workspace stuck that way is
+   * diagnosable from the warning below.
+   */
+  private async runIdentityRecovery(localMaxSyncId: SyncId): Promise<void> {
+    const hooks = this.config.identityRecovery;
+    if (!hooks) return;
+
+    let plan: TrackerIdentityRecoveryPlan;
+    try {
+      plan = planTrackerIdentityRecovery({ ...(await hooks.getFacts()), localMaxSyncId });
+    } catch (err) {
+      this.config.onBootstrapError?.(err);
+      return;
+    }
+    if (plan.action === 'none') return;
+
+    console.warn(
+      `[TrackerSync] ${plan.strandedCount} synced item(s) carry no issue key; re-requesting`,
+      `the changelog from sync_id ${plan.sinceSyncId} (${plan.rewindDistance} entries behind`,
+      `the cursor) so the room can re-assert their identity`,
+    );
+    try {
+      let cursor: SyncId = plan.sinceSyncId;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const response = await this.requestSync(cursor);
+        await this.applyBootstrapBatch(response);
+        cursor = response.cursorSyncId;
+        if (!response.hasMore) break;
+      }
+    } catch (err) {
+      this.config.onBootstrapError?.(err);
+    } finally {
+      await hooks.markAttempted().catch((err) => this.config.onBootstrapError?.(err));
     }
   }
 

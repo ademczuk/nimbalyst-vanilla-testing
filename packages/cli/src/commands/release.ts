@@ -13,15 +13,22 @@ import { usageError, notFoundError } from '../cli/exitCodes.js';
 import { makeGateway } from './common.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { green, dim } from '../cli/colors.js';
-import type { TrackerRecord } from '../vendor/trackerRecord.js';
+import {
+  createTrackerCoreContext,
+  type TrackerRecord,
+} from '@nimbalyst/tracker-core';
 import {
   RELEASE_TYPE,
   findPendingReleases,
   releaseFinalizeFields,
   releaseNoteLines,
   renderReleaseNotes,
-} from '../vendor/trackerReleases.js';
+} from '@nimbalyst/tracker-core';
 import type { TrackerGateway } from '../gateway/types.js';
+
+const releaseContext = createTrackerCoreContext(() => undefined);
+const releaseStatus = (record: TrackerRecord): string => String(record.fields.status ?? '');
+const releaseTitle = (record: TrackerRecord): string => String(record.fields.title ?? '');
 
 export async function runRelease(args: ParsedArgs): Promise<number> {
   switch (args.verb) {
@@ -44,7 +51,9 @@ async function releaseList(args: ParsedArgs): Promise<number> {
   try {
     const workspace = await resolveWorkspace(gateway, flagStr(args, 'workspace'));
     const releases = await listReleases(gateway, workspace);
-    const shown = flagBool(args, 'pending') ? findPendingReleases(releases) : releases;
+    const shown = flagBool(args, 'pending')
+      ? findPendingReleases(releaseContext, releases, releaseStatus)
+      : releases;
 
     if (flagBool(args, 'json')) {
       process.stdout.write(JSON.stringify(shown, null, 2) + '\n');
@@ -118,7 +127,7 @@ async function releaseNotes(args: ParsedArgs): Promise<number> {
     const all = await gateway.listTrackers({ workspace, limit: -1 });
     const itemsById = new Map(all.map((item) => [item.id, item]));
 
-    const lines = releaseNoteLines(target, itemsById);
+    const lines = releaseNoteLines(releaseContext, target, itemsById, releaseTitle);
     if (flagBool(args, 'json')) {
       process.stdout.write(JSON.stringify(lines, null, 2) + '\n');
       return 0;
@@ -153,7 +162,11 @@ async function resolveRelease(
     return record;
   }
 
-  const pending = findPendingReleases(await listReleases(gateway, workspace));
+  const pending = findPendingReleases(
+    releaseContext,
+    await listReleases(gateway, workspace),
+    releaseStatus,
+  );
   if (pending.length === 0) {
     throw notFoundError(
       'No pending release item. Create one (type `release`) before finalizing, or name one explicitly.',

@@ -10,6 +10,7 @@
  */
 
 import type { FieldDefinition, TrackerRelationshipValue } from './TrackerDataModel';
+import { normalizeRelationshipValue as normalizeCoreRelationshipValue } from '@nimbalyst/tracker-core';
 
 /** A relationship vocabulary entry (label + behavior hints for a field). */
 export interface TrackerRelationshipType {
@@ -80,33 +81,7 @@ export function isRelationshipField(def: Pick<FieldDefinition, 'type'>): boolean
  * pre-existing `reference` value never throws.
  */
 export function normalizeRelationshipValue(raw: unknown): TrackerRelationshipValue[] {
-  const list: unknown[] = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-  const byId = new Map<string, TrackerRelationshipValue>();
-  for (const entry of list) {
-    const v = coerceOne(entry);
-    if (v) byId.set(v.itemId, v);
-  }
-  return [...byId.values()];
-}
-
-function coerceOne(entry: unknown): TrackerRelationshipValue | null {
-  if (typeof entry === 'string') {
-    return entry ? { itemId: entry } : null;
-  }
-  if (entry && typeof entry === 'object') {
-    const o = entry as Record<string, unknown>;
-    const itemId = typeof o.itemId === 'string' ? o.itemId : typeof o.id === 'string' ? o.id : '';
-    if (!itemId) return null;
-    const out: TrackerRelationshipValue = { itemId };
-    if (typeof o.issueKey === 'string') out.issueKey = o.issueKey;
-    if (typeof o.title === 'string') out.title = o.title;
-    if (typeof o.trackerType === 'string') out.trackerType = o.trackerType;
-    if (typeof o.relationshipTypeKey === 'string') out.relationshipTypeKey = o.relationshipTypeKey;
-    if (o.direction === 'out') out.direction = 'out';
-    if (o.metadata && typeof o.metadata === 'object') out.metadata = o.metadata as Record<string, unknown>;
-    return out;
-  }
-  return null;
+  return normalizeCoreRelationshipValue(raw) as TrackerRelationshipValue[];
 }
 
 export interface RelationshipValidationContext {

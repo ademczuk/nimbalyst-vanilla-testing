@@ -11,20 +11,7 @@
  * approved would make the review lane meaningless, so `approved` is refused at
  * the agent tool boundary rather than merely discouraged in a prompt.
  */
-export declare const REVIEW_IN_REVIEW = "in-review";
-export declare const REVIEW_APPROVED = "approved";
-export declare const REVIEW_CHANGES_REQUESTED = "changes-requested";
-/** The lane, in the order a reviewer walks it. */
-export declare const REVIEW_LANE_STATUSES: readonly ["in-review", "changes-requested", "approved"];
-export declare function isReviewLaneStatus(status: string): boolean;
-/** Whether a status is one an agent must not set on a user's behalf. */
-export declare function isHumanOnlyStatus(status: string | undefined | null): boolean;
-/**
- * The message an agent gets when it tries to promote its own work. Phrased as
- * the next action rather than a bare refusal, so the agent moves the item to
- * `in-review` instead of retrying.
- */
-export declare function humanOnlyStatusMessage(status: string): string;
+export { REVIEW_APPROVED, REVIEW_CHANGES_REQUESTED, REVIEW_IN_REVIEW, REVIEW_LANE_STATUSES, humanOnlyStatusMessage, isHumanOnlyStatus, isReviewLaneStatus, } from '@nimbalyst/tracker-core';
 /** Which review-lane statuses a type actually offers, in lane order. */
 export declare function reviewLaneFor(type: string): string[];
 /** Whether a type has a review lane at all. */

@@ -1,19 +1,21 @@
 /**
- * Open a better-sqlite3 handle, honoring NIMBALYST_BETTER_SQLITE3_NATIVE.
+ * Open a better-sqlite3 handle.
  *
- * The hoisted better-sqlite3 build targets Electron's ABI (the desktop app is
- * the primary consumer). Vitest's globalSetup fetches a Node-ABI prebuild and
- * points this env var at it so CLI tests can load the binary under the system
- * Node that vitest runs against -- otherwise `new Database()` throws
- * NODE_MODULE_VERSION / "Module did not self-register". In production the env is
- * unset and this is a plain `new Database()`. Mirrors SQLiteDatabase.ts.
+ * The constructor comes from `nativeBinding.ts` rather than a static import,
+ * because the bundled `nim` has no node_modules of its own and loads the copy
+ * inside the Nimbalyst app instead. A static import would resolve at module
+ * load, before any of that file's diagnostics could run, and fail with a bare
+ * ERR_MODULE_NOT_FOUND. Read the header of nativeBinding.ts before changing
+ * how the binding is resolved.
  */
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
+import { loadSqliteCtor, nativeBindingOverride } from './nativeBinding.js';
 
 export function openDatabase(
   path: string,
   options: Database.Options = {},
 ): Database.Database {
-  const nativeBinding = process.env.NIMBALYST_BETTER_SQLITE3_NATIVE || undefined;
-  return new Database(path, nativeBinding ? { ...options, nativeBinding } : options);
+  const Ctor = loadSqliteCtor();
+  const nativeBinding = nativeBindingOverride();
+  return new Ctor(path, nativeBinding ? { ...options, nativeBinding } : options);
 }

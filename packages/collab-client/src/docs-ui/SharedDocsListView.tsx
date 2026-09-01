@@ -55,6 +55,12 @@ export interface SharedDocsListViewProps {
    * the only filter.
    */
   folderId?: string | null;
+  /**
+   * Creates a shared document. Supplied by the host so this view reuses the one
+   * creation path (sidebar -> title bar) rather than carrying a second copy of
+   * the descriptor and name-conflict handling.
+   */
+  onCreateDocument?: () => void;
 }
 
 type Segment = 'all' | 'favorites' | 'review' | 'recent' | 'sharedWithMe' | 'sharedByMe';
@@ -120,7 +126,7 @@ function memberName(
   return 'Unknown';
 }
 
-export const SharedDocsListView: React.FC<SharedDocsListViewProps> = ({ folderId }) => {
+export const SharedDocsListView: React.FC<SharedDocsListViewProps> = ({ folderId, onCreateDocument }) => {
   const { scope, host, session } = useCollabDocsUI();
 
   const documentTypesRevision = useSyncExternalStore(
@@ -509,6 +515,18 @@ export const SharedDocsListView: React.FC<SharedDocsListViewProps> = ({ folderId
           />
           <kbd className="shrink-0 text-[10.5px] text-[var(--nim-text-faint)] border border-[var(--nim-border)] rounded px-1 py-0.5">⌘K</kbd>
         </div>
+        {onCreateDocument ? (
+          <button
+            type="button"
+            className="shared-docs-list-new flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-md border border-[var(--nim-border)] bg-transparent text-[12px] text-[var(--nim-text)] cursor-pointer hover:bg-[var(--nim-bg-hover)]"
+            data-testid="shared-docs-new-document"
+            onClick={onCreateDocument}
+            title="New doc"
+          >
+            <MaterialSymbol icon="add" size={17} />
+            New doc
+          </button>
+        ) : null}
         <div className="shared-docs-view-toggle flex items-center rounded-md border border-[var(--nim-border)] overflow-hidden shrink-0">
           <button
             type="button"

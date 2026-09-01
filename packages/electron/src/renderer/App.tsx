@@ -181,6 +181,7 @@ import {
   type WindowTopBarPanelControls,
 } from './components/WindowTopBar';
 import { resolveCreateAction, type CreateKind } from '../shared/createActions';
+import { titleBarCreateMenusAtom } from './store/atoms/titleBarCreate';
 import { AccountExpiryBanner } from './components/Accounts/AccountExpiryBanner';
 import { organizationDirectoryAtom, personalAccountsAtom } from './store/atoms/settingsDomains';
 import {
@@ -267,6 +268,7 @@ import {
   showTrustToastRequestAtom,
   toggleAIChatPanelRequestAtom,
   toggleExpandedTabRequestAtom,
+  trackerQuickCreateRequestAtom,
 } from './store/atoms/appCommands';
 import { isCollabUri } from '@nimbalyst/collab-protocol';
 import {
@@ -1304,6 +1306,12 @@ export default function App() {
    * "new session" means from a tracker or the org view anyway.
    */
   const windowTopBarNewSessionControl = useMemo(() => {
+    // Agent mode is the one place the left control already means "new session",
+    // and its menu carries the variants. A second identical button on the right
+    // would be pure duplication, so that mode gets one create control, on the
+    // left, where the session list it fills lives.
+    if (activeMode === 'agent') return undefined;
+
     const startSession = () => {
       if (isFullscreenPanelActive && activeFullscreenPanel?.aiSupported) {
         void chatSidebarRef.current?.createNewSession();
@@ -1318,9 +1326,6 @@ export default function App() {
           return;
         case 'pr-review':
           void pullRequestModeRef.current?.createNewChatSession();
-          return;
-        case 'agent':
-          void agentModeRef.current?.createNewSession();
           return;
         default:
           // Tracker, Organization and Settings have no chat rail of their own.
@@ -1337,24 +1342,25 @@ export default function App() {
    * is whatever that tree is made of; `resolveCreateAction` is the single place
    * that decides, shared with the Cmd+N accelerator so the two cannot drift.
    */
+  const titleBarCreateMenus = useAtomValue(titleBarCreateMenusAtom);
+  const setTrackerQuickCreateRequest = useSetAtom(trackerQuickCreateRequestAtom);
+
   const runCreateInTree = useCallback((kind: CreateKind, anchor?: HTMLElement | null) => {
     switch (kind) {
       case 'file':
         editorModeRef.current?.createNewFile();
         return;
       case 'sharedDoc':
-        // The shared-type menu needs something to hang off. The keyboard path
-        // has no anchor of its own, so it borrows the title bar's own control.
-        collabModeRef.current?.createNewDocument(
-          anchor ??
-            document.querySelector<HTMLElement>('[data-testid="window-top-bar-create-left"]')
-        );
+        collabModeRef.current?.createNewDocument();
         return;
       case 'session':
         void agentModeRef.current?.createNewSession();
         return;
       case 'trackerItem':
-        window.dispatchEvent(new CustomEvent('tracker-quick-create-open'));
+        // Bumping the request atom is what the IPC listener for
+        // `tracker-quick-create-open` does. Dispatching a window event of that
+        // name looks equivalent and is not — that channel is IPC-only.
+        setTrackerQuickCreateRequest((value) => value + 1);
     }
   }, []);
 
@@ -1362,12 +1368,20 @@ export default function App() {
     const action = resolveCreateAction(activeMode);
     if (!action) return undefined;
 
+    const menu = titleBarCreateMenus[activeMode] ?? null;
+
     return {
       label: action.label,
       primaryIcon: action.kind === 'session' ? 'forum' : 'description',
-      onCreate: (anchor?: HTMLElement | null) => runCreateInTree(action.kind, anchor),
+      destination: menu?.destination ?? null,
+      menuHeading: menu?.heading,
+      menuItems: menu?.items,
+      menuTestId: menu?.menuTestId,
+      primaryTrailing: menu?.primaryTrailing,
+      onCreate: (anchor?: HTMLElement | null) =>
+        menu?.onPrimary ? menu.onPrimary() : runCreateInTree(action.kind, anchor),
     };
-  }, [activeMode, runCreateInTree]);
+  }, [activeMode, runCreateInTree, titleBarCreateMenus]);
 
   // Cmd+N for the modes whose noun is neither a local file nor a session. Main
   // resolves the kind with the same function the button uses.

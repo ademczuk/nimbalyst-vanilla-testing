@@ -77,11 +77,16 @@ export const sessionQuickOpenRequestedAtom = atom<number>(0);
 export const blitzDialogOpenAtom = atom<boolean>(false);
 
 /**
- * Per-workspace git-repo flag. Populated by AgentMode from an IPC check on
- * workspace mount; consumed by SessionHistory and the New Worktree / New
- * Blitz action atoms to gate worktree creation.
+ * Per-workspace git-repo flag, `undefined` until the IPC answers. Populated
+ * by `useGitRepoProbe`, which every consumer mounts for itself; consumed by
+ * SessionHistory and the New Worktree / New Blitz action atoms to gate
+ * worktree creation.
+ *
+ * Gate on an explicit `false`. A falsy check cannot tell "not a repository"
+ * apart from "nobody has asked yet", which is how the worktree actions used
+ * to end up permanently disabled inside a repository.
  */
-export const isGitRepoAtom = atomFamily((_workspacePath: string) => atom<boolean>(false));
+export const isGitRepoAtom = atomFamily((_workspacePath: string) => atom<boolean | undefined>(undefined));
 
 export interface CreateNewWorktreeSessionOptions {
   baseBranch?: string;
@@ -494,7 +499,7 @@ export const createNewWorktreeSessionActionAtom = atom(
     if (!workspacePath || typeof window === 'undefined' || !window.electronAPI) return undefined;
 
     if (!get(worktreesFeatureAvailableAtom)) return undefined;
-    if (!get(isGitRepoAtom(workspacePath))) return undefined;
+    if (get(isGitRepoAtom(workspacePath)) === false) return undefined;
 
     const defaultModel = get(defaultAgentModelAtom);
 
@@ -689,7 +694,7 @@ export const openNewBlitzDialogActionAtom = atom(null, (get, set) => {
   const workspacePath = getWorkspacePath(get);
   if (!workspacePath) return;
   if (!get(alphaFeatureEnabledAtom('blitz'))) return;
-  if (!get(isGitRepoAtom(workspacePath))) return;
+  if (get(isGitRepoAtom(workspacePath)) === false) return;
   set(blitzDialogOpenAtom, true);
 });
 

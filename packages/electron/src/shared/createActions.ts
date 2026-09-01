@@ -51,7 +51,9 @@ export interface CreateAction {
 
 const NOUNS: Partial<Record<CreateActionMode, { kind: CreateKind; label: string }>> = {
   files: { kind: 'file', label: 'New file' },
-  collab: { kind: 'sharedDoc', label: 'New doc' },
+  // Named in full: this is the one mode whose noun lands on the team's server
+  // rather than on disk, and the label is where that distinction is carried.
+  collab: { kind: 'sharedDoc', label: 'New shared doc' },
   agent: { kind: 'session', label: 'New session' },
   tracker: { kind: 'trackerItem', label: 'New item' },
 };

@@ -55,6 +55,7 @@ describe('buildSyncedSessionIndexFields', () => {
         sessionType: 'session',
         parentSessionId: 'parent-1',
         worktreeId: 'worktree-1',
+        metadata: { hostDeviceId: 'desktop-1' },
         isArchived: true,
         isPinned: true,
         branchedFromSessionId: 'branch-src-1',
@@ -68,6 +69,7 @@ describe('buildSyncedSessionIndexFields', () => {
       sessionType: 'session',
       parentSessionId: 'parent-1',
       worktreeId: 'worktree-1',
+      hostDeviceId: 'desktop-1',
       isArchived: true,
       isPinned: true,
       branchedFromSessionId: 'branch-src-1',
@@ -76,5 +78,15 @@ describe('buildSyncedSessionIndexFields', () => {
       agentRole: 'meta-agent',
       createdBySessionId: 'meta-session-123',
     });
+  });
+
+  it('prefers an explicit host while retaining the persisted-metadata fallback', () => {
+    expect(buildSyncedSessionIndexFields(makeSession({
+      hostDeviceId: 'desktop-current',
+      metadata: { hostDeviceId: 'desktop-persisted' },
+    })).hostDeviceId).toBe('desktop-current');
+    expect(buildSyncedSessionIndexFields(makeSession({
+      metadata: { hostDeviceId: 'desktop-persisted' },
+    })).hostDeviceId).toBe('desktop-persisted');
   });
 });

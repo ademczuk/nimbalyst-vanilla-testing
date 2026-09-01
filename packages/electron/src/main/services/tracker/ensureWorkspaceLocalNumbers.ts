@@ -19,6 +19,7 @@
 import { database } from '../../database/PGLiteDatabaseWorker';
 import { logger } from '../../utils/logger';
 import { assignMissingLocalKeys } from './localKeyAllocator';
+import { repairTrackerIdentityKeys } from './trackerIdentityKeyRepair';
 import { workspaceLocalKeyStore } from './workspaceLocalKeyStore';
 
 /**
@@ -57,15 +58,37 @@ export async function ensureWorkspaceLocalNumbers(workspacePath: string): Promis
 }
 
 /**
+ * One identity-key repair per workspace per process, for the same reason the
+ * number sweep has one: the pass is idempotent, so a repeat is harmless rather
+ * than wrong, but it is a full scan of the workspace's rows.
+ */
+const repairedWorkspaces = new Set<string>();
+
+/**
  * Fire and forget. The sweep reserves numbers a chunk at a time and each
  * reservation re-persists the workspace settings store, so a large tracker is
  * seconds of work that must not sit on the startup critical path.
+ *
+ * This is the workspace-open tracker maintenance lane, so the identity-key
+ * repair rides along here rather than adding a second scheduler and a second
+ * thing for a new window entry point to forget to call. The two are
+ * independent: each has its own catch, and neither failure blocks the other.
  */
 export function ensureWorkspaceLocalNumbersInBackground(workspacePath: string): void {
   void ensureWorkspaceLocalNumbers(workspacePath);
+
+  if (!workspacePath || repairedWorkspaces.has(workspacePath)) return;
+  repairedWorkspaces.add(workspacePath);
+  void repairTrackerIdentityKeys(database, workspacePath).catch((error) => {
+    // Hygiene on rows no reader consults. Allow a retry next launch rather than
+    // letting a failed repair surface anywhere the user can see it.
+    repairedWorkspaces.delete(workspacePath);
+    logger.main.warn('[TrackerIdentityKeyRepair] repair failed for', workspacePath, error);
+  });
 }
 
 /** Test seam: forget which workspaces have been swept. */
 export function resetLocalNumberSweepStateForTests(): void {
   sweptWorkspaces.clear();
+  repairedWorkspaces.clear();
 }

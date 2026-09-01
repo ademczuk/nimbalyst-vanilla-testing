@@ -31,7 +31,7 @@ import type {
   InitializeResponse,
 } from '@nimbalyst/runtime/ai/server/protocols/codexAppServer/types';
 import { logger } from '../utils/logger';
-import { getEnhancedPath } from './CLIManager';
+import { getEnhancedPath } from './shellEnvironment';
 
 export interface CodexAuthStatus {
   account: AccountKind;

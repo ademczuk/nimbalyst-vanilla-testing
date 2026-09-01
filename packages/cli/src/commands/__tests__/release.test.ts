@@ -7,13 +7,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { parseArgs } from '../../cli/parse.js';
 import { ExitCode, CliError } from '../../cli/exitCodes.js';
-import type { TrackerRecord } from '../../vendor/trackerRecord.js';
 import {
+  createTrackerCoreContext,
   findPendingReleases,
   releaseFinalizeFields,
   releaseNoteLines,
   renderReleaseNotes,
-} from '../../vendor/trackerReleases.js';
+  type TrackerRecord,
+} from '@nimbalyst/tracker-core';
+
+const releaseContext = createTrackerCoreContext(() => undefined);
+const statusOf = (item: TrackerRecord): string => String(item.fields.status ?? '');
+const titleOf = (item: TrackerRecord): string => String(item.fields.title ?? '');
 
 const gatewayStub = {
   mode: 'live' as const,
@@ -143,10 +148,10 @@ describe('release helpers', () => {
   });
 
   it('ranks a started release ahead of a merely planned one', () => {
-    const pending = findPendingReleases([
+    const pending = findPendingReleases(releaseContext, [
       record('planned', 'release', { status: 'planned' }),
       record('started', 'release', { status: 'in-progress' }),
-    ]);
+    ], statusOf);
     expect(pending.map((r) => r.id)).toEqual(['started', 'planned']);
   });
 
@@ -156,7 +161,12 @@ describe('release helpers', () => {
     (archived as { archived: boolean }).archived = true;
     const release = record('r', 'release', { items: [{ itemId: 'k' }, { itemId: 'a' }, { itemId: 'gone' }] });
 
-    const lines = releaseNoteLines(release, new Map([kept, archived].map((i) => [i.id, i])));
+    const lines = releaseNoteLines(
+      releaseContext,
+      release,
+      new Map([kept, archived].map((i) => [i.id, i])),
+      titleOf,
+    );
     expect(lines).toHaveLength(1);
     expect(renderReleaseNotes(lines)).toContain('- Item k (NIM-k)');
   });

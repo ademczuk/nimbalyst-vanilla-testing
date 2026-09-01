@@ -17,7 +17,7 @@ import crypto from 'crypto';
 import { getCurrentIdentity } from './TrackerIdentityService';
 import { applyCommentMutation, type CommentMutation } from './tracker/commentMutations';
 import { appendActivity } from './tracker/trackerActivity';
-import { extractItemCustomFields } from './tracker/trackerRowCustomFields';
+import { COLUMN_ONLY_IDENTITY_KEYS, extractItemCustomFields } from './tracker/trackerRowCustomFields';
 import { fromDbBoolean } from './tracker/trackerDbValue';
 import {
   getBacklinks as getRelationshipBacklinks,
@@ -1925,6 +1925,7 @@ export class ElectronDocumentService implements DocumentService {
         'created', 'updated', 'dueDate', 'assigneeEmail', 'reporterEmail',
         'authorIdentity', 'lastModifiedBy', 'createdByAgent', 'assigneeId',
         'reporterId', 'labels', 'linkedSessions', 'linkedCommitSha', 'documentId',
+        ...COLUMN_ONLY_IDENTITY_KEYS,
       ])),
     };
   }

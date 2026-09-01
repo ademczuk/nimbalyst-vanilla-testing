@@ -48,5 +48,17 @@ export function createOrgWizardApi(): OrgWizardApi {
         throw new Error(result.error ?? 'Could not send the invitation');
       }
     },
+
+    // A brand-new org has exactly one project, and every member is granted it
+    // automatically, so the wizard has no project choice to offer — publishing
+    // content is the only thing standing between an invitee and an empty
+    // workspace here.
+    async publishFolder(folderPath) {
+      const { publishFoldersForInvite } = await import(
+        '../../InviteToTeamDialog/publishFoldersForInvite'
+      );
+      const outcome = await publishFoldersForInvite([folderPath]);
+      return outcome.published > 0;
+    },
   };
 }

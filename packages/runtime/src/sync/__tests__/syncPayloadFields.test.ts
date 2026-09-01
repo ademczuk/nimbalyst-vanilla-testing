@@ -36,6 +36,12 @@ describe('SYNC_RELEVANT_FIELDS.columns', () => {
 });
 
 describe('buildSyncPayload (create/metadata_updated push payload)', () => {
+  it('promotes persisted host attribution onto the real-time sync payload', () => {
+    expect(buildSyncPayload({ metadata: { hostDeviceId: 'desktop-1' } })).toEqual({
+      hostDeviceId: 'desktop-1',
+    });
+  });
+
   it('carries agentRole for a freshly created meta-agent session', () => {
     const metadata = buildSyncPayload(
       { id: 'meta-1', title: 'Meta agent', provider: 'claude-code', agentRole: 'meta-agent' },

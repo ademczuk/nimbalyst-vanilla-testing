@@ -105,24 +105,9 @@ DB, or a live-only command in offline mode).
 
 ## Notes for maintainers
 
-- `src/vendor/trackerRecord.ts` is a vendored copy of
-  `packages/runtime/src/core/TrackerRecord.ts` (the runtime's Vite build does not
-  emit a Node-resolvable `dist/core/TrackerRecord.js`). Keep the `dbRowToRecord` /
-  `recordToDbParams` logic in sync with the runtime; the CLI must agree
-  byte-for-byte with the app on the `data` column / `type_tags` parsing.
-- `src/vendor/trackerWrite.ts` mirrors the offline write helpers (`appendActivity`,
-  the comment shape, git-config identity) from the app's MCP tool handlers +
-  `TrackerIdentityService`. The offline write path in `DirectGateway` deliberately
-  mirrors those handlers (not `recordToDbParams`) so a CLI-written row is
-  byte-for-byte identical to an app-written one. Keep these in sync if the
-  handlers change.
-- `src/vendor/trackerReadiness.ts` and `trackerStatusCategory.ts` mirror the
-  runtime readiness graph, relationship normalization, and lifecycle-category
-  resolution. Change them with the runtime modules named in their headers;
-  direct mode reads materialized type models alongside the full item corpus.
-- `better-sqlite3` is a native dependency and must match the version the app
-  ships, but built for the **Node** ABI (the app's copy is built for Electron's
-  ABI and cannot be shared). Publishing should ship prebuilt Node-ABI binaries.
+- Pure tracker record, key, release, status, and readiness semantics come from `@nimbalyst/tracker-core`, the same built package consumed by the runtime. Direct mode injects materialized type models alongside the full item corpus.
+- `src/gateway/trackerWrite.ts` owns only host-specific offline write helpers (activity mutation, the stored comment shape, git-config identity, and local ID generation). `DirectGateway` deliberately mirrors the app handlers rather than using `recordToDbParams`, and the cross-host regression test requires their stored activity bytes to remain identical.
+- `better-sqlite3` is a native dependency and must match the version the app ships. Version 13 uses Node-API prebuilds shared by supported Node and Electron hosts; the CLI's Node 22 floor matches its upstream engine requirement.
 - `MAX_KNOWN_SCHEMA` in `src/gateway/schema.ts` pins the newest tracker schema
   this build was verified against; bump it as the app's schema advances.
 

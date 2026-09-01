@@ -1,5 +1,5 @@
 import simpleGit, { SimpleGit, SimpleGitOptions } from 'simple-git';
-import { getEnhancedPath, getShellEnvironment } from './CLIManager';
+import { getEnhancedPath, getShellEnvironment } from './shellEnvironment';
 import { GIT_INHERITED_ENV_UNSAFE } from './gitInheritedEnvUnsafe';
 import { sanitizeGitRepositoryEnv } from './gitRepositoryEnv';
 

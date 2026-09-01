@@ -51,6 +51,12 @@ describe('isIndexClientMetadataOnlyUpdate routing predicate', () => {
         isIndexClientMetadataOnlyUpdateForTest(m({ lastReadAt: 123 } as Partial<SyncedSessionMetadata>)),
       ).toBe(false);
     });
+
+    it('routes { hostDeviceId } through indexUpdate (execution ownership)', () => {
+      expect(
+        isIndexClientMetadataOnlyUpdateForTest(m({ hostDeviceId: 'desktop-1' })),
+      ).toBe(false);
+    });
   });
 
   describe('stays on patch fast-path (Group A)', () => {

@@ -108,6 +108,7 @@
     "packages/electron",
     "packages/runtime",
     "packages/cli",
+    "packages/tracker-core",
     "packages/core",
     "packages/collab-protocol",
     "packages/collab-client",

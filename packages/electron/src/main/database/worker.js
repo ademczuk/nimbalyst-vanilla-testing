@@ -1211,7 +1211,6 @@ class PGLiteWorker {
 
             CREATE INDEX IF NOT EXISTS idx_tracker_type ON tracker_items(type);
             CREATE INDEX IF NOT EXISTS idx_tracker_workspace ON tracker_items(workspace);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_tracker_workspace_issue_number ON tracker_items(workspace, issue_number) WHERE issue_number IS NOT NULL;
             CREATE UNIQUE INDEX IF NOT EXISTS idx_tracker_workspace_issue_key ON tracker_items(workspace, issue_key) WHERE issue_key IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_tracker_status ON tracker_items(status);
             CREATE INDEX IF NOT EXISTS idx_tracker_created ON tracker_items(created);
@@ -1280,9 +1279,17 @@ class PGLiteWorker {
           ALTER TABLE tracker_items ADD COLUMN issue_key TEXT;
         `);
       }
-      // Always ensure indexes exist (covers both new DBs and migrated DBs)
+      // Always ensure indexes exist (covers both new DBs and migrated DBs).
+      //
+      // The dropped one declared UNIQUE(workspace, issue_number). The issue KEY
+      // carries the room's prefix and the number does not, so a workspace whose
+      // prefix changed legitimately holds NIM-42 and NIMA-42 and that index
+      // called the second a duplicate -- which stranded the incoming item with
+      // no key at all. issue_key already carries the correct constraint below,
+      // and nothing in the app queries by issue_number. See SQLite migration
+      // 0039 for the same drop on the other backend.
       await this.db.exec(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_tracker_workspace_issue_number ON tracker_items(workspace, issue_number) WHERE issue_number IS NOT NULL;
+        DROP INDEX IF EXISTS idx_tracker_workspace_issue_number;
         CREATE UNIQUE INDEX IF NOT EXISTS idx_tracker_workspace_issue_key ON tracker_items(workspace, issue_key) WHERE issue_key IS NOT NULL;
       `);
     } catch (error) {

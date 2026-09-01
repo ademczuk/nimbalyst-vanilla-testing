@@ -55,9 +55,7 @@ import { isBedrockToolSearchError } from '../utils/errorDetection';
 import { AgentMessagesRepository } from '../../../storage/repositories/AgentMessagesRepository';
 import { TranscriptMigrationRepository } from '../../../storage/repositories/TranscriptMigrationRepository';
 import { TeammateManager, type TeammateToLeadMessage } from './TeammateManager';
-import { describeUnusableWorkspacePath } from './workspacePreconditions';
 import path from 'path';
-import os from 'os';
 import { buildClaudeCodeSystemPrompt, buildMetaAgentSystemPrompt, type MetaAgentWorkflowPreset } from '../../prompt';
 
 import { SessionManager } from '../SessionManager';
@@ -69,12 +67,6 @@ import { McpConfigService } from '../services/McpConfigService';
 import { getMcpConfigService, isInternalMcpServerEnabled, areTrackerToolsEnabled, resolveTrackersWorkspacePath } from '../services/mcpServerConfig';
 import { historyManager } from '../../../../../electron/src/main/HistoryManager';
 import {
-  appendLargeAttachmentInstructions,
-  appendFailedAttachmentNotice,
-  buildMessageWithDocumentContext,
-  prepareClaudeCodeAttachments,
-} from './claudeCode/messagePreparation';
-import {
   applyToolResultToToolCall,
   isSearchableAssistantChunk,
   isTransientClaudeCodeChunk,
@@ -83,6 +75,8 @@ import {
 import { capClaudeCodeChunkForStorage } from '../../../storage/toolOutputBudget';
 import {
   INTERNAL_MCP_TOOLS,
+  NIMBALYST_HANDLED_TOOLS,
+  SDK_NATIVE_TOOLS,
   TEAM_TOOLS,
 } from './claudeCode/toolPolicy';
 import {
@@ -96,8 +90,6 @@ import {
   pollForAskUserQuestionResponse,
   type PendingAskUserQuestionEntry,
 } from './claudeCode/askUserQuestion';
-import { ClaudeCodeTranscriptAdapter } from './claudeCode/ClaudeCodeTranscriptAdapter';
-import { findAttachmentDenyRule } from '../attachments/attachmentDenyMatcher';
 
 import {
   resolveImmediateToolDecision as resolveImmediateToolDecisionHelper,
@@ -107,7 +99,7 @@ import {
   handleToolPermissionWithService as handleToolPermissionWithServiceHelper,
 } from './claudeCode/toolAuthorization';
 import { ClaudeCodeDeps } from './claudeCode/dependencyInjection';
-import { buildSdkOptions, resolvePermissionMode, type PromptStreamController } from './claudeCode/sdkOptionsBuilder';
+import { resolvePermissionMode, type PromptStreamController } from './claudeCode/sdkOptionsBuilder';
 import { resolveEffectiveSessionMode } from './claudeCode/resolveEffectiveSessionMode';
 import { resolveClaudeConfigDir } from './claudeCode/claudeConfigDir';
 import {
@@ -140,56 +132,12 @@ import {
   classifyStreamClosedContinuation,
   extractStreamClosedToolName,
 } from './claudeCode/streamClosedRecovery';
-import {
-  isBunRuntimeSpawnCrash,
-  collectSpawnCrashDiagnostics,
-  armAgentSdkDebugLogging,
-  readLatestSdkDebugLogTail,
-} from './claudeCode/spawnCrashDiagnostics';
-import { classifyAbnormalChildExit } from './claudeCode/abnormalExit';
-import { normalizeStructuredContextUsage, type ParsedContextUsage } from '../utils/contextUsage';
+import { normalizeStructuredContextUsage } from '../utils/contextUsage';
+import { createTurnState } from './claudeCode/turnState';
+import { buildTurnQuery, prepareTurnAttachments, resolveTurnPaths } from './claudeCode/turnPrologue';
+import { finishTurn, handleTurnError, type TurnEpilogueHost } from './claudeCode/turnEpilogue';
 import { applyTaskListMutation, sortTaskList, type TaskListItem } from './claudeCode/taskListReconstruct';
 
-
-/**
- * SDK-native tools that are executed by the Claude Code SDK itself (not by Nimbalyst).
- * AskUserQuestion is included because we handle it in canUseTool (user input, not local execution).
- * This list is the single source of truth — used for tool_use logging and tool_result logging.
- */
-const SDK_NATIVE_TOOLS: readonly string[] = [
-  'Read', 'Write', 'Edit', 'MultiEdit',
-  'Glob', 'Grep', 'LS',
-  'Bash',
-  'WebFetch', 'WebSearch',
-  'Task', 'Agent',  // Agent is the renamed Task tool (SDK 0.2.x+)
-  'TaskOutput', 'TaskStop', 'ExitPlanMode', 'AskUserQuestion',
-  'EnterPlanMode', 'EnterWorktree', 'ExitWorktree', 'Skill',
-  'NotebookRead', 'NotebookEdit',
-  'TodoRead', 'TodoWrite',
-  'ToolSearch',
-  // Task management tools (SDK-internal)
-  'TaskCreate', 'TaskGet', 'TaskUpdate', 'TaskList',
-  // Agent Teams tools (SDK-internal, executed by CLI subprocess)
-  'TeammateTool', 'SendMessage', 'TeamCreate', 'TeamDelete',
-  // Claude Code 2.1.116+ additions (CLI-native, do NOT route through our toolHandler)
-  'Monitor', 'PushNotification', 'RemoteTrigger',
-  'CronCreate', 'CronDelete', 'CronList',
-  'ListMcpResources', 'ListMcpResourcesTool',
-  'ReadMcpResource', 'ReadMcpResourceTool',
-  'Config', 'Mcp',
-  // claude-agent-sdk 0.3.x additions (CLI-native multi-agent orchestration)
-  'Workflow', 'REPL',
-];
-
-/**
- * Tools the CLI emits as tool_use but Nimbalyst services handle as a side effect
- * inside this provider (see the `tool_use` switch). Their tool_result from the CLI
- * is informational only -- routing them through `this.toolHandler` would throw
- * "Unknown tool", so we treat them like SDK_NATIVE_TOOLS for the warn/route check.
- */
-const NIMBALYST_HANDLED_TOOLS: readonly string[] = [
-  'ScheduleWakeup',
-];
 
 /**
  * Track changes in the agent-sdk and claude-code itself here:
@@ -660,6 +608,22 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
 
 
+  /**
+   * The provider surface both epilogue paths share (see turnEpilogue.ts).
+   * Built fresh per use so it always reads the current `toolHooksService`,
+   * which is replaced at the start of every turn.
+   */
+  private epilogueHost(): TurnEpilogueHost {
+    return {
+      flushPendingWrites: () => this.flushPendingWrites(),
+      processTranscriptMessages: (sid) => this.processTranscriptMessages(sid),
+      logError: (sid, provider, error, source, errorType, hidden) =>
+        this.logError(sid, provider, error, source, errorType, hidden),
+      toolHooksService: this.toolHooksService,
+      prepareStreamClosedContinuation: (sid, hidden) => this.prepareStreamClosedContinuation(sid, hidden),
+    };
+  }
+
   async *sendMessage(
     message: string,
     documentContext?: DocumentContext,
@@ -677,62 +641,25 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     this.markMessagesAsHidden = false;
     this.resetStreamClosedTurnState();
 
-    // #1361: the crash-retry path re-enters sendMessage with the caller's
-    // original arguments. `message` is rewritten in place further down (document
-    // context, attachment instructions), so capture it before that happens.
-    const originalMessage = message;
+    // Everything this turn mutates and later reads lives in one object passed by
+    // reference (see turnState.ts). `state.originalMessage` is the caller's
+    // message before the rewrites below; the crash-retry path replays it (#1361).
+    const state = createTurnState({ startTime, hideMessages, originalMessage: message });
 
-    // Track session mode for MCP server configuration and tool filtering
-    this.currentMode = (documentContext as any)?.mode || 'agent';
-    this.requestedMode = this.currentMode;
-
-    // Trust-level upgrade: when workspace permission is "Allow All" (internal
-    // mode 'bypass-all') and session mode is 'agent', the session is upgraded
-    // to 'auto' so the SDK classifier handles permissions instead of Nimbalyst
-    // bypassing everything. This is now OPT-IN per workspace (issue #628): by
-    // default "Allow All" means literal allow-all and no upgrade happens. Plan
-    // mode is never upgraded — it always uses the SDK's native read-only
-    // enforcement.
-    const pathForTrustUpgrade = (documentContext as any)?.permissionsPath || workspacePath;
-    this.pathForTrust = pathForTrustUpgrade;
-    if (this.currentMode === 'agent' && pathForTrustUpgrade && BaseAgentProvider.trustChecker) {
-      const trustStatus = BaseAgentProvider.trustChecker(pathForTrustUpgrade);
-      this.currentMode = resolveEffectiveSessionMode(this.currentMode, trustStatus);
-    }
-
-    // Threshold for large text attachments that should be written to /tmp instead of sent inline
-    // This reduces initial token usage for very large attachments
-    const LARGE_ATTACHMENT_CHAR_THRESHOLD = 10000;
-
-    const staging = workspacePath && ClaudeCodeDeps.attachmentStagingLoader
-      ? ClaudeCodeDeps.attachmentStagingLoader(workspacePath)
-      : { root: os.tmpdir(), mode: 'temp' as const };
-    let preflightAttachmentDenyRule: string | null = null;
-    if (attachments?.length && workspacePath && ClaudeCodeDeps.attachmentDenyRulesLoader) {
-      try {
-        const denyRules = await ClaudeCodeDeps.attachmentDenyRulesLoader(workspacePath);
-        preflightAttachmentDenyRule = findAttachmentDenyRule(
-          path.join(staging.root, 'nimbalyst-attachment-preflight'),
-          denyRules,
-        );
-      } catch (error) {
-        console.warn('[CLAUDE-CODE] Attachment deny pre-flight failed:', error);
-      }
-    }
-
-    const {
-      imageContentBlocks,
-      documentContentBlocks,
-      largeAttachmentFilePaths,
-      failedAttachments,
-    } = await prepareClaudeCodeAttachments({
-      attachments,
-      largeAttachmentCharThreshold: LARGE_ATTACHMENT_CHAR_THRESHOLD,
-      imageCompressor: ClaudeCodeDeps.imageCompressor || undefined,
-      stagingRoot: staging.root,
-      stagingMode: staging.mode,
-      sessionId,
+    // Session mode (incl. the trust-level upgrade) and the worktree-aware paths.
+    // Track session mode for MCP server configuration and tool filtering.
+    const paths = resolveTurnPaths({
+      documentContext,
+      workspacePath,
+      trustChecker: BaseAgentProvider.trustChecker,
     });
+    this.currentMode = paths.currentMode;
+    this.requestedMode = paths.currentMode;
+    this.pathForTrust = paths.pathForTrust;
+
+    // Deliberately outside the try, as before: a failure staging attachments
+    // throws to the caller rather than becoming an error chunk.
+    const prepared = await prepareTurnAttachments({ sessionId, workspacePath, attachments });
 
     // Abort any existing request before starting a new one
     if (this.abortController) {
@@ -742,256 +669,55 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
     // Create abort controller for this request
     this.abortController = new AbortController();
 
-    // For worktree sessions, use the parent project path for permission lookups
-    // This is passed via documentContext.permissionsPath from AIService
-    const permissionsPath = (documentContext as any)?.permissionsPath || workspacePath;
-
-    // For worktree sessions, use the parent project path for MCP config lookup
-    // .mcp.json and ~/.claude.json project entries are keyed by parent project path
-    const mcpConfigWorkspacePath = (documentContext as any)?.mcpConfigWorkspacePath || workspacePath;
-
     // Create tool hooks service for this turn
     // This service manages pre/post hooks, file tagging, and snapshot creation
     this.toolHooksService = this.createToolHooksService(
       workspacePath!,
       sessionId,
-      permissionsPath,
+      paths.permissionsPath,
       false
     );
 
     // Clear edited files tracker for new turn
     this.toolHooksService.clearEditedFiles();
 
-    // Capture stderr from the subprocess for diagnostics (populated inside try, read in catch)
-    const stderrLines: string[] = [];
-
-    // Spawn context for native-binary crash diagnostics (#614). Populated
-    // after buildSdkOptions so the catch block can see it.
-    let spawnDiagContext: { binaryPath?: string; cwd?: string } | null = null;
-
-    // Hoisted so the catch block can avoid double-yielding `complete` if the
-    // result chunk's early-yield already fired before an error was thrown.
-    let completeEmitted = false;
-
-    // Hoisted for the same reason: the crash-retry decision (#1361) must know
-    // whether any of this turn already reached the transcript, because
-    // replaying a partially-streamed turn would duplicate it.
-    let sawAssistantOutputThisTurn = false;
-
     try {
-      // Append document context to message using pre-built prompts from DocumentContextService
-      // Skip adding system message if the prompt starts with a slash command
-      const isSlashCommand = message.trimStart().startsWith('/');
-      const documentContextPrompt = (documentContext as any)?.documentContextPrompt;
-      const editingInstructions = (documentContext as any)?.editingInstructions;
-      const messageWithContext = buildMessageWithDocumentContext({
-        message,
-        isSlashCommand,
-        documentContextPrompt,
-        editingInstructions,
-      });
-      let userMessageAddition = messageWithContext.userMessageAddition;
-      message = messageWithContext.messageWithContext;
-
-      // Add large attachment file paths to system message
-      // These are text attachments over 10k chars that were written to /tmp
-      message = appendLargeAttachmentInstructions(message, largeAttachmentFilePaths);
-      message = appendFailedAttachmentNotice(message, failedAttachments);
-
-      // Load env vars from ~/.claude/settings.json early so they're available for both
-      // system prompt building (agent teams flag) and SDK environment setup
-      let settingsEnv: Record<string, string> = {};
-      if (ClaudeCodeDeps.claudeSettingsEnvLoader) {
-        try {
-          settingsEnv = await ClaudeCodeDeps.claudeSettingsEnvLoader();
-        } catch (error) {
-          console.warn('[CLAUDE-CODE] Failed to load settings env vars:', error);
-        }
-      }
-
-      // Load shell environment vars (AWS credentials, NODE_EXTRA_CA_CERTS, etc.)
-      // These fill in env vars that are missing from Electron's minimal environment
-      // when launched from Dock/Finder instead of terminal
-      let shellEnv: Record<string, string> = {};
-      if (ClaudeCodeDeps.shellEnvironmentLoader) {
-        try {
-          shellEnv = ClaudeCodeDeps.shellEnvironmentLoader() || {};
-        } catch (error) {
-          console.warn('[CLAUDE-CODE] Failed to load shell environment:', error);
-        }
-      }
-
-      // Build system prompt (no longer contains document context)
-      const promptBuildStart = Date.now();
-      // console.log('[CLAUDE-CODE] sendMessage - documentContext keys:', documentContext ? Object.keys(documentContext) : 'undefined');
-      // console.log('[CLAUDE-CODE] sendMessage - documentContext.sessionType:', (documentContext as any)?.sessionType);
-      const enableAgentTeams = settingsEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === '1';
-      const agentRole = await this.getAgentRole(sessionId);
-      const isMetaAgent = agentRole === 'meta-agent';
-      const workflowPreset = isMetaAgent ? await this.getWorkflowPreset(sessionId) : 'default';
-      // Resolve-and-freeze the git snapshot before the (synchronous) prompt
-      // build. First turn pays the git call; every later turn reads the frozen
-      // value, which is what keeps the prompt byte-stable (#1177).
-      // workspacePath is the CLI's cwd (see buildSdkOptions), so it is also the
-      // repo the suppressed CLI block would have described.
-      await this.ensureGitContext(workspacePath);
-      const systemPrompt = this.buildSystemPrompt(documentContext, enableAgentTeams, isMetaAgent, workflowPreset);
-
-      // Note: Attachments (images/documents) are NOT added to the message text.
-      // They're sent as separate content blocks via the API's multimodal format.
-      // We only show what's actually appended to the user's text message.
-
-      // Emit prompt additions for debugging UI
-      // Only emit for user-initiated messages, not hidden/auto-triggered commands like /context
-      // This prevents auto-commands from overwriting the user's prompt additions data
-      const hasAttachments = attachments && attachments.length > 0;
-      if (!hideMessages && sessionId && (systemPrompt || userMessageAddition || hasAttachments)) {
-        // Build attachment summaries (don't include full base64 data, just metadata)
-        const attachmentSummaries = attachments?.map(att => ({
-          type: att.type,
-          filename: att.filename || (att.filepath ? path.basename(att.filepath) : 'unknown'),
-          mimeType: att.mimeType,
-          filepath: att.filepath
-        })) || [];
-
-        this.emit('promptAdditions', {
-          sessionId,
-          systemPromptAddition: systemPrompt || null,
-          userMessageAddition: userMessageAddition,
-          attachments: attachmentSummaries,
-          timestamp: Date.now()
-        });
-      }
-
-      // Require a workspace path that still exists on disk. Without this the
-      // Agent SDK spawns into a dead cwd and misreports the ENOENT as a
-      // libc/musl mismatch on the bundled binary.
-      const unusableWorkspace = describeUnusableWorkspacePath(workspacePath);
-      if (unusableWorkspace || !workspacePath) {
-        throw new Error(unusableWorkspace ?? 'No project folder is set for this session.');
-      }
-
-      // Build SDK options (settings, MCP config, env, session resumption, prompt input)
-      const sdkResult = await buildSdkOptions(
+      // Prompt rewriting, system prompt, SDK options, input logging and the
+      // transcript adapter. Inside the try, as before: `buildTurnQuery` throws
+      // on an unusable workspace and the catch below turns that into the
+      // error/complete pair the consumer expects.
+      const {
+        options,
+        promptInput,
+        transcriptAdapter,
+        queryStartTime,
+      } = await buildTurnQuery(
         {
+          getAgentRole: (sid) => this.getAgentRole(sid),
+          getWorkflowPreset: (sid) => this.getWorkflowPreset(sid),
+          ensureGitContext: (wp) => this.ensureGitContext(wp),
+          buildSystemPrompt: (dc, teams, meta, preset) => this.buildSystemPrompt(dc, teams, meta, preset),
+          emit: (event, payload) => { this.emit(event, payload); },
+          withPromptProvenanceMetadata: (dc) => this.withPromptProvenanceMetadata(dc),
+          logAgentMessage: (...args) => this.logAgentMessage(...args),
           resolveModelVariant: () => this.resolveModelVariant(),
-          getMcpServersSnapshot: (options) => this.getMcpServersSnapshot(options),
+          getMcpServersSnapshot: (o) => this.getMcpServersSnapshot(o),
           createCanUseToolHandler: (sid, wp, pp) => this.createCanUseToolHandler(sid, wp, pp),
           toolHooksService: this.toolHooksService!,
           teammateManager: this.teammateManager,
           sessions: this.sessions,
           config: this.config,
           abortController: this.abortController!,
-        },
-        {
-          message,
-          workspacePath,
-          sessionId,
-          documentContext,
-          settingsEnv,
-          shellEnv,
-          systemPrompt,
           currentMode: this.currentMode,
-          imageContentBlocks,
-          documentContentBlocks,
-          permissionsPath,
-          mcpConfigWorkspacePath,
-          isMetaAgent,
-        }
+          metaAgentAllowedTools: BaseAgentProvider.META_AGENT_ALLOWED_TOOLS,
+          publishSdkResult: (result) => {
+            this.helperMethod = result.helperMethod;
+            this.promptController = result.promptController;
+          },
+        },
+        state,
+        { documentContext, sessionId, workspacePath, attachments, paths, prepared },
       );
-      const { options, promptInput, promptController } = sdkResult;
-      this.helperMethod = sdkResult.helperMethod;
-      this.promptController = promptController;
-      spawnDiagContext = { binaryPath: options.pathToClaudeCodeExecutable, cwd: options.cwd };
-
-      // Meta-agent: the profile-specific MCP map was frozen by buildSdkOptions
-      // through getMcpServersSnapshot; only native-tool restrictions remain here.
-      if (isMetaAgent) {
-        const allowedSet = new Set(BaseAgentProvider.META_AGENT_ALLOWED_TOOLS);
-        const blockedNativeTools = SDK_NATIVE_TOOLS.filter(t => !allowedSet.has(t));
-        (options as any).allowedTools = BaseAgentProvider.META_AGENT_ALLOWED_TOOLS;
-        (options as any).disallowedTools = blockedNativeTools;
-        (options as any).blockedTools = blockedNativeTools;
-      }
-
-      const queryStartTime = Date.now();
-
-      // Log the raw input to the SDK (include attachments and mode in metadata for UI restoration)
-      if (sessionId) {
-        const metadataToLog: Record<string, any> = this.withPromptProvenanceMetadata(documentContext);
-        if (attachments && attachments.length > 0) {
-          metadataToLog.attachments = attachments;
-        }
-        if (documentContext?.mode) {
-          metadataToLog.mode = documentContext.mode;
-        }
-        const teammateMatch = message.match(/^\[Teammate message from "([^"]+)"\]/);
-        if (teammateMatch) {
-          metadataToLog.messageType = 'teammate_message_injected';
-          metadataToLog.teammateName = teammateMatch[1];
-        }
-        await this.logAgentMessage(sessionId, 'claude-code', 'input', JSON.stringify({
-          prompt: message,
-          options: {
-            model: options.model,
-            cwd: options.cwd,
-            resume: options.resume,
-            systemPrompt: options.systemPrompt,
-            settingSources: options.settingSources,
-            mcpServers: options.mcpServers ? Object.keys(options.mcpServers) : [],
-            allowedTools: options.allowedTools,
-            disallowedTools: options.disallowedTools,
-            permissionMode: options.permissionMode,
-            thinking: options.thinking
-          }
-        }), metadataToLog, hideMessages, undefined, true /* searchable */);
-
-        if (preflightAttachmentDenyRule && !hideMessages) {
-          const firstAttachment = attachments?.[0];
-          await this.logAgentMessage(sessionId, 'claude-code', 'output', JSON.stringify({
-            type: 'system',
-            subtype: 'permission_denied',
-            tool_name: 'Read',
-            tool_input: { file_path: firstAttachment?.filepath ?? staging.root },
-            decision_reason: `Attachment staging matches ${preflightAttachmentDenyRule}`,
-            decision_reason_type: 'rule',
-            message: `Claude Code may be unable to read ${firstAttachment?.filename ?? 'this attachment'} because ${preflightAttachmentDenyRule} denies its staging directory.`,
-            is_attachment_staging_denied: true,
-            attachment_path: firstAttachment?.filepath ?? staging.root,
-            attachment_filename: firstAttachment?.filename ?? 'attachment',
-            attachment_staging_mode: staging.mode,
-            attachment_deny_rule: preflightAttachmentDenyRule,
-            attachment_detection: 'preflight',
-          }), undefined, false, undefined, true);
-        }
-      }
-
-      // Create transcript adapter as chunk parser (returns ParsedItems for the streaming loop).
-      // Canonical events are written by the TranscriptTransformer from raw ai_agent_messages.
-      const transcriptAdapter = sessionId
-        ? new ClaudeCodeTranscriptAdapter(null, sessionId)
-        : null;
-
-      // Canonical transcript: user message
-      transcriptAdapter?.userMessage(
-        message,
-        documentContext?.mode === 'planning' ? 'planning' : 'agent',
-        attachments as any,
-      );
-
-      // Wire up stderr capture so process exit errors include diagnostic context.
-      const MAX_STDERR_LINES = 50;
-      options.stderr = (data: string) => {
-        stderrLines.push(data);
-        if (stderrLines.length > MAX_STDERR_LINES) {
-          stderrLines.shift();
-        }
-        // Log stderr in real-time for diagnostics (native binary crashes)
-        const trimmed = data.trim();
-        if (trimmed) {
-          console.warn(`[CLAUDE-CODE-STDERR] ${trimmed.substring(0, 300)}`);
-        }
-      };
 
       const queryCallStart = Date.now();
 
@@ -1015,31 +741,18 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       }
 
 
-      let fullContent = '';
-      let chunkCount = 0;
-      let firstChunkTime: number | undefined;
-      let toolCallCount = 0;
-      let receivedCompactBoundary = false;
-      // Count of tool calls whose result has not yet come back. While > 0 a tool
-      // is executing in the subprocess and main-stream silence is legitimate, so
-      // the stall watchdog stays disarmed (see below). NIM-1481.
-      let outstandingToolCalls = 0;
-      // Timestamp of the first `type: 'result'` chunk from the SDK. Used to
-      // arm a grace-period timer that ends the prompt AsyncIterable so the
-      // SDK can call transport.endInput() and let the binary exit cleanly.
-      // The grace period gives late can_use_tool control requests a chance to
-      // complete over the still-open stdin -- they're the original cause of
-      // the "Stream closed" tool permission errors.
-      let resultReceivedTime: number | null = null;
-      let resultReceivedChunkCount: number | null = null;
-      // `completeEmitted` is declared outside the try block so the catch can
-      // see it. We yield `complete` as soon as the SDK sends the `result`
-      // chunk so the UI flips to ready immediately, rather than waiting for
-      // the post-result grace period to expire (~30s of perceived "still
-      // running" with no new output). The for-await loop and grace timer
-      // continue running so late can_use_tool control requests on stdin still
-      // complete; subsequent chunks (rare -- teammate drainage, late text)
-      // are still yielded to the consumer.
+      // The chunk loop's counters, usage accumulators and `state.completeEmitted` all
+      // live on `state` (created at the top of the turn) so the epilogue and the
+      // catch block read the same values the loop wrote. See turnState.ts.
+      //
+      // On `state.completeEmitted` specifically: we yield `complete` as soon as the
+      // SDK sends the `result` chunk so the UI flips to ready immediately,
+      // rather than waiting for the post-result grace period to expire (~30s of
+      // perceived "still running" with no new output). The for-await loop and
+      // grace timer continue running so late can_use_tool control requests on
+      // stdin still complete; subsequent chunks (rare -- teammate drainage, late
+      // text) are still yielded to the consumer.
+      //
       // Grace window after `type: 'result'` before the controller ends the
       // prompt iterable and the SDK closes the binary's stdin pipe.
       //
@@ -1102,41 +815,6 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           this.promptController?.end(reason);
         }, delay);
       };
-      // Track tool calls by ID so we can update them with results
-      const toolCallsById: Map<string, any> = new Map();
-      // Track usage data from the SDK (gets overwritten by cumulative result.usage)
-      let usageData: {
-        input_tokens?: number;
-        output_tokens?: number;
-        cache_read_input_tokens?: number;
-        cache_creation_input_tokens?: number;
-      } | undefined;
-      // Track the last assistant message's usage separately (per-step, not cumulative).
-      // Used for context window fill calculation: input + cacheRead + cacheCreation = actual context size.
-      let lastAssistantUsage: typeof usageData | undefined;
-      // Set only on a /context turn, from the SDK's structured twin of the
-      // markdown report. Undefined on every ordinary turn.
-      let structuredContextUsage: ParsedContextUsage | undefined;
-      // Track per-model usage from SDK result (contains inputTokens, outputTokens, costUSD, etc.)
-      let modelUsageData: Record<string, {
-        inputTokens?: number;
-        outputTokens?: number;
-        cacheReadInputTokens?: number;
-        cacheCreationInputTokens?: number;
-        costUSD?: number;
-        contextWindow?: number;
-        webSearchRequests?: number;
-      }> | undefined;
-      // Track whether any displayable content was yielded during this request
-      // Used to detect when a slash command returns no output
-      let hasYieldedContent = false;
-      let hasYieldedError = false;
-      // Flags for detecting the CLI's "notification flush" result: on resume
-      // with pending task notifications the CLI emits task_notification chunks
-      // then an empty success result (num_turns=0) BEFORE processing the user's
-      // prompt. Ending the turn on that result swallows the prompt. NIM-1470.
-      let sawTaskNotificationThisTurn = false;
-
 
       // Stream the response
       try {
@@ -1165,8 +843,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           // legitimate and the watchdog stays disarmed so real work is never reaped.
           // NIM-1481 / #802.
           const watchdogActive = shouldArmStreamStallWatchdog({
-            resultReceivedTime,
-            outstandingToolCalls,
+            resultReceivedTime: state.resultReceivedTime,
+            outstandingToolCalls: state.outstandingToolCalls,
             hasRunningTasks: this.hasRunningTasks(),
             hasPendingUserInteraction: this.hasPendingUserInteraction(),
           });
@@ -1189,7 +867,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             // isn't an unhandled rejection, then tear down the wedged subprocess.
             void nextPromise.catch(() => {});
             const stalledAfterMs = Date.now() - queryStartTime;
-            console.error(`[CLAUDE-CODE] STREAM_STALL_DETECTED: no chunk for ${streamStallMs}ms pre-result (chunkCount=${chunkCount}, turnElapsed=${stalledAfterMs}ms). Aborting wedged query.`);
+            console.error(`[CLAUDE-CODE] STREAM_STALL_DETECTED: no chunk for ${streamStallMs}ms pre-result (chunkCount=${state.chunkCount}, turnElapsed=${stalledAfterMs}ms). Aborting wedged query.`);
             try { this.abortController?.abort(); } catch { /* best effort */ }
             // Throw so the existing catch path logs the error, yields it to the
             // UI, and emits the terminal `complete` -- unwinding the stuck spinner.
@@ -1214,7 +892,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           const rawChunk = iterResult.value;
 
           const chunk = rawChunk as any;
-          chunkCount++;
+          state.chunkCount++;
 
           // Grace-period stdin-close logic. The SDK's `isSingleUserTurn` is
           // false because we always pass an AsyncIterable prompt -- so the
@@ -1235,15 +913,15 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             // subprocess runs away. Only arm on the REAL result. See NIM-1470.
             const armsGraceTimer = shouldArmGraceTimerForResult(
               chunk,
-              sawTaskNotificationThisTurn,
-              sawAssistantOutputThisTurn,
+              state.sawTaskNotificationThisTurn,
+              state.sawAssistantOutputThisTurn,
             );
-            if (armsGraceTimer && resultReceivedTime === null) {
-              resultReceivedTime = Date.now();
-              resultReceivedChunkCount = chunkCount;
-              console.log(`[CLAUDE-CODE] RESULT_MESSAGE_RECEIVED: turnElapsed=${resultReceivedTime - queryStartTime}ms chunkCount=${chunkCount} subtype="${chunk.subtype}" isError=${chunk.is_error === true}`);
+            if (armsGraceTimer && state.resultReceivedTime === null) {
+              state.resultReceivedTime = Date.now();
+              state.resultReceivedChunkCount = state.chunkCount;
+              console.log(`[CLAUDE-CODE] RESULT_MESSAGE_RECEIVED: turnElapsed=${state.resultReceivedTime - queryStartTime}ms chunkCount=${state.chunkCount} subtype="${chunk.subtype}" isError=${chunk.is_error === true}`);
               armPromptEndTimer('grace-period-after-result');
-            } else if (resultReceivedTime !== null) {
+            } else if (state.resultReceivedTime !== null) {
               // Activity continued after the real result -- reset the grace
               // timer so we don't kill stdin while the binary is still working.
               armPromptEndTimer('grace-period-reset-on-activity');
@@ -1272,15 +950,15 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
               const rawToolUseId = typeof streamClosedResult?.tool_use_id === 'string'
                 ? streamClosedResult.tool_use_id
                 : undefined;
-              const rawToolName = rawToolUseId ? toolCallsById.get(rawToolUseId)?.name : undefined;
+              const rawToolName = rawToolUseId ? state.toolCallsById.get(rawToolUseId)?.name : undefined;
               const chunkJson = JSON.stringify(chunk);
-              const timeSinceResult = resultReceivedTime !== null
-                ? `${Date.now() - resultReceivedTime}ms (result was chunk #${resultReceivedChunkCount})`
+              const timeSinceResult = state.resultReceivedTime !== null
+                ? `${Date.now() - state.resultReceivedTime}ms (result was chunk #${state.resultReceivedChunkCount})`
                 : 'result not yet received';
-              console.error(`[CLAUDE-CODE] STREAM_CLOSED_RAW_CHUNK: chunkType="${chunk.type}" chunkSubtype="${chunk.subtype}" chunkCount=${chunkCount} turnElapsed=${Date.now() - queryStartTime}ms stderrLines=${stderrLines.length} timeSinceResult=${timeSinceResult}`);
+              console.error(`[CLAUDE-CODE] STREAM_CLOSED_RAW_CHUNK: chunkType="${chunk.type}" chunkSubtype="${chunk.subtype}" chunkCount=${state.chunkCount} turnElapsed=${Date.now() - queryStartTime}ms stderrLines=${state.stderrLines.length} timeSinceResult=${timeSinceResult}`);
               console.error(`[CLAUDE-CODE] STREAM_CLOSED_RAW_CHUNK: ${chunkJson.substring(0, 500)}`);
-              if (stderrLines.length > 0) {
-                console.error(`[CLAUDE-CODE] STREAM_CLOSED_RAW_CHUNK stderr: ${stderrLines.join('').trim().substring(0, 500)}`);
+              if (state.stderrLines.length > 0) {
+                console.error(`[CLAUDE-CODE] STREAM_CLOSED_RAW_CHUNK stderr: ${state.stderrLines.join('').trim().substring(0, 500)}`);
               }
               this.recordStreamClosedToolFailure({
                 sessionId,
@@ -1328,16 +1006,16 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             this.scheduleTranscriptProcessing(sessionId);
           }
 
-          // if (chunkCount <= 5) {
+          // if (state.chunkCount <= 5) {
           //     typeof chunk === 'string'
           //       ? { type: 'string', length: chunk.length, preview: chunk.substring(0, 100) }
           //       : JSON.stringify(chunk, null, 2)
           //   );
           // }
 
-          if (!firstChunkTime) {
-            firstChunkTime = Date.now();
-            const timeToFirstChunk = firstChunkTime - queryStartTime;
+          if (!state.firstChunkTime) {
+            state.firstChunkTime = Date.now();
+            const timeToFirstChunk = state.firstChunkTime - queryStartTime;
             // console.log(`[CLAUDE-CODE] First chunk received in ${timeToFirstChunk}ms from query start`);
             if (timeToFirstChunk > 10000) {
               console.warn(`[CLAUDE-CODE] Time to first chunk was ${timeToFirstChunk}ms (>10s threshold) - possible Windows Defender/antivirus delay during subprocess spawn`);
@@ -1354,13 +1032,13 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             // here — sub-agent assistant text, tool calls, usage — must NOT be
             // yielded: the consumer already received isComplete:true and any further
             // text would mutate the finished parent response. See NIM-1344 / #732 (Medium).
-            if (completeEmitted && this.drainingBackgroundTasks && item.kind !== 'system_task') {
+            if (state.completeEmitted && this.drainingBackgroundTasks && item.kind !== 'system_task') {
               continue;
             }
             switch (item.kind) {
               case 'text':
-                fullContent += item.text;
-                sawAssistantOutputThisTurn = true;
+                state.fullContent += item.text;
+                state.sawAssistantOutputThisTurn = true;
                 yield { type: 'text', content: item.text };
                 break;
 
@@ -1388,9 +1066,9 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                 break;
 
               case 'usage':
-                usageData = item.usage;
+                state.usageData = item.usage;
                 if (item.isPerStep) {
-                  lastAssistantUsage = item.usage;
+                  state.lastAssistantUsage = item.usage;
                   // Surface context fill live, per assistant step, so the UI's
                   // context indicator updates throughout a long agentic turn
                   // instead of only at the `result` chunk (turn end). This is a
@@ -1405,22 +1083,22 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                     yield { type: 'context_usage', contextFillTokens: stepContextTokens };
                   }
                 }
-                if (item.modelUsage) modelUsageData = item.modelUsage;
+                if (item.modelUsage) state.modelUsageData = item.modelUsage;
                 break;
 
               case 'context_report':
                 // Only ever set on a /context turn. Carried to the `complete`
                 // chunk so AIService can use the exact figures instead of
                 // re-deriving them from the rendered markdown.
-                structuredContextUsage = normalizeStructuredContextUsage(item.usage);
+                state.structuredContextUsage = normalizeStructuredContextUsage(item.usage);
                 break;
 
               case 'tool_use': {
-                toolCallCount++;
+                state.toolCallCount++;
                 // A tool is now executing; disarm the stall watchdog until its
                 // result comes back (main-stream silence is legitimate). NIM-1481.
-                outstandingToolCalls++;
-                sawAssistantOutputThisTurn = true;
+                state.outstandingToolCalls++;
+                state.sawAssistantOutputThisTurn = true;
                 const { toolId, toolName, args, isMcp, isSubagent } = item;
 
                 if (toolName === 'TodoWrite' && args?.todos) {
@@ -1450,17 +1128,17 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                 }
 
                 const toolCall = { id: toolId, name: toolName, arguments: args };
-                toolCallsById.set(toolId, toolCall);
+                state.toolCallsById.set(toolId, toolCall);
                 // Yield so AIService can track tool calls (notification text reset,
                 // worktree inference, file tracking side effects). Parity with
                 // Codex/OpenCode providers -- the result is attached later in
-                // `tool_result` and picked up via toolCallsById.
+                // `tool_result` and picked up via state.toolCallsById.
                 yield { type: 'tool_call', toolCall };
                 break;
               }
 
               case 'tool_result': {
-                const toolCall = toolCallsById.get(item.toolUseId);
+                const toolCall = state.toolCallsById.get(item.toolUseId);
                 if (toolCall) {
                   const { isDuplicate, isBackgroundAck } = applyToolResultToToolCall(toolCall, item.content, item.isError);
                   if (isDuplicate) break;
@@ -1471,7 +1149,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                   if (isBackgroundAck) break;
                   // Tool finished -- re-arm the stall watchdog for the model's
                   // next thinking/generation phase. NIM-1481.
-                  outstandingToolCalls = Math.max(0, outstandingToolCalls - 1);
+                  state.outstandingToolCalls = Math.max(0, state.outstandingToolCalls - 1);
 
                   // The result is attached by mutating the object yielded at
                   // tool_use, which a consumer that already handled that chunk
@@ -1493,16 +1171,16 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                       }) ?? toolCall.name,
                       resultText,
                     });
-                    const timeSinceResult = resultReceivedTime !== null
-                      ? `${Date.now() - resultReceivedTime}ms (result was chunk #${resultReceivedChunkCount})`
+                    const timeSinceResult = state.resultReceivedTime !== null
+                      ? `${Date.now() - state.resultReceivedTime}ms (result was chunk #${state.resultReceivedChunkCount})`
                       : 'result not yet received';
                     const controllerState = this.promptController
                       ? (this.promptController.isEnded() ? 'ended' : 'open')
                       : 'null';
-                    console.error(`[CLAUDE-CODE] STREAM_CLOSED_DIAGNOSTIC: tool="${toolCall.name}" toolUseId="${item.toolUseId}" isError=${item.isError} stderrLines=${stderrLines.length} chunkCount=${chunkCount} turnElapsed=${Date.now() - queryStartTime}ms timeSinceResult=${timeSinceResult} promptController=${controllerState}`);
+                    console.error(`[CLAUDE-CODE] STREAM_CLOSED_DIAGNOSTIC: tool="${toolCall.name}" toolUseId="${item.toolUseId}" isError=${item.isError} stderrLines=${state.stderrLines.length} chunkCount=${state.chunkCount} turnElapsed=${Date.now() - queryStartTime}ms timeSinceResult=${timeSinceResult} promptController=${controllerState}`);
                     console.error(`[CLAUDE-CODE] STREAM_CLOSED_DIAGNOSTIC: resultText="${resultText.substring(0, 300)}"`);
-                    if (stderrLines.length > 0) {
-                      console.error(`[CLAUDE-CODE] STREAM_CLOSED_DIAGNOSTIC: stderr="${stderrLines.join('').trim().substring(0, 500)}"`);
+                    if (state.stderrLines.length > 0) {
+                      console.error(`[CLAUDE-CODE] STREAM_CLOSED_DIAGNOSTIC: stderr="${state.stderrLines.join('').trim().substring(0, 500)}"`);
                     }
                   }
 
@@ -1541,7 +1219,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                 if (errorChunk?.type === 'assistant' && errorChunk?.error === 'authentication_failed') {
                   this.logError(sessionId, 'claude-code', new Error(errorMessage), 'assistant_chunk', 'authentication_error', hideMessages);
                   yield { type: 'error', error: errorMessage, isAuthError: true };
-                  yield { type: 'complete', isComplete: true };
+                  // No `complete` here -- finishTurn owns terminal completion.
                   breakOuter = true;
                   break;
                 }
@@ -1576,9 +1254,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                     ...(isServerError && { isServerError: true }),
                   };
 
-                  await this.flushPendingWrites();
-                  if (sessionId) await this.processTranscriptMessages(sessionId);
-                  yield { type: 'complete', isComplete: true };
+                  // No `complete` here -- finishTurn owns terminal completion,
+                  // and it flushes writes and processes the transcript first.
                   breakOuter = true;
                   break;
                 }
@@ -1595,14 +1272,14 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
               case 'system_task':
                 if (item.subtype === 'task_notification') {
-                  sawTaskNotificationThisTurn = true;
+                  state.sawTaskNotificationThisTurn = true;
                 }
                 this.handleSystemTask(item.subtype, item.chunk, sessionId);
                 break;
 
               case 'system_compact':
-                receivedCompactBoundary = true;
-                lastAssistantUsage = undefined;
+                state.receivedCompactBoundary = true;
+                state.lastAssistantUsage = undefined;
                 yield { type: 'text', content: `Conversation compacted (was ${item.preTokens} tokens)` };
                 break;
 
@@ -1615,7 +1292,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
                   // console.error('[CLAUDE-CODE] Authentication error detected in summary:', item.text);
                   this.logError(sessionId, 'claude-code', new Error(item.text), 'summary_chunk', 'authentication_error', hideMessages);
                   yield { type: 'error', error: item.text, isAuthError: true };
-                  yield { type: 'complete', isComplete: true };
+                  // No `complete` here -- finishTurn owns terminal completion.
                   breakOuter = true;
                 } else {
                   const displayMessage = item.text
@@ -1670,7 +1347,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           if (breakOuter) break;
 
           // Yield `complete` as soon as the SDK reports the turn is done (`result`
-          // chunk). usageData / lastAssistantUsage / modelUsageData were populated
+          // chunk). state.usageData / state.lastAssistantUsage / state.modelUsageData were populated
           // by the parsed items above (via `usage` items from the result chunk).
           // The for-await keeps running so stdin stays open for late control
           // requests, but the consumer sees completion immediately.
@@ -1682,14 +1359,14 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           // result completes the turn, and the post-loop fallback covers the
           // case where it never arrives. See NIM-1470.
           if (
-            typeof chunk === 'object' && chunk !== null && !completeEmitted
-            && isNotificationFlushResult(chunk, sawTaskNotificationThisTurn, sawAssistantOutputThisTurn)
+            typeof chunk === 'object' && chunk !== null && !state.completeEmitted
+            && isNotificationFlushResult(chunk, state.sawTaskNotificationThisTurn, state.sawAssistantOutputThisTurn)
           ) {
             console.log('[CLAUDE-CODE] Ignoring notification-flush result (num_turns=0, no output) — awaiting the real turn result');
             continue;
           }
 
-          if (typeof chunk === 'object' && chunk !== null && chunk.type === 'result' && !completeEmitted) {
+          if (typeof chunk === 'object' && chunk !== null && chunk.type === 'result' && !state.completeEmitted) {
             await this.flushPendingWrites();
             if (sessionId) await this.processTranscriptMessages(sessionId);
 
@@ -1702,23 +1379,23 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             // message 2-3x (one event per content block) and modelUsage sums the dupes,
             // inflating cumulative input/output. Fall back to the modelUsage sum only when
             // result.usage is missing. See NIM-689.
-            let totalInputTokens = usageData?.input_tokens || 0;
-            let totalOutputTokens = usageData?.output_tokens || 0;
-            if (!usageData && modelUsageData) {
-              for (const modelName of Object.keys(modelUsageData)) {
-                const modelStats = modelUsageData[modelName];
+            let totalInputTokens = state.usageData?.input_tokens || 0;
+            let totalOutputTokens = state.usageData?.output_tokens || 0;
+            if (!state.usageData && state.modelUsageData) {
+              for (const modelName of Object.keys(state.modelUsageData)) {
+                const modelStats = state.modelUsageData[modelName];
                 totalInputTokens += modelStats.inputTokens || 0;
                 totalOutputTokens += modelStats.outputTokens || 0;
               }
             }
 
-            const lastMessageContextTokens = lastAssistantUsage
-              ? (lastAssistantUsage.input_tokens || 0)
-                + (lastAssistantUsage.cache_read_input_tokens || 0)
-                + (lastAssistantUsage.cache_creation_input_tokens || 0)
+            const lastMessageContextTokens = state.lastAssistantUsage
+              ? (state.lastAssistantUsage.input_tokens || 0)
+                + (state.lastAssistantUsage.cache_read_input_tokens || 0)
+                + (state.lastAssistantUsage.cache_creation_input_tokens || 0)
               : undefined;
 
-            transcriptAdapter?.turnEnded(usageData, modelUsageData);
+            transcriptAdapter?.turnEnded(state.usageData, state.modelUsageData);
 
             // Decide BEFORE yielding `complete` whether background sub-agents will
             // keep this turn draining. The consumer runs willResumeAfterCompletion()
@@ -1734,21 +1411,21 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             yield {
               type: 'complete',
               isComplete: true,
-              ...(usageData || modelUsageData ? {
+              ...(state.usageData || state.modelUsageData ? {
                 usage: {
                   input_tokens: totalInputTokens,
                   output_tokens: totalOutputTokens,
-                  cache_read_input_tokens: usageData?.cache_read_input_tokens || 0,
-                  cache_creation_input_tokens: usageData?.cache_creation_input_tokens || 0,
+                  cache_read_input_tokens: state.usageData?.cache_read_input_tokens || 0,
+                  cache_creation_input_tokens: state.usageData?.cache_creation_input_tokens || 0,
                   total_tokens: totalInputTokens + totalOutputTokens
                 }
               } : {}),
-              ...(modelUsageData ? { modelUsage: modelUsageData } : {}),
+              ...(state.modelUsageData ? { modelUsage: state.modelUsageData } : {}),
               ...(lastMessageContextTokens !== undefined ? { contextFillTokens: lastMessageContextTokens } : {}),
-              ...(structuredContextUsage ? { contextReport: structuredContextUsage } : {}),
-              ...(receivedCompactBoundary ? { contextCompacted: true } : {})
+              ...(state.structuredContextUsage ? { contextReport: state.structuredContextUsage } : {}),
+              ...(state.receivedCompactBoundary ? { contextCompacted: true } : {})
             };
-            completeEmitted = true;
+            state.completeEmitted = true;
             // The binary got a turn all the way through; give the next one a
             // fresh crash-retry budget (#1361).
             this.abnormalExitRetryCount = 0;
@@ -1786,7 +1463,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
           // While draining background sub-agents after `complete` was emitted,
           // exit as soon as every task has reported a terminal status.
-          if (shouldExitDrain(completeEmitted, this.drainingBackgroundTasks, this.hasRunningTasks())) {
+          if (shouldExitDrain(state.completeEmitted, this.drainingBackgroundTasks, this.hasRunningTasks())) {
             this.drainExitCause = 'resolved';
             console.log('[CLAUDE-CODE] SUBAGENT_DRAIN: all background sub-agent task(s) resolved; ending drain loop');
             break;
@@ -1852,24 +1529,24 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             const chunk = typeof rawChunk === 'string' ? rawChunk : rawChunk;
 
             if (typeof chunk === 'string') {
-              fullContent += chunk;
+              state.fullContent += chunk;
               yield { type: 'text', content: chunk };
             } else if (chunk && typeof chunk === 'object') {
               if (chunk.type === 'result') {
                 if (chunk.usage) {
-                  usageData = {
-                    ...(usageData || {}),
-                    input_tokens: (usageData?.input_tokens || 0) + (chunk.usage.input_tokens || 0),
-                    output_tokens: (usageData?.output_tokens || 0) + (chunk.usage.output_tokens || 0),
+                  state.usageData = {
+                    ...(state.usageData || {}),
+                    input_tokens: (state.usageData?.input_tokens || 0) + (chunk.usage.input_tokens || 0),
+                    output_tokens: (state.usageData?.output_tokens || 0) + (chunk.usage.output_tokens || 0),
                   };
                 }
               } else if (chunk.type === 'assistant' && chunk.message?.content) {
                 for (const block of chunk.message.content) {
                   if (block.type === 'text' && block.text) {
-                    fullContent += block.text;
+                    state.fullContent += block.text;
                     yield { type: 'text', content: block.text };
                   } else if (block.type === 'tool_use') {
-                    toolCallCount++;
+                    state.toolCallCount++;
                     if (sessionId) {
                       this.logAgentMessageNonBlocking(
                         sessionId, 'claude-code', 'output',
@@ -1900,211 +1577,29 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         }
       }
 
-      // Check if this was a slash command that returned no output
-      // This helps users understand when a command doesn't exist or failed silently
-      // Skip this check if we received a compact_boundary (compact outputs via system message, not fullContent)
-      if (isSlashCommand && fullContent.trim().length === 0 && toolCallCount === 0 && !receivedCompactBoundary) {
-        // Extract the command name from the message for the error message
-        const commandMatch = message.trimStart().match(/^\/(\S+)/);
-        const commandName = commandMatch ? commandMatch[1] : 'unknown';
-
-        const errorMessage = `The command "/${commandName}" did not produce any output. This command may not exist or may have failed silently. Try typing "/" to see available commands.`;
-        // console.error(`[CLAUDE-CODE] Slash command /${commandName} returned no output`);
-
-        // Log error to database for persistence
-        // The logError call saves the message to the database and emits 'message:logged'
-        // which triggers a session reload in the UI, displaying the error
-        // Do NOT yield an error chunk here - that would cause duplicate display via ai:error IPC
-        // Pass hideMessages so /context errors (auto-triggered) stay hidden
-        this.logError(sessionId, 'claude-code', new Error(errorMessage), 'slash_command', 'slash_command_error', hideMessages);
-      }
-
-      // Send completion event
-      const totalTime = Date.now() - startTime;
-
-      // If we already emitted `complete` on the `result` chunk (the common
-      // path), all post-turn side effects (flushPendingWrites, snapshots,
-      // transcriptAdapter.turnEnded) were already run there. Skip them and the
-      // duplicate yield. We only fall through to the legacy end-of-loop path
-      // when no `result` chunk was ever seen (e.g. iterator closed early,
-      // slash command produced no result).
-      if (!completeEmitted) {
-        // Flush all pending non-blocking DB writes before signaling completion.
-        // Without this, the UI receives session:completed and reloads from DB
-        // before the final messages (e.g. compact_boundary, continuation, result)
-        // have been committed, causing a stale transcript.
-        await this.flushPendingWrites();
-        if (sessionId) await this.processTranscriptMessages(sessionId);
-
-        // Create snapshots for all files edited during this turn
-        if (this.toolHooksService && this.toolHooksService.getEditedFiles().size > 0) {
-          await this.toolHooksService.createTurnEndSnapshots();
-        }
-
-        // Prefer result.usage (deduplicated by Anthropic via message.id) for token totals.
-        // modelUsage over-counts because the agent stream emits each assistant message
-        // 2-3x (one event per content block) and modelUsage sums the dupes. Use the
-        // modelUsage sum only as a fallback when result.usage is absent. Cost still comes
-        // from modelUsage (the only per-model cost source; not displayed). See NIM-689.
-        let totalInputTokens = usageData?.input_tokens || 0;
-        let totalOutputTokens = usageData?.output_tokens || 0;
-        let totalCostUSD = 0;
-
-        if (modelUsageData) {
-          if (!usageData) {
-            totalInputTokens = 0;
-            totalOutputTokens = 0;
-          }
-          for (const modelName of Object.keys(modelUsageData)) {
-            const modelStats = modelUsageData[modelName];
-            if (!usageData) {
-              totalInputTokens += modelStats.inputTokens || 0;
-              totalOutputTokens += modelStats.outputTokens || 0;
-            }
-            totalCostUSD += modelStats.costUSD || 0;
-          }
-        }
-
-        // Compute context fill from last assistant message's usage (not cumulative result.usage).
-        // CRITICAL: Use lastAssistantUsage, NOT usageData (which gets overwritten by cumulative result.usage).
-        const lastMessageContextTokens = lastAssistantUsage
-          ? (lastAssistantUsage.input_tokens || 0)
-            + (lastAssistantUsage.cache_read_input_tokens || 0)
-            + (lastAssistantUsage.cache_creation_input_tokens || 0)
-          : undefined;
-
-        // Canonical transcript: turn ended with usage
-        transcriptAdapter?.turnEnded(usageData, modelUsageData);
-        this.prepareStreamClosedContinuation(sessionId, hideMessages);
-
-        yield {
-          type: 'complete',
-          // Don't send content here - it's already been sent in chunks
-          // The AIService accumulates the chunks itself
-          isComplete: true,
-          ...(usageData || modelUsageData ? {
-            usage: {
-              input_tokens: totalInputTokens,
-              output_tokens: totalOutputTokens,
-              cache_read_input_tokens: usageData?.cache_read_input_tokens || 0,
-              cache_creation_input_tokens: usageData?.cache_creation_input_tokens || 0,
-              total_tokens: totalInputTokens + totalOutputTokens
-            }
-          } : {}),
-          // Include modelUsage for detailed per-model breakdown and cost tracking
-          ...(modelUsageData ? { modelUsage: modelUsageData } : {}),
-          // Context fill from last assistant message (for context window display)
-          ...(lastMessageContextTokens !== undefined ? { contextFillTokens: lastMessageContextTokens } : {}),
-              ...(structuredContextUsage ? { contextReport: structuredContextUsage } : {}),
-          // Signal that compaction happened so AIService clears stale currentContext
-          ...(receivedCompactBoundary ? { contextCompacted: true } : {})
-        };
-      }
-
+      // Slash-command-produced-nothing check and the terminal `complete`
+      // (skipped when the `result` chunk already emitted one).
+      yield* finishTurn(this.epilogueHost(), state, { sessionId, transcriptAdapter });
 
     } catch (error: any) {
-      const errorTime = Date.now() - startTime;
-      const isAbort = error.name === 'AbortError' || error.message?.includes('aborted');
-
-      // #1361: a native subprocess fault reaches here as a bare
-      // `exited with code <wait status>`. Classify it before anything else
-      // consumes error.message, so both the transcript and the retry decision
-      // work from the fault rather than the integer.
-      const abnormalExit = isAbort ? null : classifyAbnormalChildExit({
-        errorMessage: error.message,
-        stderrLines,
-        producedOutput: sawAssistantOutputThisTurn || completeEmitted,
-      });
-
-      // Only log details for non-abort errors
-      if (!isAbort) {
-        console.error(`[CLAUDE-CODE] ========== ERROR in sendMessage ==========`);
-        console.error(`[CLAUDE-CODE] Error occurred after ${errorTime}ms`);
-        console.error(`[CLAUDE-CODE] Error name: ${error.name}`);
-        console.error(`[CLAUDE-CODE] Error message: ${error.message}`);
-        console.error(`[CLAUDE-CODE] Error stack:`, error.stack);
-        if (stderrLines.length > 0) {
-          console.error(`[CLAUDE-CODE] Subprocess stderr (${stderrLines.length} lines):`);
-          for (const line of stderrLines) {
-            console.error(`[CLAUDE-CODE-STDERR] ${line}`);
-          }
-        }
-        // Enrich the error message with stderr for the UI
-        if (stderrLines.length > 0) {
-          const stderrSummary = stderrLines.join('').trim().slice(0, 500);
-          if (stderrSummary) {
-            error.message = `${error.message}\n\nProcess output:\n${stderrSummary}`;
-          }
-        }
-
-        // #614: the bundled CLI is a Bun-compiled binary; "An unknown error
-        // occurred (Unexpected)" on exit 1 is Bun's native startup failure,
-        // emitted before any JS-level logging. Log the process attributes a
-        // child inherits from Electron (the prime suspects -- they can't be
-        // reproduced by replaying argv/env in a shell), and arm the SDK's
-        // debug mode so the next attempt passes --debug-file to the CLI.
-        if (isBunRuntimeSpawnCrash(error.message, stderrLines)) {
-          const diag = collectSpawnCrashDiagnostics(spawnDiagContext ?? {});
-          console.error(`[CLAUDE-CODE] Native binary startup crash (Bun runtime). Spawn diagnostics: ${JSON.stringify(diag)}`);
-          if (armAgentSdkDebugLogging()) {
-            console.error('[CLAUDE-CODE] Armed DEBUG_CLAUDE_AGENT_SDK for subsequent attempts in this app run -- retry the message to capture a CLI debug log.');
-          } else {
-            const debugLog = await readLatestSdkDebugLogTail().catch(() => null);
-            if (debugLog) {
-              console.error(`[CLAUDE-CODE] SDK/CLI debug log tail (${debugLog.path}):\n${debugLog.tail}`);
-            } else {
-              console.error('[CLAUDE-CODE] Debug mode was armed but no SDK/CLI debug log was found -- the binary crashed before writing one.');
-            }
-          }
-        }
-
-        // #1361: log the same inherited-process attributes for a native fault,
-        // then swap the raw wait status for the readable cause. The transcript,
-        // the DB error record and the renderer all read error.message.
-        if (abnormalExit) {
-          const diag = collectSpawnCrashDiagnostics(spawnDiagContext ?? {});
-          console.error(
-            `[CLAUDE-CODE] Abnormal subprocess exit: kind=${abnormalExit.kind} `
-            + `code=${abnormalExit.exitCode} retryable=${abnormalExit.retryable} `
-            + `diagnostics=${JSON.stringify(diag)}`
-          );
-          error.message = abnormalExit.message;
-        }
-      }
-
-      if (isAbort) {
-        // Abort is expected - user cancelled, don't log as error
-        await this.flushPendingWrites();
-        if (sessionId) await this.processTranscriptMessages(sessionId);
-        if (!completeEmitted) {
-          yield {
-            type: 'complete',
-            isComplete: true
-          };
-        }
-      } else if (
-        abnormalExit?.retryable
-        && this.abnormalExitRetryCount < ClaudeCodeProvider.MAX_ABNORMAL_EXIT_RETRIES
-      ) {
-        // #1361: the crash killed the subprocess before it produced anything,
-        // so nothing has reached the transcript and re-running the turn cannot
-        // duplicate output. In the reported case the fault was intermittent at
-        // ~80%, which one retry very nearly covers.
-        //
-        // Re-entry, not a loop: `yield*` delegates the whole retried turn, and
-        // the inner call re-runs setup from the caller's original arguments.
-        // The budget is per-provider and is only cleared by a completed turn or
-        // an abort, so a binary that crashes every time settles after one extra
-        // attempt instead of spinning.
-        this.abnormalExitRetryCount++;
-        console.warn(
-          `[CLAUDE-CODE] Retrying turn after ${abnormalExit.kind} `
-          + `(attempt ${this.abnormalExitRetryCount}/${ClaudeCodeProvider.MAX_ABNORMAL_EXIT_RETRIES})`
-        );
+      const outcome = yield* handleTurnError(
+        {
+          ...this.epilogueHost(),
+          getResumeSessionId: (sid) => this.sessions.getSessionId(sid),
+          checkSessionExists: (claudeSessionId) => this.checkSessionExists(claudeSessionId),
+          getAbnormalExitRetryCount: () => this.abnormalExitRetryCount,
+          maxAbnormalExitRetries: ClaudeCodeProvider.MAX_ABNORMAL_EXIT_RETRIES,
+          consumeAbnormalExitRetry: () => { this.abnormalExitRetryCount++; },
+        },
+        state,
+        error,
+        sessionId,
+      );
+      if (outcome.retry) {
         // sendMessage consumes this flag at entry, so restore it for the retry.
-        this.markMessagesAsHidden = hideMessages;
+        this.markMessagesAsHidden = state.hideMessages;
         yield* this.sendMessage(
-          originalMessage,
+          state.originalMessage,
           documentContext,
           sessionId,
           messages,
@@ -2112,55 +1607,6 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           attachments,
         );
         return;
-      } else {
-        console.error(`[CLAUDE-CODE] Error occurred`);
-
-        // Diagnostic only: log whether the resumed session was in history.jsonl.
-        // We no longer mis-attribute arbitrary SDK errors to "session expired" --
-        // history.jsonl lookups race with SDK writes and may not reflect programmatic
-        // sessions, so a miss is not authoritative. The SDK's own error handling at
-        // the isExpiredSessionError branch above is the source of truth for real expiry.
-        const resumeSessionId = sessionId ? this.sessions.getSessionId(sessionId) : null;
-        if (resumeSessionId) {
-          const sessionExists = await this.checkSessionExists(resumeSessionId);
-          if (!sessionExists) {
-            console.warn(`[CLAUDE-CODE] Resume session ${resumeSessionId} not found in history.jsonl (soft signal -- not acting on it)`);
-          }
-        }
-
-        console.error(`[CLAUDE-CODE] Yielding error to client`);
-        console.error(`[CLAUDE-CODE] Session ID for error logging:`, sessionId);
-
-        // Log error to database (as 'output' since errors are provider responses)
-        if (!sessionId) {
-          console.error(`[CLAUDE-CODE] CRITICAL: Cannot log error - sessionId is undefined!`);
-        } else {
-          console.error(`[CLAUDE-CODE] Logging error to database for session:`, sessionId);
-          this.logError(sessionId, 'claude-code', error, 'catch_block', 'exception', hideMessages);
-        }
-
-        yield {
-          type: 'error',
-          error: error.message,
-          // #1361: the `complete` chunk below is emitted purely to clear the
-          // renderer's spinner. Without this flag the consumer cannot tell a
-          // crashed turn from a finished one and settles the session as a
-          // success with an empty response.
-          ...(abnormalExit ? { isProcessCrash: true } : {}),
-        };
-
-        // CRITICAL: Always send completion after error to clean up UI state.
-        // Skip if we already emitted complete on the result chunk -- the UI
-        // is already cleaned up; this error was raised after the turn was
-        // delivered (e.g. teammate streamInput failure).
-        await this.flushPendingWrites();
-        if (sessionId) await this.processTranscriptMessages(sessionId);
-        if (!completeEmitted) {
-          this.prepareStreamClosedContinuation(sessionId, hideMessages);
-          yield {
-            type: 'complete'
-          };
-        }
       }
     } finally {
       // Don't stop MCP health checks or clear mcpQuery between turns -

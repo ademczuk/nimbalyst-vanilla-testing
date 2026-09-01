@@ -25,6 +25,7 @@ function fakeApi(overrides: Partial<OrgWizardApi> = {}): OrgWizardApi {
     acceptInvitation: vi.fn(async (orgId: string) => ({ orgId })),
     createOrganization: vi.fn(async () => ({ orgId: 'org-1' })),
     inviteMember: vi.fn(async () => {}),
+    publishFolder: vi.fn(async () => true),
     ...overrides,
   };
 }

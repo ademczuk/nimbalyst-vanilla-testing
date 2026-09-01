@@ -536,6 +536,7 @@ public final class SyncManager: ObservableObject {
             phase: clientMeta?.phase ?? existing?.phase,
             tagsJson: tagsJson ?? existing?.tagsJson,
             worktreeId: entry.worktreeId ?? existing?.worktreeId,
+            hostDeviceId: entry.hostDeviceId ?? existing?.hostDeviceId,
             isArchived: entry.isArchived ?? existing?.isArchived ?? false,
             isPinned: entry.isPinned ?? existing?.isPinned ?? false,
             branchedFromSessionId: entry.branchedFromSessionId ?? existing?.branchedFromSessionId,
@@ -704,6 +705,7 @@ public final class SyncManager: ObservableObject {
             phase: clientMeta?.phase ?? existing?.phase,
             tagsJson: tagsJson ?? existing?.tagsJson,
             worktreeId: entry.worktreeId ?? existing?.worktreeId,
+            hostDeviceId: entry.hostDeviceId ?? existing?.hostDeviceId,
             isArchived: entry.isArchived ?? existing?.isArchived ?? false,
             isPinned: entry.isPinned ?? existing?.isPinned ?? false,
             branchedFromSessionId: entry.branchedFromSessionId ?? existing?.branchedFromSessionId,
@@ -1544,7 +1546,14 @@ public final class SyncManager: ObservableObject {
 
     /// Send a session_control message to the desktop via the index room.
     /// Used for interactive prompt responses (AskUserQuestion, ToolPermission, ExitPlanMode, GitCommit).
+    /// Routes to the desktop that owns the session. Without a target the server
+    /// broadcasts and every connected desktop acts on the control -- two
+    /// desktops both cancelling, or both answering the same prompt.
     public func sendSessionControlMessage(sessionId: String, messageType: String, payload: [String: Any]? = nil) {
+        var hostDeviceId: String?
+        if let session = try? database.session(byId: sessionId) {
+            hostDeviceId = session.hostDeviceId
+        }
         let controlPayload = SessionControlPayload(
             sessionId: sessionId,
             messageType: messageType,
@@ -1552,7 +1561,9 @@ public final class SyncManager: ObservableObject {
                 dict.mapValues { AnyCodable($0) }
             },
             timestamp: Int(Date().timeIntervalSince1970 * 1000),
-            sentBy: "mobile"
+            sentBy: "mobile",
+            sentByDeviceId: WebSocketClient.deviceId,
+            targetDeviceId: hostDeviceId
         )
 
         let message = SessionControlMessage(message: controlPayload)

@@ -26,6 +26,10 @@ const electronLogStub = path.resolve(__dirname, './test-utils/electronLogStub.ts
 
 const alias = [
   {
+    find: '@nimbalyst/tracker-core',
+    replacement: path.resolve(__dirname, './packages/tracker-core/src'),
+  },
+  {
     find: '@nimbalyst/runtime',
     replacement: path.resolve(__dirname, './packages/runtime/src'),
   },
@@ -114,9 +118,13 @@ const nodeOnly = [
   'packages/electron/src/shared/analytics/**',
   'packages/runtime/src/ai/**',
   'packages/runtime/src/ui/git/__tests__/unifiedDiffModel.test.ts',
+  // The recovery planner is a pure function over three numbers.
+  'packages/runtime/src/sync/__tests__/trackerIdentityRecovery.test.ts',
   // `feedback-ui` is otherwise React components; only the pure scroll-carry
   // arithmetic is routed here, for the same reason as the diff model above.
   'packages/collab-client/src/feedback-ui/__tests__/artifactScrollCarry.test.ts',
+  // Layout <-> saved-view definition translation is pure object shuffling.
+  'packages/electron/src/renderer/components/TrackerMode/__tests__/trackerViewDefinition.test.ts',
   // `EmbedFrame` is otherwise React components; the drop payload is pure
   // string handling over a `getData` stub and needs no DOM.
   'packages/electron/src/renderer/components/EmbedFrame/__tests__/canvasDropSource.test.ts',
@@ -125,6 +133,11 @@ const nodeOnly = [
   // boundary stubbed; it never mounts an editor, which is the whole point.
   'packages/electron/src/renderer/services/__tests__/HeadlessCollabDocument.test.ts',
   'packages/electron/src/renderer/services/__tests__/codecOnlyHeadlessEdit.test.ts',
+  // `nim` is a terminal process; nothing under it can touch a DOM. These were
+  // running in the jsdom project purely because they matched the default
+  // include, paying an environment they cannot use.
+  'packages/cli/src/**',
+  'packages/tracker-core/src/**',
 ];
 
 // The node project's `include` and the jsdom project's `exclude` must describe
@@ -143,13 +156,11 @@ export default defineConfig({
     // minutes; losing which tests failed to a dot reporter or a truncated pipe
     // should never cost a second run to find out.
     reporters: ['default', './scripts/vitest-run-log-reporter.mjs'],
-    // Tests under packages/electron/src/main touch better-sqlite3, whose
-    // build/Release/.node binary is compiled for Electron (NODE_MODULE_VERSION
-    // 145) and unloadable under the system Node that vitest runs against.
-    // The globalSetup fetches a Node-ABI prebuild into a side cache and sets
-    // NIMBALYST_BETTER_SQLITE3_NATIVE; SQLiteDatabase reads that env to load
-    // the right binary via better-sqlite3's `nativeBinding` option without
-    // disturbing the Electron binary that the dev server depends on.
+    // Tests under packages/electron/src/main touch better-sqlite3. Version 13
+    // ships Node-API prebuilds that are stable across supported Node and
+    // Electron hosts. The globalSetup still provisions an isolated side-cache
+    // binary and sets NIMBALYST_BETTER_SQLITE3_NATIVE so tests do not rebuild or
+    // replace the workspace installation used by the running dev server.
     globalSetup: ['./packages/electron/vitest.globalSetup.ts'],
     coverage: {
       reporter: ['text', 'json', 'html'],

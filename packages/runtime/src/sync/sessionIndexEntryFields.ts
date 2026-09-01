@@ -17,6 +17,7 @@ export interface SyncedSessionIndexFields {
   sessionType?: string;
   parentSessionId?: string;
   worktreeId?: string;
+  hostDeviceId?: string;
   isArchived?: boolean;
   isPinned?: boolean;
   branchedFromSessionId?: string;
@@ -36,10 +37,14 @@ export interface SyncedSessionIndexFields {
 export function buildSyncedSessionIndexFields(
   session: SessionIndexData,
 ): SyncedSessionIndexFields {
+  const metadataHostDeviceId = typeof session.metadata?.hostDeviceId === 'string'
+    ? session.metadata.hostDeviceId
+    : undefined;
   return {
     sessionType: session.sessionType,
     parentSessionId: session.parentSessionId,
     worktreeId: session.worktreeId,
+    hostDeviceId: session.hostDeviceId ?? metadataHostDeviceId,
     isArchived: session.isArchived,
     isPinned: session.isPinned,
     branchedFromSessionId: session.branchedFromSessionId,

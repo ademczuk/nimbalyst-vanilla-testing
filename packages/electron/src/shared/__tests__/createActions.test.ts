@@ -9,7 +9,7 @@ describe('resolveCreateAction', () => {
   // the bug this design exists to fix (the bar used to make a session in Files).
   const cases: Array<[CreateActionMode, ReturnType<typeof resolveCreateAction>]> = [
     ['files', { kind: 'file', label: 'New file', destination: null }],
-    ['collab', { kind: 'sharedDoc', label: 'New doc', destination: null }],
+    ['collab', { kind: 'sharedDoc', label: 'New shared doc', destination: null }],
     ['agent', { kind: 'session', label: 'New session', destination: null }],
     ['tracker', { kind: 'trackerItem', label: 'New item', destination: null }],
     ['pr-review', null],

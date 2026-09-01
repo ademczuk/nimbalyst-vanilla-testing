@@ -1859,8 +1859,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('team:find-pending-invite-for-email', email),
     acceptInvitation: (orgId: string) => ipcRenderer.invoke('team:accept-invite', orgId),
     listMembers: (orgId: string) => ipcRenderer.invoke('team:list-members', orgId),
-    inviteMember: (orgId: string, email: string, role?: 'owner' | 'admin' | 'member' | 'viewer' | 'guest') =>
-      ipcRenderer.invoke('team:invite', orgId, email, role),
+    inviteMember: (
+      orgId: string,
+      email: string,
+      role?: 'owner' | 'admin' | 'member' | 'viewer' | 'guest',
+      projectGrants?: Array<{ teamProjectId: string; projectRole: string }>,
+    ) => ipcRenderer.invoke('team:invite', orgId, email, role, projectGrants),
     removeMember: (orgId: string, memberId: string) => ipcRenderer.invoke('team:remove-member', orgId, memberId),
     updateMemberRole: (orgId: string, memberId: string, role: string) => ipcRenderer.invoke('team:update-role', orgId, memberId, role),
     listProjects: (orgId: string) => ipcRenderer.invoke('team:list-projects', orgId),

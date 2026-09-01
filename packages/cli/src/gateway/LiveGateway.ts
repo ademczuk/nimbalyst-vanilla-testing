@@ -8,7 +8,7 @@
  */
 import { McpHttpClient } from './mcpClient.js';
 import type { EndpointDescriptor } from './endpoint.js';
-import type { TrackerRecord } from '../vendor/trackerRecord.js';
+import type { TrackerRecord } from '@nimbalyst/tracker-core';
 import { connectionError, writeNotPermittedError } from '../cli/exitCodes.js';
 import type {
   CreateInput,

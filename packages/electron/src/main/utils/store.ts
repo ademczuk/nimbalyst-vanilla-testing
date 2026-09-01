@@ -619,6 +619,13 @@ export interface WorkspaceState {
   // exact mistake that made `LC-###` reissue numbers after items were acked or
   // deleted. A deleted item's number stays spent.
   localKeyCounter?: number;
+  // Whether the one-time repair for rows the old issue-key collision branch
+  // stranded has already run here. Persisted rather than per-process because
+  // the repair rewinds the item bootstrap cursor by however far the oldest
+  // stranded row sits behind it -- thousands of rows on a mature workspace --
+  // and that must happen once, not on every launch. See
+  // `runtime/src/sync/trackerIdentityRecovery.ts`.
+  trackerIdentityRecoveryAttempted?: boolean;
   // Account identity bound to this workspace (personalOrgId).
   // Set once when the workspace is first synced. Different workspaces can use different accounts.
   // Defaults to the account selected for personal sync if not set.
@@ -915,6 +922,7 @@ function createDefaultWorkspaceState(workspacePath: string): WorkspaceState {
     issueKeyPrefix: deriveIssueKeyPrefix(workspacePath),
     localKeyPrefix: undefined,
     localKeyCounter: undefined,
+    trackerIdentityRecoveryAttempted: undefined,
     lastUpdated: Date.now(),
   };
 }

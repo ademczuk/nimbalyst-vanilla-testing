@@ -1,0 +1,24 @@
+-- Drop idx_tracker_workspace_issue_number.
+--
+-- It declared UNIQUE(workspace, issue_number). The issue KEY carries the
+-- room's prefix; the number does not. So a workspace whose prefix changes --
+-- via tracker_set_issue_key_prefix, or the room's own conflict path handing
+-- back NIM -> NIMA -- legitimately holds NIM-42 and NIMA-42, and this index
+-- called the second one a duplicate.
+--
+-- That rejection is not cosmetic. The sync store caught it up front and landed
+-- the incoming row with NULL issue_number / issue_key, so the item arrived
+-- with no key at all and nothing ever gave it one back: 72 such rows across 10
+-- workspaces on the machine where this was found, 21 of them with no
+-- addressable key of any kind.
+--
+-- idx_tracker_workspace_issue_key already declares UNIQUE(workspace,
+-- issue_key) on both backends, and it is prefix-carrying by construction, so
+-- the correct constraint is already in place and this one only overreached.
+--
+-- Dropped rather than rebuilt non-unique because it has no reader. After the
+-- collision branch stopped querying by number, no query in the app filters,
+-- joins or orders on issue_number -- the column is projected onto payloads and
+-- nothing else.
+
+DROP INDEX IF EXISTS idx_tracker_workspace_issue_number;

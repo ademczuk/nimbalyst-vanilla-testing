@@ -35,6 +35,7 @@
  */
 import type { SyncId, TrackerItemPayload, TrackerRoomConfig, TrackerTransactionRow, TrackerErrorMessage } from './trackerProtocol';
 import { type TrackerAccessTermination } from './trackerAccessTermination';
+import { type StrandedIdentityFacts } from './trackerIdentityRecovery';
 import { type TrackerPersistence } from './trackerPersistence';
 import { type TeamJwt, type TeamMemberId } from '../auth/jwtScopes';
 export type TrackerSyncStatus = 'disconnected' | 'connecting' | 'syncing' | 'connected' | 'error';
@@ -115,6 +116,12 @@ export interface TrackerSchemaSyncHooks {
      * no notion of a retired row simply keeps the old behaviour.
      */
     markRejected?: (type: string, code: string) => Promise<unknown>;
+}
+export interface TrackerIdentityRecoveryHooks {
+    /** Everything the plan needs except the bootstrap cursor, which the engine holds. */
+    getFacts: () => Promise<Omit<StrandedIdentityFacts, 'localMaxSyncId'>>;
+    /** Record that this workspace has had its one attempt. */
+    markAttempted: () => Promise<void>;
 }
 export interface TrackerNavigationLocalChange {
     entryId: string;
@@ -224,6 +231,11 @@ export interface TrackerSyncEngineConfig {
      * decide to force a reconnect.
      */
     onBootstrapError?: (err: unknown) => void;
+    /**
+     * Repair for rows the old issue-key collision branch stranded. Optional: a
+     * host that does not track stranded rows simply never runs the pass.
+     */
+    identityRecovery?: TrackerIdentityRecoveryHooks;
     /**
      * Epic H3 P1: fires when the server reports this tracker room was relocated
      * to another org by the move engine. The engine stops (the old room is
@@ -354,6 +366,22 @@ export declare class TrackerSyncEngine {
      */
     setIssueKeyPrefix(prefix: string, assignmentMode?: 'auto' | 'explicit'): Promise<TrackerConfigSetResult>;
     private runBootstrap;
+    /**
+     * Re-request a span of the changelog for rows the old collision branch
+     * stranded without an issue key.
+     *
+     * Those rows are `synced` and carry a `sync_id`, so the ordinary bootstrap
+     * -- which starts at `MAX(sync_id)` -- can never reach them again. See
+     * `trackerIdentityRecovery.ts` for why, and for the pure decision this only
+     * executes.
+     *
+     * The attempt is marked whether or not it succeeds. The alternative, marking
+     * only on success, retries a multi-thousand-row rewind on every launch for
+     * any workspace whose rows the room cannot re-assert, which is a worse
+     * failure than one repair that did not take. A workspace stuck that way is
+     * diagnosable from the warning below.
+     */
+    private runIdentityRecovery;
     private requestSync;
     /**
      * Bootstrap schemas from ZERO, not from the local cursor.

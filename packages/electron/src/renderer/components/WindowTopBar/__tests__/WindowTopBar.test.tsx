@@ -306,6 +306,42 @@ describe('WindowTopBar', () => {
     expect(onCreate).toHaveBeenCalledTimes(1);
   });
 
+  // Menu items carry the testids of the sidebar controls they replaced, so the
+  // E2E specs that drive session creation keep matching after the move.
+  it('preserves replaced sidebar testids on menu items and the caret', () => {
+    render(
+      <WindowTopBar
+        workspaceName="Repo"
+        activeModeLabel="Agent"
+        gitStatus={null}
+        gitActions={{ onPull: () => {}, onPush: () => {}, onOpenLog: () => {} }}
+        newInTreeControl={{
+          label: 'New session',
+          onCreate: () => {},
+          menuTestId: 'new-dropdown-button',
+          menuItems: [
+            {
+              id: 'worktree',
+              label: 'New Worktree',
+              icon: 'account_tree',
+              testId: 'new-worktree-session-button',
+              disabled: true,
+              disabledReason: 'Worktrees require a git repository',
+              onSelect: () => {},
+            },
+          ],
+        }}
+      />,
+    );
+
+    const caret = screen.getByTestId('new-dropdown-button');
+    fireEvent.click(caret);
+
+    const worktree = screen.getByTestId('new-worktree-session-button');
+    expect(worktree).toHaveProperty('disabled', true);
+    expect(worktree.getAttribute('title')).toBe('Worktrees require a git repository');
+  });
+
   it('renders no caret when the control has no type variants', () => {
     render(
       <WindowTopBar

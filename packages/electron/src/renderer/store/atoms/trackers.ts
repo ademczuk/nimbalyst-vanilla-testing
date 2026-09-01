@@ -142,6 +142,7 @@ export async function initTrackerPanelLayout(workspacePath: string): Promise<voi
         detailPanelWidth: savedModeLayout.detailPanelWidth ?? DEFAULT_MODE_LAYOUT.detailPanelWidth,
         typeColumnConfigs,
         typeColumnFilters: savedModeLayout.typeColumnFilters ?? DEFAULT_MODE_LAYOUT.typeColumnFilters,
+        typeViewSettings: normalizeTypeViewSettings(savedModeLayout.typeViewSettings),
         groupBy: normalizeTrackerGroupBy(savedModeLayout.groupBy ?? legacyGroupBy),
         ordering: normalizeTrackerOrdering(savedModeLayout.ordering),
         sortBy: typeof savedModeLayout.sortBy === 'string' ? savedModeLayout.sortBy : DEFAULT_MODE_LAYOUT.sortBy,
@@ -245,6 +246,23 @@ import {
   normalizeExpandedNavFolders,
 } from '../../components/TrackerMode/trackerSidebarCollapse';
 
+/**
+ * The Display Settings a tracker type remembers for itself: which view renders,
+ * how it groups, and how it orders and sorts within a group.
+ *
+ * Stored per type (see {@link TrackerModeLayout.typeViewSettings}) because a bug
+ * list and a plan roadmap want different presentations, the same way they
+ * already want different columns (#1412). Every field is optional -- an absent
+ * one falls back to the same-named root field on the layout.
+ */
+export interface TrackerTypeViewSettings {
+  viewMode: TrackerViewMode;
+  groupBy: TrackerGroupBy;
+  ordering: TrackerOrdering;
+  sortBy: SortColumn;
+  sortDirection: SortDirection;
+}
+
 export interface TrackerModeLayout {
   /** Selected type filter in sidebar ('all' or specific type) */
   selectedType: string;
@@ -282,9 +300,21 @@ export interface TrackerModeLayout {
    * `activeFilters` chips.
    */
   typeColumnFilters: Record<string, TrackerFilterSet>;
-  /** Active grouping for grouped renderings (NIM-788). Defaults to 'none'. */
+  /**
+   * Display Settings remembered per type, keyed the same way as
+   * {@link TrackerModeLayout.typeColumnConfigs}. A missing key -- or a missing
+   * field within a key -- reads through to the root-level field below, so a
+   * workspace upgrading into this build opens every type on exactly the view it
+   * had before. Read through {@link resolveTrackerViewSettings}, never directly.
+   */
+  typeViewSettings: Record<string, Partial<TrackerTypeViewSettings>>;
+  /**
+   * Fallback grouping for a type with no entry in `typeViewSettings` (NIM-788).
+   * Writes go to the per-type slot, so this holds whatever the workspace was
+   * last set to before per-type settings existed.
+   */
   groupBy: TrackerGroupBy;
-  /** Manual kanban ordering, or a sortable schema field id. */
+  /** Fallback manual kanban ordering, or a sortable schema field id. */
   ordering: TrackerOrdering;
   sortBy: SortColumn;
   sortDirection: SortDirection;
@@ -346,6 +376,7 @@ const DEFAULT_MODE_LAYOUT: TrackerModeLayout = {
   detailPanelWidth: 400,
   typeColumnConfigs: {},
   typeColumnFilters: {},
+  typeViewSettings: {},
   groupBy: 'none',
   ordering: 'manual',
   sortBy: 'lastIndexed',
@@ -380,6 +411,86 @@ function normalizeTypeColumnConfigs(raw: unknown): Record<string, TypeColumnConf
     };
   }
   return normalized;
+}
+
+/**
+ * Each reader below answers "did the persisted value mean something?" rather
+ * than "what should this be?" -- an unrecognized value returns `undefined` so
+ * the slot stays absent and {@link resolveTrackerViewSettings} falls through to
+ * the root field, instead of pinning the type to a hardcoded default.
+ */
+function readTypeViewMode(value: unknown): TrackerViewMode | undefined {
+  if (value === undefined) return undefined;
+  // `normalizeViewMode` folds the retired 'grid' literal into 'table' and
+  // silently falls back for anything else, so 'grid' has to be kept by name.
+  if (value === 'grid') return 'table';
+  const normalized = normalizeViewMode(value, DEFAULT_MODE_LAYOUT.viewMode);
+  return normalized === value ? normalized : undefined;
+}
+
+function readTypeGroupBy(value: unknown): TrackerGroupBy | undefined {
+  if (value === undefined) return undefined;
+  const normalized = normalizeTrackerGroupBy(value);
+  // 'none' is both a real axis and the normalizer's failure answer.
+  return normalized !== 'none' || value === 'none' ? normalized : undefined;
+}
+
+function readTypeOrdering(value: unknown): TrackerOrdering | undefined {
+  return typeof value === 'string' && value.trim() ? normalizeTrackerOrdering(value) : undefined;
+}
+
+function readTypeSortDirection(value: unknown): SortDirection | undefined {
+  return value === 'asc' || value === 'desc' ? value : undefined;
+}
+
+/**
+ * Per-type Display Settings, normalized field by field. Types whose every field
+ * is unusable are dropped rather than stored empty, so the persisted blob only
+ * carries settings a user actually chose.
+ */
+function normalizeTypeViewSettings(raw: unknown): Record<string, Partial<TrackerTypeViewSettings>> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const normalized: Record<string, Partial<TrackerTypeViewSettings>> = {};
+  for (const [type, value] of Object.entries(raw)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const saved = value as Partial<Record<keyof TrackerTypeViewSettings, unknown>>;
+    const settings: Partial<TrackerTypeViewSettings> = {};
+
+    const viewMode = readTypeViewMode(saved.viewMode);
+    if (viewMode !== undefined) settings.viewMode = viewMode;
+    const groupBy = readTypeGroupBy(saved.groupBy);
+    if (groupBy !== undefined) settings.groupBy = groupBy;
+    const ordering = readTypeOrdering(saved.ordering);
+    if (ordering !== undefined) settings.ordering = ordering;
+    if (typeof saved.sortBy === 'string' && saved.sortBy) settings.sortBy = saved.sortBy;
+    const sortDirection = readTypeSortDirection(saved.sortDirection);
+    if (sortDirection !== undefined) settings.sortDirection = sortDirection;
+
+    if (Object.keys(settings).length > 0) normalized[type] = settings;
+  }
+  return normalized;
+}
+
+/**
+ * The Display Settings actually in force for one tracker type: its own choices
+ * where it has made them, the workspace-wide values everywhere else.
+ *
+ * This two-level read is the whole fix for #1412. It also means an upgrading
+ * workspace -- which has no `typeViewSettings` at all -- opens every type on
+ * exactly the view it was last left in, with nothing to migrate.
+ */
+export function resolveTrackerViewSettings(
+  layout: TrackerModeLayout,
+  typeKey: string,
+): TrackerTypeViewSettings {
+  const settings = layout.typeViewSettings[typeKey];
+  return {
+    viewMode: settings?.viewMode ?? layout.viewMode,
+    groupBy: settings?.groupBy ?? layout.groupBy,
+    ordering: settings?.ordering ?? layout.ordering,
+    sortBy: settings?.sortBy ?? layout.sortBy,
+    sortDirection: settings?.sortDirection ?? layout.sortDirection,
+  };
 }
 
 function readLegacyTypeGroupBy(raw: unknown, selectedType: string): unknown {
@@ -473,11 +584,6 @@ export const trackerModeActiveFiltersAtom = atom(
   (get) => get(trackerModeLayoutAtom).activeFilters
 );
 
-/** View mode (`list` row-list, `table` grid, or `kanban` board) in tracker mode. */
-export const trackerModeViewModeAtom = atom(
-  (get) => get(trackerModeLayoutAtom).viewMode
-);
-
 /** Currently selected item ID in tracker mode (opens detail panel). */
 export const trackerModeSelectedItemIdAtom = atom(
   (get) => get(trackerModeLayoutAtom).selectedItemId
@@ -539,14 +645,55 @@ export const toggleTrackerSidebarCollapsedAtom = atom(
   }
 );
 
-/** Active grouping in tracker mode. */
-export const trackerModeGroupByAtom = atom(
-  (get) => get(trackerModeLayoutAtom).groupBy
+/**
+ * Display Settings in force for the selected type -- view mode, grouping,
+ * ordering, and sort. Every consumer reads this rather than the root layout
+ * fields, so the on-screen view and the per-type store cannot drift apart.
+ *
+ * The previous value is returned whenever all five fields are unchanged. Every
+ * write to the layout re-runs this read, and the layout carries high-churn
+ * state like `selectedItemId`; a fresh object each time would re-render both
+ * tracker components and rebuild the view definition on every item click.
+ */
+let lastActiveViewSettings = resolveTrackerViewSettings(
+  DEFAULT_MODE_LAYOUT,
+  DEFAULT_MODE_LAYOUT.selectedType,
 );
 
-/** Active manual-or-field ordering in tracker mode. */
-export const trackerModeOrderingAtom = atom(
-  (get) => get(trackerModeLayoutAtom).ordering
+export const trackerActiveViewSettingsAtom = atom(
+  (get) => {
+    const layout = get(trackerModeLayoutAtom);
+    const next = resolveTrackerViewSettings(layout, layout.selectedType);
+    const previous = lastActiveViewSettings;
+    const unchanged = next.viewMode === previous.viewMode
+      && next.groupBy === previous.groupBy
+      && next.ordering === previous.ordering
+      && next.sortBy === previous.sortBy
+      && next.sortDirection === previous.sortDirection;
+    if (unchanged) return previous;
+    lastActiveViewSettings = next;
+    return next;
+  }
+);
+
+/**
+ * Write Display Settings for one tracker type, leaving every other type -- and
+ * the root fallback -- alone. Writing the fallback too would let a type nobody
+ * has configured drift as a side effect of configuring a different one, which
+ * is the bug this replaced (#1412).
+ */
+export const setTrackerTypeViewSettingsAtom = atom(
+  null,
+  (get, set, updates: { typeKey: string } & Partial<TrackerTypeViewSettings>) => {
+    const { typeKey, ...settings } = updates;
+    const current = get(trackerModeLayoutAtom);
+    set(setTrackerModeLayoutAtom, {
+      typeViewSettings: {
+        ...current.typeViewSettings,
+        [typeKey]: { ...current.typeViewSettings[typeKey], ...settings },
+      },
+    });
+  }
 );
 
 /** Active lifecycle scope in tracker mode. */

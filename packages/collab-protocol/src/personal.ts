@@ -141,6 +141,8 @@ export interface DeviceAnnounceMessage {
 export interface CreateSessionRequestMessage {
   type: 'createSessionRequest';
   request: EncryptedCreateSessionRequest;
+  /** Execute on this host only. Absent preserves legacy untargeted routing. */
+  targetDeviceId?: string;
 }
 
 /** Response to session creation request from desktop */
@@ -185,6 +187,8 @@ export interface EncryptedCreateSessionResponse {
 export interface CreateWorktreeRequestMessage {
   type: 'createWorktreeRequest';
   request: EncryptedCreateWorktreeRequest;
+  /** Execute on this host only. Absent preserves legacy untargeted routing. */
+  targetDeviceId?: string;
 }
 
 /** Response to worktree creation request from desktop */
@@ -257,6 +261,10 @@ export interface SessionControlMessage {
   payload?: Record<string, unknown>;
   timestamp: number;
   sentBy: 'desktop' | 'mobile';
+  /** Stable ID of the sending device. Absent on legacy clients. */
+  sentByDeviceId?: string;
+  /** Deliver to this device only. Absent preserves legacy broadcast routing. */
+  targetDeviceId?: string;
 }
 
 /** Register a push notification token for this device */
@@ -612,6 +620,8 @@ export interface DeviceLeftMessage {
 export interface CreateSessionRequestBroadcastMessage {
   type: 'createSessionRequestBroadcast';
   request: EncryptedCreateSessionRequest;
+  /** Host selected to execute this request. */
+  targetDeviceId?: string;
   fromConnectionId?: string;
 }
 
@@ -626,6 +636,8 @@ export interface CreateSessionResponseBroadcastMessage {
 export interface CreateWorktreeRequestBroadcastMessage {
   type: 'createWorktreeRequestBroadcast';
   request: EncryptedCreateWorktreeRequest;
+  /** Host selected to execute this request. */
+  targetDeviceId?: string;
   fromConnectionId?: string;
 }
 
@@ -735,7 +747,7 @@ export interface DeviceInfo {
   /** Human-readable device name (e.g., "MacBook Pro", "iPhone 15") */
   name: string;
   /** Device type for icon display */
-  type: 'desktop' | 'mobile' | 'tablet' | 'unknown';
+  type: 'desktop' | 'mobile' | 'tablet' | 'headless' | 'unknown';
   /** Platform (e.g., "macos", "ios", "windows", "android", "web") */
   platform: string;
   /** App version */
@@ -830,6 +842,8 @@ export interface SessionIndexEntry {
   sessionType?: string;
   /** Worktree ID for git worktree association (plaintext UUID) */
   worktreeId?: string;
+  /** Device that owns execution for this session (plaintext stable device ID). */
+  hostDeviceId?: string;
   /** Agent role marker (e.g. 'meta-agent', 'standard'). Plaintext - drives mobile meta-agent grouping. */
   agentRole?: string;
   /** Meta-agent parent session ID for spawned children (plaintext UUID). Drives mobile meta-agent grouping. */

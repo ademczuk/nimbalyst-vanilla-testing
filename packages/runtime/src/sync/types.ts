@@ -78,7 +78,7 @@ export interface DeviceInfo {
   /** Human-readable device name (e.g., "MacBook Pro", "iPhone 15") */
   name: string;
   /** Device type for icon display */
-  type: 'desktop' | 'mobile' | 'tablet' | 'unknown';
+  type: 'desktop' | 'mobile' | 'tablet' | 'headless' | 'unknown';
   /** Platform (e.g., "macos", "ios", "windows", "android", "web") */
   platform: string;
   /** App version */
@@ -173,6 +173,7 @@ export interface SyncProvider {
       sessionType?: string;
       parentSessionId?: string;
       worktreeId?: string;
+      hostDeviceId?: string;
       isArchived?: boolean;
       isPinned?: boolean;
       messageCount: number;
@@ -203,6 +204,8 @@ export interface SyncProvider {
   /** Subscribe to index changes (session updates broadcast to all connected clients) */
   onIndexChange?(callback: (sessionId: string, entry: {
     sessionId: string;
+    /** Stable device ID of the host that owns this session. */
+    hostDeviceId?: string;
     title?: string;
     provider?: string;
     model?: string;
@@ -243,6 +246,8 @@ export interface SyncProvider {
    * Note: Returns decrypted values - title is always present after decryption */
   getCachedIndexEntry?(sessionId: string): {
     sessionId: string;
+    /** Stable device ID of the host that owns this session. */
+    hostDeviceId?: string;
     projectId: string;
     /** Decrypted title (always present in cache) */
     title: string;
@@ -338,6 +343,9 @@ export interface SyncProvider {
   /** Get list of currently connected devices */
   getConnectedDevices?(): DeviceInfo[];
 
+  /** Get this provider's current device identity for routing and attribution. */
+  getLocalDeviceInfo?(): DeviceInfo | undefined;
+
   /** Subscribe to device status changes (devices joining/leaving) */
   onDeviceStatusChange?(callback: (devices: DeviceInfo[]) => void): () => void;
 
@@ -426,6 +434,8 @@ export interface SessionIndexData {
   parentSessionId?: string;
   /** Worktree ID for git worktree association */
   worktreeId?: string;
+  /** Stable device ID of the host that owns this session. */
+  hostDeviceId?: string;
   /** Agent role marker (e.g. 'meta-agent', 'standard'); drives mobile meta-agent grouping. */
   agentRole?: string;
   /** Meta-agent parent session ID for spawned children; drives mobile meta-agent grouping. */
@@ -519,6 +529,8 @@ export interface SyncedSessionMetadata {
   parentSessionId?: string;
   /** Worktree association (mirrored from ai_sessions.worktree_id). */
   worktreeId?: string;
+  /** Stable device ID of the host that owns this session. */
+  hostDeviceId?: string;
   /** Agent role marker (e.g. 'meta-agent', 'standard'); drives mobile meta-agent grouping. */
   agentRole?: string;
   /** Meta-agent parent session ID for spawned children; drives mobile meta-agent grouping. */
@@ -581,6 +593,8 @@ export interface SessionIndexEntry {
   parentSessionId?: string;
   /** Worktree ID for git worktree association */
   worktreeId?: string;
+  /** Stable device ID of the host that owns this session. */
+  hostDeviceId?: string;
   /** Agent role marker (e.g. 'meta-agent', 'standard'); drives mobile meta-agent grouping. */
   agentRole?: string;
   /** Meta-agent parent session ID for spawned children; drives mobile meta-agent grouping. */
@@ -681,6 +695,8 @@ export interface CreateSessionRequest {
   model?: string;
   /** Agent role (e.g., "meta-agent", "standard"). Falls back to "standard" if omitted. */
   agentRole?: string;
+  /** Execute on this host only. Absent preserves legacy untargeted routing. */
+  targetDeviceId?: string;
   /** Timestamp when request was created */
   timestamp: number;
 }
@@ -744,6 +760,8 @@ export interface CreateWorktreeRequest {
   requestId: string;
   /** Project/workspace ID to create the worktree in */
   projectId: string;
+  /** Execute on this host only. Absent preserves legacy untargeted routing. */
+  targetDeviceId?: string;
   /** Timestamp when request was created */
   timestamp: number;
 }
@@ -776,6 +794,10 @@ export interface SessionControlMessage {
   timestamp: number;
   /** Device that sent the message */
   sentBy: 'desktop' | 'mobile';
+  /** Stable ID of the sending device. Absent on legacy clients. */
+  sentByDeviceId?: string;
+  /** Deliver to this device only. Absent preserves legacy broadcast routing. */
+  targetDeviceId?: string;
 }
 
 /**

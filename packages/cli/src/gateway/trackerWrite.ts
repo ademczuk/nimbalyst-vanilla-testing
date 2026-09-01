@@ -1,27 +1,27 @@
 /**
- * VENDORED write-path helpers for offline (direct-mode) tracker mutations.
+ * CLI host helpers for offline (direct-mode) tracker mutations.
  *
- * These mirror the app's MCP tool handlers + identity service so a CLI-written
- * row is shaped identically to an app-written one:
+ * These stay in the CLI because identity lookup uses Node's git process and the
+ * mutation transaction belongs to DirectGateway, not the pure tracker package.
  *   - `getCurrentIdentity` — copy of the git-config branch of
  *     packages/electron/src/main/services/TrackerIdentityService.ts. The app
  *     also checks Stytch auth first, but Stytch state only exists inside the
  *     running app; an offline CLI has no app session, so we resolve identity
  *     from git config (then anonymous), which is exactly the app's fallback.
- *   - `appendActivity` — copy of the private helper in
- *     packages/electron/src/main/mcp/tools/trackerToolHandlers.ts.
- *   - `buildComment` — the comment shape from `handleTrackerAddComment`.
+ * The remaining helpers shape CLI-only ids and comments at the host boundary.
  *
- * KEEP IN SYNC with those sources.
+ * `appendActivity` is deliberately NOT one of them: a CLI-written row has to be
+ * byte-for-byte what the app writes, and two copies of that rule had already
+ * drifted, so it is re-exported from the shared package rather than restated.
  */
 import { execSync } from 'child_process';
-
-export interface TrackerIdentity {
-  email: string | null;
-  displayName: string;
-  gitName?: string | null;
-  gitEmail?: string | null;
-}
+import type { TrackerIdentity } from '@nimbalyst/tracker-core';
+export {
+  appendActivity,
+  humanOnlyStatusMessage,
+  isHumanOnlyStatus,
+} from '@nimbalyst/tracker-core';
+export type { TrackerIdentity } from '@nimbalyst/tracker-core';
 
 function getGitUserConfig(workspacePath?: string): { gitName: string | null; gitEmail: string | null } {
   const cwd = workspacePath || process.cwd();
@@ -57,33 +57,6 @@ export function getCurrentIdentity(workspacePath?: string): TrackerIdentity {
   return { email: null, displayName: 'Local User', gitName: null, gitEmail: null };
 }
 
-/**
- * Append an entry to `data.activity`, bounded to the last 100 entries. Exact
- * copy of the handler's private `appendActivity`.
- */
-export function appendActivity(
-  data: Record<string, any>,
-  authorIdentity: any,
-  action: string,
-  details?: { field?: string; oldValue?: string; newValue?: string },
-): void {
-  const activity = data.activity || [];
-  activity.push({
-    id: `activity_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    authorIdentity,
-    action,
-    field: details?.field,
-    oldValue: details?.oldValue,
-    newValue: details?.newValue,
-    timestamp: Date.now(),
-  });
-  if (activity.length > 100) {
-    data.activity = activity.slice(-100);
-  } else {
-    data.activity = activity;
-  }
-}
-
 /** The comment shape pushed by `handleTrackerAddComment`. */
 export function buildComment(authorIdentity: TrackerIdentity, body: string): {
   id: string;
@@ -106,23 +79,4 @@ export function buildComment(authorIdentity: TrackerIdentity, body: string): {
 /** Allocate a fresh native tracker id, matching the handler's scheme. */
 export function newTrackerId(type: string): string {
   return `${type}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/**
- * Statuses only a person may set. VENDORED copy of `HUMAN_ONLY_STATUSES` in
- * packages/runtime/src/plugins/TrackerPlugin/models/trackerReview.ts so the
- * offline CLI enforces the same review-lane boundary the app's MCP tools do.
- * KEEP IN SYNC.
- */
-const HUMAN_ONLY_STATUSES = new Set<string>(['approved']);
-
-/** Whether a status is one an agent must not set on a user's behalf. */
-export function isHumanOnlyStatus(status: unknown): boolean {
-  return typeof status === 'string' && HUMAN_ONLY_STATUSES.has(status.trim().toLowerCase());
-}
-
-/** The message shown when a write tries to promote work past review. */
-export function humanOnlyStatusMessage(status: string): string {
-  return `'${status}' can only be set by a person. Move the item to 'in-review' `
-    + 'and let a reviewer promote it.';
 }

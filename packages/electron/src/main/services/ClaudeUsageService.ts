@@ -36,7 +36,7 @@ import {
   resolveClaudeKeychainServiceNames,
 } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeKeychain';
 import { logger } from '../utils/logger';
-import { getShellEnvironment } from './CLIManager';
+import { getShellEnvironment } from './shellEnvironment';
 import { ClaudeSettingsManager } from './ClaudeSettingsManager';
 
 /** Env shape the Claude config-dir resolvers read. */

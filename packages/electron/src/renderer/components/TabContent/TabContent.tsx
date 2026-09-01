@@ -39,6 +39,7 @@ import {
 } from '../../utils/collabDocumentOpener';
 import { getPersistedCollabDocMetadata } from '../../utils/collabOpenDocsPersistence';
 import { store, editorDirtyAtom, editorHasUnacceptedChangesAtom, makeEditorKey } from '@nimbalyst/runtime/store';
+import { titleBarCreateMenusAtom } from '../../store/atoms/titleBarCreate';
 import { clearMockupAnnotationsForFile, getMockupFilePath } from '../UnifiedAI/MockupAnnotationIndicator';
 import { resolveDesktopCollabScope } from '../../store/atoms/collabDocuments';
 
@@ -345,7 +346,12 @@ const TabContentComponent: React.FC<TabContentProps> = ({
                 // Own React root: context does not cross, so the Shared Docs
                 // context has to be re-established here or the view throws.
                 <ElectronCollabDocsUIRoot scope={propsRef.current.collabScope}>
-                  <SharedDocsListView />
+                  {/* Creation is owned by the sidebar and republished for the
+                      title bar; the home view triggers that same action rather
+                      than opening a creation path of its own. */}
+                  <SharedDocsListView
+                    onCreateDocument={() => store.get(titleBarCreateMenusAtom).collab?.onPrimary?.()}
+                  />
                 </ElectronCollabDocsUIRoot>
               )
               : null}

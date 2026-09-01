@@ -39,14 +39,12 @@ export interface WindowedMatchResult {
 }
 
 export interface MatchingConfig {
-  windowSize: number;
   similarityThreshold: number;
   requireSameType: boolean;
   transformers: Transformer[];
 }
 
 const DEFAULT_CONFIG: MatchingConfig = {
-  windowSize: 2,
   similarityThreshold: 0.2,
   requireSameType: true,
   transformers: [],

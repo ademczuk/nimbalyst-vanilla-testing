@@ -38,6 +38,8 @@ struct ServerSessionEntry: Codable {
     let createdBySessionId: String?
     /// Worktree ID for git worktree association
     let worktreeId: String?
+    /// Stable ID of the desktop or headless host that owns execution
+    let hostDeviceId: String?
     /// Whether this session is archived
     let isArchived: Bool?
     /// Whether this session is pinned
@@ -171,7 +173,9 @@ struct ProjectBroadcast: Codable {
 public struct DeviceInfo: Codable {
     public let deviceId: String
     public let name: String
-    public let type: String       // "desktop" | "mobile" | "tablet" | "unknown"
+    // Intentionally a String rather than a closed enum so shipped clients keep
+    // decoding device lists when newer hosts add a type such as "headless".
+    public let type: String
     public let platform: String
     public let appVersion: String?
     public let connectedAt: Int
@@ -403,6 +407,11 @@ struct SessionControlPayload: Codable {
     let payload: [String: AnyCodable]?
     let timestamp: Int
     let sentBy: String
+    /// Stable ID of this device, for the receiving host's own filtering.
+    let sentByDeviceId: String?
+    /// Host that owns the session. nil routes as a broadcast, which is what a
+    /// session with no known host has always done.
+    let targetDeviceId: String?
 }
 
 // MARK: - Session Room Messages (Client -> Server)

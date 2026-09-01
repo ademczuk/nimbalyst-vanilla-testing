@@ -301,6 +301,55 @@ describe('UnifiedQuickOpen — Projects tab', () => {
     });
   });
 
+  it('scopes Files results to local or shared and remembers the choice', async () => {
+    const { appSettings } = setupElectronApiMock();
+    (window.electronAPI.searchWorkspaceFileNames as ReturnType<typeof vi.fn>)
+      .mockResolvedValue([{ path: `${WORKSPACE}/docs/roadmap.md`, type: 'file', isFileNameMatch: true }]);
+
+    const store = createStore();
+    store.set(activeWorkspacePathAtom, WORKSPACE);
+    activateTeam(store);
+    store.set(sharedDocumentsAtom, [sharedDoc('doc-roadmap', 'Planning/Product Roadmap')]);
+
+    const { unmount } = renderQuickOpen({ initialTab: 'files' }, store);
+    typeSearch('roadmap');
+
+    await screen.findByTestId('shared-file-quick-open-doc-roadmap');
+    await screen.findByText('roadmap.md');
+
+    fireEvent.click(within(screen.getByRole('group', { name: 'Show' })).getByText('Local'));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('shared-file-quick-open-doc-roadmap')).toBeNull();
+    });
+    screen.getByText('roadmap.md');
+
+    await waitFor(() => {
+      expect(appSettings.get('unifiedQuickOpen.selectedFileSource')).toBe('local');
+    });
+
+    unmount();
+
+    renderQuickOpen({ initialTab: 'files' }, store);
+    typeSearch('roadmap');
+
+    await screen.findByText('roadmap.md');
+    expect(screen.queryByTestId('shared-file-quick-open-doc-roadmap')).toBeNull();
+
+    // Scoping to shared drops the local hit and lists the team index instead.
+    fireEvent.click(within(screen.getByRole('group', { name: 'Show' })).getByText('Shared'));
+
+    await screen.findByTestId('shared-file-quick-open-doc-roadmap');
+    expect(screen.queryByText('roadmap.md')).toBeNull();
+  });
+
+  it('hides the Files source row when the workspace has no shared documents', async () => {
+    renderQuickOpen({ initialTab: 'files' });
+
+    await screen.findByText('crystal');
+    expect(screen.queryByRole('group', { name: 'Show' })).toBeNull();
+  });
+
   it('opens the tracker type picker with Ctrl+T', async () => {
     renderQuickOpen({ initialTab: 'files' });
 

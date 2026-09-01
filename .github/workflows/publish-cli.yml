@@ -1,0 +1,219 @@
+name: Publish CLI to npm
+
+# Triggered manually only, for the same reason as publish-extension-sdk.yml:
+# pushing `cli-v*` tags to nimbalyst/nimbalyst pollutes the repo's
+# `releases.atom` feed, and electron-updater's GitHub provider reads that feed
+# and picks the topmost <entry> -- a stray tag at the top 404s the desktop
+# app's update check. Do not add a tag trigger here.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Expected version (must match packages/cli/package.json). Defaults to whatever is in package.json.'
+        type: string
+        required: false
+        default: ''
+      dry_run:
+        description: 'Dry run (build, test, and pack, but do not publish)'
+        type: boolean
+        default: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Make npm resilient to transient registry socket drops (ECONNRESET): retry
+  # individual failed requests instead of aborting the whole `npm ci`.
+  npm_config_fetch_retries: '5'
+  npm_config_fetch_retry_mintimeout: '20000'
+  npm_config_fetch_retry_maxtimeout: '120000'
+  npm_config_fetch_timeout: '300000'
+
+concurrency:
+  group: publish-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Verification and the dry-run path, split out of `publish` so checking a
+  # release candidate never runs with publish authority. This job holds none:
+  # no environment, no id-token.
+  verify:
+    name: Verify @nimbalyst/cli
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify expected version matches package.json
+        if: ${{ inputs.version != '' }}
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          PKG_VERSION=$(node -p "require('./packages/cli/package.json').version")
+          if [ "$PKG_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "::error::Expected version ($EXPECTED_VERSION) does not match packages/cli/package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "Version match: $PKG_VERSION"
+
+      # The CLI bundles @nimbalyst/tracker-core into dist rather than depending
+      # on it at install time, and it resolves that package through its built
+      # `dist`. Building it here makes the ordering explicit instead of relying
+      # on whether `npm ci` happened to run the workspace's `prepare`.
+      - name: Build tracker-core
+        run: npm run build -w @nimbalyst/tracker-core
+
+      - name: Typecheck
+        working-directory: packages/cli
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: packages/cli
+        run: npm test
+
+      - name: Build
+        working-directory: packages/cli
+        run: npm run build
+
+      # `files` is ["dist", "README.md"], so a missing or partial build packs a
+      # tarball whose `bin` target does not exist and installs a broken `nim`.
+      # `npm pack --dry-run` alone reports success on that tarball.
+      - name: Verify package contents
+        working-directory: packages/cli
+        run: |
+          if [ ! -f dist/bin/cli.js ]; then
+            echo "::error::dist/bin/cli.js missing -- the bin entry would not resolve after install"
+            exit 1
+          fi
+          npm pack --dry-run
+          node -e "
+            const { execSync } = require('child_process');
+            const files = JSON.parse(execSync('npm pack --dry-run --json', { encoding: 'utf8' }))[0].files.map(f => f.path);
+            // cli-bundled.js is not in \`bin\` -- it is the copy the desktop app
+            // ships -- but it comes out of this same build, so a build that
+            // stopped emitting it should fail here rather than in packaging.
+            const required = ['package.json', 'README.md', 'dist/bin/cli.js', 'dist/bin/cli-bundled.js', 'dist/index.js'];
+            const missing = required.filter(f => !files.includes(f));
+            if (missing.length) {
+              console.error('::error::Missing from tarball: ' + missing.join(', '));
+              process.exit(1);
+            }
+            console.log('Tarball contains ' + files.length + ' files');
+          "
+
+      - name: Smoke test the packed CLI
+        working-directory: packages/cli
+        # Installing the tarball into a scratch directory builds better-sqlite3
+        # for the runner's Node, which is the whole premise of the npm channel:
+        # unlike the bundled channel, there is no Electron-ABI prebuild to ship.
+        #
+        # `nim --help` prints without touching a database or any tracker code,
+        # so it is not enough on its own: it would pass on a build whose tracker
+        # semantics failed to resolve. The commands below read a fixture
+        # database, which is what actually runs the bundled tracker-core.
+        run: |
+          set -euo pipefail
+          TARBALL=$(npm pack --silent)
+          WORK=$(mktemp -d)
+          mv "$TARBALL" "$WORK/"
+          cp scripts/smoke-fixture.mjs "$WORK/"
+          cd "$WORK"
+          npm init -y >/dev/null
+          npm install "./$TARBALL" >/dev/null
+          ./node_modules/.bin/nim --help >/dev/null
+          node smoke-fixture.mjs "$WORK/smoke.db"
+          ./node_modules/.bin/nim tracker list --db smoke.db --workspace /tmp/nim-smoke-workspace --json > list.json
+          ./node_modules/.bin/nim tracker ready --db smoke.db --workspace /tmp/nim-smoke-workspace
+          node -e "
+            const out = require('fs').readFileSync('list.json', 'utf8');
+            const { items, count } = JSON.parse(out);
+            // The record shape (primaryType/system/fields) and issueKeyStatus are
+            // produced by tracker-core, so an assertion on them is an assertion
+            // that the bundled copy ran.
+            const bug = items.find((i) => i.id === 'smoke-bug-1');
+            if (count !== 2 || !bug || bug.primaryType !== 'bug' || bug.issueKeyStatus !== 'assigned' || bug.fields.title !== 'smoke bug') {
+              console.error('::error::Installed nim did not return the expected tracker records: ' + out);
+              process.exit(1);
+            }
+            console.log('Installed nim converted ' + count + ' tracker rows.');
+          "
+
+      # The copy that ships inside the desktop app runs from
+      # <Resources>/nim/dist/bin/ with only the app's own node_modules in scope.
+      # Reproducing that layout is the only way to catch a build that leaves the
+      # bundled entry importing something the app does not carry.
+      - name: Smoke test the bundled-channel entry
+        working-directory: packages/cli
+        run: |
+          set -euo pipefail
+          WORK=$(mktemp -d)
+          RES="$WORK/Resources"
+          mkdir -p "$RES/nim/dist" "$RES/node_modules"
+          cp -R dist/. "$RES/nim/dist/"
+          cp scripts/smoke-fixture.mjs "$WORK/"
+          cd "$WORK"
+          npm init -y >/dev/null
+          npm install better-sqlite3@13.0.1 >/dev/null
+          node smoke-fixture.mjs "$WORK/smoke.db"
+          mv node_modules/* "$RES/node_modules/"
+          node "$RES/nim/dist/bin/cli-bundled.js" tracker ready --db smoke.db --workspace /tmp/nim-smoke-workspace
+
+  publish:
+    name: Publish @nimbalyst/cli
+    needs: verify
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    # Adding this environment changes npm's OIDC subject claim from a ref-based
+    # subject to an environment-based one. The npm trusted-publisher config for
+    # @nimbalyst/cli must name `npm-publish` before this lands, or publishing
+    # fails to authenticate. There is no npm write token here and one must never
+    # be added as a workaround -- see MAINTAINERS.md.
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          # Node 24 ships with npm >= 11.5.1, which is required for Trusted
+          # Publishing. Earlier majors need an `npm install -g npm@latest`
+          # upgrade step that hits a known self-replace bug on the runner.
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish to npm (Trusted Publishing via OIDC)
+        working-directory: packages/cli
+        # `prepublishOnly` builds dist. `--provenance` is what triggers npm's
+        # OIDC exchange; without it the CLI publishes anonymously and bails on
+        # ENEEDAUTH even when id-token: write is granted.
+        run: npm publish --access public --provenance
+
+      - name: Summary
+        run: |
+          VERSION=$(node -p "require('./packages/cli/package.json').version")
+          echo "Published @nimbalyst/cli@$VERSION"
+          echo "https://www.npmjs.com/package/@nimbalyst/cli/v/$VERSION"

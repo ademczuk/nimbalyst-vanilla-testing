@@ -262,6 +262,24 @@ export interface TeamMember {
 
 type InviteMemberRole = 'owner' | 'admin' | 'member' | 'viewer' | 'guest';
 
+/**
+ * An extra project an invitation should grant.
+ *
+ * `teamProjectId` is the routing key, not `projectId`: the server's
+ * `project_access.project_id` column holds `team_project_id`, so a grant sent
+ * under the other identifier writes a row that authorizes nothing.
+ */
+export interface InviteProjectGrant {
+  teamProjectId: string;
+  projectRole: 'project-admin' | 'project-editor' | 'project-viewer';
+}
+
+export interface InviteMemberOutcome {
+  projectGrantsApplied: number;
+  /** `teamProjectId`s the server accepted the invitation for but could not grant. */
+  projectGrantsFailed: string[];
+}
+
 // ============================================================================
 // Per-Org JWT Cache
 // ============================================================================
@@ -2079,9 +2097,30 @@ export async function listMembersWithTeamJwt(
 
 /**
  * Invite a member to a team by email. Requires explicit orgId.
+ *
+ * `projectGrants` covers only the projects *beyond* the org's primary one — the
+ * server already seeds every joiner an editor grant there — and is keyed by
+ * `teamProjectId`, which is what the server's `project_access` rows hold.
+ *
+ * The result carries what actually happened, because a grant can fail after the
+ * membership is real. Reporting a partial success as a plain success would tell
+ * the inviter they shared a project the invitee cannot open.
  */
-async function inviteMember(orgId: string, email: string, role?: InviteMemberRole): Promise<void> {
-  await fetchTeamApi(`/api/teams/${orgId}/invite`, 'POST', { email, ...(role ? { role } : {}) }, orgId);
+async function inviteMember(
+  orgId: string,
+  email: string,
+  role?: InviteMemberRole,
+  projectGrants?: InviteProjectGrant[],
+): Promise<InviteMemberOutcome> {
+  const response = await fetchTeamApi(`/api/teams/${orgId}/invite`, 'POST', {
+    email,
+    ...(role ? { role } : {}),
+    ...(projectGrants && projectGrants.length > 0 ? { projectGrants } : {}),
+  }, orgId) as InviteMemberOutcome | undefined;
+  return {
+    projectGrantsApplied: response?.projectGrantsApplied ?? 0,
+    projectGrantsFailed: response?.projectGrantsFailed ?? [],
+  };
 }
 
 /**
@@ -2693,10 +2732,16 @@ export function registerTeamHandlers(): void {
     }
   });
 
-  safeHandle('team:invite', async (_event, orgId: string, email: string, role?: InviteMemberRole) => {
+  safeHandle('team:invite', async (
+    _event,
+    orgId: string,
+    email: string,
+    role?: InviteMemberRole,
+    projectGrants?: InviteProjectGrant[],
+  ) => {
     try {
-      await inviteMember(orgId, email, role);
-      return { success: true };
+      const outcome = await inviteMember(orgId, email, role, projectGrants);
+      return { success: true, ...outcome };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }

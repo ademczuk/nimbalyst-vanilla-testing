@@ -1474,3 +1474,74 @@ describe('TrackerSyncEngine terminal access refusal', () => {
     dropped.engine.destroy();
   });
 });
+
+// ============================================================================
+// Recovery for rows the old issue-key collision branch stranded
+// ============================================================================
+
+describe('TrackerSyncEngine stranded-identity recovery', () => {
+  const build = createEngineBuilder(() => new InspectableInMemoryTrackerPersistence());
+
+  /**
+   * The rows this repairs are `synced`, carry a `sync_id`, and hold no issue
+   * key, so the ordinary bootstrap -- which starts at `MAX(sync_id)` -- can
+   * never reach them again. The host reports them through `getFacts`; every
+   * step after that is the real engine over the real protocol.
+   *
+   * This exercise exists because a repair that is defined and unit-tested but
+   * never actually driven from the bootstrap is the failure destructive-data
+   * -paths.md calls out by name.
+   */
+  it('rewinds the bootstrap cursor and re-applies the rows the room still owns', async () => {
+    const server = createFakeServer();
+    const key = await generateKey();
+
+    const author = await build({ room: server.room, serverConnect: server.connect, encryptionKey: key });
+    await author.engine.connect();
+    await waitUntil(() => author.engine.getStatus() === 'connected');
+    for (const id of ['stranded-1', 'stranded-2', 'later-3']) {
+      await author.engine.upsertItem(basePayload(id));
+    }
+
+    let markedAttempted = 0;
+    const victim = await build({ room: server.room, serverConnect: server.connect, encryptionKey: key });
+    // Put the ordinary cursor past everything the room holds. This is what a
+    // stranded workspace actually looks like: the rows are below MAX(sync_id),
+    // so `trackerSync` from the watermark returns an empty batch forever.
+    victim.persistence.getMaxSyncId = async () => 999;
+    victim.config.identityRecovery = {
+      getFacts: async () => ({ strandedCount: 2, minStrandedSyncId: 1, alreadyAttempted: false }),
+      markAttempted: async () => { markedAttempted += 1; },
+    };
+
+    await victim.engine.connect();
+    await waitUntil(() => victim.engine.getStatus() === 'connected');
+
+    // Only the rewind can have delivered these.
+    expect(await victim.persistence.getItem('stranded-1')).not.toBeNull();
+    expect(await victim.persistence.getItem('stranded-2')).not.toBeNull();
+    expect(await victim.persistence.getItem('later-3')).not.toBeNull();
+    expect(markedAttempted).toBe(1);
+
+    author.engine.destroy();
+    victim.engine.destroy();
+  });
+
+  it('does not rewind when the host reports nothing stranded', async () => {
+    const server = createFakeServer();
+    const key = await generateKey();
+
+    let markedAttempted = 0;
+    const client = await build({ room: server.room, serverConnect: server.connect, encryptionKey: key });
+    client.config.identityRecovery = {
+      getFacts: async () => ({ strandedCount: 0, minStrandedSyncId: 0, alreadyAttempted: false }),
+      markAttempted: async () => { markedAttempted += 1; },
+    };
+
+    await client.engine.connect();
+    await waitUntil(() => client.engine.getStatus() === 'connected');
+
+    expect(markedAttempted).toBe(0);
+    client.engine.destroy();
+  });
+});

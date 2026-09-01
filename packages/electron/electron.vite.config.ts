@@ -115,6 +115,7 @@ const claudeAgentSdkVersion = (() => {
   }
   return 'unknown';
 })();
+const trackerCoreSrcDir = resolve(__dirname, '../tracker-core/src');
 const runtimeSrcDir = resolve(__dirname, '../runtime/src');
 const runtimeDistDir = resolve(__dirname, '../runtime/dist');
 const runtimeElectronMainEntry = resolve(runtimeSrcDir, 'electronMain.ts');
@@ -304,6 +305,7 @@ export default defineConfig({
         { find: /^@nimbalyst\/runtime$/, replacement: runtimeElectronMainEntry },
         // Explicit subpath imports still resolve straight to runtime source.
         { find: '@nimbalyst/runtime', replacement: runtimeSrcDir },
+        { find: '@nimbalyst/tracker-core', replacement: trackerCoreSrcDir },
         // The public SDK barrel includes renderer hooks which import the public
         // runtime barrel. Main only needs validation and protocol helpers.
         { find: /^@nimbalyst\/extension-sdk$/, replacement: extensionSdkElectronMainEntry },
@@ -350,7 +352,8 @@ export default defineConfig({
   preload: {
     resolve: {
       alias: {
-        '@nimbalyst/runtime': runtimeSrcDir
+        '@nimbalyst/runtime': runtimeSrcDir,
+        '@nimbalyst/tracker-core': trackerCoreSrcDir
       }
     },
     build: {
@@ -529,6 +532,7 @@ export default defineConfig({
       alias: [
         // Ensure renderer also points runtime imports at source
         { find: '@nimbalyst/runtime', replacement: runtimeSrcDir },
+        { find: '@nimbalyst/tracker-core', replacement: trackerCoreSrcDir },
         ...extensionSdkSourceSubpaths,
         // Redirect `import ... from 'prismjs'` (exact match only) to a shim
         // that returns the window.Prism instance loaded by the classic
@@ -573,7 +577,8 @@ export default defineConfig({
         '@lexical/text',
         '@lexical/utils',
         '@lexical/yjs',
-        '@nimbalyst/runtime'
+        '@nimbalyst/runtime',
+        '@nimbalyst/tracker-core'
       ]
     },
     optimizeDeps: {
@@ -711,6 +716,7 @@ export default defineConfig({
         '@shikijs/langs',
         'prettier',
         '@nimbalyst/runtime',
+        '@nimbalyst/tracker-core',
         // RevoGrid is a Stencil bundle: its runtime lazy-imports its own
         // component entry chunks at render time. Pre-bundled, those dynamic
         // imports are emitted WITHOUT a `?v=` query, so Vite re-transforms them

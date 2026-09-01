@@ -4,7 +4,7 @@ import * as os from 'os';
 import { watch, FSWatcher } from 'fs';
 import { MCPConfig, MCPServerConfig, MCPServerEnv } from '@nimbalyst/runtime/types/MCPServerConfig';
 import { logger } from '../utils/logger';
-import { getEnhancedPath } from './CLIManager';
+import { getEnhancedPath } from './shellEnvironment';
 import {
   applyDisabledMcpjsonServersToSettings,
   applyDisabledServersToClaudeConfig,

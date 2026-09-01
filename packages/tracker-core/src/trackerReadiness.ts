@@ -1,19 +1,26 @@
 /**
- * VENDORED SUBSET of
- * `packages/runtime/src/plugins/TrackerPlugin/models/trackerReadiness.ts`, with
- * the value normalizer mirrored from `trackerRelationships.ts`.
+ * Pure dependency-graph analysis and readiness derivation for tracker items.
  *
- * The graph algorithm and accessor contract match the runtime. The only CLI
- * adaptation is schema lookup: direct mode registers the materialized models
- * read beside the tracker rows instead of loading the runtime global registry.
+ * The generic entry points keep storage-shape adaptation at the caller boundary:
+ * renderer records, MCP items, and CLI rows can share one edge implementation.
+ * The TrackerRecord wrappers mirror trackerCollections for runtime callers.
  *
- * KEEP IN SYNC with both runtime modules. Edge extraction, SCC handling, and
- * readiness semantics must change in the app and CLI together.
+ * Graph work is one Tarjan SCC pass plus a union-find track partition. Both walk
+ * iteratively on purpose: chain length is decided by whoever can create tracker
+ * items, so recursion depth would be untrusted input and a long chain would
+ * overflow the call stack, taking down every surface that renders readiness.
+ *
+ * Cost is O(V log V + E log E), not O(V + E): ids, blocker lists, and component
+ * members are sorted so the output is deterministic. Callers persist and diff
+ * these results, so stable ordering is worth the log factor.
  */
 
-import type { IssueKeyStatus } from '../cli/output.js';
+import type { TrackerCoreContext } from './context.js';
+import type { TrackerRecord } from './trackerRecord.js';
+import { resolveDisplayIssueKey, type IssueKeyStatus } from './localIssueKey.js';
+import { isRelationshipField, normalizeRelationshipValue } from './trackerRelationships.js';
 import {
-  getTrackerReadinessTypeModel,
+  getWorkflowStatusFieldName,
   isTerminalStatus,
   resolveStatusCategory,
   type StatusCategory,
@@ -21,6 +28,12 @@ import {
 
 export const DEPENDENCY_BLOCKER_KEY = 'depends-on';
 export const DEPENDENCY_BLOCKS_KEY = 'blocks';
+
+/**
+ * Owned by `localIssueKey`, where the rest of the issue-key vocabulary lives.
+ * Re-exported so a caller reading `BlockerRef.refStatus` needs only this module.
+ */
+export type { IssueKeyStatus };
 
 export type ReadinessState = 'ready' | 'blocked' | 'closed';
 
@@ -36,11 +49,30 @@ export interface BlockerRef {
 
 export interface Readiness {
   state: ReadinessState;
+  /** Open direct blockers, with enough detail to explain the verdict. */
   blockedBy: BlockerRef[];
+  /** Blocker ids not present in the corpus -- reported, not counted. */
   unresolvedBlockerIds: string[];
+  /**
+   * How many open dependents become ready the moment this item closes -- the
+   * dependents whose only remaining open blocker is this item.
+   *
+   * Deliberately not the count of all open dependents. One that is also blocked
+   * by something else does not move when this item closes, so counting it would
+   * overstate the leverage of anything ranking a queue by this number.
+   */
   unblocks: number;
+  /** Member of a dependency cycle: will never become ready on its own. */
   inCycle: boolean;
+  /** Stable id of the weakly connected component in the open dependency graph. */
   trackId: string;
+}
+
+interface DependencyGraphAnalysis {
+  /** SCCs of size greater than one, plus single items that depend on themselves. */
+  cycles: string[][];
+  /** Open item id to its weakly connected component id. */
+  trackIdByItemId: Map<string, string>;
 }
 
 export interface ReadinessReference {
@@ -48,6 +80,7 @@ export interface ReadinessReference {
   refStatus: IssueKeyStatus;
 }
 
+/** Storage-shape seam shared by runtime, MCP, and CLI callers. */
 export interface ReadinessAccessors<T> {
   getId: (item: T) => string;
   getType: (item: T) => string;
@@ -70,44 +103,8 @@ interface PreparedGraph<T> {
   blockerIdsByDependentId: Map<string, Set<string>>;
 }
 
-interface DependencyGraphAnalysis {
-  /** SCCs of size greater than one, plus single items that depend on themselves. */
-  cycles: string[][];
-  trackIdByItemId: Map<string, string>;
-}
-
-interface RelationshipValue {
-  itemId: string;
-  relationshipTypeKey?: string;
-}
-
-function normalizeRelationshipValue(raw: unknown): RelationshipValue[] {
-  const list: unknown[] = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-  const byId = new Map<string, RelationshipValue>();
-  for (const entry of list) {
-    let value: RelationshipValue | null = null;
-    if (typeof entry === 'string') {
-      value = entry ? { itemId: entry } : null;
-    } else if (entry && typeof entry === 'object') {
-      const object = entry as Record<string, unknown>;
-      const itemId = typeof object.itemId === 'string'
-        ? object.itemId
-        : typeof object.id === 'string' ? object.id : '';
-      if (itemId) {
-        value = {
-          itemId,
-          ...(typeof object.relationshipTypeKey === 'string'
-            ? { relationshipTypeKey: object.relationshipTypeKey }
-            : {}),
-        };
-      }
-    }
-    if (value) byId.set(value.itemId, value);
-  }
-  return [...byId.values()];
-}
-
 function prepareGraph<T>(
+  ctx: TrackerCoreContext,
   allItems: readonly T[],
   accessors: ReadinessAccessors<T>,
 ): PreparedGraph<T> {
@@ -121,7 +118,7 @@ function prepareGraph<T>(
       id,
       type,
       status,
-      terminal: isTerminalStatus(type, status),
+      terminal: isTerminalStatus(ctx, type, status),
     });
   }
 
@@ -136,9 +133,9 @@ function prepareGraph<T>(
   };
 
   for (const node of nodesById.values()) {
-    const fields = getTrackerReadinessTypeModel(node.type)?.fields ?? [];
+    const fields = ctx.getTypeModel(node.type)?.fields ?? [];
     for (const field of fields) {
-      if (field.type !== 'relationship' && field.type !== 'reference') continue;
+      if (!isRelationshipField(field)) continue;
       if (
         field.relationshipTypeKey !== DEPENDENCY_BLOCKER_KEY &&
         field.relationshipTypeKey !== DEPENDENCY_BLOCKS_KEY
@@ -146,7 +143,7 @@ function prepareGraph<T>(
         continue;
 
       const relationships = normalizeRelationshipValue(
-        accessors.getFieldValue(node.item, field.name),
+        accessors.getFieldValue(node.item, field.name)
       );
       for (const relationship of relationships) {
         const relationshipKey =
@@ -197,9 +194,7 @@ class DisjointSet {
     const leftRoot = this.find(left);
     const rightRoot = this.find(right);
     if (leftRoot === rightRoot) return;
-    const [root, child] = leftRoot < rightRoot
-      ? [leftRoot, rightRoot]
-      : [rightRoot, leftRoot];
+    const [root, child] = leftRoot < rightRoot ? [leftRoot, rightRoot] : [rightRoot, leftRoot];
     this.parent.set(child, root);
   }
 }
@@ -319,14 +314,19 @@ function readinessState(terminal: boolean, openBlockerCount: number): ReadinessS
 }
 
 /**
- * Compute readiness over the FULL unfiltered corpus. Filtering first turns
- * satisfied blockers into dangling ids and falsely marks dependents ready.
+ * Compute readiness for any in-memory item shape.
+ *
+ * `allItems` must be the FULL unfiltered corpus: every type and status,
+ * including terminal and archived items. Filtering first turns satisfied
+ * blockers into dangling ids and falsely marks their dependents ready. Build
+ * the id index once here; never fetch blockers per item.
  */
 export function computeReadinessForItems<T>(
+  ctx: TrackerCoreContext,
   allItems: readonly T[],
   accessors: ReadinessAccessors<T>,
 ): Map<string, Readiness> {
-  const prepared = prepareGraph(allItems, accessors);
+  const prepared = prepareGraph(ctx, allItems, accessors);
   const analysis = analyzePreparedGraph(prepared);
   const cycleIds = new Set(analysis.cycles.flat());
   const openBlockerIdsByDependentId = new Map<string, string[]>();
@@ -370,7 +370,7 @@ export function computeReadinessForItems<T>(
         ...(title ? { title } : {}),
         type: blocker.type,
         status: blocker.status,
-        statusCategory: resolveStatusCategory(blocker.type, blocker.status),
+        statusCategory: resolveStatusCategory(ctx, blocker.type, blocker.status),
       };
     });
     result.set(node.id, {
@@ -383,4 +383,45 @@ export function computeReadinessForItems<T>(
     });
   }
   return result;
+}
+
+/** TrackerRecord adapter shared by runtime and renderer callers. */
+export function trackerRecordReadinessAccessors(
+  ctx: TrackerCoreContext,
+  getStatus: (record: TrackerRecord) => string = (record) => {
+    const fieldName = getWorkflowStatusFieldName(ctx, record.primaryType);
+    return String(record.fields[fieldName] ?? '');
+  },
+): ReadinessAccessors<TrackerRecord> {
+  return {
+    getId: (record) => record.id,
+    getType: (record) => record.primaryType,
+    getStatus,
+    getTitle: (record) => {
+      const fieldName = ctx.getTypeModel(record.primaryType)?.roles?.title ?? 'title';
+      const title = record.fields[fieldName];
+      return typeof title === 'string' && title ? title : undefined;
+    },
+    getFieldValue: (record, fieldName) => record.fields[fieldName],
+    getReference: (record) => {
+      const ref = resolveDisplayIssueKey(record);
+      if (ref === undefined) return { ref: record.id, refStatus: 'unassigned' };
+      return {
+        ref,
+        refStatus: record.localKey && ref === record.localKey ? 'local' : 'assigned',
+      };
+    },
+  };
+}
+
+/**
+ * One pass over the FULL unfiltered TrackerRecord corpus. Mirrors
+ * computeCollectionRollups and performs no per-blocker fetches.
+ */
+export function computeReadiness(
+  ctx: TrackerCoreContext,
+  allItems: TrackerRecord[],
+  getStatus?: (record: TrackerRecord) => string,
+): Map<string, Readiness> {
+  return computeReadinessForItems(ctx, allItems, trackerRecordReadinessAccessors(ctx, getStatus));
 }

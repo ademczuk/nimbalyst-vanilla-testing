@@ -8,13 +8,15 @@
  * These writes never touch the user's real database — each test builds its own
  * temp fixture and points DirectGateway at it via --db.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { openDatabase } from '../../db/openDatabase.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { renderList, renderRecord } from '../../cli/output.js';
 import { DirectGateway } from '../DirectGateway.js';
+import { getCurrentIdentity } from '../trackerWrite.js';
+import { appendActivity as appendAppActivity } from '../../../../electron/src/main/services/tracker/trackerActivity';
 
 const WORKSPACE = '/tmp/fixture-write-workspace';
 
@@ -130,6 +132,42 @@ afterEach(() => {
 });
 
 describe('DirectGateway offline writes', () => {
+  it('produces the same stored row bytes as the app update path', async () => {
+    const identity = getCurrentIdentity(WORKSPACE);
+    const stored = {
+      title: 'Existing item',
+      priority: 'medium',
+      customFields: {
+        activity: [{
+          id: 'activity-existing',
+          authorIdentity: identity,
+          action: 'updated',
+          field: 'priority',
+          oldValue: 'low',
+          newValue: 'medium',
+          timestamp: 1,
+        }],
+      },
+    };
+    seed({ id: 'byte-parity', issueKey: 'NIM-1', type: 'bug', data: stored });
+
+    const expectedAppData: Record<string, any> = structuredClone(stored);
+    expectedAppData.lastModifiedBy = identity;
+    expectedAppData.priority = 'high';
+    vi.spyOn(Date, 'now').mockReturnValue(1_788_200_000_000);
+    appendAppActivity(expectedAppData, identity, 'updated', {
+      field: 'priority',
+      oldValue: 'medium',
+      newValue: 'high',
+    });
+
+    const gateway = new DirectGateway(dbPath);
+    await gateway.updateTracker(WORKSPACE, 'NIM-1', { priority: 'high' });
+    gateway.close();
+
+    expect(rawRow('byte-parity').data).toBe(JSON.stringify(expectedAppData));
+  });
+
   it('creates a solo-workspace item without a key or number and explains the unassigned key', async () => {
     const gw = new DirectGateway(dbPath);
     const rec = await gw.createTracker(WORKSPACE, {
@@ -361,6 +399,27 @@ describe('DirectGateway offline writes', () => {
     expect(data.state).toBe('lead');
     expect(data.rep).toBe('greg');
     expect(data.title).toBeUndefined(); // not under the default key
+  });
+
+  it('uses the materialized schema default and required self id like the app writer', async () => {
+    seedTypeDef('plan', {
+      type: 'plan',
+      roles: { title: 'title', workflowStatus: 'status' },
+      fields: [
+        { name: 'title', type: 'string', required: true },
+        { name: 'status', type: 'select', default: 'draft' },
+        { name: 'planId', type: 'string', required: true, displayInline: false },
+      ],
+    });
+    const gateway = new DirectGateway(dbPath);
+    const record = await gateway.createTracker(WORKSPACE, { type: 'plan', title: 'Build it' });
+    gateway.close();
+
+    expect(JSON.parse(rawRow(record.id).data)).toMatchObject({
+      title: 'Build it',
+      status: 'draft',
+      planId: record.id,
+    });
   });
 
   it('falls back to default field names when no type def exists', async () => {

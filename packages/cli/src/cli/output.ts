@@ -2,7 +2,7 @@
  * Output rendering: table (TTY default), --json (the stable agent contract,
  * shape = TrackerRecord), --csv, and --quiet (ids only).
  */
-import type { TrackerRecord } from '../vendor/trackerRecord.js';
+import type { IssueKeyStatus, TrackerRecord } from '@nimbalyst/tracker-core';
 import type {
   ImporterInfo,
   ImporterSearchResult,
@@ -10,11 +10,11 @@ import type {
   ResnapshotResult,
 } from '../gateway/types.js';
 import {
-  isLegacyLocalIssueKey,
+  isLocalIssueKey,
   resolveDisplayIssueKey,
   TRACKER_LOCAL_ISSUE_KEY_MESSAGE,
   TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE,
-} from '../vendor/localIssueKey.js';
+} from '@nimbalyst/tracker-core';
 import { bold, dim, colorStatus, gray } from './colors.js';
 import { relativeFromNow } from './time.js';
 
@@ -30,23 +30,10 @@ export const UNASSIGNED_ISSUE_KEY_MESSAGE = TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE
 
 type IssueKeyRef = Pick<TrackerRecord, 'issueKey' | 'localKey'>;
 
-/**
- * Three states, matching the agent tools exactly. `local` is not a lesser
- * `assigned`: the number is real and stable, but it resolves only in this
- * project on this machine, so a consumer must not treat it as shareable.
- * Reporting one as `unassigned` is what made `nim` disagree with the app about
- * whether an item had a number at all (#1346).
- *
- * Duplicated from the runtime's `localIssueKey` on purpose: the CLI vendors
- * runtime sources rather than importing the package, so it cannot share the
- * declaration. Change both together.
- */
-export type IssueKeyStatus = 'assigned' | 'local' | 'unassigned';
-
 /** Legacy provisional LC keys remain stored but are not stable identifiers. */
 export function getAssignedIssueKey(record: Pick<TrackerRecord, 'issueKey'>): string | undefined {
   const issueKey = record.issueKey?.trim();
-  return issueKey && !isLegacyLocalIssueKey(issueKey) ? issueKey : undefined;
+  return issueKey && !isLocalIssueKey(issueKey) ? issueKey : undefined;
 }
 
 export function issueKeyStatus(record: IssueKeyRef): IssueKeyStatus {

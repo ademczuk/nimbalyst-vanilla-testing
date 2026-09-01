@@ -13,6 +13,8 @@
     "noEmit": true,
     "types": ["vitest/globals"],
     "paths": {
+      "@nimbalyst/tracker-core": ["../tracker-core/src/index.ts"],
+      "@nimbalyst/tracker-core/*": ["../tracker-core/src/*"],
       "@nimbalyst/runtime": ["./src/index.ts"],
       "@nimbalyst/runtime/*": ["./src/*"],
       "@nimbalyst/extension-sdk": ["../extension-sdk/src/index.ts"],

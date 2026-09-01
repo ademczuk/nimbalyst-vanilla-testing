@@ -300,6 +300,15 @@ public final class DatabaseManager: @unchecked Sendable {
             try db.create(index: "idx_sessions_created_by", on: "sessions", columns: ["createdBySessionId"])
         }
 
+        // Which desktop owns execution for a session, so a control message goes
+        // to that host instead of every connected desktop. NULL means unknown,
+        // which routes as an untargeted broadcast exactly as before.
+        migrator.registerMigration("v14_session_host_device") { db in
+            try db.alter(table: "sessions") { t in
+                t.add(column: "hostDeviceId", .text)
+            }
+        }
+
         try migrator.migrate(writer)
     }
 

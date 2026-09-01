@@ -42,9 +42,11 @@ import {
   resolveAuthenticatedAccount,
   resolveSourcePersonalOrgId,
   stepStatus,
+  toggleFolderToPublish,
   type OrgWizardPersonalAccount,
   type OrgWizardState,
 } from './orgWizardModel';
+import { WorkspaceFolderPicker } from '../../InviteToTeamDialog/WorkspaceFolderPicker';
 import { createOrgWizardApi } from './orgWizardApi';
 import { OrgWizardAccountStep } from './OrgWizardAccountStep';
 import { stytchAuthAtom, type StytchAuthSnapshot } from '../../../store/atoms/stytchAuth';
@@ -810,6 +812,20 @@ export function OrgCreationWizard({
               <p className="m-0 mt-2 text-[11px] text-[var(--nim-text-muted)]">
                 Invited people join as members. Roles are changed from Members &amp; Roles.
               </p>
+
+              {state.workspacePath && (
+                <div className="org-wizard-publish-folders mt-3" data-testid="org-wizard-publish-folders">
+                  <p className="m-0 mb-1.5 text-[11px] text-[var(--nim-text-muted)]">
+                    Share folders so they have something to open. Without this, everyone you invite
+                    arrives to an empty workspace.
+                  </p>
+                  <WorkspaceFolderPicker
+                    workspacePath={state.workspacePath}
+                    selected={state.publishFolders}
+                    onToggle={(folderPath) => update((current) => toggleFolderToPublish(current, folderPath))}
+                  />
+                </div>
+              )}
             </section>
           )}
 

@@ -26,5 +26,11 @@ export interface SharedDocsListViewProps {
      * the only filter.
      */
     folderId?: string | null;
+    /**
+     * Creates a shared document. Supplied by the host so this view reuses the one
+     * creation path (sidebar -> title bar) rather than carrying a second copy of
+     * the descriptor and name-conflict handling.
+     */
+    onCreateDocument?: () => void;
 }
 export declare const SharedDocsListView: React.FC<SharedDocsListViewProps>;

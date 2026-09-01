@@ -216,6 +216,11 @@ interface ElectronAPI {
       orgId: string,
       email: string,
       role?: 'owner' | 'admin' | 'member' | 'viewer' | 'guest',
+      /** Projects beyond the org's primary one; keyed by `teamProjectId`. */
+      projectGrants?: Array<{
+        teamProjectId: string;
+        projectRole: 'project-admin' | 'project-editor' | 'project-viewer';
+      }>,
     ) => Promise<any>;
     removeMember: (orgId: string, memberId: string) => Promise<any>;
     updateMemberRole: (orgId: string, memberId: string, role: string) => Promise<any>;

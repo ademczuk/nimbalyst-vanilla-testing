@@ -18,7 +18,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { McpConfigService, getMcpConfigService } from '@nimbalyst/runtime/ai/server';
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
 import { getTerminalSessionManager } from '../TerminalSessionManager';
-import { getEnhancedPath, getShellEnvironment } from '../CLIManager';
+import { getEnhancedPath, getShellEnvironment } from '../shellEnvironment';
 import { ClaudeCliSessionLauncher } from './ClaudeCliSessionLauncher';
 import { HooklessAgentFileWatcher } from './HooklessAgentFileWatcher';
 import { resolveClaudeCliWorktreeCwd } from './resolveClaudeCliWorktreeCwd';

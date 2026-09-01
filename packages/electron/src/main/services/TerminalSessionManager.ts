@@ -38,7 +38,7 @@ const pty = loadNodePty();
 import { promises as fs, existsSync } from 'fs';
 import os from 'os';
 import { ShellDetector, type ShellInfo } from './ShellDetector';
-import { getEnhancedPath } from './CLIManager';
+import { getEnhancedPath } from './shellEnvironment';
 import type { ClaudeCliSpawnConfig } from './ai/claudeCliSpawnConfig';
 import {
   watchClaudePidState,

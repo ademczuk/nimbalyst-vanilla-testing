@@ -48,12 +48,15 @@ import {
   TrackerViewTitle,
   useTrackerViewRows,
   type TrackerFilterField,
+  type TrackerViewLayoutUpdate,
 } from '@nimbalyst/collab-client/trackers-ui';
 import { ImportFromSourceDialog } from './ImportFromSourceDialog';
 import { TrackerDocumentView } from './TrackerDocumentView';
 import {
   trackerModeLayoutAtom,
   setTrackerModeLayoutAtom,
+  trackerActiveViewSettingsAtom,
+  setTrackerTypeViewSettingsAtom,
   setTrackerDocumentChatSessionAtom,
   setTrackerItemViewAtom,
   trackerModeDocumentItemIdAtom,
@@ -92,9 +95,9 @@ import {
 } from './trackerSavedViews';
 import { orderTrackerItemsByLeverage, READINESS_LEVERAGE_SORT } from './trackerReadyQueue';
 import { useTrackerUnread } from '../../hooks/useTrackerUnread';
+import { useGitRepoProbe } from '../../hooks/useGitRepoProbe';
 import {
   createNewWorktreeSessionActionAtom,
-  isGitRepoAtom,
 } from '../../store/actions/sessionHistoryActions';
 import { setTrackerFavoriteAtom } from '../../store/atoms/trackerPersonalState';
 import { WorktreeBaseBranchPicker } from '../AgenticCoding/WorktreeBaseBranchPicker';
@@ -192,7 +195,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   // See nimbalyst#176.
   const defaultModel = useAtomValue(defaultAgentModelAtom);
   const isWorktreesFeatureAvailable = useAtomValue(worktreesFeatureAvailableAtom);
-  const isGitRepo = useAtomValue(isGitRepoAtom(workspacePath || ''));
+  const isGitRepo = useGitRepoProbe(workspacePath);
 
   useEffect(() => {
     if (!workspacePath) return;
@@ -206,6 +209,10 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   const modeLayout = useAtomValue(trackerModeLayoutAtom);
   const resolveRelationshipLabel = useAtomValue(trackerRelationshipLabelAtom);
   const setModeLayout = useSetAtom(setTrackerModeLayoutAtom);
+  // Display Settings for the selected type; the root layout fields are only the
+  // fallback behind these, so nothing here reads them directly.
+  const viewSettings = useAtomValue(trackerActiveViewSettingsAtom);
+  const setTypeViewSettings = useSetAtom(setTrackerTypeViewSettingsAtom);
   const setDocumentChatSession = useSetAtom(setTrackerDocumentChatSessionAtom);
   const setFavorite = useSetAtom(setTrackerFavoriteAtom);
   // Non-null only while the selected item is presented as a document.
@@ -223,8 +230,8 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   const inboxScope = modeLayout.inboxScope;
   const statusScope = modeLayout.statusScope;
   const detailPanelWidth = modeLayout.detailPanelWidth;
-  const sortBy = modeLayout.sortBy as TrackerSortColumn;
-  const sortDirection = modeLayout.sortDirection as TrackerSortDirection;
+  const sortBy = viewSettings.sortBy as TrackerSortColumn;
+  const sortDirection = viewSettings.sortDirection as TrackerSortDirection;
 
   // Column config for the current type (persisted per-type)
   const columnConfigKey = filterType === 'all' ? 'all' : filterType;
@@ -264,6 +271,16 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       },
     });
   }, [setModeLayout, modeLayout.typeColumnConfigs, columnConfigKey]);
+
+  // Display Settings are persisted per-type on the same key as the columns, so
+  // grouping a bug list by status leaves the plan list alone (#1412).
+  const handleViewLayoutChange = useCallback((updates: TrackerViewLayoutUpdate) => {
+    setTypeViewSettings({ typeKey: columnConfigKey, ...updates });
+  }, [setTypeViewSettings, columnConfigKey]);
+
+  const handleSortChange = useCallback((sortBy: string, sortDirection: TrackerSortDirection) => {
+    setTypeViewSettings({ typeKey: columnConfigKey, sortBy, sortDirection });
+  }, [setTypeViewSettings, columnConfigKey]);
 
   // Per-column filters, persisted per-type alongside the column layout.
   const columnFilters = modeLayout.typeColumnFilters[columnConfigKey] ?? null;
@@ -553,12 +570,12 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   const effectiveViewDefinition = useMemo<SavedViewDefinition>(() => ({
     selectedType: 'all',
     activeFilters,
-    viewMode: modeLayout.viewMode,
+    viewMode: viewSettings.viewMode,
     tagFilter,
-    groupBy: modeLayout.groupBy,
-    ordering: modeLayout.ordering,
-    sortBy: modeLayout.sortBy,
-    sortDirection: modeLayout.sortDirection,
+    groupBy: viewSettings.groupBy,
+    ordering: viewSettings.ordering,
+    sortBy: viewSettings.sortBy,
+    sortDirection: viewSettings.sortDirection,
     recentlyViewedDays: modeLayout.recentlyViewedDays,
     columnConfig,
     columnFilters,
@@ -569,14 +586,10 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
     columnConfig,
     columnFilters,
     inboxScope,
-    modeLayout.groupBy,
-    modeLayout.ordering,
     modeLayout.recentlyViewedDays,
-    modeLayout.sortBy,
-    modeLayout.sortDirection,
-    modeLayout.viewMode,
     statusScope,
     tagFilter,
+    viewSettings,
   ]);
   const viewRowOptions = useMemo(() => ({
     ...filterContext,
@@ -1040,7 +1053,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
         });
       }}
       onLaunchSession={handleLaunchSession}
-      onLaunchWorktree={isWorktreesFeatureAvailable && isGitRepo ? handleLaunchWorktree : undefined}
+      onLaunchWorktree={isWorktreesFeatureAvailable && isGitRepo !== false ? handleLaunchWorktree : undefined}
       onArchive={handleArchiveItem}
       onDelete={handleDeleteItem}
       onOpenItem={handleItemSelect}
@@ -1068,7 +1081,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       filterType={filterType}
       sortBy={sortBy}
       sortDirection={sortDirection}
-      groupBy={modeLayout.groupBy}
+      groupBy={viewSettings.groupBy}
       hideTypeTabs
       hideToolbar
       preserveItemOrder={preserveOrder}
@@ -1238,10 +1251,10 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
           openFiltersToken={openFiltersToken}
           statusScope={statusScope}
           onStatusScopeChange={scope => setModeLayout({ statusScope: scope })}
-          viewMode={modeLayout.viewMode}
-          groupBy={modeLayout.groupBy}
-          ordering={modeLayout.ordering}
-          onLayoutChange={setModeLayout}
+          viewMode={viewSettings.viewMode}
+          groupBy={viewSettings.groupBy}
+          ordering={viewSettings.ordering}
+          onLayoutChange={handleViewLayoutChange}
         />
 
         <div className="relative" ref={importMenuRef}>
@@ -1338,11 +1351,11 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               filterType={filterType}
               sortBy={sortBy}
               sortDirection={sortDirection}
-              groupBy={modeLayout.groupBy}
+              groupBy={viewSettings.groupBy}
               hideTypeTabs={true}
               onSortChange={(column, direction) => {
                 trackTableSort();
-                setModeLayout({ sortBy: column, sortDirection: direction });
+                handleSortChange(column, direction);
               }}
               preserveItemOrder={preserveOrder}
               readinessByItemId={readinessByItemId}
@@ -1370,7 +1383,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               filterType={filterType}
               sortBy={sortBy}
               sortDirection={sortDirection}
-              groupBy={modeLayout.groupBy}
+              groupBy={viewSettings.groupBy}
               preserveItemOrder={preserveOrder}
               onSwitchToFilesMode={onSwitchToFilesMode}
               onNewItem={handleNewItem}
@@ -1385,7 +1398,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               getLinkedSessions={getLinkedSessionOptions}
               onOpenSession={handleSwitchToAgentMode}
               onLaunchSession={handleLaunchSession}
-              onLaunchWorktree={isWorktreesFeatureAvailable && isGitRepo ? handleLaunchWorktree : undefined}
+              onLaunchWorktree={isWorktreesFeatureAvailable && isGitRepo !== false ? handleLaunchWorktree : undefined}
               favoriteItemIds={favoriteItemIds}
               onToggleFavorite={handleToggleFavorite}
               searchQuery={searchQuery}
@@ -1399,10 +1412,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               filterEvaluationContext={filterEvaluationContext}
               onSortChange={(column, direction) => {
                 trackTableSort();
-                setModeLayout({
-                  sortBy: column as TrackerSortColumn,
-                  sortDirection: direction,
-                });
+                handleSortChange(column, direction);
               }}
             />
           ) : viewMode === 'inbox' ? (
@@ -1421,8 +1431,8 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
           ) : viewMode === 'timeline' ? (
             <TrackerTimelineView
               items={viewFilteredItems}
-              groupBy={modeLayout.groupBy}
-              ordering={modeLayout.ordering}
+              groupBy={viewSettings.groupBy}
+              ordering={viewSettings.ordering}
               onItemSelect={handleItemSelect}
               onOpenDocument={handleOpenItemAsDocument}
               selectedItemId={selectedItemId}
@@ -1446,8 +1456,8 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
           ) : (
             <KanbanBoard
               filterType={filterType}
-              groupBy={modeLayout.groupBy}
-              ordering={modeLayout.ordering}
+              groupBy={viewSettings.groupBy}
+              ordering={viewSettings.ordering}
               searchQuery={searchQuery}
               onSwitchToFilesMode={onSwitchToFilesMode}
               onItemSelect={handleItemSelect}
@@ -1460,7 +1470,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
               getLinkedSessions={getLinkedSessionOptions}
               onOpenSession={handleSwitchToAgentMode}
               onLaunchSession={handleLaunchSession}
-              onLaunchWorktree={isWorktreesFeatureAvailable && isGitRepo ? handleLaunchWorktree : undefined}
+              onLaunchWorktree={isWorktreesFeatureAvailable && isGitRepo !== false ? handleLaunchWorktree : undefined}
               favoriteItemIds={favoriteItemIds}
               onToggleFavorite={handleToggleFavorite}
             />

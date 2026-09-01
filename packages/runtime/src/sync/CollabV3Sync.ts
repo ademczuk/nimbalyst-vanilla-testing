@@ -166,6 +166,8 @@ interface SessionIndexEntry {
   parentSessionId?: string;
   /** Worktree ID for git worktree association (plaintext UUID) */
   worktreeId?: string;
+  /** Stable device ID of the host that owns this session. */
+  hostDeviceId?: string;
   /** Agent role marker (e.g. 'meta-agent', 'standard'). Plaintext - drives mobile meta-agent grouping. */
   agentRole?: string;
   /** Meta-agent parent session ID for spawned children (plaintext UUID). Drives mobile meta-agent grouping. */
@@ -302,13 +304,13 @@ type ClientMessage =
   | { type: 'indexBatchUpdate'; sessions: SessionIndexEntry[] }
   | { type: 'indexDelete'; sessionId: string }
   | { type: 'deviceAnnounce'; device: DeviceInfo }
-  | { type: 'createSessionRequest'; request: EncryptedCreateSessionRequest }
+  | { type: 'createSessionRequest'; request: EncryptedCreateSessionRequest; targetDeviceId?: string }
   | { type: 'createSessionResponse'; response: EncryptedCreateSessionResponse }
-  | { type: 'createWorktreeRequest'; request: EncryptedCreateWorktreeRequest }
+  | { type: 'createWorktreeRequest'; request: EncryptedCreateWorktreeRequest; targetDeviceId?: string }
   | { type: 'createWorktreeResponse'; response: EncryptedCreateWorktreeResponse }
   | { type: 'voiceToolRequest'; request: EncryptedVoiceToolRequest }
   | { type: 'voiceToolResponse'; response: EncryptedVoiceToolResponse }
-  | { type: 'sessionControl'; message: { sessionId: string; messageType: string; payload?: Record<string, unknown>; timestamp: number; sentBy: 'desktop' | 'mobile' } }
+  | { type: 'sessionControl'; message: { sessionId: string; messageType: string; payload?: Record<string, unknown>; timestamp: number; sentBy: 'desktop' | 'mobile'; sentByDeviceId?: string; targetDeviceId?: string } }
   | {
       type: 'requestMobilePush';
       sessionId: string;
@@ -363,13 +365,13 @@ type ServerMessage =
   | { type: 'devicesList'; devices: DeviceInfo[] }
   | { type: 'deviceJoined'; device: DeviceInfo }
   | { type: 'deviceLeft'; deviceId: string }
-  | { type: 'createSessionRequestBroadcast'; request: EncryptedCreateSessionRequest; fromConnectionId?: string }
+  | { type: 'createSessionRequestBroadcast'; request: EncryptedCreateSessionRequest; targetDeviceId?: string; fromConnectionId?: string }
   | { type: 'createSessionResponseBroadcast'; response: EncryptedCreateSessionResponse; fromConnectionId?: string }
-  | { type: 'createWorktreeRequestBroadcast'; request: EncryptedCreateWorktreeRequest; fromConnectionId?: string }
+  | { type: 'createWorktreeRequestBroadcast'; request: EncryptedCreateWorktreeRequest; targetDeviceId?: string; fromConnectionId?: string }
   | { type: 'createWorktreeResponseBroadcast'; response: EncryptedCreateWorktreeResponse; fromConnectionId?: string }
   | { type: 'voiceToolRequestBroadcast'; request: EncryptedVoiceToolRequest; fromConnectionId?: string }
   | { type: 'voiceToolResponseBroadcast'; response: EncryptedVoiceToolResponse; fromConnectionId?: string }
-  | { type: 'sessionControlBroadcast'; message: { sessionId: string; messageType: string; payload?: Record<string, unknown>; timestamp: number; sentBy: 'desktop' | 'mobile' }; fromConnectionId?: string }
+  | { type: 'sessionControlBroadcast'; message: { sessionId: string; messageType: string; payload?: Record<string, unknown>; timestamp: number; sentBy: 'desktop' | 'mobile'; sentByDeviceId?: string; targetDeviceId?: string }; fromConnectionId?: string }
   | { type: 'settingsSyncBroadcast'; settings: EncryptedSettingsPayload; fromConnectionId?: string }
   | { type: 'readReceiptBroadcast'; receipt: EncryptedReadReceiptPayload; fromConnectionId?: string }
   | { type: 'trackerPersonalStateBroadcast'; state: EncryptedTrackerPersonalStatePayload; fromConnectionId?: string }
@@ -874,6 +876,8 @@ interface CachedSessionIndex {
   parentSessionId?: string;
   /** Worktree ID for git worktree association */
   worktreeId?: string;
+  /** Stable device ID of the host that owns this session. */
+  hostDeviceId?: string;
   /** Agent role marker (e.g. 'meta-agent', 'standard'); drives mobile meta-agent grouping. */
   agentRole?: string;
   /** Meta-agent parent session ID for spawned children; drives mobile meta-agent grouping. */
@@ -924,6 +928,21 @@ interface CachedSessionIndex {
 // ============================================================================
 
 export function createCollabV3Sync(config: SyncConfig): SyncProvider {
+  /**
+   * This client's own device identity, read fresh on every call.
+   *
+   * `getDeviceInfo` exists so presence fields (focus, status, lastActiveAt)
+   * reflect the moment they are read rather than the moment the provider was
+   * constructed; `config.deviceInfo` is the static fallback for callers that
+   * never supplied one. Every read of "who am I" goes through here — the
+   * self-broadcast filters, device-targeted routing, and host attribution all
+   * have to agree on the answer, and they had drifted into eight hand-copied
+   * expressions of it.
+   */
+  const localDeviceInfo = (): DeviceInfo | undefined =>
+    config.getDeviceInfo?.() ?? config.deviceInfo;
+  const localDeviceId = (): string | undefined => localDeviceInfo()?.deviceId;
+
   // We need to get the initial JWT synchronously for setup, but will refresh before each connection
   // The getJwt function is called before each WebSocket connection to ensure fresh JWT
   let currentJwt: PersonalJwt | null = null;
@@ -1279,6 +1298,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       sessionType: baseEntry.sessionType,
       parentSessionId: baseEntry.parentSessionId,
       worktreeId: baseEntry.worktreeId,
+      hostDeviceId: baseEntry.hostDeviceId,
       agentRole: baseEntry.agentRole,
       createdBySessionId: baseEntry.createdBySessionId,
       isArchived: baseEntry.isArchived,
@@ -1371,6 +1391,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       sessionType: 'sessionType' in pending ? pending.sessionType : cached.sessionType,
       parentSessionId: 'parentSessionId' in pending ? pending.parentSessionId : cached.parentSessionId,
       worktreeId: 'worktreeId' in pending ? pending.worktreeId : cached.worktreeId,
+      hostDeviceId: 'hostDeviceId' in pending ? pending.hostDeviceId : cached.hostDeviceId,
       agentRole: cached.agentRole,
       createdBySessionId: cached.createdBySessionId,
       isArchived: 'isArchived' in pending ? pending.isArchived : cached.isArchived,
@@ -1411,7 +1432,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   // Helper to announce device to the index server
   function announceDevice(): void {
     // Get current device info (prefer callback for dynamic presence, fallback to static)
-    const deviceInfo = config.getDeviceInfo?.() ?? config.deviceInfo;
+    const deviceInfo = localDeviceInfo();
     // Check both our flag AND the actual WebSocket readyState to avoid "Sent before connected" errors
     if (deviceInfo && indexWs && indexConnected && indexWs.readyState === WebSocket.OPEN) {
       const announceMsg: ClientMessage = {
@@ -2063,6 +2084,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
                     sessionType: entry.sessionType,
                     parentSessionId: entry.parentSessionId,
                     worktreeId: entry.worktreeId,
+                    hostDeviceId: entry.hostDeviceId,
                     agentRole: entry.agentRole,
                     createdBySessionId: entry.createdBySessionId,
                     isArchived: entry.isArchived,
@@ -2094,6 +2116,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
                     sessionType: decrypted.sessionType,
                     parentSessionId: decrypted.parentSessionId,
                     worktreeId: decrypted.worktreeId,
+                    hostDeviceId: decrypted.hostDeviceId,
                     agentRole: decrypted.agentRole,
                     createdBySessionId: decrypted.createdBySessionId,
                     isArchived: decrypted.isArchived,
@@ -2221,6 +2244,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               sessionType: entry.sessionType,
               parentSessionId: entry.parentSessionId,
               worktreeId: entry.worktreeId,
+              hostDeviceId: entry.hostDeviceId,
               // Carry the meta-agent grouping fields off the wire so an
               // incremental broadcast keeps the local cache groupable (parity
               // with the indexResponse decrypt path above).
@@ -2368,6 +2392,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
           case 'createSessionRequestBroadcast': {
             // Another device (mobile) requested session creation
+            const ourDeviceId = localDeviceId();
+            if (message.targetDeviceId && message.targetDeviceId !== ourDeviceId) break;
             // Decrypt projectId - required for encrypted wire protocol
             let projectId: string;
             if (message.request.encryptedProjectId && message.request.projectIdIv && config.encryptionKey) {
@@ -2400,6 +2426,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               provider: message.request.provider,
               model: message.request.model,
               agentRole: message.request.agentRole,
+              targetDeviceId: message.targetDeviceId,
               timestamp: message.request.timestamp,
             };
 
@@ -2515,6 +2542,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
           case 'createWorktreeRequestBroadcast': {
             // Another device (mobile) requested worktree creation
+            const ourDeviceId = localDeviceId();
+            if (message.targetDeviceId && message.targetDeviceId !== ourDeviceId) break;
             let projectId: string;
             if (message.request.encryptedProjectId && message.request.projectIdIv && config.encryptionKey) {
               try {
@@ -2530,6 +2559,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             const decryptedRequest: CreateWorktreeRequest = {
               requestId: message.request.requestId,
               projectId,
+              targetDeviceId: message.targetDeviceId,
               timestamp: message.request.timestamp,
             };
 
@@ -2553,12 +2583,16 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
           case 'sessionControlBroadcast': {
             // Generic session control message from another device
+            const ourDeviceId = localDeviceId();
+            if (message.message.targetDeviceId && message.message.targetDeviceId !== ourDeviceId) break;
             const controlMessage: SessionControlMessage = {
               sessionId: message.message.sessionId,
               type: message.message.messageType,
               payload: message.message.payload,
               timestamp: message.message.timestamp,
               sentBy: message.message.sentBy,
+              sentByDeviceId: message.message.sentByDeviceId,
+              targetDeviceId: message.message.targetDeviceId,
             };
 
             console.log('[CollabV3] Received sessionControl:', controlMessage.sessionId, controlMessage.type);
@@ -2579,7 +2613,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             const payload = message.settings;
 
             // Don't process our own broadcasts
-            const ourDeviceId = config.getDeviceInfo?.()?.deviceId ?? config.deviceInfo?.deviceId;
+            const ourDeviceId = localDeviceId();
             if (ourDeviceId && payload.deviceId === ourDeviceId) {
               break;
             }
@@ -2620,7 +2654,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             // listeners which merge advance-only into local state.
             const payload = message.receipt;
 
-            const ourDeviceId = config.getDeviceInfo?.()?.deviceId ?? config.deviceInfo?.deviceId;
+            const ourDeviceId = localDeviceId();
             if (ourDeviceId && payload.deviceId === ourDeviceId) {
               break;
             }
@@ -2650,7 +2684,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
           case 'trackerPersonalStateBroadcast': {
             const payload = message.state;
-            const ourDeviceId = config.getDeviceInfo?.()?.deviceId ?? config.deviceInfo?.deviceId;
+            const ourDeviceId = localDeviceId();
             if (ourDeviceId && payload.deviceId === ourDeviceId) break;
             if (!config.encryptionKey) {
               console.error('[CollabV3] Cannot decrypt tracker personal state - no encryption key');
@@ -2953,6 +2987,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         // Plaintext relationship/flag fields (incl. agentRole + createdBySessionId
         // for mobile meta-agent grouping). Single source of truth + regression lock:
         // sessionIndexEntryFields.ts / __tests__/sessionIndexEntryFields.test.ts.
+        //
+        // hostDeviceId comes from the row and only from the row. A session
+        // written before host attribution existed stays unattributed: publishing
+        // a row is not evidence of owning it, and two upgraded installs holding
+        // the same pre-upgrade session would otherwise each claim it in turn.
         ...buildSyncedSessionIndexFields(session),
         messageCount: session.messageCount,
         // lastMessageAt keeps advancing per message so mobile unread state
@@ -3025,6 +3064,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         sessionType: session.sessionType,
         parentSessionId: session.parentSessionId,
         worktreeId: session.worktreeId,
+        hostDeviceId: entry.hostDeviceId,
         agentRole: session.agentRole,
         createdBySessionId: session.createdBySessionId ?? undefined,
         isArchived: session.isArchived,
@@ -3455,6 +3495,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               sessionType: 'sessionType' in meta ? (meta as any).sessionType : cached.sessionType,
               parentSessionId: 'parentSessionId' in meta ? meta.parentSessionId : cached.parentSessionId,
               worktreeId: 'worktreeId' in meta ? (meta as any).worktreeId : cached.worktreeId,
+              hostDeviceId: 'hostDeviceId' in meta ? meta.hostDeviceId : cached.hostDeviceId,
               // Meta-agent grouping fields: apply when the update carries them,
               // otherwise preserve the cached value (also held by the `...cached`
               // spread above). createdBySessionId is normalized null -> undefined.
@@ -3497,6 +3538,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               sessionType: meta.sessionType,
               parentSessionId: meta.parentSessionId,
               worktreeId: (meta as any).worktreeId,
+              hostDeviceId: meta.hostDeviceId,
               // Meta-agent grouping fields (parity with bulk path's
               // buildSyncedSessionIndexFields + sendIndexUpdate). Without these a
               // freshly-created meta agent/child reaches the server/phone ungrouped
@@ -3536,6 +3578,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               'sessionType' in meta ||
               'parentSessionId' in meta ||
               'worktreeId' in meta ||
+              'hostDeviceId' in meta ||
               'isArchived' in meta ||
               'isPinned' in meta ||
               'queuedPrompts' in meta ||
@@ -3557,6 +3600,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               if ('sessionType' in meta) existing.sessionType = meta.sessionType;
               if ('parentSessionId' in meta) existing.parentSessionId = meta.parentSessionId;
               if ('worktreeId' in meta) existing.worktreeId = (meta as any).worktreeId;
+              if ('hostDeviceId' in meta) existing.hostDeviceId = meta.hostDeviceId;
               if ('isArchived' in meta) existing.isArchived = meta.isArchived;
               if ('isPinned' in meta) existing.isPinned = (meta as any).isPinned;
               if ('queuedPrompts' in meta) existing.queuedPrompts = meta.queuedPrompts;
@@ -3834,7 +3878,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         }
       }
 
-      const msg: ClientMessage = { type: 'createSessionRequest', request: wireRequest };
+      const msg: ClientMessage = {
+        type: 'createSessionRequest',
+        request: wireRequest,
+        targetDeviceId: request.targetDeviceId,
+      };
       // Debug logging - uncomment if needed
       // console.log('[CollabV3] Sending create_session_request:', request.requestId, 'project:', request.projectId);
       indexWs.send(JSON.stringify(msg));
@@ -3976,6 +4024,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       return Array.from(connectedDevices.values());
     },
 
+    /** Get this client's own current device identity. */
+    getLocalDeviceInfo(): DeviceInfo | undefined {
+      return localDeviceInfo();
+    },
+
     /** Subscribe to device status changes (devices joining/leaving) */
     onDeviceStatusChange(callback: (devices: DeviceInfo[]) => void): () => void {
       deviceStatusListeners.add(callback);
@@ -4017,6 +4070,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           payload: message.payload,
           timestamp: message.timestamp,
           sentBy: message.sentBy,
+          sentByDeviceId: message.sentByDeviceId ?? localDeviceId(),
+          targetDeviceId: message.targetDeviceId,
         },
       };
       console.log('[CollabV3] Sending sessionControl:', message.sessionId, message.type);
@@ -4058,7 +4113,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
       try {
         // Get our device ID
-        const deviceId = config.getDeviceInfo?.()?.deviceId ?? config.deviceInfo?.deviceId ?? 'unknown';
+        const deviceId = localDeviceId() ?? 'unknown';
 
         // Encrypt the settings as JSON
         const settingsJson = JSON.stringify(settings);
@@ -4111,7 +4166,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         return;
       }
       try {
-        const deviceId = config.getDeviceInfo?.()?.deviceId ?? config.deviceInfo?.deviceId ?? 'unknown';
+        const deviceId = localDeviceId() ?? 'unknown';
         const receiptKey = await sha256Hex(
           `${receipt.entityKind}|${receipt.entityId}|${receipt.scope}`,
         );
@@ -4153,7 +4208,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         return;
       }
       try {
-        const deviceId = config.getDeviceInfo?.()?.deviceId ?? config.deviceInfo?.deviceId ?? 'unknown';
+        const deviceId = localDeviceId() ?? 'unknown';
         const stateKey = await deriveTrackerPersonalStateKey(change.scope, change.itemId, change.kind);
         const { encrypted, iv } = await encrypt(JSON.stringify(change), config.encryptionKey);
         const version = change.kind === 'favorite' ? change.favoriteUpdatedAt : change.lastOpenedAt;
@@ -4233,7 +4288,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         return failed('no_ack');
       }
 
-      const deviceId = config.getDeviceInfo?.()?.deviceId ?? config.deviceInfo?.deviceId;
+      const deviceId = localDeviceId();
       const requestId = `push-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       const msg: ClientMessage = {
         type: 'requestMobilePush',

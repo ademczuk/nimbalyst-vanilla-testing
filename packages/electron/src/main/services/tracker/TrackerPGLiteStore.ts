@@ -38,7 +38,11 @@ import type { TrackerItem } from '@nimbalyst/runtime';
 import { trackerRecordToItem, type TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { logger } from '../../utils/logger';
 import { fromDbBoolean, toDbBoolean } from './trackerDbValue';
-import { extractItemCustomFields } from './trackerRowCustomFields';
+import {
+  COLUMN_ONLY_IDENTITY_KEYS,
+  extractItemCustomFields,
+  stripColumnOnlyIdentityKeys,
+} from './trackerRowCustomFields';
 
 // ============================================================================
 // Local-only field preservation on UPDATE
@@ -235,6 +239,32 @@ export class TrackerPGLiteStore implements TrackerPersistence {
     return pgliteRowToTrackerItem(row, this.workspacePath);
   }
 
+  /**
+   * Rows the old issue-key collision branch stranded: `synced`, carrying a
+   * `sync_id`, and holding no `issue_key`.
+   *
+   * `sync_id IS NOT NULL` is what makes them unreachable rather than merely
+   * unkeyed -- a row the room has never seen has no cursor to rewind to, and a
+   * row the room HAS seen sits below `MAX(sync_id)` and is never re-sent.
+   */
+  async getStrandedIdentityFacts(): Promise<{ strandedCount: number; minStrandedSyncId: SyncId }> {
+    const result = await this.db.query<{ stranded: number | string; min_sync_id: string | number | null }>(
+      `SELECT COUNT(*) AS stranded, MIN(sync_id) AS min_sync_id
+         FROM tracker_items
+        WHERE workspace = $1
+          AND issue_key IS NULL
+          AND sync_status = 'synced'
+          AND sync_id IS NOT NULL
+          AND deleted_at IS NULL`,
+      [this.workspacePath],
+    );
+    const row = result.rows[0];
+    return {
+      strandedCount: Number(row?.stranded ?? 0),
+      minStrandedSyncId: row?.min_sync_id == null ? 0 : Number(row.min_sync_id),
+    };
+  }
+
   async getMaxSyncId(): Promise<SyncId> {
     const result = await this.db.query<{ max_sync_id: string | number | null }>(
       `SELECT MAX(sync_id) as max_sync_id FROM tracker_items WHERE workspace = $1`,
@@ -333,8 +363,7 @@ export class TrackerPGLiteStore implements TrackerPersistence {
     // payload -- so they drifted and an item could report a key that was not
     // its own. Every reader goes through the columns, so the blob copy could
     // only ever be a wrong shadow of them.
-    delete dataJson.issueNumber;
-    delete dataJson.issueKey;
+    stripColumnOnlyIdentityKeys(dataJson);
     liftSystemCollections(dataJson, record);
 
     // `data` carries device-local keys (e.g. linkedSessions) that the wire
@@ -358,33 +387,59 @@ export class TrackerPGLiteStore implements TrackerPersistence {
     // could therefore only ever write NULL over the user's body: with the
     // room connected, every ordinary metadata sync silently emptied the item.
     //
-    // Issue-number conflict resolution: two clients that each had locally
+    // Issue-key conflict resolution: two clients that each had locally
     // assigned NIM-{N} before the new tracker room arbitrated them can
-    // legitimately ship items with the same `(workspace, issue_number)`
-    // pair. The partial unique index `idx_tracker_workspace_issue_number`
-    // rejects the INSERT in that case, and the engine's bootstrap loop
-    // used to silently die there. Detect the collision up front and
-    // land the incoming row with NULL issue_number / issue_key -- the
-    // data is preserved and the user can renumber later. NULLs are
-    // exempt from the partial index.
-    let effectiveIssueNumber: number | null = envelope.issueNumber ?? item.issueNumber ?? null;
-    let effectiveIssueKey: string | null = envelope.issueKey ?? item.issueKey ?? null;
-    if (effectiveIssueNumber !== null) {
-      const conflict = await this.db.query<{ id: string }>(
-        `SELECT id FROM tracker_items
-         WHERE workspace = $1 AND issue_number = $2 AND id != $3
+    // legitimately ship items carrying the same key. The partial unique
+    // index `idx_tracker_workspace_issue_key` rejects the INSERT in that
+    // case, and the engine's bootstrap loop used to silently die there.
+    //
+    // The incoming row wins, and the local holder gives the key up.
+    //
+    // That direction is not a coin flip. `TrackerRoom.assignIssueIdentity`
+    // is the sole allocator of issue identity and enforces uniqueness
+    // across the room; a client hint only raises its high-water mark. So a
+    // local row holding a key the room has just vouched for someone else is
+    // a legacy client-minted guess from before `LC-###` and the dotted
+    // `local_key` existed. This used to resolve the other way, dropping the
+    // room's allocation and keeping the guess, which stranded the incoming
+    // row with no key at all -- 72 rows across 10 workspaces on the machine
+    // where this was found, 21 of them with no addressable key of any kind.
+    //
+    // The yielding row is NOT renumbered into the room's namespace. It goes
+    // to NULL (exempt from the partial index) and picks up a machine-private
+    // `local_key` from the next `ensureWorkspaceLocalNumbers` sweep, which
+    // already selects rows with `local_key IS NULL`. Per localKeyAllocator:
+    // a missing number is an annoyance, a recycled one sends you to the
+    // wrong item with no warning.
+    //
+    // Nothing records that the yielding row once held the key. A `Fixes
+    // NIM-42` written before a surrender will close whoever holds NIM-42
+    // afterwards. The warning below is the only trail, so it carries both
+    // ids and is emitted BEFORE the write.
+    const effectiveIssueNumber: number | null = envelope.issueNumber ?? item.issueNumber ?? null;
+    const effectiveIssueKey: string | null = envelope.issueKey ?? item.issueKey ?? null;
+    if (effectiveIssueKey !== null) {
+      const conflict = await this.db.query<{ id: string; issue_number: number | null }>(
+        `SELECT id, issue_number FROM tracker_items
+         WHERE workspace = $1 AND issue_key = $2 AND id != $3
          LIMIT 1`,
-        [this.workspacePath, effectiveIssueNumber, envelope.itemId],
+        [this.workspacePath, effectiveIssueKey, envelope.itemId],
       );
       if (conflict.rows.length > 0) {
+        const squatter = conflict.rows[0];
         logger.main.warn(
-          '[TrackerPGLiteStore] issue_number collision for incoming', envelope.itemId,
-          'number:', effectiveIssueNumber,
-          'conflicts with local:', conflict.rows[0].id,
-          '-- landing incoming row with NULL issue_number',
+          '[TrackerPGLiteStore] issue key', effectiveIssueKey,
+          'arrived for', envelope.itemId,
+          'but is held locally by', squatter.id,
+          '-- the room is the allocator, so', squatter.id,
+          'yields it and keeps only its local key',
         );
-        effectiveIssueNumber = null;
-        effectiveIssueKey = null;
+        await this.db.query(
+          `UPDATE tracker_items
+              SET issue_number = NULL, issue_key = NULL
+            WHERE id = $1 AND workspace = $2`,
+          [squatter.id, this.workspacePath],
+        );
       }
     }
     await this.db.query(
@@ -510,8 +565,7 @@ export class TrackerPGLiteStore implements TrackerPersistence {
     delete dataJson.created;
     delete dataJson.updated;
     // See applyRemoteItem: the identity keys are column-only.
-    delete dataJson.issueNumber;
-    delete dataJson.issueKey;
+    stripColumnOnlyIdentityKeys(dataJson);
     liftSystemCollections(dataJson, record);
 
     // See applyRemoteItem for why the JSONB-merge + COALESCE pattern is
@@ -869,16 +923,16 @@ function pgliteRowToPayload(row: PGLiteTrackerItemRow): TrackerItemPayload {
 
   // Carve system/non-field keys out of `fields`.
   //
-  // `issueNumber` / `issueKey` are listed because rows written before the
+  // COLUMN_ONLY_IDENTITY_KEYS are listed because rows written before the
   // identity keys became column-only still carry a stale copy in `data`, and
   // that copy is exactly the one that drifted. Reading it back into `fields`
   // would launder a known-wrong key into a payload; the row's own columns are
   // the authority and are read separately below.
-  const systemKeys = new Set([
+  const systemKeys = new Set<string>([
     'authorIdentity', 'lastModifiedBy', 'createdByAgent',
     'linkedSessions', 'linkedCommitSha', 'linkedCommits', 'linkedPullRequests', 'documentId',
     'activity', 'comments', 'created', 'updated', 'origin', 'triagedAt', 'triagedBy',
-    'issueNumber', 'issueKey',
+    ...COLUMN_ONLY_IDENTITY_KEYS,
   ]);
   const fields: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) {
@@ -953,6 +1007,7 @@ export function pgliteRowToTrackerItem(row: PGLiteTrackerItemRow, workspacePath:
     'created', 'updated', 'dueDate', 'progress', 'authorIdentity',
     'lastModifiedBy', 'createdByAgent', 'labels', 'labelsMap',
     'linkedSessions', 'linkedCommitSha', 'linkedCommits', 'documentId',
+    ...COLUMN_ONLY_IDENTITY_KEYS,
   ]);
   return {
     id: row.id,

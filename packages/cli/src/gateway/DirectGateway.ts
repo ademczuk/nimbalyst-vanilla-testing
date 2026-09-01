@@ -3,21 +3,22 @@
  * directly. Safe to run while the app is live because WAL lets a second process
  * read committed snapshots; we never take a write lock in this gateway.
  *
- * Row -> record conversion goes through the vendored `dbRowToRecord` so a
+ * Row -> record conversion goes through tracker-core's `dbRowToRecord` so a
  * CLI-read row is shaped identically to an app-read one.
  */
 import type { Database as DB } from 'better-sqlite3';
 import * as fs from 'fs';
-import { openDatabase } from '../db/openDatabase.js';
-import { isLocalKeyReference } from '../vendor/localIssueKey.js';
-import { dbRowToRecord, type TrackerRecord } from '../vendor/trackerRecord.js';
-import { computeReadinessForItems, type Readiness } from '../vendor/trackerReadiness.js';
 import {
-  getTrackerReadinessTypeModel,
+  computeReadinessForItems,
+  createTrackerCoreContext,
+  dbRowToRecord,
+  isLocalKeyReference,
   READINESS_FILTER_FIELD,
-  replaceTrackerReadinessTypeModels,
-  type TrackerReadinessTypeModel,
-} from '../vendor/trackerStatusCategory.js';
+  type Readiness,
+  type TrackerRecord,
+  type TrackerTypeModel,
+} from '@nimbalyst/tracker-core';
+import { openDatabase } from '../db/openDatabase.js';
 import {
   appendActivity,
   buildComment,
@@ -25,7 +26,7 @@ import {
   humanOnlyStatusMessage,
   isHumanOnlyStatus,
   newTrackerId,
-} from '../vendor/trackerWrite.js';
+} from './trackerWrite.js';
 import { resolveSqlitePath, resolveDefaultSqlitePath, resolveAppSettingsPath } from '../config/paths.js';
 import {
   connectionError,
@@ -151,10 +152,10 @@ export class DirectGateway implements TrackerGateway {
   async listTrackers(filters: ListFilters): Promise<TrackerRecord[]> {
     if (filters.inbox) {
       // "Untriaged" is defined against each type's initial status and default
-      // priority, and the CLI deliberately does not load tracker schemas (see
-      // src/vendor/trackerReleases.ts). Answering from SQL alone would give a
-      // queue that disagrees with the one the app shows, which is worse than
-      // not answering.
+      // priority. `loadTypeDefs` only sees schemas the app has already
+      // materialized into the local database, so a workspace the app has never
+      // opened has none, and answering from SQL alone would give a queue that
+      // disagrees with the one the app shows -- worse than not answering.
       throw connectionError(
         '--inbox needs the running Nimbalyst app: the triage predicate reads each type\'s schema. ' +
           'Start Nimbalyst, or drop --inbox to list without it.',
@@ -286,18 +287,19 @@ export class DirectGateway implements TrackerGateway {
           `${missingTypes.join(', ')}. Open this workspace in Nimbalyst once to materialize them.`,
       );
     }
-    replaceTrackerReadinessTypeModels(typeModels);
+    const modelsByType = new Map(typeModels.map((model) => [model.type, model]));
+    const trackerContext = createTrackerCoreContext((type) => modelsByType.get(type));
     const records = rows.map((row) => dbRowToRecord(row as any));
-    const readiness = computeReadinessForItems(records, {
+    const readiness = computeReadinessForItems(trackerContext, records, {
       getId: (record) => record.id,
       getType: (record) => record.primaryType,
       getStatus: (record) => {
-        const model = getTrackerReadinessTypeModel(record.primaryType);
+        const model = trackerContext.getTypeModel(record.primaryType);
         const fieldName = model?.roles?.workflowStatus ?? 'status';
         return String(record.fields[fieldName] ?? '');
       },
       getTitle: (record) => {
-        const model = getTrackerReadinessTypeModel(record.primaryType);
+        const model = trackerContext.getTypeModel(record.primaryType);
         const fieldName = model?.roles?.title ?? 'title';
         const title = record.fields[fieldName];
         return typeof title === 'string' ? title : undefined;
@@ -561,11 +563,17 @@ export class DirectGateway implements TrackerGateway {
     const titleField = rf('title', 'title');
     const statusField = rf('workflowStatus', 'status');
     const priorityField = rf('priority', 'priority');
+    const model = this.loadTypeDefs(workspace).get(input.type);
+    const statusDefinition = model?.fields?.find((field: any) => field.name === statusField);
+    const defaultStatus =
+      typeof statusDefinition?.default === 'string' && statusDefinition.default
+        ? statusDefinition.default
+        : 'to-do';
     this.assertNotHumanOnlyStatus(statusField, input);
 
     const data: Record<string, any> = {
       [titleField]: input.title,
-      [statusField]: input.status || 'to-do',
+      [statusField]: input.status || defaultStatus,
       [priorityField]: input.priority || 'medium',
       created: createdDate,
       authorIdentity: identity,
@@ -581,6 +589,16 @@ export class DirectGateway implements TrackerGateway {
     if (input.fields) {
       for (const [k, v] of Object.entries(input.fields)) {
         if (v !== undefined) data[k] = v;
+      }
+    }
+    for (const field of model?.fields ?? []) {
+      if (
+        field.required
+        && field.type === 'string'
+        && field.displayInline === false
+        && data[field.name] === undefined
+      ) {
+        data[field.name] = id;
       }
     }
     appendActivity(data, identity, 'created');
@@ -881,13 +899,13 @@ function resolveLimit(limit: number | undefined): number {
 
 function readReadinessTypeModels(
   rows: Array<Record<string, unknown>>,
-): TrackerReadinessTypeModel[] {
-  const models = new Map<string, TrackerReadinessTypeModel>();
+): TrackerTypeModel[] {
+  const models = new Map<string, TrackerTypeModel>();
   for (const row of rows) {
     const raw = row.__readiness_type_model;
     if (typeof raw !== 'string') continue;
     try {
-      const model = JSON.parse(raw) as TrackerReadinessTypeModel;
+      const model = JSON.parse(raw) as TrackerTypeModel;
       if (model?.type) models.set(model.type, model);
     } catch {
       /* malformed materialized schema: status resolution stays conservative */

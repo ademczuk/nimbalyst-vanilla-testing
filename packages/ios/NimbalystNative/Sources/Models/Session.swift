@@ -25,6 +25,9 @@ public struct Session: Codable, Identifiable, Hashable, Sendable {
     public var tagsJson: String?
     /// Worktree ID for git worktree association
     public var worktreeId: String?
+    /// Stable ID of the desktop or headless host that owns execution for this
+    /// session. nil means unknown -- control messages then broadcast as before.
+    public var hostDeviceId: String?
     /// Whether the session is archived
     public var isArchived: Bool
     /// Whether the session is pinned
@@ -89,6 +92,7 @@ public struct Session: Codable, Identifiable, Hashable, Sendable {
         phase: String? = nil,
         tagsJson: String? = nil,
         worktreeId: String? = nil,
+        hostDeviceId: String? = nil,
         isArchived: Bool = false,
         isPinned: Bool = false,
         branchedFromSessionId: String? = nil,
@@ -121,6 +125,7 @@ public struct Session: Codable, Identifiable, Hashable, Sendable {
         self.phase = phase
         self.tagsJson = tagsJson
         self.worktreeId = worktreeId
+        self.hostDeviceId = hostDeviceId
         self.isArchived = isArchived
         self.isPinned = isPinned
         self.branchedFromSessionId = branchedFromSessionId
@@ -147,7 +152,7 @@ extension Session: FetchableRecord, PersistableRecord {
 
     public enum Columns: String, ColumnExpression {
         case id, projectId, titleEncrypted, titleIv, titleDecrypted
-        case provider, model, mode, sessionType, parentSessionId, agentRole, createdBySessionId, phase, tagsJson, worktreeId
+        case provider, model, mode, sessionType, parentSessionId, agentRole, createdBySessionId, phase, tagsJson, worktreeId, hostDeviceId
         case isArchived, isPinned, branchedFromSessionId, branchPointMessageId, branchedAt
         case isExecuting, hasQueuedPrompts
         case contextTokens, contextWindow

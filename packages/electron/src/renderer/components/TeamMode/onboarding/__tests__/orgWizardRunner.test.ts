@@ -14,6 +14,7 @@ function fakeApi(overrides: Partial<OrgWizardApi> = {}): OrgWizardApi {
     acceptInvitation: vi.fn(async (orgId: string) => ({ orgId })),
     createOrganization: vi.fn(async () => ({ orgId: 'org-1' })),
     inviteMember: vi.fn(async () => {}),
+    publishFolder: vi.fn(async () => true),
     ...overrides,
   };
 }
@@ -80,6 +81,53 @@ describe('runSendInvites', () => {
     const once = await runSendInvites(created({ emails: ['karl@example.com'] }), api);
     await runSendInvites(once, api);
     expect(api.inviteMember).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A publish is a one-time copy, so re-running the step after a partial
+   * failure must not copy a folder that already landed — that would leave the
+   * team with two sets of the same documents and no way to tell them apart.
+   */
+  it('publishes each selected folder once, after the invitations', async () => {
+    const api = fakeApi();
+    const once = await runSendInvites(
+      created({ emails: ['karl@example.com'], publishFolders: ['/w/docs', '/w/specs'] }),
+      api,
+    );
+    expect(api.publishFolder).toHaveBeenCalledTimes(2);
+    expect(once.publishedFolders).toEqual(['/w/docs', '/w/specs']);
+    expect(once.error).toBeNull();
+
+    await runSendInvites(once, api);
+    expect(api.publishFolder).toHaveBeenCalledTimes(2);
+  });
+
+  /** Copying into a team nobody was invited to is work the user has to undo. */
+  it('publishes nothing when every invitation failed', async () => {
+    const api = fakeApi({
+      inviteMember: vi.fn(async () => { throw new Error('nope'); }),
+    });
+    const state = await runSendInvites(
+      created({ emails: ['karl@example.com'], publishFolders: ['/w/docs'] }),
+      api,
+    );
+    expect(api.publishFolder).not.toHaveBeenCalled();
+    expect(state.publishedFolders).toEqual([]);
+  });
+
+  /**
+   * "Some invitations failed" would send the creator to re-invite people who
+   * already have their email. The two failures are different problems and have
+   * to read as different problems.
+   */
+  it('does not report a failed publish as a failed invitation', async () => {
+    const api = fakeApi({ publishFolder: vi.fn(async () => false) });
+    const state = await runSendInvites(
+      created({ emails: ['karl@example.com'], publishFolders: ['/w/docs'] }),
+      api,
+    );
+    expect(state.invitedEmails).toEqual(['karl@example.com']);
+    expect(state.error).toBe('Some folders were not published — /w/docs');
   });
 
   it('keeps the addresses that succeeded when one fails', async () => {

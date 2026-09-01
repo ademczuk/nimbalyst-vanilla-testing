@@ -17,11 +17,26 @@ export interface CollabSidebarProps {
      */
     onSelectFolder?: (folderId: string | null) => void;
     /**
-     * Lets a host outside this tree (the desktop title bar's create control) open
-     * the shared-document type menu against its own anchor. The menu stays here
-     * because the catalog filtering that decides which types are shareable at all
-     * lives here; a second copy in the host would drift from it.
+     * Publishes this tree's create menu to a host outside it (the desktop title
+     * bar's create control). The list is built here because the catalog filtering
+     * that decides which types are shareable at all lives here; a second copy in
+     * the host would drift from it.
      */
-    registerCreateDocumentTrigger?: (open: ((anchor: HTMLElement) => void) | null) => void;
+    registerCreateMenu?: (menu: CollabSidebarCreateMenu | null) => void;
+}
+export interface CollabSidebarCreateMenu {
+    items: Array<{
+        id: string;
+        label: string;
+        icon: string;
+        onSelect: () => void;
+    }>;
+    /** Folder the new document lands in, or null for the space root. */
+    destination: string | null;
+    /** Default action: a shared Markdown doc. */
+    onPrimary: () => void;
+    /** Extension the default action produces, shown beside it. */
+    primaryTrailing?: string;
+    onNewFolder: () => void;
 }
 export declare const CollabSidebar: React.FC<CollabSidebarProps>;

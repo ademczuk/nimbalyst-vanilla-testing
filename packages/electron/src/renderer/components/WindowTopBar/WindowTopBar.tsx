@@ -80,8 +80,14 @@ export interface WindowTopBarCreateMenuItem {
   icon: string;
   onSelect: () => void;
   disabled?: boolean;
+  /** Tooltip explaining why the item is unavailable. */
+  disabledReason?: string;
   /** Draws a divider above this item, for grouping types vs. containers. */
   separatorBefore?: boolean;
+  /** Preserves the testid of a sidebar control this item replaced. */
+  testId?: string;
+  /** Right-aligned hint: keyboard shortcut, or the extension a type produces. */
+  trailing?: string;
 }
 
 export interface WindowTopBarCreateControl {
@@ -108,6 +114,10 @@ export interface WindowTopBarCreateControl {
   menuItems?: WindowTopBarCreateMenuItem[];
   /** Icon for the mirrored primary entry in the menu. Default: description. */
   primaryIcon?: string;
+  /** Preserves the testid of a sidebar trigger this caret replaced. */
+  menuTestId?: string;
+  /** Right-aligned hint on the mirrored primary entry. */
+  primaryTrailing?: string;
 }
 
 /** @deprecated Use {@link WindowTopBarCreateControl}. */
@@ -595,7 +605,7 @@ function CreateSplitButton({
           {...menu.getReferenceProps()}
           type="button"
           className={`window-top-bar__create-caret w-6 px-1 rounded-l-none ${CONTROL_BASE} ${CONTROL_GHOST} ${NO_DRAG_REGION}`}
-          data-testid={`window-top-bar-create-${side}-menu-button`}
+          data-testid={control.menuTestId ?? `window-top-bar-create-${side}-menu-button`}
           aria-label={`Choose what to create: ${control.label}`}
           aria-haspopup="menu"
           aria-expanded={menu.isOpen}
@@ -648,6 +658,11 @@ function CreateSplitButton({
             >
               <MaterialSymbol icon={control.primaryIcon ?? 'description'} size={17} />
               <span>{control.label}</span>
+              {control.primaryTrailing && (
+                <span className="window-top-bar__menu-hint flex-none text-[11px] text-nim-muted opacity-70">
+                  {control.primaryTrailing}
+                </span>
+              )}
             </button>
             {control.menuItems!.map((item) => (
               <React.Fragment key={item.id}>
@@ -661,7 +676,9 @@ function CreateSplitButton({
                   type="button"
                   role="menuitem"
                   className={`window-top-bar__menu-item ${MENU_ITEM}`}
+                  data-testid={item.testId}
                   disabled={item.disabled}
+                  title={item.disabled ? item.disabledReason : undefined}
                   onClick={() => {
                     item.onSelect();
                     menu.setIsOpen(false);
@@ -669,6 +686,11 @@ function CreateSplitButton({
                 >
                   <MaterialSymbol icon={item.icon} size={17} />
                   <span>{item.label}</span>
+                  {item.trailing && (
+                    <span className="window-top-bar__menu-hint flex-none text-[11px] text-nim-muted opacity-70">
+                      {item.trailing}
+                    </span>
+                  )}
                 </button>
               </React.Fragment>
             ))}

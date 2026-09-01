@@ -15,6 +15,8 @@
     "types": ["vite/client", "node"],
     "baseUrl": ".",
     "paths": {
+      "@nimbalyst/tracker-core": ["../tracker-core/src/index.ts"],
+      "@nimbalyst/tracker-core/*": ["../tracker-core/src/*"],
       "@nimbalyst/runtime": ["../runtime/src/index.ts"],
       "@nimbalyst/runtime/*": ["../runtime/src/*"],
       "@nimbalyst/extension-sdk": ["../extension-sdk/src/index.ts"],

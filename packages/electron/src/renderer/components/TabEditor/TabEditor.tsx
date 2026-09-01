@@ -781,30 +781,33 @@ export const TabEditor: React.FC<TabEditorProps> = ({
           }
 
           // For markdown files, use Lexical diff mode.
-          // Skip it for oversize payloads: the TOPT tree-matcher in
-          // applyMarkdownDiffToDocument is O(N^2) in root-children count and
-          // hits V8's Map size cap (~16M entries) on documents with >~1500
-          // root nodes. On a real CHANGELOG-shaped 280KB-vs-413KB pending
-          // diff this pins the renderer for ~57s before throwing a swallowed
-          // "Map maximum size exceeded" error. Until we rewrite the matcher
-          // (see nimbalyst-local/plans/lexical-diff-size-guard.md) we bail
-          // out before entering the slow path. The pendingAIEditTag is
-          // already set above, so the approval bar still appears and the
-          // user can accept/reject from there -- they just don't get the
-          // inline diff highlighting for this one file.
+          // Skip it for documents the tree matcher can't afford: it aligns
+          // siblings with an O(m*n) cost matrix, so a document with thousands
+          // of top-level blocks on each side blocks the renderer main thread
+          // for tens of seconds and then dies on V8's Map size cap (#4821).
+          // Bytes are the wrong proxy for that -- 194KB of prose is a handful
+          // of nodes, 194KB of bullets is thousands -- so the byte check below
+          // is only a cheap pre-filter and the real guard counts root nodes
+          // after parsing. When we skip, the pendingAIEditTag is already set
+          // above, so the approval bar still appears and the user can
+          // accept/reject from there; they just don't get the inline diff
+          // highlighting for this one file.
+          const skipLexicalDiff = (reason: string) => {
+            logger.ui.warn(`[TabEditor] Skipping Lexical diff on mount: ${reason} file=${fileName}`);
+            fetchDiffSessionInfo(
+              pendingTag.sessionId,
+              pendingTag.createdAt ? new Date(pendingTag.createdAt).getTime() : Date.now(),
+            );
+          };
+
           const LEXICAL_DIFF_MAX_BYTES = 200_000;
           if (
             (oldContent?.length ?? 0) > LEXICAL_DIFF_MAX_BYTES ||
             (newContent?.length ?? 0) > LEXICAL_DIFF_MAX_BYTES
           ) {
-            logger.ui.warn(
-              `[TabEditor] Skipping Lexical diff on mount for oversize payload: ` +
-                `oldLen=${oldContent?.length ?? 0} newLen=${newContent?.length ?? 0} ` +
-                `threshold=${LEXICAL_DIFF_MAX_BYTES} file=${fileName}`,
-            );
-            fetchDiffSessionInfo(
-              pendingTag.sessionId,
-              pendingTag.createdAt ? new Date(pendingTag.createdAt).getTime() : Date.now(),
+            skipLexicalDiff(
+              `oldLen=${oldContent?.length ?? 0} newLen=${newContent?.length ?? 0} ` +
+                `byteThreshold=${LEXICAL_DIFF_MAX_BYTES}`,
             );
             return;
           }
@@ -813,6 +816,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
           const transformers = getEditorTransformers();
 
           const tReparseStart = performance.now();
+          let oldRootNodeCount = 0;
           editorRef.current.update(() => {
             const tInsideUpdateStart = performance.now();
             // Clearing a selected node without moving selection first makes
@@ -822,10 +826,36 @@ export const TabEditor: React.FC<TabEditorProps> = ({
             root.clear();
             const tAfterClear = performance.now();
             $convertFromEnhancedMarkdownString(oldContent, transformers);
+            oldRootNodeCount = root.getChildren().length;
             const tAfterConvert = performance.now();
-            console.log(`[TabEditor.timing]   inside update: clear=${(tAfterClear - tInsideUpdateStart).toFixed(1)}ms convertFromMarkdown=${(tAfterConvert - tAfterClear).toFixed(1)}ms`);
+            console.log(`[TabEditor.timing]   inside update: clear=${(tAfterClear - tInsideUpdateStart).toFixed(1)}ms convertFromMarkdown=${(tAfterConvert - tAfterClear).toFixed(1)}ms rootNodes=${oldRootNodeCount}`);
           }, { tag: SKIP_SCROLL_INTO_VIEW_TAG });
           console.log(`[TabEditor.timing] clear+reparseOldContent (editor.update wall): ${(performance.now() - tReparseStart).toFixed(1)}ms`);
+
+          // Sits under the runtime's DEFAULT_MAX_PAIR_EVALUATIONS budget
+          // (1200 x 1200 = 1.44M of 2M cells), leaving headroom for the nested
+          // child alignments inside those blocks. Above this we put the new
+          // content back and leave the user with the approval bar alone.
+          const LEXICAL_DIFF_MAX_ROOT_NODES = 1200;
+          if (oldRootNodeCount > LEXICAL_DIFF_MAX_ROOT_NODES) {
+            editorRef.current.update(() => {
+              $setSelection(null);
+              const root = $getRoot();
+              root.clear();
+              $convertFromEnhancedMarkdownString(newContent, transformers);
+            }, { tag: SKIP_SCROLL_INTO_VIEW_TAG });
+            contentRef.current = newContent;
+            // The restore round-trip is a reparse, not a user edit -- don't let
+            // it trigger an autosave.
+            setTimeout(() => {
+              isDirtyRef.current = false;
+              onDirtyChange?.(false);
+            }, 100);
+            skipLexicalDiff(
+              `rootNodes=${oldRootNodeCount} nodeThreshold=${LEXICAL_DIFF_MAX_ROOT_NODES}`,
+            );
+            return;
+          }
 
           contentRef.current = oldContent;
 

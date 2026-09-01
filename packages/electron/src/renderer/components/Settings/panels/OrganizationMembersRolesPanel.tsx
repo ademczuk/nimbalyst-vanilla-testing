@@ -13,7 +13,10 @@ import {
 import { trackTeamAnalyticsEvent } from '../../../utils/teamAnalytics';
 import { organizationCreationEnabled } from '../../../store/atoms/settingsDomains';
 import { teamPresenceAtomFamily } from '../../../store/atoms/teamPresence';
+import { activeWorkspacePathAtom } from '../../../store/atoms/openProjects';
 import { requestConfirmation } from '../../../dialogs/requestConfirmation';
+import { InviteToTeamDialog } from '../../InviteToTeamDialog/InviteToTeamDialog';
+import type { InviteProjectOption } from '../../InviteToTeamDialog/inviteToTeamModel';
 
 interface Member {
   memberId: string;
@@ -44,8 +47,10 @@ export function OrganizationMembersRolesPanel({
   const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [callerRole, setCallerRole] = useState('member');
-  const [inviteEmail, setInviteEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteProjects, setInviteProjects] = useState<InviteProjectOption[]>([]);
+  const workspacePath = useAtomValue(activeWorkspacePathAtom);
   const refresh = useCallback(async () => {
     const directory = await window.electronAPI.organization.list();
     const teams = directory?.success && Array.isArray(directory.teams) ? directory.teams : [];
@@ -56,6 +61,31 @@ export function OrganizationMembersRolesPanel({
       setMembers(roster.members ?? []);
       setCallerRole(roster.callerRole ?? teams.find((team: OrganizationSummary) => team.orgId === orgId)?.role ?? 'member');
     }
+  }, [orgId]);
+
+  // The invite dialog needs the org's projects to offer any beyond the primary
+  // one. A failure here leaves the dialog offering only the automatic grant,
+  // which is the correct degraded state rather than a blocked invitation.
+  useEffect(() => {
+    if (!orgId) return;
+    let active = true;
+    void (async () => {
+      try {
+        const listing = await window.electronAPI.organization.listProjects(orgId);
+        const projects = listing?.success && Array.isArray(listing.projects) ? listing.projects : [];
+        if (!active) return;
+        setInviteProjects(projects.map((project: {
+          teamProjectId: string; name?: string | null; isPrimary?: boolean; primary?: boolean;
+        }, index: number) => ({
+          teamProjectId: project.teamProjectId,
+          name: project.name ?? null,
+          isPrimary: project.isPrimary ?? project.primary ?? index === 0,
+        })));
+      } catch (reason) {
+        console.warn('[OrganizationMembersRolesPanel] could not list projects for the invite dialog', reason);
+      }
+    })();
+    return () => { active = false; };
   }, [orgId]);
 
   useEffect(() => { void refresh().catch((reason) => setError(String(reason))); }, [refresh]);
@@ -187,43 +217,55 @@ export function OrganizationMembersRolesPanel({
           </div>
 
           <ActionGuard allowed={canAdminister} reason="An organization owner or admin is required to invite members.">
-            <form
-              className="organization-invite-form mt-4 flex gap-2"
-              data-testid="organization-invite-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (!inviteEmail.trim()) return;
-                void window.electronAPI.organization.inviteMember(orgId, inviteEmail.trim())
-                  .then((result) => {
-                    if (result?.success === false) throw new Error(result.error ?? 'Could not send invitation');
-                    trackTeamAnalyticsEvent('team_invitation_sent', {
-                      surface: 'desktop',
-                      entryPoint: 'organization_manager',
-                      callerRole: analyticsCallerRole,
-                      memberCountBucket: bucketMemberCount(members.length + 1),
-                    });
-                    setInviteEmail('');
-                    return refresh();
-                  })
-                  .catch((reason) => {
-                    trackTeamAnalyticsEvent('team_operation_failed', {
-                      surface: 'desktop',
-                      operation: 'send_invitation',
-                      entryPoint: 'organization_manager',
-                      callerRole: analyticsCallerRole,
-                      errorCategory: categorizeTeamAnalyticsError('organization', reason),
-                    });
-                    setError(String(reason));
-                  });
-              }}
+            <button
+              className="organization-invite-open mt-4 rounded bg-[var(--nim-primary)] px-3 py-2 text-sm font-semibold text-[var(--nim-on-primary)]"
+              data-testid="organization-invite-open"
+              type="button"
+              onClick={() => setInviteOpen(true)}
             >
-              <input className="min-w-0 flex-1 rounded border border-[var(--nim-border)] bg-[var(--nim-bg)] px-3 py-2 text-sm" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="teammate@example.com" />
-              <button className="rounded bg-[var(--nim-primary)] px-3 py-2 text-sm font-semibold text-[var(--nim-on-primary)]" type="submit">Invite</button>
-            </form>
+              Invite people
+            </button>
           </ActionGuard>
         </>
       )}
-      {error && <p className="select-text text-sm text-[var(--nim-error)]">{error}</p>}
+      {orgId && (
+        <InviteToTeamDialog
+          isOpen={inviteOpen}
+          orgId={orgId}
+          orgName={organizations.find(team => team.orgId === orgId)?.name ?? 'your team'}
+          projects={inviteProjects}
+          workspacePath={workspacePath}
+          onClose={() => setInviteOpen(false)}
+          onInvited={(result) => {
+            trackTeamAnalyticsEvent('team_invitation_sent', {
+              surface: 'desktop',
+              entryPoint: 'organization_manager',
+              callerRole: analyticsCallerRole,
+              memberCountBucket: bucketMemberCount(members.length + result.invited.length),
+            });
+            // Partial outcomes are surfaced rather than folded into success:
+            // an inviter who is told nothing believes every address went out
+            // and every folder landed.
+            const problems = [
+              ...result.failed.map(failure => `${failure.email}: ${failure.error}`),
+              ...result.projectGrantsFailed.map(id => `Project access could not be granted (${id})`),
+              ...result.folderFailures,
+            ];
+            setError(problems.length > 0 ? problems.join('\n') : null);
+            if (result.failed.length > 0) {
+              trackTeamAnalyticsEvent('team_operation_failed', {
+                surface: 'desktop',
+                operation: 'send_invitation',
+                entryPoint: 'organization_manager',
+                callerRole: analyticsCallerRole,
+                errorCategory: categorizeTeamAnalyticsError('organization', result.failed[0]?.error),
+              });
+            }
+            void refresh();
+          }}
+        />
+      )}
+      {error && <p className="select-text whitespace-pre-line text-sm text-[var(--nim-error)]">{error}</p>}
     </section>
   );
 }
