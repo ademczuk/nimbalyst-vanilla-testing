@@ -199,7 +199,7 @@ export function createSuperLoopStore(db: PGliteLike, ensureDbReady?: EnsureReady
     async listLoops(workspaceId: string): Promise<SuperLoop[]> {
       await ensureReady();
 
-      logger.debug('Listing super loops', { workspaceId });
+      // logger.debug('Listing super loops', { workspaceId });
 
       const { rows } = await db.query<SuperLoopRow>(
         `SELECT rl.* FROM super_loops rl
@@ -212,7 +212,7 @@ export function createSuperLoopStore(db: PGliteLike, ensureDbReady?: EnsureReady
       );
 
       const loops = rows.map(rowToSuperLoop);
-      logger.debug('Found super loops', { count: loops.length });
+      // logger.debug('Found super loops', { count: loops.length });
 
       return loops;
     },

@@ -104,6 +104,25 @@ export function isToggleSidebarShortcut(
     && event.key.toLowerCase() === 'b';
 }
 
+/**
+ * True when the keystroke landed inside a rich-text surface, where Cmd/Ctrl+B
+ * means bold. This listener runs in the capture phase, so without this check it
+ * preventDefaults the keystroke before Lexical's own root-element handler ever
+ * sees it and the editor can never bold anything.
+ *
+ * Plain inputs, textareas and Monaco (which types into a hidden textarea) are
+ * not editable regions, so the sidebar shortcut still applies there — matching
+ * VS Code's Cmd+B in code.
+ */
+export function isRichTextEditingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  // jsdom never sets isContentEditable, so fall back to the nearest declared
+  // editing host — which is also how a target nested inside the editor matches.
+  const host = target.closest<HTMLElement>('[contenteditable]');
+  return host !== null && host.getAttribute('contenteditable') !== 'false';
+}
+
 export function useKeyboardShortcuts({
   activeMode,
   workspaceMode,
@@ -162,7 +181,9 @@ export function useKeyboardShortcuts({
         return;
       }
 
-      if (workspaceMode && isToggleSidebarShortcut(e)) {
+      // Cmd/Ctrl+B toggles the active left pane, except inside a rich-text
+      // editor where it is bold.
+      if (workspaceMode && isToggleSidebarShortcut(e) && !isRichTextEditingTarget(e.target)) {
         e.preventDefault();
         e.stopPropagation();
         toggleActiveLeftPane();

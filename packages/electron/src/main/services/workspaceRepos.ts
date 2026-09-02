@@ -18,8 +18,8 @@
  */
 
 import { existsSync, readdirSync } from 'fs';
-import { join } from 'path';
-import { getWorkspaceRoots } from '../utils/store';
+import { isAbsolute, join, resolve as resolvePath } from 'path';
+import { getAttachedFolders, getWorkspaceRoots } from '../utils/store';
 import { findGitRootForFile } from './GitStatusService';
 import { isPathInWorkspace } from '../../shared/pathUtils';
 import { logger } from '../utils/logger';
@@ -129,14 +129,52 @@ export function listRepoScanPaths(workspacePath: string): string[] {
 }
 
 /**
+ * The roots a resolution should consider.
+ *
+ * `extraRoots` exists for the worktree case. Attached folders are stored under
+ * the primary workspace's key, so `getWorkspaceRoots(worktreePath)` answers with
+ * the worktree alone -- and every file in an attached folder then resolves to no
+ * repo at all. The caller that knows both paths (it has the session record)
+ * supplies the parent workspace's attached folders here.
+ */
+function rootsFor(workspacePath: string, extraRoots?: string[]): string[] {
+  const roots = getWorkspaceRoots(workspacePath);
+  if (!extraRoots?.length) return roots;
+  const seen = new Set(roots);
+  return [...roots, ...extraRoots.filter((root) => !seen.has(root) && !!seen.add(root))];
+}
+
+/**
+ * Attached folders that a commit against `commitPath` should still consider.
+ *
+ * A worktree session commits against the worktree, not the workspace, and
+ * attached folders are stored under the workspace's key -- so the worktree sees
+ * none of them. Returns the parent workspace's attached folders in that case and
+ * nothing at all for an ordinary session, where `getWorkspaceRoots` already
+ * answers correctly and adding them twice would be noise.
+ */
+export function resolveExtraCommitRoots(
+  commitPath: string,
+  sessionWorkspacePath?: string | null,
+): string[] {
+  if (!sessionWorkspacePath) return [];
+  if (resolvePath(sessionWorkspacePath) === resolvePath(commitPath)) return [];
+  return getAttachedFolders(sessionWorkspacePath);
+}
+
+/**
  * The repo that owns `filePath`, or null when the file is in no repo (or in no
  * root of this workspace).
  *
  * Resolves within the file's own root, so a file in an attached folder is never
  * attributed to the primary root's repo.
  */
-export function resolveRepoForFile(workspacePath: string, filePath: string): string | null {
-  const roots = getWorkspaceRoots(workspacePath);
+export function resolveRepoForFile(
+  workspacePath: string,
+  filePath: string,
+  extraRoots?: string[],
+): string | null {
+  const roots = rootsFor(workspacePath, extraRoots);
 
   // Deepest containing root first: a root nested inside another root bounds the
   // walk more tightly, which is what its own `.git` deserves.
@@ -159,6 +197,40 @@ export function resolveRepoForFile(workspacePath: string, filePath: string): str
  */
 export function resolveDefaultRepo(workspacePath: string): string | null {
   return listWorkspaceRepos(workspacePath)[0] ?? null;
+}
+
+/**
+ * The single repo a commit proposal targets, or the groups it wrongly spans.
+ *
+ * One proposal is one commit in one repo. A list spanning repos would put N
+ * commits behind a single approval, all sharing one message, with only the
+ * first hash ever shown -- the exact shape that hid multi-repo commits for a
+ * release. Callers reject that and let the agent make one call per group.
+ *
+ * Files in no repo do not make a proposal cross-repo: they are reported as
+ * uncommittable after the commit, which is already correct.
+ */
+export function scopeProposalToRepo(
+  workspacePath: string,
+  filePaths: string[],
+  extraRoots?: string[],
+):
+  | { ok: true; repoPath: string | null }
+  | { ok: false; groups: Array<{ repoPath: string; files: string[] }> } {
+  const absolute = filePaths.map((filePath) =>
+    isAbsolute(filePath) ? filePath : resolvePath(workspacePath, filePath),
+  );
+  const groups = groupFilesByRepo(workspacePath, absolute, extraRoots);
+  groups.delete(null);
+
+  const repoPaths = [...groups.keys()].filter((repo): repo is string => repo !== null);
+  if (repoPaths.length <= 1) {
+    return { ok: true, repoPath: repoPaths[0] ?? null };
+  }
+  return {
+    ok: false,
+    groups: repoPaths.map((repoPath) => ({ repoPath, files: groups.get(repoPath)! })),
+  };
 }
 
 /**
@@ -199,10 +271,11 @@ export function groupFilesByRoot(
 export function groupFilesByRepo(
   workspacePath: string,
   filePaths: string[],
+  extraRoots?: string[],
 ): Map<string | null, string[]> {
   const groups = new Map<string | null, string[]>();
   for (const filePath of filePaths) {
-    const repo = resolveRepoForFile(workspacePath, filePath);
+    const repo = resolveRepoForFile(workspacePath, filePath, extraRoots);
     const existing = groups.get(repo);
     if (existing) {
       existing.push(filePath);

@@ -10,12 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- The Git panel's Changes tab can show every repository in the project at once, each with its own file list and commit box.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Commit with AI now proposes one commit per repository when your changes span several, so you approve each one separately and each gets its own message.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Document sync could delete markdown files from your workspace, including files tracked in git.
+- Sync connection errors wrote your authentication token to the application log in plain text.
+- Committing changes that spanned repositories reported files as committed that were never committed, and showed only the first repository's commit hash.
+- Approving a commit from your phone failed outright when the changes spanned repositories, including the files that could have been committed.
+- A session running in a worktree silently left out changes in the project's attached folders when committing.
+- Cmd+B bolds text again when you are typing in an editor, instead of toggling the sidebar.
+- Typing in a markdown file no longer stutters each time it autosaves in a workspace with a large tracker.
+- A session that had previously reached the complete phase stayed out of the menu bar's Running list for the whole of its next turn.
+- Opening a session on iOS could show another session's transcript under the correct title.
 
 ### Removed
 <!-- Removed features go here -->

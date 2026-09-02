@@ -5,10 +5,13 @@ import {
 } from '@floating-ui/react';
 import { repoLabels } from '../repoPaths';
 
+/** Scope value meaning "show every repo at once" rather than one repo. */
+export const ALL_REPOS = '__all__';
+
 interface RepoPickerProps {
   /** Repos the workspace spans, in root order. */
   repos: string[];
-  /** Currently targeted repo. */
+  /** Currently targeted repo, or ALL_REPOS. */
   current: string;
   onChange: (repoPath: string) => void;
   /**
@@ -63,6 +66,7 @@ export function RepoPicker({
   if (repos.length < 2) return null;
 
   const labels = repoLabels(repos);
+  const currentLabel = current === ALL_REPOS ? 'All repositories' : (labels[current] ?? current);
 
   return (
     <>
@@ -70,11 +74,11 @@ export function RepoPicker({
         ref={refs.setReference}
         className="git-log-select git-repo-picker-trigger"
         onClick={toggle}
-        title={current}
-        aria-label={`Repository: ${labels[current] ?? current}`}
+        title={current === ALL_REPOS ? 'All repositories' : current}
+        aria-label={`Repository: ${currentLabel}`}
         {...getReferenceProps()}
       >
-        {labels[current] ?? current}
+        {currentLabel}
         <span className="git-repo-picker-chevron">{isOpen ? '▲' : '▼'}</span>
       </button>
 
@@ -87,6 +91,17 @@ export function RepoPicker({
             {...getFloatingProps()}
           >
             <div className="git-branch-menu-section">Repositories</div>
+            {/* Changes shows every repo at once under this scope; Log and
+                Output stay on one repo, since a merged commit log across
+                repos is meaningless. */}
+            <button
+              className={`git-branch-menu-item${current === ALL_REPOS ? ' git-branch-menu-item--current' : ''}`}
+              onClick={() => handleSelect(ALL_REPOS)}
+              title="Show changes from every repository"
+            >
+              <span className="git-branch-menu-item-name">All repositories</span>
+              {current === ALL_REPOS && <span className="git-branch-menu-item-check">✓</span>}
+            </button>
             {repos.map(repoPath => (
               <button
                 key={repoPath}

@@ -30,7 +30,7 @@
 - A command an agent ran in the background was killed about five minutes after its turn ended. One can now run for up to 30 minutes.
 - A session working through a long build or test run dropped out of the menu bar's Running list after fifteen minutes and was labelled as not responding until its turn ended.
 - Clicking a desktop notification from a session running in a worktree reported that the session could not be found. It now opens the session.
-- Images an agent writes inside a session's worktree open at full size instead of failing to load (#1343).
+- Images an agent writes inside a session's worktree open at full size instead of failing to load (#1343, contributed by @forcewalkerneo).
 - Images in a shared document render in the web console instead of showing a broken-image placeholder.
 - Extensions can store secrets on Windows again; secrets saved on macOS and Linux by earlier versions are picked up automatically.
 - An API key left in your shell environment is no longer handed to the Codex or Copilot coding agents. Only a key you configured in Nimbalyst settings is used.
@@ -40,10 +40,11 @@
 - Cmd+N in Shared Docs opened the local new-file dialog instead of creating a shared document, and did nothing in the tracker.
 - Typing in quick open over an open spreadsheet lost everything after the first letter to the selected cell, and typing in a dialog while the tracker table was open edited the selected cell.
 - Changing the theme laid a large opaque rectangle across the top of the screen behind the menu bar island, and flattened the menu bar panel's translucency.
-- Project-knowledge search falls back to the local keyword index when semantic matching is unavailable instead of presenting a credential setup error.
+- Project-knowledge search falls back to the local keyword index when semantic matching is unavailable instead of presenting a credential setup error. (#955, contributed by @Yogitmeister)
 - Files whose AI edits have already been committed no longer open with a leftover change count and review dot.
-- A tool permission request that timed out or was dropped now says nobody answered it, instead of reporting a cancellation you never made (#1348).
-- The workspace picker marks a truncated markdown count as a lower bound instead of showing a confidently wrong number (#1376).
+- A tool permission request that timed out or was dropped now says nobody answered it, instead of reporting a cancellation you never made (#1348, contributed by @forcewalkerneo).
+- The workspace picker marks a truncated markdown count as a lower bound instead of showing a confidently wrong number (#1376, contributed by @forcewalkerneo).
+- Time trackers, screen readers, and other macOS accessibility tools now see the document you are actually viewing, instead of the last file you happened to open (#1375, contributed by @timscott-frogslayer).
 - Worktree actions were greyed out inside a git repository until another part of the app happened to check first.
 - The Git panel's Refresh button reloads the Changes tab's file list, not just the commit log and branch.
 

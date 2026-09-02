@@ -30,7 +30,8 @@ import { getGitSubprocessEnv, simpleGitWithHookEnv } from '../services/gitEnv';
 import { SessionCommitService } from '../services/SessionCommitService';
 import { safeHandle } from '../utils/ipcRegistry';
 import { findGitRootForFile } from '../services/GitStatusService';
-import { resolveRepoForFile } from '../services/workspaceRepos';
+import { resolveExtraCommitRoots, resolveRepoForFile } from '../services/workspaceRepos';
+import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
 import { isFileInWorkspaceOrWorktree } from '../utils/workspaceDetection';
 import {
   getGitOperationLogService,
@@ -1138,6 +1139,26 @@ export function registerGitHandlers(): void {
   /**
    * Execute git commit
    */
+  /**
+   * Attached folders that apply to a commit made by `sessionId`.
+   *
+   * Only a worktree session needs these -- it commits against the worktree,
+   * while its attached folders live under the parent workspace's key. Any
+   * lookup failure yields no extra roots, which is exactly today's behaviour.
+   */
+  async function resolveSessionExtraCommitRoots(
+    sessionId: string,
+    commitPath: string,
+  ): Promise<string[]> {
+    try {
+      const session = await AISessionsRepository.get(sessionId);
+      return resolveExtraCommitRoots(commitPath, session?.workspacePath);
+    } catch (error) {
+      log.warn('[git:commit] Could not resolve session roots:', error);
+      return [];
+    }
+  }
+
   ipcMain.handle(
     'git:commit',
     async (
@@ -1166,6 +1187,13 @@ export function registerGitHandlers(): void {
       /** Selected files that belong to no repository and were not committed. */
       uncommittableFiles?: string[];
     }> => {
+      // A worktree session commits against the worktree path, which owns no
+      // attached folders -- they are keyed by the parent workspace. Without
+      // this every attached-folder file resolves to no repo and is dropped.
+      const extraRoots = sessionId
+        ? await resolveSessionExtraCommitRoots(sessionId, workspacePath)
+        : [];
+
       const result = await withGitOperationLog(
         operationLog,
         workspacePath,
@@ -1179,6 +1207,7 @@ export function registerGitHandlers(): void {
           onOutput: (stream, chunk) => operationLog.appendOutput(workspacePath, entry.id, stream, chunk),
           hunkSelections,
           repoPath,
+          extraRoots,
         }),
         result => result.commitHash ? `[${result.commitHash}] commit created` : undefined,
       );

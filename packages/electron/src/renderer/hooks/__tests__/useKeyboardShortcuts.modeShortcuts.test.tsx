@@ -106,6 +106,38 @@ describe('Cmd+T', () => {
   });
 });
 
+describe('Cmd+B', () => {
+  // The hook listens in the capture phase, so a preventDefault here reaches
+  // Lexical's own root handler as "already handled" and bold silently dies.
+  it('leaves Cmd+B to the editor when focus is in a rich-text surface', () => {
+    const { container } = render(
+      <>
+        <Harness activeMode="files" />
+        <div contentEditable suppressContentEditableWarning><span>text</span></div>
+      </>,
+    );
+    const isMac = navigator.platform.startsWith('Mac');
+    const event = new KeyboardEvent('keydown', {
+      key: 'b',
+      metaKey: isMac,
+      ctrlKey: !isMac,
+      bubbles: true,
+      cancelable: true,
+    });
+    container.querySelector('span')!.dispatchEvent(event);
+
+    expect(toggleActiveLeftPane).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('toggles the left pane outside a rich-text surface', () => {
+    render(<Harness activeMode="files" />);
+    pressAppModifier('b');
+
+    expect(toggleActiveLeftPane).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('Cmd+Alt+M', () => {
   // Option rewrites the character on macOS (Option+M is "µ"), so the chord is
   // matched on `code` as well — a `key`-only match silently never fires.

@@ -34,6 +34,7 @@ import { broadcastMessageLogged } from "../../services/ai/claudeCliUserPromptLog
 import { ClaudeSettingsManager } from "../../services/ClaudeSettingsManager";
 import { getPermissionService } from "../../services/PermissionService";
 import { SessionCommitService } from "../../services/SessionCommitService";
+import { scopeProposalToRepo } from "../../services/workspaceRepos";
 import { findFreshInteractiveResponse } from "./interactiveResponsePolling";
 import {
   clearPendingInteractiveWaiter,
@@ -120,6 +121,8 @@ export function getInteractiveToolSchemas(sessionId: string | undefined) {
 
 IMPORTANT: First call get_session_edited_files, cross-reference with git status, and include ALL session-edited files that have uncommitted changes — do not cherry-pick a subset.
 
+ONE REPOSITORY PER CALL. A commit cannot span repositories. If the files you are committing live in more than one repository (a workspace can have attached folders that are their own checkouts), call this tool once per repository — each call with only that repository's files and a commit message describing that repository's change. A call whose files span repositories is rejected.
+
 Commit message: type prefix (feat:/fix:/refactor:/docs:/test:/chore:), title states the user-visible outcome, focus on impact and why (not technique), lines under 72 chars, no emojis, dash bullets only for multiple distinct changes. If the commit resolves an issue or tracker item, include its canonical closing reference (e.g. Fixes #123, Closes ABC-123), or a neutral reference line if the closing syntax is unclear.`,
       inputSchema: {
         type: "object",
@@ -134,7 +137,8 @@ Commit message: type prefix (feat:/fix:/refactor:/docs:/test:/chore:), title sta
                   properties: {
                     path: {
                       type: "string",
-                      description: "File path relative to workspace root",
+                      description:
+                        "File path, either relative to the workspace root or absolute. Files in an attached folder are supplied to you as absolute paths; pass them back unchanged.",
                     },
                     status: {
                       type: "string",
@@ -847,6 +851,34 @@ export async function handleGitCommitProposal(
     };
   }
 
+  // One proposal is one commit in one repo. Accepting a list that spans repos
+  // would put N commits behind a single approval, sharing one message, with
+  // only the first hash ever surfaced. Refuse and name the groups so the agent
+  // makes one call per repo -- it corrects within the same turn.
+  const proposalPaths = proposalArgs.filesToStage.map((file) =>
+    typeof file === "string" ? file : file.path
+  );
+  const scope = scopeProposalToRepo(workspacePath, proposalPaths);
+  if (!scope.ok) {
+    const groupList = scope.groups
+      .map((group) => `${group.repoPath}\n${group.files.map((f) => `  - ${f}`).join("\n")}`)
+      .join("\n\n");
+    return {
+      content: [
+        {
+          type: "text",
+          text:
+            `Error: this proposal spans ${scope.groups.length} git repositories. ` +
+            `A commit cannot cross repositories, so call developer_git_commit_proposal ` +
+            `once per repository, each with only that repository's files and a commit ` +
+            `message describing that repository's change.\n\n${groupList}`,
+        },
+      ],
+      isError: true,
+    };
+  }
+  const proposalRepoPath = scope.repoPath ?? undefined;
+
   // Find the target window (resolves worktree paths to parent project)
   const commitWindowId = await findWindowIdForWorkspacePath(workspacePath);
   if (!commitWindowId) {
@@ -908,6 +940,9 @@ export async function handleGitCommitProposal(
               filesToStage: proposalArgs.filesToStage,
               commitMessage: proposalArgs.commitMessage,
               reasoning: proposalArgs.reasoning,
+              // Resolved here, not sent by the model. The widget reads the tool
+              // input, so this is the only place it can reach it.
+              repoPath: proposalRepoPath,
             },
           }),
           hidden: false,
@@ -933,6 +968,10 @@ export async function handleGitCommitProposal(
         commitMessage: proposalArgs.commitMessage,
         reasoning: proposalArgs.reasoning,
         workspacePath,
+        // The repo this proposal commits into, resolved from the files. The
+        // widget names it and renders paths relative to it -- an attached
+        // folder's absolute path would otherwise render as a tree from `/`.
+        repoPath: proposalRepoPath,
         timestamp: now.getTime(),
         status: "pending",
       }),

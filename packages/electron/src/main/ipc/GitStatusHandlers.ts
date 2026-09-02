@@ -222,7 +222,16 @@ export function registerGitStatusHandlers(): void {
       includeAllUncommitted?: boolean
     ): Promise<{
       success: boolean;
-      files: Array<{ path: string; status: 'added' | 'modified' | 'deleted' }>;
+      files: Array<{
+        path: string;
+        status: 'added' | 'modified' | 'deleted';
+        /**
+         * The repo that owns this file. The prompt groups on it so the agent
+         * makes one commit proposal per repo -- a commit cannot span repos, and
+         * a flat list gives the agent no way to know it needs several calls.
+         */
+        repo?: string;
+      }>;
       scenario: 'single' | 'workstream' | 'worktree';
       error?: string;
     }> => {
@@ -256,11 +265,15 @@ export function registerGitStatusHandlers(): void {
           return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : absPath;
         };
 
+        const owningRepo = (absPath: string): string | undefined =>
+          resolveRepoForFile(workspacePath, absPath) ?? undefined;
+
         if (includeAllUncommitted) {
           const allStatuses = await collectAllStatuses();
           const files = Object.values(allStatuses).map(s => ({
             path: displayPath(s.filePath),
             status: mapStatus(s.status),
+            repo: owningRepo(s.filePath),
           }));
           return { success: true, files, scenario: 'worktree' as const };
         }
@@ -285,7 +298,7 @@ export function registerGitStatusHandlers(): void {
 
         // Cross-reference: only session-edited files that still have uncommitted changes
         const seen = new Set<string>();
-        const files: Array<{ path: string; status: 'added' | 'modified' | 'deleted' }> = [];
+        const files: Array<{ path: string; status: 'added' | 'modified' | 'deleted'; repo?: string }> = [];
 
         for (const editedFile of editedFiles) {
           const absPath = editedFile.filePath.startsWith('/')
@@ -298,7 +311,11 @@ export function registerGitStatusHandlers(): void {
           const gitStatus = allStatuses[absPath];
           if (!gitStatus) continue;
 
-          files.push({ path: displayPath(absPath), status: mapStatus(gitStatus.status) });
+          files.push({
+            path: displayPath(absPath),
+            status: mapStatus(gitStatus.status),
+            repo: owningRepo(absPath),
+          });
         }
 
         return { success: true, files, scenario };

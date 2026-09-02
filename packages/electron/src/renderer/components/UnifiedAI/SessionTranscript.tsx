@@ -2018,7 +2018,15 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
             files,
             sessionId,
             hunkSelections
-          ) as { success: boolean; commitHash?: string; commitDate?: string; error?: string };
+          ) as {
+            success: boolean;
+            commitHash?: string;
+            commitDate?: string;
+            error?: string;
+            committedFiles?: string[];
+            uncommittableFiles?: string[];
+            repoResults?: Array<{ repoPath: string; success: boolean; commitHash?: string; error?: string }>;
+          };
 
           // Send response via unified IPC channel for the durable prompt.
           // A real failure (success=false with an error) maps to action='error',
@@ -2034,7 +2042,15 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
               commitHash: result.commitHash,
               commitDate: result.commitDate,
               error: result.error,
-              filesCommitted: result.success ? files : undefined,
+              // `committedFiles` is what actually landed. Reporting the full
+              // input instead tells the agent that a file belonging to no repo
+              // -- never staged anywhere -- is committed.
+              filesCommitted: result.success ? (result.committedFiles ?? files) : undefined,
+              uncommittableFiles: result.uncommittableFiles,
+              // A selection spanning repos makes one commit per repo, and
+              // `commitHash` is only the first. Without this the rest are
+              // invisible to both the widget and the agent.
+              repoResults: result.repoResults,
               commitMessage: result.success ? message : undefined,
             },
             respondedBy: 'desktop' as const,

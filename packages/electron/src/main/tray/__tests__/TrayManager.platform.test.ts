@@ -440,6 +440,96 @@ describe('liveness ticks', () => {
   });
 });
 
+/**
+ * The cache freezes `phase` and `isArchived` at first sight, and both of them
+ * decide whether a running session is shown at all. A session marked `complete`
+ * on an earlier run and then re-prompted therefore stayed out of the running
+ * bucket for its whole next turn -- status `running`, tray icon lit, strip count
+ * zero.
+ */
+describe('cached session flags go stale', () => {
+  const NOW = 1_700_000_000_000;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetSingleton();
+    browserGetAllWindows.mockReturnValue([]);
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  function cacheFinished(tm: TrayManager, phase: string) {
+    (tm as any).sessionCache.set('s1', {
+      sessionId: 's1',
+      title: 'Was finished',
+      workspacePath: '/workspace/a',
+      status: 'completed',
+      isStreaming: false,
+      hasPendingPrompt: false,
+      hasUnread: false,
+      phase,
+      isArchived: false,
+      updatedAt: NOW - 60_000,
+    });
+  }
+
+  function stubRow(tm: TrayManager, row: Record<string, unknown>) {
+    tm.setDatabase({ query: vi.fn().mockResolvedValue({ rows: [row] }) } as any);
+  }
+
+  it('re-reads the phase when a stale-complete session starts a new turn', async () => {
+    const tm = TrayManager.getInstance();
+    cacheFinished(tm, 'complete');
+    stubRow(tm, { is_archived: 0, metadata: JSON.stringify({ phase: 'implementing' }) });
+
+    await (tm as any).onSessionStateEvent({
+      type: 'session:started',
+      sessionId: 's1',
+      timestamp: new Date(),
+    });
+
+    expect((tm as any).sessionCache.get('s1')).toMatchObject({ status: 'running', phase: 'implementing' });
+    expect(tm.buildPanelFeed().running).toHaveLength(1);
+    expect(tm.buildFleetSnapshot(NOW).running).toBe(1);
+  });
+
+  // The guard's original purpose, which must survive the refresh: an agent sets
+  // `complete` just before its closing output, and the session has to drop out
+  // of Running at that moment rather than at the end of the turn.
+  it('honours a phase change written while the turn is running', async () => {
+    const tm = TrayManager.getInstance();
+    cacheFinished(tm, 'implementing');
+    stubRow(tm, { is_archived: 0, metadata: JSON.stringify({ phase: 'implementing' }) });
+    await (tm as any).onSessionStateEvent({
+      type: 'session:started',
+      sessionId: 's1',
+      timestamp: new Date(),
+    });
+    expect(tm.buildPanelFeed().running).toHaveLength(1);
+
+    tm.onSessionPhaseChanged('s1', 'complete');
+
+    expect(tm.buildPanelFeed().running).toHaveLength(0);
+    expect(tm.buildFleetSnapshot(NOW).running).toBe(0);
+  });
+
+  it('re-reads archived state, so a session archived mid-run leaves the panel', async () => {
+    const tm = TrayManager.getInstance();
+    cacheFinished(tm, 'implementing');
+    stubRow(tm, { is_archived: 1, metadata: JSON.stringify({ phase: 'implementing' }) });
+
+    await (tm as any).onSessionStateEvent({
+      type: 'session:started',
+      sessionId: 's1',
+      timestamp: new Date(),
+    });
+
+    expect(tm.buildPanelFeed().running).toHaveLength(0);
+  });
+});
+
 describe('groupTraySessions', () => {
   /**
    * A clock just past the newest fixture, so nothing below reads as stalled.

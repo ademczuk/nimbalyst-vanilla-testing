@@ -2512,9 +2512,11 @@ export async function initializeExtensions(): Promise<void> {
         }
 
         if (!shouldLoad) {
-          console.info(
-            `[ExtensionLoader] Skipping disabled extension: ${ext.manifest.name}`
-          );
+          // Debug logging - uncomment if needed. One line per disabled
+          // extension on every startup; the count is in the summary below.
+          // console.info(
+          //   `[ExtensionLoader] Skipping disabled extension: ${ext.manifest.name}`
+          // );
           continue;
         }
 
@@ -2531,14 +2533,18 @@ export async function initializeExtensions(): Promise<void> {
       }
 
       console.info(
-        `[ExtensionLoader] Registered ${toLoad.length - eager.length} deferred editor extension(s); ` +
+        `[ExtensionLoader] Skipped ${discovered.length - toLoad.length} disabled extension(s); ` +
+          `registered ${toLoad.length - eager.length} deferred editor extension(s); ` +
           `loading ${eager.length} eager extension(s) in parallel...`,
       );
       const results = await Promise.allSettled(
         eager.map(async (ext) => {
-          console.info(
-            `[ExtensionLoader] Loading ${ext.manifest.name} v${ext.manifest.version}...`
-          );
+          // Debug logging - uncomment if needed. One line per extension on
+          // every startup; the count is in the summary above and failures
+          // still log below.
+          // console.info(
+          //   `[ExtensionLoader] Loading ${ext.manifest.name} v${ext.manifest.version}...`
+          // );
           const result = await loader.loadExtension(ext, 'startup:eager');
           if (!result.success) {
             console.error(`[ExtensionLoader] Failed to load ${ext.manifest.id}:`, result.error);

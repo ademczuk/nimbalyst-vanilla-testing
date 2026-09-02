@@ -668,7 +668,10 @@ async function fetchTeamApi(
       ? getPersonalSessionJwtForAccount(accountOrgId)
       : getPersonalSessionJwt();
   if (!jwt) {
-    logger.main.warn(`[TeamService] No JWT available (source: ${jwtSource})`);
+    // Debug logging - uncomment if needed. Being signed out is an expected
+    // steady state, and every caller already logs its own failure, so this
+    // fired on every poll for no added signal.
+    // logger.main.warn(`[TeamService] No JWT available (source: ${jwtSource})`);
     throw new Error('Not authenticated. Sign in first.');
   }
 
@@ -1273,10 +1276,16 @@ export async function listTeamDirectory(options?: ListTeamsOptions): Promise<Tea
         }
       } else {
         allAccountLookupsSucceeded = false;
-        logger.main.error(
-          `[TeamService] listTeams error for account ${allAccounts[index]?.email ?? 'unknown'}:`,
-          result.reason,
-        );
+        const email = allAccounts[index]?.email ?? 'unknown';
+        // A signed-out account rejects with "Not authenticated" on every poll.
+        // That is an expected steady state, not a fault, so log it as a single
+        // warn line -- passing the Error made us write a full stack trace each
+        // time, which was the bulk of this tag's ~13% share of main.log.
+        if (result.reason instanceof Error && result.reason.message.startsWith('Not authenticated')) {
+          logger.main.warn(`[TeamService] listTeams skipped for account ${email}: not signed in`);
+        } else {
+          logger.main.error(`[TeamService] listTeams error for account ${email}:`, result.reason);
+        }
       }
     }
 

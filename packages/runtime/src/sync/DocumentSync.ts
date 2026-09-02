@@ -37,7 +37,7 @@ import type {
   DocUpdateAckMessage,
 } from './documentSyncTypes';
 import { documentSyncMemberId } from './documentSyncTypes';
-import { appendSyncClientParams } from './syncClientInfo';
+import { appendSyncClientParams, redactSyncUrl } from './syncClientInfo';
 import { encodeDocumentRoomId, isValidCollabDocumentId } from './collabDocumentId';
 import { isConfirmedOutboxRevocationCode } from './OutboxDrainer';
 import {
@@ -373,7 +373,7 @@ export class DocumentSyncProvider {
       return;
     }
 
-    console.log('[DocumentSync] Connecting to:', url.replace(/token=[^&]+/, 'token=<redacted>'));
+    console.log('[DocumentSync] Connecting to:', redactSyncUrl(url));
     const ws = this.config.createWebSocket
       ? this.config.createWebSocket(url)
       : new WebSocket(url);

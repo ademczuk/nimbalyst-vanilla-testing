@@ -40,6 +40,7 @@ import { projectionWouldChange } from './tracker/projectionUpdateGuard';
 import { assignLocalKeysToRows } from './tracker/localKeyAllocator';
 import { workspaceLocalKeyStore } from './tracker/workspaceLocalKeyStore';
 import { extractFrontmatter, extractCommonFields } from '../utils/frontmatterReader';
+import { frontmatterHashChanged } from './documentMetadataChange';
 import {
   PLAN_INVALID_STATUS_SIGNAL_KIND,
   VIRTUAL_DOCS,
@@ -668,7 +669,7 @@ export class ElectronDocumentService implements DocumentService {
           }
 
           // Check if frontmatter actually changed
-          if (!cachedState || cachedState.hash !== hash) {
+          if (!cachedState || frontmatterHashChanged(cachedState.hash, hash)) {
             const commonFields = data ? extractCommonFields(data) : {};
 
             const metadata: DocumentMetadataEntry = {
@@ -1152,7 +1153,7 @@ export class ElectronDocumentService implements DocumentService {
       const cachedState = this.fileStateCache.get(relativePath);
 
       // Always update if hash changed or no cache exists
-      if (!cachedState || cachedState.hash !== hash) {
+      if (!cachedState || frontmatterHashChanged(cachedState.hash, hash)) {
         const commonFields = data ? extractCommonFields(data) : {};
 
         // Find the document entry, or create one if it doesn't exist

@@ -110,6 +110,14 @@ interface StructuredCommitResult {
   error?: string;
   success?: boolean;
   status?: string;
+  /** Files that were selected but belong to no repo, so committed nowhere. */
+  uncommittableFiles?: string[];
+  /**
+   * Per-repo outcome. Present on older proposals made before one-repo-per-call,
+   * which could still split at execution; `commitHash` is only the first of
+   * them, so without this the other commits have no hash anywhere in the UI.
+   */
+  repoResults?: Array<{ repoPath: string; success: boolean; commitHash?: string; error?: string }>;
 }
 
 /**
@@ -238,6 +246,19 @@ function extractStructuredCommitResult(value: unknown, seen: Set<object> = new S
     result.status = record.status;
     hasAnyField = true;
   }
+  if (Array.isArray(record.uncommittableFiles)) {
+    result.uncommittableFiles = record.uncommittableFiles.filter(
+      (file): file is string => typeof file === 'string'
+    );
+    hasAnyField = true;
+  }
+  if (Array.isArray(record.repoResults)) {
+    result.repoResults = record.repoResults.filter(
+      (entry): entry is { repoPath: string; success: boolean; commitHash?: string; error?: string } =>
+        !!entry && typeof entry === 'object' && typeof (entry as { repoPath?: unknown }).repoPath === 'string'
+    );
+    hasAnyField = true;
+  }
 
   const nestedCandidates = [record.result, record.content];
   for (const candidate of nestedCandidates) {
@@ -256,6 +277,8 @@ function extractStructuredCommitResult(value: unknown, seen: Set<object> = new S
     result.error = result.error ?? nested.error;
     result.success = result.success ?? nested.success;
     result.status = result.status ?? nested.status;
+    result.uncommittableFiles = result.uncommittableFiles ?? nested.uncommittableFiles;
+    result.repoResults = result.repoResults ?? nested.repoResults;
     hasAnyField = true;
   }
 
@@ -520,10 +543,29 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
     onResize: host?.setDiffPeekSize,
   });
 
+  // The repo this proposal commits into, resolved in the main process from the
+  // files. One proposal is one repo, so this is a single value.
+  const repoPath: string | undefined = args.repoPath;
+  const repoLabel = useMemo(
+    () => (repoPath ? repoPath.split('/').filter(Boolean).pop() : undefined),
+    [repoPath]
+  );
+
+  // Files in an attached folder arrive absolute. Rendered as-is they build a
+  // tree from `/` -- Users → ghinkle → sources → … -- beside a shallow relative
+  // tree for the primary repo. Display them relative to the repo they commit
+  // into; the underlying path strings are untouched, since staging and hunk
+  // selection key on them.
+  const displayPathFor = useMemo(() => {
+    const prefix = repoPath?.endsWith('/') ? repoPath : repoPath ? `${repoPath}/` : undefined;
+    return (filePath: string): string =>
+      prefix && filePath.startsWith(prefix) ? filePath.slice(prefix.length) : filePath;
+  }, [repoPath]);
+
   // Build directory tree from files
   const directoryTree = useMemo(() => {
-    return buildFileDirectoryTree(initialFilesToStage, filePath => filePath);
-  }, [initialFilesToStage]);
+    return buildFileDirectoryTree(initialFilesToStage, displayPathFor);
+  }, [initialFilesToStage, displayPathFor]);
 
   // Auto-expand all folders on mount
   useEffect(() => {
@@ -542,6 +584,15 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
   }, [host?.autoCommitEnabled, isCommitting, wasAutoCommitted]);
 
   // Determine which result to show (tool result wins once available; local is only for pending UI)
+  // Extra commits beyond the one `commitHash` names, and files that landed
+  // nowhere. Both are reported by the commit service and were previously
+  // dropped before reaching the user.
+  const extraRepoResults = useMemo(
+    () => (structuredResult?.repoResults ?? []).filter((entry) => entry.repoPath !== repoPath),
+    [structuredResult?.repoResults, repoPath]
+  );
+  const uncommittableFiles = structuredResult?.uncommittableFiles ?? [];
+
   const displayResult = completedState ? {
     success: completedState.type === 'committed',
     commitHash: completedState.type === 'committed' ? completedState.commitHash : undefined,
@@ -803,6 +854,37 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
                 })}
               </div>
             </div>
+            {extraRepoResults.length > 0 && (
+              <div className="git-commit-widget__repo-results mt-1 pt-2 border-t border-[var(--nim-border)]">
+                <div className="text-[0.6875rem] font-semibold uppercase tracking-wide text-[var(--nim-text-muted)] mb-1.5">
+                  Also committed
+                </div>
+                {extraRepoResults.map((entry) => (
+                  <div key={entry.repoPath} className="flex items-center gap-2 text-xs" title={entry.repoPath}>
+                    <span className="text-[var(--nim-text-muted)]">
+                      {entry.repoPath.split('/').filter(Boolean).pop()}
+                    </span>
+                    <span className={`font-mono ${entry.success ? 'text-[var(--nim-success)]' : 'text-[var(--nim-error)]'}`}>
+                      {entry.success ? entry.commitHash?.slice(0, 7) : (entry.error ?? 'failed')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {uncommittableFiles.length > 0 && (
+              <div className="git-commit-widget__uncommittable mt-1 pt-2 border-t border-[var(--nim-border)]">
+                <div className="text-[0.6875rem] font-semibold uppercase tracking-wide text-[var(--nim-warning)] mb-1.5">
+                  {uncommittableFiles.length} file{uncommittableFiles.length !== 1 ? 's' : ''} in no repository — not committed
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {uncommittableFiles.map((filePath) => (
+                    <span key={filePath} className="text-xs font-mono text-[var(--nim-text-muted)]" title={filePath}>
+                      {getFilePathBasename(filePath)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             {host?.autoCommitEnabled && (
               <div className="mt-2 pt-2 border-t border-[var(--nim-border)]">
                 <button
@@ -905,6 +987,17 @@ export const GitCommitConfirmationWidget: React.FC<CustomToolWidgetProps> = ({
       <div className="git-commit-widget__header flex items-center gap-2 p-2 border-b border-[var(--nim-border)] bg-[var(--nim-bg-secondary)]">
         <MaterialSymbol icon="commit" size={16} className="text-[var(--nim-primary)]" />
         <span className="text-sm font-semibold text-[var(--nim-text)] flex-1">Commit Proposal</span>
+        {/* Which repo this commits into. A multi-root workspace can have a
+            proposal per repo on screen at once; without this they are
+            indistinguishable. */}
+        {repoLabel && (
+          <span
+            className="git-commit-widget__repo text-[0.6875rem] font-medium px-1.5 py-0.5 rounded bg-[var(--nim-bg)] border border-[var(--nim-border)] text-[var(--nim-text-muted)]"
+            title={repoPath}
+          >
+            {repoLabel}
+          </span>
+        )}
       </div>
 
       <div className="git-commit-widget__content p-2 flex flex-col gap-3">

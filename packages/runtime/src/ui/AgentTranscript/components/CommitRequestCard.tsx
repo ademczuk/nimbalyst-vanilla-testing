@@ -5,6 +5,7 @@ import {
   COMMIT_FILE_LIST_HEADERS,
   COMMIT_FILE_COUNT_PREFIX,
   COMMIT_PROMPT_PREFIX,
+  NO_REPOSITORY_GROUP_HEADER,
   isCommitPromptSafePath,
 } from '../utils/commitPromptBuilder';
 
@@ -16,6 +17,8 @@ const LEGACY_COMMIT_PROMPT_PREFIX = 'Use the developer_git_commit_proposal tool 
 interface ParsedCommitFile {
   path: string;
   status: 'added' | 'modified' | 'deleted';
+  /** Set only when the list spans repos and this file's group named one. */
+  repo?: string;
 }
 
 interface ParsedCommitRequest {
@@ -30,6 +33,13 @@ interface CommitFileListBounds {
   lines: string[];
   headerIndex: number;
   endIndex: number;
+  /**
+   * Files the producer says it wrote, checked against the rows actually parsed.
+   * That equality is the anti-forgery guarantee: an injected row makes the
+   * counts disagree. Compared after parsing rather than against the raw line
+   * span, because a repo-grouped list interleaves headers and blank lines.
+   */
+  declaredCount?: number;
 }
 
 function findCommitFileListBounds(text: string): CommitFileListBounds | null {
@@ -47,11 +57,14 @@ function findCommitFileListBounds(text: string): CommitFileListBounds | null {
 
   const countLine = lines[headerIndexes[0] + 1];
   const countMatch = countLine?.match(new RegExp(`^${COMMIT_FILE_COUNT_PREFIX}(\\d+)\\.$`));
-  if (!countMatch || Number(countMatch[1]) !== endIndexes[0] - headerIndexes[0] - 2) {
-    return null;
-  }
+  if (!countMatch) return null;
 
-  return { lines, headerIndex: headerIndexes[0], endIndex: endIndexes[0] };
+  return {
+    lines,
+    headerIndex: headerIndexes[0],
+    endIndex: endIndexes[0],
+    declaredCount: Number(countMatch[1]),
+  };
 }
 
 /**
@@ -98,13 +111,36 @@ export function parseCommitRequest(text: string): ParsedCommitRequest | null {
 
   const files: ParsedCommitFile[] = [];
 
+  // A file list spanning repos is emitted in `Repository: <path>` groups, so
+  // the rows are interleaved with headers and blank lines. Anything still
+  // unrecognized fails the parse, as before -- the strictness is the point.
+  let currentRepo: string | undefined;
   for (const line of bounds.lines.slice(bounds.headerIndex + 2, bounds.endIndex)) {
+    if (line === '') continue;
+    const repoHeader = line.match(/^Repository: (.+)$/);
+    if (repoHeader) {
+      currentRepo = repoHeader[1];
+      continue;
+    }
+    if (line === NO_REPOSITORY_GROUP_HEADER) {
+      currentRepo = undefined;
+      continue;
+    }
     const match = line.match(/^- (.+) \((added|modified|deleted)\)$/);
     if (!match) return null;
     // Only the marker-bearing format carries the producer's safety guarantee;
     // legacy history predates it and must still render.
     if (strictBounds && !isCommitPromptSafePath(match[1])) return null;
-    files.push({ path: match[1], status: match[2] as ParsedCommitFile['status'] });
+    files.push({
+      path: match[1],
+      status: match[2] as ParsedCommitFile['status'],
+      ...(currentRepo ? { repo: currentRepo } : {}),
+    });
+  }
+
+  // The producer's count must match the rows read back, or a row was forged.
+  if (bounds.declaredCount !== undefined && bounds.declaredCount !== files.length) {
+    return null;
   }
 
   const excludedFileNotice = bounds.lines[bounds.endIndex + 2]?.match(EXCLUDED_FILE_NOTICE_PATTERN);

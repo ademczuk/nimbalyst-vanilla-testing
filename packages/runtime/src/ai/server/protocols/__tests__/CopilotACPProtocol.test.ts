@@ -4,7 +4,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { describe, expect, it } from 'vitest';
+import type { ChildProcess } from 'child_process';
+import { describe, expect, it, vi } from 'vitest';
 import { CopilotACPProtocol } from '../CopilotACPProtocol';
 
 function mockAgentPath(): string {
@@ -71,6 +72,29 @@ describe('CopilotACPProtocol', () => {
       if (saved.openai === undefined) delete process.env.OPENAI_API_KEY;
       if (saved.anthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
       fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('stops logging about the child once destroy() has killed it', async () => {
+    const protocol = new CopilotACPProtocol();
+    protocol.setCommand(process.execPath, [mockAgentPath()]);
+    await protocol.createSession({ workspacePath: os.tmpdir() });
+
+    // destroy() returns before SIGTERM lands. Anything still listening for the
+    // child's exit then fires after the caller has moved on; in a test file
+    // that is after the file finished, which vitest reports as an unhandled
+    // error when the worker is already closing its rpc.
+    const child = (protocol as unknown as { process: ChildProcess }).process;
+    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      protocol.destroy();
+      await exited;
+      expect(log.mock.calls.map((call) => call.join(' '))).not.toContainEqual(
+        expect.stringContaining('[COPILOT-ACP] Process exited'),
+      );
+    } finally {
+      log.mockRestore();
     }
   }, 15000);
 });

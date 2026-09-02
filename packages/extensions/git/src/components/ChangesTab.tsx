@@ -36,6 +36,11 @@ interface ChangesTabProps {
   onWorkspaceEvent: (event: string, handler: () => void) => (() => void);
   /** Switch to the Output tab to show operation details */
   onShowOutput: () => void;
+  /**
+   * Reports this repo's changed-file count, so an all-repos view can badge a
+   * collapsed section. Absent for the ordinary single-repo tab.
+   */
+  onCountChange?: (count: number) => void;
   /** Whether the file mask is enabled (filter applied) */
   fileMaskEnabled: boolean;
   /** Comma-separated glob patterns for the file mask */
@@ -213,6 +218,7 @@ export function ChangesTab({
   fileMaskEnabled,
   fileMaskInput,
   refreshToken,
+  onCountChange,
 }: ChangesTabProps) {
   // One flat list of changes: staged/unstaged/untracked are merged, since the
   // selection (not the index) is what gets committed.
@@ -370,6 +376,10 @@ export function ChangesTab({
     [conflicted, maskPatterns],
   );
 
+  useEffect(() => {
+    onCountChange?.(filteredChanges.length + filteredConflicted.length);
+  }, [filteredChanges.length, filteredConflicted.length, onCountChange]);
+
   // Drop selections that are no longer visible (filtered out or removed from working tree)
   useEffect(() => {
     const visible = new Set(filteredChanges.map(f => f.path));
@@ -485,10 +495,20 @@ export function ChangesTab({
   const handleCommitWithAI = useCallback(() => {
     if (selectedFiles.length === 0) return;
     // App.tsx opens a new session seeded with a commit request for exactly these files.
+    //
+    // Paths go out ABSOLUTE. `workspacePath` here is the repo the picker
+    // selected, which in a multi-root workspace need not be the session's
+    // primary root -- and a repo-relative path resolved against the primary
+    // root points at the wrong repo, or at nothing.
     window.dispatchEvent(new CustomEvent('nimbalyst:commit-with-ai', {
       detail: {
         workspacePath,
-        files: selectedFiles.map(f => ({ path: f.path, status: f.status })),
+        repoPath: workspacePath,
+        files: selectedFiles.map(f => ({
+          path: f.path.startsWith('/') ? f.path : `${workspacePath}/${f.path}`,
+          status: f.status,
+          repo: workspacePath,
+        })),
       },
     }));
   }, [selectedFiles, workspacePath]);

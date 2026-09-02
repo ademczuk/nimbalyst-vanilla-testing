@@ -148,6 +148,35 @@ version: 2
       expect(hash3).not.toBe(hash1);
       expect(metadata3[0].frontmatter.title).toBe('Updated Title');
     });
+
+    it('stops reporting a metadata change for a file that has no frontmatter', async () => {
+      // `extractFrontmatter` reports "none" as `hash: null` while the cache
+      // stores `hash || undefined`, so the raw `!==` was true forever and every
+      // save of a plain markdown file re-announced a metadata change. The
+      // renderer answers that by reloading every tracker item in the workspace,
+      // which is why typing in a file like this stuttered on the autosave tick.
+      const filePath = await createTestFile('plain.md', '# No frontmatter here\n');
+
+      service = new ElectronDocumentService(tempDir);
+      await service.refreshWorkspaceData();
+
+      const changeEvents: MetadataChangeEvent[] = [];
+      const unsubscribe = service.watchDocumentMetadata((change) => {
+        changeEvents.push(change);
+      });
+
+      // Three autosaves of the body. None of them touch frontmatter, because
+      // there isn't any.
+      for (let i = 1; i <= 3; i++) {
+        await fs.writeFile(filePath, `# No frontmatter here\n\nbody revision ${i}\n`);
+        await fs.utimes(filePath, new Date(), new Date(Date.now() + i * 1000));
+        await service.refreshFileMetadata(filePath);
+      }
+
+      expect(changeEvents).toHaveLength(0);
+
+      unsubscribe();
+    });
   });
 
   describe('metadata API methods', () => {

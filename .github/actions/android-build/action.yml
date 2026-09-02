@@ -78,6 +78,15 @@ runs:
       shell: bash
       run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
+    # tracker-core and extension-sdk are consumed through their built `dist`,
+    # produced only by their `prepare` scripts. `npm ci --ignore-scripts` skips
+    # those, and a cache hit skips the install entirely, so build them here or
+    # the transcript bundle fails with: Failed to resolve entry for package
+    # "@nimbalyst/tracker-core".
+    - name: Build workspace deps
+      shell: bash
+      run: npm run build:workspace-deps
+
     - name: Build transcript bundle
       shell: bash
       run: npm run android:build:transcript

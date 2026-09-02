@@ -98,7 +98,7 @@ public final class FleetActivityController: ObservableObject {
 
         observationTasks.append(Task { [weak self] in
             for await tokenData in Activity<FleetActivityAttributes>.pushToStartTokenUpdates {
-                await self?.handlePushToStartToken(tokenData)
+                self?.handlePushToStartToken(tokenData)
             }
         })
 
@@ -108,7 +108,7 @@ public final class FleetActivityController: ObservableObject {
         // freeze at whatever the start payload said.
         observationTasks.append(Task { [weak self] in
             for await activity in Activity<FleetActivityAttributes>.activityUpdates {
-                await self?.observe(activity)
+                self?.observe(activity)
             }
         })
 
@@ -180,12 +180,12 @@ public final class FleetActivityController: ObservableObject {
 
         let tokenTask = Task { [weak self] in
             for await tokenData in activity.pushTokenUpdates {
-                await self?.handleUpdateToken(Self.hex(tokenData))
+                self?.handleUpdateToken(Self.hex(tokenData))
             }
         }
         let stateTask = Task { [weak self] in
             for await state in activity.activityStateUpdates {
-                await self?.handleActivityState(state, id: activity.id)
+                self?.handleActivityState(state, id: activity.id)
             }
         }
         activityTasks[activity.id] = [tokenTask, stateTask]
@@ -207,9 +207,12 @@ public final class FleetActivityController: ObservableObject {
             for task in activityTasks.removeValue(forKey: id) ?? [] { task.cancel() }
             updateToken = nil
             onTokenInvalidated?(.update)
-        case .active, .stale:
-            break
-        @unknown default:
+        default:
+            // Everything that is not an end — active, stale, and the iOS 26
+            // `pending` state a push-to-start card sits in before it appears —
+            // means the card is live or on its way, so the update token stands.
+            // Listed as `default` rather than case-by-case so a new non-terminal
+            // state added by a future SDK keeps the token instead of dropping it.
             break
         }
     }

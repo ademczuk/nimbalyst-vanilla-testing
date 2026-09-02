@@ -198,6 +198,7 @@ public struct TranscriptWebView: UIViewRepresentable {
         if coordinator.currentSessionId != session.id {
             Self.logger.info("updateUIView: session changed to \(session.id) (webViewReady=\(coordinator.webViewReady), msgs=\(messages.count))")
             coordinator.currentSessionId = session.id
+            coordinator.currentSession = session
             coordinator.lastMessageCount = 0
             coordinator.isReady = false
             coordinator.isLoadingSession = false
@@ -223,7 +224,7 @@ public struct TranscriptWebView: UIViewRepresentable {
         // Check for new messages (append only) — batched into a single IPC call
         if messages.count > coordinator.lastMessageCount {
             let newMessages = Array(messages[coordinator.lastMessageCount...])
-            coordinator.appendMessagesToWebView(messages: newMessages)
+            coordinator.appendMessagesToWebView(messages: newMessages, sessionId: session.id)
             coordinator.lastMessageCount = messages.count
         }
 
@@ -258,6 +259,11 @@ public struct TranscriptWebView: UIViewRepresentable {
 
         weak var webView: WKWebView?
         var currentSessionId: String?
+
+        /// The session `currentSessionId` refers to. On iPad the coordinator
+        /// outlives a session swap, so recovery paths must reseed from this and
+        /// not from the `session` captured at init.
+        var currentSession: Session?
         var lastMessageCount: Int = 0
         var lastIsExecuting: Bool = false
         var lastProvider: String?
@@ -279,7 +285,6 @@ public struct TranscriptWebView: UIViewRepresentable {
         /// Defer the first JS load until Swift has real initial transcript data.
         var waitForInitialMessages: Bool
 
-        private let session: Session
         private let onSendPrompt: (String) -> Void
         private let onInteractiveResponse: (String, String, [String: Any]) -> Void
         private let onReady: (() -> Void)?
@@ -298,7 +303,7 @@ public struct TranscriptWebView: UIViewRepresentable {
             onError: ((String) -> Void)? = nil,
             onOpenFile: ((String) -> Void)? = nil
         ) {
-            self.session = session
+            self.currentSession = session
             self.waitForInitialMessages = waitForInitialMessages
             self.onSendPrompt = onSendPrompt
             self.onInteractiveResponse = onInteractiveResponse
@@ -455,8 +460,8 @@ public struct TranscriptWebView: UIViewRepresentable {
             isLoadingSession = false
             lastMessageCount = 0
 
-            if currentSessionId != nil {
-                pendingSession = (session, [])
+            if let currentSession {
+                pendingSession = (currentSession, [])
             }
 
             // Avoid crash loops: only reload if we haven't had too many terminations.
@@ -552,12 +557,23 @@ public struct TranscriptWebView: UIViewRepresentable {
         // message content (code, nested JSON, unicode, etc.).
 
         private func callJS(_ script: String, arguments: [String: Any] = [:], in webView: WKWebView, completion: ((Error?) -> Void)? = nil) {
+            callJS(script, arguments: arguments, in: webView) { (_: Any?, error: Error?) in
+                completion?(error)
+            }
+        }
+
+        private func callJS(
+            _ script: String,
+            arguments: [String: Any] = [:],
+            in webView: WKWebView,
+            completion: @escaping (Any?, Error?) -> Void
+        ) {
             webView.callAsyncJavaScript(script, arguments: arguments, in: nil, in: .page) { result in
                 switch result {
                 case .failure(let error):
-                    completion?(error)
-                case .success:
-                    completion?(nil)
+                    completion(nil, error)
+                case .success(let value):
+                    completion(value, nil)
                 }
             }
         }
@@ -595,65 +611,114 @@ public struct TranscriptWebView: UIViewRepresentable {
 
             logger.info("loadSession: calling JS with \(messages.count) messages for session \(session.id)")
 
-            callJS("window.nimbalyst?.loadSession(data);", arguments: ["data": sessionData], in: webView) { [weak self] error in
-                self?.isLoadingSession = false
-                if let error = error {
-                    self?.logger.error("loadSession JS error: \(error.localizedDescription)")
-                    self?.onError?("loadSession JS failed: \(error.localizedDescription)")
-                } else {
-                    self?.logger.info("loadSession: JS completed OK, isReady=true, lastMessageCount=\(messages.count)")
-                    self?.isReady = true
-                    self?.lastMessageCount = messages.count
-                    self?.lastIsExecuting = session.isExecuting
-                    self?.lastProvider = session.provider
-                    self?.lastModel = session.model
-                    self?.lastTitle = session.titleDecrypted
+            // The bridge returns the sessionId it activated. Without that echo a
+            // missing `window.nimbalyst` would resolve successfully through the
+            // optional chain and we would reveal the pooled webview still showing
+            // the previous session's transcript.
+            callJS(
+                "return window.nimbalyst ? window.nimbalyst.loadSession(data) : null;",
+                arguments: ["data": sessionData],
+                in: webView
+            ) { [weak self] result, error in
+                guard let self else { return }
+                self.isLoadingSession = false
 
-                    if let pending = self?.pendingSession,
-                       pending.0.id == session.id,
-                       pending.1.count > messages.count {
-                        let newMessages = Array(pending.1[messages.count...])
-                        self?.appendMessagesToWebView(messages: newMessages)
-                        self?.lastMessageCount = pending.1.count
-                        self?.pendingSession = nil
-                    } else if self?.pendingSession?.0.id == session.id {
-                        self?.pendingSession = nil
+                if let error = error {
+                    self.logger.error("loadSession JS error: \(error.localizedDescription)")
+                    self.onError?("loadSession JS failed: \(error.localizedDescription)")
+                    return
+                }
+
+                let outcome = resolveTranscriptLoad(
+                    requestedSessionId: session.id,
+                    activatedSessionId: result as? String,
+                    loadedMessageCount: messages.count,
+                    pendingSessionId: self.pendingSession?.0.id,
+                    pendingMessageCount: self.pendingSession?.1.count ?? 0
+                )
+
+                switch outcome {
+                case .failed(let reason):
+                    self.logger.error("loadSession: \(reason)")
+                    self.onError?(reason)
+
+                case .loadPending(let pendingId):
+                    self.logger.info("loadSession: session swapped to \(pendingId) mid-flight, reloading")
+                    guard let pending = self.pendingSession else { return }
+                    self.pendingSession = nil
+                    self.loadSessionIntoWebView(session: pending.0, messages: pending.1)
+
+                case .activated, .activatedThenAppend:
+                    self.logger.info("loadSession: activated \(session.id), lastMessageCount=\(messages.count)")
+                    self.isReady = true
+                    self.lastMessageCount = messages.count
+                    self.lastIsExecuting = session.isExecuting
+                    self.lastProvider = session.provider
+                    self.lastModel = session.model
+                    self.lastTitle = session.titleDecrypted
+
+                    if case .activatedThenAppend(let fromIndex) = outcome, let pending = self.pendingSession {
+                        self.appendMessagesToWebView(messages: Array(pending.1[fromIndex...]), sessionId: session.id)
+                        self.lastMessageCount = pending.1.count
                     }
+                    self.pendingSession = nil
 
                     // Signal to the parent view that transcript is ready.
-                    self?.onReady?()
+                    self.onReady?()
                 }
             }
 
             return true
         }
 
-        func appendMessageToWebView(message: Message) {
+        // Every mutation names the session it belongs to. JS drops it if that
+        // session is not the one on screen, so a delta computed for one session
+        // can never land in another's transcript.
+
+        func appendMessageToWebView(message: Message, sessionId: String) {
             guard let webView = webView, isReady else { return }
 
             let bridgeMsg = messageToBridgeJSON(message)
-            callJS("window.nimbalyst?.appendMessage(msg);", arguments: ["msg": bridgeMsg], in: webView) { [weak self] error in
-                if let error = error {
-                    self?.logger.error("appendMessage JS error: \(error.localizedDescription)")
-                }
+            callJS(
+                "return window.nimbalyst?.appendMessage(msg, sessionId);",
+                arguments: ["msg": bridgeMsg, "sessionId": sessionId],
+                in: webView
+            ) { [weak self] result, error in
+                self?.reportMutationResult("appendMessage", sessionId: sessionId, result: result, error: error)
             }
         }
 
         /// Batch-append multiple messages in a single IPC call to avoid WebKit throttling.
-        func appendMessagesToWebView(messages: [Message]) {
+        func appendMessagesToWebView(messages: [Message], sessionId: String) {
             guard let webView = webView, isReady, !messages.isEmpty else { return }
 
             if messages.count == 1 {
-                appendMessageToWebView(message: messages[0])
+                appendMessageToWebView(message: messages[0], sessionId: sessionId)
                 return
             }
 
             let bridgeMsgs = messages.map { messageToBridgeJSON($0) }
-            callJS("window.nimbalyst?.appendMessages(msgs);", arguments: ["msgs": bridgeMsgs], in: webView) { [weak self] error in
-                if let error = error {
-                    self?.logger.error("appendMessages JS error: \(error.localizedDescription)")
-                }
+            callJS(
+                "return window.nimbalyst?.appendMessages(msgs, sessionId);",
+                arguments: ["msgs": bridgeMsgs, "sessionId": sessionId],
+                in: webView
+            ) { [weak self] result, error in
+                self?.reportMutationResult("appendMessages", sessionId: sessionId, result: result, error: error)
             }
+        }
+
+        /// A rejected mutation means Swift and the bridge disagree about which
+        /// session is on screen. Drop `isReady` so the next `updateUIView` goes
+        /// back through `loadSession` and re-establishes which session is live.
+        private func reportMutationResult(_ name: String, sessionId: String, result: Any?, error: Error?) {
+            if let error {
+                logger.error("\(name) JS error: \(error.localizedDescription)")
+                return
+            }
+            guard (result as? Bool) == false else { return }
+            logger.warning("\(name): bridge rejected an update for \(sessionId); forcing a reload")
+            isReady = false
+            lastMessageCount = 0
         }
 
         func updateMetadataInWebView(session: Session) {
@@ -667,10 +732,12 @@ public struct TranscriptWebView: UIViewRepresentable {
                 "isExecuting": session.isExecuting,
             ]
 
-            callJS("window.nimbalyst?.updateMetadata(meta);", arguments: ["meta": metadata], in: webView) { [weak self] error in
-                if let error = error {
-                    self?.logger.error("updateMetadata JS error: \(error.localizedDescription)")
-                }
+            callJS(
+                "return window.nimbalyst?.updateMetadata(meta, sessionId);",
+                arguments: ["meta": metadata, "sessionId": session.id],
+                in: webView
+            ) { [weak self] result, error in
+                self?.reportMutationResult("updateMetadata", sessionId: session.id, result: result, error: error)
             }
 
             lastIsExecuting = session.isExecuting
@@ -747,6 +814,7 @@ public struct TranscriptWebView: UIViewRepresentable {
             isReady = false
             isLoadingSession = false
             lastMessageCount = 0
+            currentSession = nil
             webView = nil
         }
     }

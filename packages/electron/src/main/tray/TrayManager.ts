@@ -598,7 +598,63 @@ export class TrayManager {
     }
   }
 
+  /**
+   * Take a phase change into the cache as it is written.
+   *
+   * `phase` decides whether a running session is counted at all, and the cache
+   * used to read it exactly once -- at `fetchSessionMetadata`, when the session
+   * first appeared. Nothing wrote it back, so the guard below could only ever
+   * act on a value that was already stale by a turn.
+   *
+   * Called from `SessionNamingService.applySessionMetadata`, the funnel every
+   * agent-driven and commit-driven metadata write already goes through, and
+   * from the renderer's `ai:updateSessionMetadata` handler alongside the
+   * existing `hasUnread` forward. A session not in the cache is not a miss:
+   * it is not on any ambient surface, and it will read the current phase when
+   * it next starts a turn.
+   */
+  onSessionPhaseChanged(sessionId: string, phase: string): void {
+    const session = this.sessionCache.get(sessionId);
+    if (!session || session.phase === phase) return;
+    session.phase = phase;
+    this.scheduleMenuRebuild();
+  }
+
   // ─── Session state event handling ───────────────────────────────────────
+
+  /**
+   * Re-read the fields the cache froze when the session first entered it.
+   *
+   * `title` already had `refreshCachedTitles`, but that one runs over the rows
+   * the panel is *about* to show -- which cannot recover a session that a stale
+   * `phase` has excluded from the feed in the first place. This reads by id, so
+   * it works on exactly the sessions the feed cannot see.
+   *
+   * `isArchived` comes along because it is the other frozen field that decides
+   * visibility, off the same row.
+   */
+  private async refreshCachedSessionFlags(session: TraySessionInfo): Promise<void> {
+    if (!this.database) return;
+
+    try {
+      const { rows } = await this.database.query<{ is_archived: unknown; metadata: unknown }>(
+        `SELECT is_archived, metadata FROM ai_sessions WHERE id = $1`,
+        [session.sessionId],
+      );
+      if (rows.length === 0) return;
+
+      const metadata = parseMetadataColumn(rows[0].metadata);
+      session.phase = typeof metadata.phase === 'string' ? metadata.phase : undefined;
+      session.isArchived = !!rows[0].is_archived;
+    } catch (error) {
+      // Failing to refresh leaves the previous value, which is what the cache
+      // did unconditionally before. It must never cost the panel.
+      logger.main.warn(
+        `[TrayManager] Failed to refresh cached flags for ${session.sessionId}:`,
+        error,
+      );
+    }
+  }
 
   private async onSessionStateEvent(event: SessionStateEvent): Promise<void> {
     switch (event.type) {
@@ -619,7 +675,8 @@ export class TrayManager {
         // Stamp only the transition *into* running. `session:streaming` fires
         // repeatedly for the same run, and re-stamping would make the strip
         // announce a working session over and over instead of once as it starts.
-        if (session.status !== 'running' || session.startedAt === undefined) {
+        const enteringRun = session.status !== 'running' || session.startedAt === undefined;
+        if (enteringRun) {
           session.startedAt = Date.now();
           // A new run is not the old run's completion; leaving this set would
           // keep the finished session eligible to be named a second time.
@@ -629,6 +686,17 @@ export class TrayManager {
         session.isStreaming = event.type === 'session:streaming';
         // Clear any linger timer if session restarts
         this.clearLingerTimer(event.sessionId);
+        // The one moment a stale `phase` is guaranteed to cost something: the
+        // session is about to be judged by it. Bounded to the transition rather
+        // than every `session:streaming` tick, which fires throughout a turn and
+        // would make this a query per tick.
+        //
+        // Deliberately after the mutations above rather than before them: the
+        // await is a window in which a short turn's `session:completed` can land,
+        // and resuming into `status = 'running'` on the far side of it would
+        // strand a finished session in the running bucket. The refresh writes
+        // only `phase` and `isArchived`, which no other branch touches.
+        if (enteringRun) await this.refreshCachedSessionFlags(session);
         break;
       }
 

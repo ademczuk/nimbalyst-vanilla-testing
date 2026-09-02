@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useFloating, offset, flip, shift, FloatingPortal,
   useDismiss, useInteractions, autoUpdate,
@@ -12,7 +12,7 @@ import { CommitHoverCard } from './CommitHoverCard';
 import { CommitContextMenu } from './CommitContextMenu';
 import { CommitDetailContent, type CommitDetail } from './CommitDetailContent';
 import { BranchPicker } from './BranchPicker';
-import { RepoPicker } from './RepoPicker';
+import { ALL_REPOS, RepoPicker } from './RepoPicker';
 import { ChangesTab } from './ChangesTab';
 import { OutputTab } from './OutputTab';
 import { GitStatusBar } from './GitStatusBar';
@@ -21,6 +21,7 @@ import { useOperationLog, getSuggestionForError } from '../hooks/useOperationLog
 import { usePanelState, readSelectedHash } from '../hooks/usePanelState';
 import { useSessionsForCommits } from '../hooks/useSessionsForCommits';
 import { filterCommits } from '../commitFilters';
+import { repoLabels } from '../repoPaths';
 
 interface GitCommit {
   hash: string;
@@ -114,9 +115,15 @@ export function GitLogPanel({ host }: PanelHostProps) {
     () => host.storage.get<string>('selectedRepo') ?? null,
   );
   const [branchByRepo, setBranchByRepo] = useState<Record<string, string>>({});
-  const repoPath = selectedRepo && repos.includes(selectedRepo)
+  // "All repositories" is a Changes-tab scope only. Log and Output stay on one
+  // repo -- a merged commit log across repos is meaningless -- so they fall
+  // back to the first repo while the scope is ALL.
+  const showAllRepos = selectedRepo === ALL_REPOS && repos.length > 1;
+  const repoPath = !showAllRepos && selectedRepo && repos.includes(selectedRepo)
     ? selectedRepo
     : repos[0] ?? workspacePath;
+  /** Repos the Changes tab renders, in root order. */
+  const changesRepos = showAllRepos ? repos : [repoPath];
 
   // The repo set only changes when a folder is attached or detached, and the
   // host republishes its folder list at the same time -- so that is the signal
@@ -1116,21 +1123,96 @@ export function GitLogPanel({ host }: PanelHostProps) {
       )}
 
       {activeTab === 'changes' && (
-        <ChangesTab
-          workspacePath={repoPath}
-          withLog={withLog}
-          onWorkspaceEvent={subscribeToWorkspaceEvents}
-          onShowOutput={() => setActiveTab('output')}
-          fileMaskEnabled={fileMaskEnabled}
-          fileMaskInput={fileMaskInput}
-          refreshToken={changesRefreshToken}
-        />
+        changesRepos.length > 1 ? (
+          <div className="git-changes-all-repos">
+            {changesRepos.map(repo => (
+              <RepoChangesSection
+                key={repo}
+                repoPath={repo}
+                label={repoLabels(changesRepos)[repo] ?? repo}
+                withLog={withLog}
+                onWorkspaceEvent={subscribeToWorkspaceEvents}
+                onShowOutput={() => setActiveTab('output')}
+                fileMaskEnabled={fileMaskEnabled}
+                fileMaskInput={fileMaskInput}
+                refreshToken={changesRefreshToken}
+              />
+            ))}
+          </div>
+        ) : (
+          <ChangesTab
+            workspacePath={repoPath}
+            withLog={withLog}
+            onWorkspaceEvent={subscribeToWorkspaceEvents}
+            onShowOutput={() => setActiveTab('output')}
+            fileMaskEnabled={fileMaskEnabled}
+            fileMaskInput={fileMaskInput}
+            refreshToken={changesRefreshToken}
+          />
+        )
       )}
 
       {activeTab === 'output' && (
         <OutputTab
           entries={logEntries}
           onClear={clearLog}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * One repo's working changes under the "All repositories" scope.
+ *
+ * Wraps the ordinary per-repo `ChangesTab` in a collapsible header rather than
+ * merging every repo into one list: a commit cannot cross repos, so each repo
+ * keeps its own file list, selection, and commit box. Merging them would need a
+ * commit box that silently made N commits, which is the shape this round is
+ * removing everywhere else.
+ */
+function RepoChangesSection({
+  repoPath,
+  label,
+  withLog,
+  onWorkspaceEvent,
+  onShowOutput,
+  fileMaskEnabled,
+  fileMaskInput,
+  refreshToken,
+}: {
+  repoPath: string;
+  label: string;
+} & Omit<React.ComponentProps<typeof ChangesTab>, 'workspacePath' | 'onCountChange'>) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [count, setCount] = useState<number | null>(null);
+
+  return (
+    <div className="git-changes-repo-section">
+      <button
+        className="git-changes-repo-header"
+        onClick={() => setCollapsed(c => !c)}
+        title={repoPath}
+        aria-expanded={!collapsed}
+      >
+        <span className="git-changes-repo-caret">{collapsed ? '▸' : '▾'}</span>
+        <span className="git-changes-repo-name">{label}</span>
+        {/* The count is the cue that another repo has work waiting -- without
+            it a collapsed section looks the same whether it is empty or not. */}
+        {count !== null && count > 0 && (
+          <span className="git-changes-repo-count">{count}</span>
+        )}
+      </button>
+      {!collapsed && (
+        <ChangesTab
+          workspacePath={repoPath}
+          withLog={withLog}
+          onWorkspaceEvent={onWorkspaceEvent}
+          onShowOutput={onShowOutput}
+          fileMaskEnabled={fileMaskEnabled}
+          fileMaskInput={fileMaskInput}
+          refreshToken={refreshToken}
+          onCountChange={setCount}
         />
       )}
     </div>

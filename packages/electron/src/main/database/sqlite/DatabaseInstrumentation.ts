@@ -256,13 +256,14 @@ export class DatabaseInstrumentation {
 
     if (isSlow) {
       this.persistSlowQuery(opts, shape, callSite);
-      // Surface the exact SQL + duration + call site in main.log so we don't
-      // have to guess which query is hot. Shape-normalized so logs aren't
-      // flooded with literal-only variants.
-      this.log(
-        'warn',
-        `[DBInstr] SLOW ${opts.kind} ${opts.durationMs.toFixed(1)}ms${opts.rowsReturned != null ? ` rows=${opts.rowsReturned}` : ''} site=${callSite ?? '?'} sql=${shape.length > 240 ? shape.slice(0, 240) + '...' : shape}`,
-      );
+      // Debug logging - uncomment if needed. Every slow query is already durably
+      // recorded in `_perf_slow_queries` by persistSlowQuery above, so the log
+      // line is a duplicate of queryable data; it carries a call-site path plus
+      // 240 chars of SQL and was ~11% of main.log by volume.
+      // this.log(
+      //   'warn',
+      //   `[DBInstr] SLOW ${opts.kind} ${opts.durationMs.toFixed(1)}ms${opts.rowsReturned != null ? ` rows=${opts.rowsReturned}` : ''} site=${callSite ?? '?'} sql=${shape.length > 240 ? shape.slice(0, 240) + '...' : shape}`,
+      // );
     }
   }
 

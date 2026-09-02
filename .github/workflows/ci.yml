@@ -52,9 +52,14 @@ jobs:
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
 
-      - name: Build extension-sdk
-        working-directory: packages/extension-sdk
-        run: npm run build
+      # tracker-core and extension-sdk are consumed through their built `dist`,
+      # which only exists as a side effect of `npm ci` running their `prepare`
+      # scripts. The install step above is skipped on a node_modules cache hit
+      # and the cache does not carry those dist dirs, so build them explicitly
+      # or downstream vite builds fail with: Failed to resolve entry for
+      # package "@nimbalyst/tracker-core".
+      - name: Build workspace deps
+        run: npm run build:workspace-deps
 
       # docsUiStoreBinding.test.tsx imports the built bundle entry
       # (@nimbalyst/collab-bundle/docs-ui -> dist/docs-ui.js) on purpose: it
@@ -103,10 +108,11 @@ jobs:
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
 
-      # Build packages that export types (required before typecheck)
-      - name: Build extension-sdk
-        working-directory: packages/extension-sdk
-        run: npm run build
+      # Build packages consumed through their `dist` (required before typecheck
+      # and before the runtime build). See the note in the Unit Tests job: a
+      # node_modules cache hit skips the install that would have built these.
+      - name: Build workspace deps
+        run: npm run build:workspace-deps
 
       - name: Public extension SDK smoke checks
         run: npm run extension-sdk:check-public
@@ -188,6 +194,12 @@ jobs:
       - name: Install dependencies
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
+
+      # See the note in the Unit Tests job: a node_modules cache hit skips the
+      # install that would have built these, and the transcript bundle pulls in
+      # runtime source that imports @nimbalyst/tracker-core.
+      - name: Build workspace deps
+        run: npm run build:workspace-deps
 
       - name: Build transcript bundle
         run: npm run ios:build:transcript

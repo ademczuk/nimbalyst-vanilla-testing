@@ -73,10 +73,10 @@ export function registerCollabConversionClient(): void {
     // away rather than trusting the renderer to say goodbye.
     event.sender.once('destroyed', () => { hosts.delete(windowId); });
     window.once('closed', () => { hosts.delete(windowId); });
-    logger.main.info('[CollabConversion] Codec host ready', {
-      windowId,
-      workspacePath: payload?.workspacePath ?? null,
-    });
+    // logger.main.info('[CollabConversion] Codec host ready', {
+    //   windowId,
+    //   workspacePath: payload?.workspacePath ?? null,
+    // });
   });
 
   safeOn(HOST_GONE_CHANNEL, (event) => {

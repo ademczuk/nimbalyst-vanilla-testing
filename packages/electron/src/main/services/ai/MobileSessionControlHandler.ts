@@ -737,13 +737,21 @@ async function handleGitCommitResponse(
 
     const {
       createGitCommitProposalResponse,
-      executeGitCommit,
+      executeGitCommitAcrossRepos,
     } = await import('../../services/GitCommitService');
-    const commitResult = await executeGitCommit(
+    const { resolveExtraCommitRoots } = await import('../../services/workspaceRepos');
+    // Across-repos, not `executeGitCommit`: the single-repo path makes any file
+    // outside `workspacePath` throw 'File is outside the repository', which
+    // failed the WHOLE commit -- including the files that were committable.
+    const commitResult = await executeGitCommitAcrossRepos(
       workspacePath,
       response.message,
       response.files,
-      { logContext: '[GitCommit mobile]', env: getGitSubprocessEnv() }
+      {
+        logContext: '[GitCommit mobile]',
+        env: getGitSubprocessEnv(),
+        extraRoots: resolveExtraCommitRoots(workspacePath, session.workspacePath),
+      }
     );
     await emitProposalResponse(
       createGitCommitProposalResponse(commitResult, response.files, response.message)

@@ -56,3 +56,22 @@ export function appendSyncClientParams(urlWithToken: string): string {
   const version = encodeURIComponent(clientInfo.version.slice(0, MAX_LABEL_LENGTH));
   return `${urlWithToken}&platform=${platform}&version=${version}`;
 }
+
+/**
+ * Strip the auth JWT out of a sync socket URL so it is safe to log.
+ *
+ * Every `/sync/{roomId}` URL carries the caller's Stytch session JWT in its
+ * `token=` query param, and those tokens stay valid for days. `main.log` is a
+ * file we routinely ask users to read (and paste) when troubleshooting, so a
+ * raw socket URL in a log line is a live credential sitting on disk.
+ *
+ * Always run a sync URL through this before handing it to a logger -- including
+ * the `event.target.url` off a WebSocket error, which is the same URL.
+ */
+export function redactSyncUrl(url: string): string;
+export function redactSyncUrl(url: undefined | null): undefined;
+export function redactSyncUrl(url: string | undefined | null): string | undefined;
+export function redactSyncUrl(url: string | undefined | null): string | undefined {
+  if (!url) return undefined;
+  return url.replace(/([?&]token=)[^&]*/g, '$1<redacted>');
+}

@@ -450,18 +450,40 @@ export class ProjectFileSyncService {
     logger.main.info(`[ProjectFileSync] Deferring remote delete of dirty file: ${path.basename(filePath)}`);
   }
 
-  /** Unlink a file for a remote delete and clear its baseline + file-map entry. */
-  private async applyRemoteDelete(projectId: string, syncId: string, filePath: string): Promise<void> {
-    try {
-      this.suppressFileWatcherEcho(filePath);
-      await fs.unlink(filePath);
-      logger.main.info(`[ProjectFileSync] Remote delete: ${path.basename(filePath)}`);
-    } catch {
-      // File might already be gone.
-    }
-    await this.deleteBaseline(projectId, syncId);
-    const cache = (this as any)._fileMapCache?.get(projectId) as { fileMap: Map<string, string> } | undefined;
-    cache?.fileMap.delete(syncId);
+  /**
+   * Handle a remote delete. Project sync does NOT remove local files.
+   *
+   * This used to `fs.unlink(filePath)`. A workspace is a real directory on a
+   * real disk -- frequently a git working tree -- and a tombstone in the room's
+   * state is not consent to destroy the user's copy of a file. The only guard
+   * was `dirtyEditorRegistry.isDirty()`, which protects an unsaved editor
+   * buffer and nothing else: no git check, no confirmation, no backup, and
+   * `unlink` does not go to the trash. A single stale tombstone therefore
+   * deleted the same path on every client, on every sync, indefinitely --
+   * observed as 91 extension `.md` files (including a command file added the
+   * day before) being removed four times in two days, each time restored from
+   * git and each time deleted again on the next sync burst.
+   *
+   * See `.claude/rules/destructive-data-paths.md`: a destructive path must
+   * verify the damage is real, ask, and leave a recoverable artifact. None of
+   * that was true here, so the delete does not happen at all.
+   *
+   * Consequence, deliberately chosen: a file genuinely deleted on another
+   * device stays on disk here and is re-offered to the server on the next
+   * manifest sweep. Resurrecting a file is recoverable; deleting one is not.
+   */
+  private async applyRemoteDelete(_projectId: string, _syncId: string, filePath: string): Promise<void> {
+    // Keep the baseline and file-map entry: the file is still on disk, so the
+    // conflict guard must keep working and the next sweep must still see it.
+    logger.main.warn(
+      `[ProjectFileSync] Ignoring remote delete for ${path.relative(this.workspacePathFor(_projectId) ?? '', filePath) || path.basename(filePath)} -- project sync does not remove local files`,
+    );
+  }
+
+  /** Workspace root for a project, if the file-map cache knows it. */
+  private workspacePathFor(projectId: string): string | undefined {
+    const cache = (this as any)._fileMapCache?.get(projectId) as { workspacePath: string } | undefined;
+    return cache?.workspacePath;
   }
 
   /**

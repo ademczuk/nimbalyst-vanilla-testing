@@ -665,6 +665,14 @@ export function createGitCommitProposalResponse(
     if (skipped.size > 0) {
       response.uncommittableFiles = [...skipped];
     }
+    // A selection spanning repos makes N commits, and `commitHash` is only the
+    // first. Without this the user is told one commit landed when several did,
+    // and the others have no hash anywhere in the UI.
+    if (result.repoResults) {
+      response.repoResults = result.repoResults.map(({ repoPath, success, commitHash, error }) => ({
+        repoPath, success, commitHash, error,
+      }));
+    }
     return response;
   }
 
@@ -699,6 +707,13 @@ export async function executeGitCommitAcrossRepos(
   options?: Parameters<typeof executeGitCommit>[3] & {
     /** Commit only this repo, skipping resolution. Set by an explicit repoPath. */
     repoPath?: string;
+    /**
+     * Roots to consider besides `workspacePath`'s own. Set when committing from
+     * a worktree session: attached folders are keyed by the PARENT workspace, so
+     * without them every attached-folder file resolves to no repo, lands in
+     * `uncommittableFiles`, and is silently dropped from the commit.
+     */
+    extraRoots?: string[];
   }
 ): Promise<GitCommitExecutionResult> {
   if (options?.repoPath) {
@@ -719,7 +734,7 @@ export async function executeGitCommitAcrossRepos(
   });
   const toOriginal = (paths: string[]) => paths.map((p) => originalByAbsolute.get(p) ?? p);
 
-  const groups = groupFilesByRepo(workspacePath, absoluteFiles);
+  const groups = groupFilesByRepo(workspacePath, absoluteFiles, options?.extraRoots);
   const uncommittableFiles = groups.get(null) ?? [];
   groups.delete(null);
 

@@ -410,6 +410,12 @@ export function registerSessionHandlers(ctx: AIServiceContext): void {
       TrayManager.getInstance().onSessionUnread(sessionId, !!metadata.metadata.hasUnread);
     }
 
+    // Same reason: the tray's cached `phase` gates the running bucket, and this
+    // is the renderer's half of the metadata write path.
+    if (typeof metadata.metadata?.phase === 'string') {
+      TrayManager.getInstance().onSessionPhaseChanged(sessionId, metadata.metadata.phase);
+    }
+
     // If lastReadAt is being updated, also push through sync for cross-device read state
     // NOTE: Do NOT include updatedAt here. Reading a session is not meaningful activity
     // and should not cause the session to resort to the top of the list on other devices.

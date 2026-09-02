@@ -10,6 +10,7 @@ import {
   setGetSessionPhaseFn,
 } from '../mcp/sessionNamingServer';
 import { getDatabase } from '../database/initialize';
+import { TrayManager } from '../tray/TrayManager';
 import { createWorktreeStore } from './WorktreeStore';
 import { getPreferredAgentLanguage } from '../utils/store';
 import { normalizeSessionPhaseMetadataUpdate } from './session/sessionPhaseTransition';
@@ -127,6 +128,13 @@ export class SessionNamingService {
     // SyncedSessionStore.updateMetadata is the single source of truth for
     // what reaches other devices; phase/tags forwarding lives there now.
     await AISessionsRepository.updateMetadata(sessionId, { metadata: normalizedMetadata });
+
+    // The tray caches `phase` and decides whether a running session is counted
+    // by it, so a write that does not reach it leaves the menu bar judging the
+    // session on whatever phase it had a turn ago.
+    if (typeof normalizedMetadata.phase === 'string') {
+      TrayManager.getInstance().onSessionPhaseChanged(sessionId, normalizedMetadata.phase);
+    }
 
     // Notify renderer windows so UI updates in real time
     const windows = BrowserWindow.getAllWindows();

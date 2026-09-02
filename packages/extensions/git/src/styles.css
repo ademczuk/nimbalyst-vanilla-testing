@@ -796,6 +796,66 @@
   font-style: italic;
 }
 
+/* All-repositories Changes scope: one collapsible section per repo. */
+.git-changes-all-repos {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.git-changes-repo-section {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--nim-border);
+  min-height: 0;
+}
+
+.git-changes-repo-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  background: var(--nim-bg-secondary);
+  border: none;
+  cursor: pointer;
+  color: var(--nim-text);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.git-changes-repo-header:hover {
+  background: var(--nim-bg-hover);
+}
+
+.git-changes-repo-caret {
+  color: var(--nim-text-faint);
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
+.git-changes-repo-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-changes-repo-count {
+  flex-shrink: 0;
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--nim-bg);
+  color: var(--nim-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+}
+
 /* Commit context menu */
 .git-context-menu {
   z-index: 10000;

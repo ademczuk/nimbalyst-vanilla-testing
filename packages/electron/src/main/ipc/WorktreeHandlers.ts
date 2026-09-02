@@ -817,7 +817,7 @@ export function registerWorktreeHandlers(): void {
         };
       }
 
-      logger.info('Batch fetching worktrees', { count: worktreeIds.length, ids: worktreeIds });
+      // logger.info('Batch fetching worktrees', { count: worktreeIds.length, ids: worktreeIds });
 
       const db = getDatabase();
       if (!db) {

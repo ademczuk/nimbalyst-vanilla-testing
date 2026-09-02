@@ -313,8 +313,8 @@ public struct SessionDetailView: View {
             // character.
             guard !isApplyingRemoteDraft else { return }
             draftDebounceItem?.cancel()
-            let item = DispatchWorkItem { [weak appState] in
-                appState?.syncManager?.updateDraftInput(
+            let item = DispatchWorkItem {
+                appState.syncManager?.updateDraftInput(
                     sessionId: session.id,
                     draftInput: newText
                 )

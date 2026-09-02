@@ -61,6 +61,7 @@ export class CopilotACPProtocol implements AgentProtocol {
   readonly platform = 'copilot-acp';
 
   private process: ChildProcess | null = null;
+  private onProcessExit: ((code: number | null, signal: NodeJS.Signals | null) => void) | null = null;
   private readline: ReadlineInterface | null = null;
   private nextRequestId = 1;
   private pendingRequests = new Map<number, PendingRequest>();
@@ -116,12 +117,15 @@ export class CopilotACPProtocol implements AgentProtocol {
       console.warn('[COPILOT-ACP] stderr:', data.toString());
     });
 
-    proc.on('exit', (code, signal) => {
+    // Kept on the instance so destroy() can detach it: a deliberately killed
+    // child would otherwise report its own exit after the caller has moved on.
+    this.onProcessExit = (code, signal) => {
       console.log(`[COPILOT-ACP] Process exited: code=${code}, signal=${signal}`);
       this.rejectAllPending(new Error(`Copilot process exited (code=${code})`));
       this.process = null;
       this.readline = null;
-    });
+    };
+    proc.on('exit', this.onProcessExit);
 
     return proc;
   }
@@ -386,8 +390,12 @@ export class CopilotACPProtocol implements AgentProtocol {
 
   destroy(): void {
     if (this.process && !this.process.killed) {
+      if (this.onProcessExit) {
+        this.process.off('exit', this.onProcessExit);
+      }
       this.process.kill();
     }
+    this.onProcessExit = null;
     this.process = null;
     this.readline = null;
     this.initialized = false;

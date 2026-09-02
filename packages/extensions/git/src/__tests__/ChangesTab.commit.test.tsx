@@ -87,9 +87,13 @@ describe('ChangesTab commit', () => {
     fireEvent.click(screen.getByRole('button', { name: /Commit with AI/ }));
 
     window.removeEventListener('nimbalyst:commit-with-ai', listener);
+    // Absolute paths and an explicit repo: the picked repo need not be the
+    // session's primary root, and a repo-relative path resolved against that
+    // root points at a different repo, or at nothing.
     expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({
       workspacePath: WORKSPACE,
-      files: [{ path: 'src/picked.ts', status: 'M' }],
+      repoPath: WORKSPACE,
+      files: [{ path: `${WORKSPACE}/src/picked.ts`, status: 'M', repo: WORKSPACE }],
     });
   });
 });

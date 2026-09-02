@@ -160,7 +160,7 @@ export class GhCliDetector {
             const firstLine = output.split('\n')[0]?.trim() ?? '';
             const match = firstLine.match(/gh version (\S+)/);
             const version = match?.[1];
-            logger.main.info('[GhCliDetector] gh installed, version:', version);
+            // logger.main.info('[GhCliDetector] gh installed, version:', version);
             resolve({ installed: true, version });
           } else {
             logger.main.info('[GhCliDetector] gh not installed. Exit:', code, 'stderr:', errorOutput);
@@ -183,7 +183,7 @@ export class GhCliDetector {
   private async checkAuth(): Promise<{ authed: boolean; host?: string; user?: string }> {
     return new Promise((resolve) => {
       try {
-        logger.main.info('[GhCliDetector] Checking gh auth status...');
+        // logger.main.info('[GhCliDetector] Checking gh auth status...');
 
         const env = {
           ...process.env,

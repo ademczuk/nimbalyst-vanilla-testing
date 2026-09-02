@@ -19,7 +19,7 @@
 import type { AgentMessage } from '../ai/server/types';
 import type { PersonalJwt, PersonalMemberId } from '../auth/jwtScopes';
 import { shouldSyncMessageForSessionRoom, truncateContentForSync } from './syncContentTruncator';
-import { appendSyncClientParams } from './syncClientInfo';
+import { appendSyncClientParams, redactSyncUrl } from './syncClientInfo';
 import { buildSyncedSessionIndexFields } from './sessionIndexEntryFields';
 import { resolveIndexSortTimestamp } from './sessionSortTimestamp';
 import { deriveTrackerPersonalStateKey } from './trackerPersonalStateKey';
@@ -1976,7 +1976,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       const errorInfo = typeof ErrorEvent !== 'undefined' && event instanceof ErrorEvent
         ? { message: event.message, error: event.error }
         : { type: event.type };
-      console.error('[CollabV3] Index WebSocket error:', errorInfo, 'URL:', wsUrl);
+      console.error('[CollabV3] Index WebSocket error:', errorInfo, 'URL:', redactSyncUrl(wsUrl));
     };
 
     indexWs.onmessage = async (event) => {
@@ -3255,8 +3255,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           // the actionable code/reason. Keep this log as a breadcrumb only.
           const errorInfo = typeof ErrorEvent !== 'undefined' && event instanceof ErrorEvent
             ? { message: event.message, error: event.error }
-            : { type: event.type, target: (event.target as WebSocket)?.url };
-          console.error(`[CollabV3] WebSocket error for ${sessionId}:`, errorInfo, 'URL:', wsUrl);
+            : { type: event.type, target: redactSyncUrl((event.target as WebSocket)?.url) };
+          console.error(`[CollabV3] WebSocket error for ${sessionId}:`, errorInfo, 'URL:', redactSyncUrl(wsUrl));
           updateStatus(sessionId, { connected: false, error: 'Connection error' });
         };
 

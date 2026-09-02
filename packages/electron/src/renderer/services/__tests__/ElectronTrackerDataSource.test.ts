@@ -106,6 +106,8 @@ describe('ElectronTrackerDataSource', () => {
     handlers.get('tracker-saved-views:changed')?.({
       workspacePath: '/workspace/one',
     });
+    // The metadata-driven reload is coalesced on a trailing window, so give it
+    // more than vi.waitFor's 1s default.
     await vi.waitFor(() => {
       expect(changes).toContainEqual({
         type: 'items-replaced',
@@ -115,7 +117,7 @@ describe('ElectronTrackerDataSource', () => {
         type: 'saved-views-replaced',
         savedViews,
       });
-    });
+    }, { timeout: 3000 });
 
     expect(changes).toEqual(
       expect.arrayContaining([
@@ -269,6 +271,48 @@ describe('ElectronTrackerDataSource', () => {
       } else {
         expect(result).toEqual({ ok: true, result: hostResult });
       }
+    }
+  });
+
+  it('collapses a burst of metadata changes into a single full item reload', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveList: ((items: TrackerItem[]) => void) | null = null;
+      const invoke = vi.fn(async (channel: string) => {
+        if (channel !== 'document-service:tracker-items-list') return [];
+        return new Promise<TrackerItem[]>((resolve) => {
+          resolveList = resolve;
+        });
+      });
+      const { ipc, handlers } = createIpc(invoke);
+      const source = new ElectronTrackerDataSource({ workspacePath: '/workspace/one', ipc });
+      const changes: TrackerDataChange[] = [];
+      source.subscribe((change) => changes.push(change));
+
+      // Typing inside a frontmatter block: one metadata change per keystroke.
+      const fire = handlers.get('document-service:metadata-changed')!;
+      for (let i = 0; i < 20; i++) {
+        fire(undefined);
+        await vi.advanceTimersByTimeAsync(40);
+      }
+      // 800ms of keystrokes 40ms apart used to be 20 full-list fetches.
+      expect(invoke).toHaveBeenCalledTimes(1);
+
+      // A change arriving while the reload is in flight does not start a second
+      // concurrent fetch -- it is served by one trailing pass after it settles.
+      fire(undefined);
+      fire(undefined);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(invoke).toHaveBeenCalledTimes(1);
+
+      resolveList!([item('one')]);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(invoke).toHaveBeenCalledTimes(2);
+      expect(changes).toContainEqual({ type: 'items-replaced', items: [item('one')] });
+
+      source.dispose();
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

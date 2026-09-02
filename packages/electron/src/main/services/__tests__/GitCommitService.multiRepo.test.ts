@@ -166,4 +166,50 @@ describe('executeGitCommitAcrossRepos', () => {
     expect(result.success).toBe(true);
     expect(await gitOutput(['log', '--oneline'], infraRepo)).toContain('feat: explicit repo');
   });
+
+  it('reports every repo hash on success, not just the first', async () => {
+    // Without this the user approves one card, two commits land, and the UI can
+    // only ever show one hash -- the second commit is invisible.
+    rootsByWorkspace.set(appRepo, [appRepo, infraRepo]);
+    await fs.writeFile(path.join(appRepo, 'a.txt'), 'one\n', 'utf8');
+    await fs.writeFile(path.join(infraRepo, 'main.tf'), 'two\n', 'utf8');
+    const files = [path.join(appRepo, 'a.txt'), path.join(infraRepo, 'main.tf')];
+
+    const result = await executeGitCommitAcrossRepos(appRepo, 'feat: two hashes', files);
+    const response = createGitCommitProposalResponse(result, files, 'feat: two hashes');
+
+    expect(response.action).toBe('committed');
+    expect(response.repoResults?.map((entry) => entry.repoPath)).toEqual([appRepo, infraRepo]);
+    expect(response.repoResults?.every((entry) => entry.success && entry.commitHash)).toBe(true);
+    // Two distinct commits, not the same hash echoed twice.
+    const hashes = new Set(response.repoResults?.map((entry) => entry.commitHash));
+    expect(hashes.size).toBe(2);
+  });
+
+  it('commits into an attached folder when the workspace path is a worktree', async () => {
+    // A worktree session passes the WORKTREE path, but attached folders are
+    // stored under the parent workspace key. Without extraRoots the infra file
+    // resolves to no repo, is dropped into uncommittableFiles, and never lands.
+    const worktree = path.join(tmpRoot, 'app-worktree');
+    await initScratchRepo(worktree);
+    rootsByWorkspace.set(worktree, [worktree]);
+    await fs.writeFile(path.join(worktree, 'a.txt'), 'one\n', 'utf8');
+    await fs.writeFile(path.join(infraRepo, 'main.tf'), 'two\n', 'utf8');
+    const files = [path.join(worktree, 'a.txt'), path.join(infraRepo, 'main.tf')];
+
+    const dropped = await executeGitCommitAcrossRepos(worktree, 'feat: no extra roots', files);
+    expect(dropped.uncommittableFiles).toEqual([path.join(infraRepo, 'main.tf')]);
+
+    // That call committed the worktree file and dropped the infra one, so
+    // re-dirty the worktree side before asserting the fixed behaviour.
+    await fs.writeFile(path.join(worktree, 'a.txt'), 'one again\n', 'utf8');
+
+    const result = await executeGitCommitAcrossRepos(worktree, 'feat: with extra roots', files, {
+      extraRoots: [infraRepo],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.uncommittableFiles).toBeUndefined();
+    expect(await gitOutput(['log', '--oneline'], infraRepo)).toContain('feat: with extra roots');
+  });
 });

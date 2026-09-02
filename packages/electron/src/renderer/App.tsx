@@ -2336,9 +2336,11 @@ export default function App() {
   useEffect(() => {
     const handleCommitWithAi = async (event: CustomEvent<{
       workspacePath: string;
+      /** The repo the git panel's picker selected, when it sent one. */
+      repoPath?: string;
       files: SelectedCommitFile[];
     }>) => {
-      const { workspacePath: commitWorkspacePath, files } = event.detail ?? {};
+      const { workspacePath: commitWorkspacePath, repoPath: commitRepoPath, files } = event.detail ?? {};
       if (!commitWorkspacePath || !Array.isArray(files) || files.length === 0) return;
 
       const commitFiles = mapSelectedCommitFiles(files);
@@ -2370,7 +2372,7 @@ export default function App() {
           detail: { sessionId, workspacePath: commitWorkspacePath },
         }));
 
-        const message = buildSelectedCommitPrompt(commitFiles);
+        const message = buildSelectedCommitPrompt(commitFiles, commitRepoPath);
         const docContext = {
           filePath: undefined,
           content: undefined,

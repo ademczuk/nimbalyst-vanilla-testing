@@ -48,7 +48,7 @@ The commit message should follow these guidelines:
             {
               type: 'object' as const,
               properties: {
-                path: { type: 'string' as const, description: 'File path relative to workspace root' },
+                path: { type: 'string' as const, description: 'File path, either relative to the workspace root or absolute (files in an attached folder arrive as absolute paths)' },
                 status: {
                   type: 'string' as const,
                   enum: ['added', 'modified', 'deleted'],

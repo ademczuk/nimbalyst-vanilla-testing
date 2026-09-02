@@ -308,10 +308,12 @@ export function registerModelHandlers(ctx: AIServiceContext): void {
       grouped[model.provider].push(model);
     }
 
-    // Log final claude-code models being returned
-    const enabledClaudeCodeModels = enabledModels.filter(m => m.provider === 'claude-code');
-    console.log('[AIService] ai:getModels - returning enabled claude-code models:',
-      enabledClaudeCodeModels.map(m => ({ id: m.id, name: m.name })));
+    // Debug logging - uncomment if needed. ai:getModels is called on every
+    // model-picker render, and this dumps the whole claude-code model array
+    // each time; it was ~14% of main.log by volume.
+    // const enabledClaudeCodeModels = enabledModels.filter(m => m.provider === 'claude-code');
+    // console.log('[AIService] ai:getModels - returning enabled claude-code models:',
+    //   enabledClaudeCodeModels.map(m => ({ id: m.id, name: m.name })));
 
     return {
       success: true,

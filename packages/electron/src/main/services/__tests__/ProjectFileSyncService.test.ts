@@ -479,6 +479,33 @@ describe('ProjectFileSyncService sync-response edge cases', () => {
     expect(await fsp.readFile(filePath, 'utf-8')).toBe('# Keep me\n');
   });
 
+  it('does not delete files in a bulk deletedSyncIds burst with no editor open', async () => {
+    const fsp = await import('fs/promises');
+    // The real regression: a workspace is scanned wholesale for .md files, so
+    // ordinary repo source files (extension docs, command definitions) end up
+    // in the room. One stale tombstone per path then unlinked all of them from
+    // the git working tree on every sync -- no editor involved, so the
+    // dirty-editor guard above never applied.
+    const rels = ['docs/a.md', 'docs/b.md', 'docs/c.md'];
+    const syncIds: string[] = [];
+    await fsp.mkdir(path.join(tmpDir, 'docs'), { recursive: true });
+    for (const rel of rels) {
+      const filePath = path.join(tmpDir, rel);
+      const syncId = syncIdFromPath(rel);
+      syncIds.push(syncId);
+      await writeFile(filePath, `# ${rel}\n`, 'utf-8');
+      (service as any)._fileMapCache.get('proj-enc').fileMap.set(syncId, filePath);
+    }
+
+    await (service as any).handleSyncResponse('proj-enc', {
+      updatedFiles: [], newFiles: [], deletedSyncIds: syncIds, needFromClient: [], yjsUpdates: [],
+    });
+
+    for (const rel of rels) {
+      expect(await fsp.readFile(path.join(tmpDir, rel), 'utf-8')).toBe(`# ${rel}\n`);
+    }
+  });
+
   it('registers a remote-created file in the file map for later delete resolution', async () => {
     const fsp = await import('fs/promises');
     const rel = 'from-mobile.md';
@@ -544,22 +571,24 @@ describe('ProjectFileSyncService deferred remote delete', () => {
     return { filePath, syncId };
   }
 
-  it('applies the deferred delete once the editor is clean and the file is unchanged', async () => {
+  it('never removes the local file, even once the editor is clean and it matches the baseline', async () => {
     const fsp = await import('fs/promises');
     const { filePath } = await deferDeleteFor('drop.md', '# Drop me\n');
 
     // Still present while dirty.
     expect(await fsp.readFile(filePath, 'utf-8')).toBe('# Drop me\n');
 
-    // Editor closes/discards -> clean -> deferred delete applies.
+    // Editor goes clean and the file is byte-identical to the last sync, so
+    // this is the case that used to `fs.unlink` it. A workspace is a real
+    // directory (often a git working tree) and a tombstone in the room state
+    // is not consent to destroy the user's copy: a single stale tombstone
+    // deleted the same paths on every client on every sync, indefinitely.
     dirtyEditorRegistry.setDirty(filePath, false);
     const start = Date.now();
-    let gone = false;
-    while (Date.now() - start < 1000) {
-      try { await fsp.readFile(filePath, 'utf-8'); } catch { gone = true; break; }
+    while (Date.now() - start < 300) {
       await new Promise((r) => setTimeout(r, 10));
     }
-    expect(gone).toBe(true);
+    expect(await fsp.readFile(filePath, 'utf-8')).toBe('# Drop me\n');
   });
 
   it('a saved local edit overrides the deferred delete (resurrect via re-push)', async () => {
