@@ -62,6 +62,43 @@ describe('deriveFleetSnapshot', () => {
     expect(snapshot).toMatchObject({ running: 1, stalled: 1 });
   });
 
+  // The bug this file's stall rule shipped with: `updatedAt` only moves on a
+  // lifecycle transition, so a turn that runs for 40 minutes without one -- a
+  // long test run, a slow build -- left Running and never came back. Liveness
+  // is the evidence of progress the threshold was always supposed to measure.
+  it('keeps a long turn running while liveness ticks keep arriving', () => {
+    const snapshot = deriveFleetSnapshot(
+      [session({
+        sessionId: 'long-tool-call',
+        updatedAt: NOW - 40 * 60_000,
+        liveAt: NOW - 30_000,
+        turnInFlight: true,
+      })],
+      1,
+      { now: NOW },
+    );
+
+    expect(snapshot).toMatchObject({ running: 1, stalled: 0 });
+  });
+
+  // The other half: liveness is *additional* evidence, never a way to defeat
+  // the check. A ticker that stopped is exactly the wedged provider the stalled
+  // bucket exists to catch.
+  it('still stalls a session whose liveness ticks stopped', () => {
+    const snapshot = deriveFleetSnapshot(
+      [session({
+        sessionId: 'wedged',
+        updatedAt: NOW - 40 * 60_000,
+        liveAt: NOW - STALL_AFTER_MS,
+        turnInFlight: true,
+      })],
+      1,
+      { now: NOW },
+    );
+
+    expect(snapshot).toMatchObject({ running: 0, stalled: 1 });
+  });
+
   it('does not call a just-restored session stalled', () => {
     // No `updatedAt` means "not observed", not "silent" -- the cache is seeded
     // from the database on launch and must not announce a stall it never saw.

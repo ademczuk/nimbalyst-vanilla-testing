@@ -72,6 +72,7 @@ A concise reference of all features in the product. Keep this up to date as feat
 - Configurable columns
 - Auto-exit kanban when navigating to a session
 - Agent-assisted cleanup (`/session-cleanup` slash command in the Planning extension) — audits sessions, proposes phase corrections and "mark complete" candidates for approval, and flags old sessions to archive
+- Workspace coaching (`/planning:nimbalyst-coach` slash command in the Planning extension) — reviews the project and recent sessions, then recommends extensions matching the project's file types, product features going unused, and additions to the project's agent instructions; read-only until the user approves each edit
 
 ## Agent Mode
 

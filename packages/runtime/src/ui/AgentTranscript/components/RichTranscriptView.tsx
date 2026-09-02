@@ -493,7 +493,7 @@ interface RichTranscriptViewProps {
   /** Optional: Navigate to a session by ID (for @@session reference links) */
   onOpenSession?: (sessionId: string) => void;
   /** Optional: Callback to trigger /compact command */
-  onCompact?: () => void;
+  onCompact?: () => void | Promise<void>;
   /** Optional: Prompt additions for debugging (system prompt, user message, and attachments) */
   promptAdditions?: {
     systemPromptAddition: string | null;

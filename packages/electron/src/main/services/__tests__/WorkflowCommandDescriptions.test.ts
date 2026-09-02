@@ -55,4 +55,40 @@ describe('workflow command metadata', () => {
 
     expect(missing).toEqual([]);
   });
+
+  // A command file that exists on disk but is missing from its manifest never
+  // reaches the user: the plugin export walks the manifest, not the directory.
+  // The failure is silent -- the file is right there, the command just isn't
+  // offered -- so it is invisible in review and only shows up when someone
+  // types the slash command and nothing happens.
+  it('keeps each extension manifest in sync with its command files on disk', () => {
+    const extensionRoot = path.join(repoRoot, 'packages', 'extensions');
+    const drift: string[] = [];
+
+    for (const entry of fs.readdirSync(extensionRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+
+      const manifestPath = path.join(extensionRoot, entry.name, 'manifest.json');
+      const commandsDir = path.join(extensionRoot, entry.name, 'claude-plugin', 'commands');
+      if (!fs.existsSync(manifestPath) || !fs.existsSync(commandsDir)) continue;
+
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as {
+        contributions?: { claudePlugin?: { commands?: Array<{ name: string }> } };
+      };
+      const declared = (manifest.contributions?.claudePlugin?.commands ?? [])
+        .map((c) => c.name)
+        .sort();
+      const onDisk = fs
+        .readdirSync(commandsDir)
+        .filter((f) => f.endsWith('.md'))
+        .map((f) => f.replace(/\.md$/, ''))
+        .sort();
+
+      if (declared.join(',') !== onDisk.join(',')) {
+        drift.push(`${entry.name}: manifest=[${declared.join(', ')}] disk=[${onDisk.join(', ')}]`);
+      }
+    }
+
+    expect(drift).toEqual([]);
+  });
 });

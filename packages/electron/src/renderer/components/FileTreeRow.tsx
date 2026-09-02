@@ -189,11 +189,13 @@ export const FileTreeRow = memo<FileTreeRowProps>(({
         aria-expanded={node.isExpanded}
         aria-selected={node.isMultiSelected || node.isSelected}
         aria-level={node.depth + 1}
-        className={`file-tree-directory${node.isDragOver ? ' drag-over' : ''}${node.isSelected ? ' selected' : ''}${node.isMultiSelected ? ' multi-selected' : ''}${node.isSpecialDirectory ? ' special-directory' : ''}${isFocused ? ' focused' : ''}`}
+        className={`file-tree-directory${node.isDragOver ? ' drag-over' : ''}${node.isSelected ? ' selected' : ''}${node.isMultiSelected ? ' multi-selected' : ''}${node.isSpecialDirectory ? ' special-directory' : ''}${node.isWorkspaceRoot ? ' workspace-root' : ''}${isFocused ? ' focused' : ''}`}
         style={{ paddingLeft: indent, opacity: isDragSource ? 0.5 : 1 }}
         onClick={onClick}
         onContextMenu={onContextMenu}
-        draggable={!isRenaming}
+        // A workspace root is not a file inside the workspace -- dragging one
+        // would offer to move the folder the user attached.
+        draggable={!isRenaming && !node.isWorkspaceRoot}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
         onDragOver={onDragOver}

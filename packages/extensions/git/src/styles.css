@@ -770,6 +770,26 @@
   line-height: 1;
 }
 
+/* Repo picker (multi-root workspaces only; hidden when there is one repo) */
+.git-repo-picker-chevron {
+  font-size: 8px;
+  color: var(--nim-text-faint);
+  flex-shrink: 0;
+}
+
+.git-repo-menu {
+  min-width: 220px;
+}
+
+.git-repo-menu-branch {
+  color: var(--nim-text-faint);
+  font-size: 11px;
+  flex-shrink: 0;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .git-branch-menu-empty {
   padding: 8px 10px;
   color: var(--nim-text-faint);

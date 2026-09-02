@@ -46,6 +46,20 @@ describe('GitStatusRefreshCoordinator', () => {
     expect(broadcasts[0].status).toEqual(SNAPSHOT);
   });
 
+  it('names the repository the snapshot describes', async () => {
+    // Multi-root: a consumer showing one repo routes on `repoPath`. Without it
+    // an attached repo's branch lands on the primary repo's indicator.
+    const broadcasts: GitStatusChangedPayload[] = [];
+    const coordinator = new GitStatusRefreshCoordinator({
+      readStatus: async () => SNAPSHOT,
+      broadcast: (payload) => broadcasts.push(payload),
+    });
+
+    await coordinator.request('/workspace/attached-repo');
+
+    expect(broadcasts[0].repoPath).toBe('/workspace/attached-repo');
+  });
+
   it('collapses a burst of concurrent requests into one read plus one re-run', async () => {
     // Several operations finishing at once must not fan out into a `git status`
     // per event, but the last request still has to be honoured -- it may have

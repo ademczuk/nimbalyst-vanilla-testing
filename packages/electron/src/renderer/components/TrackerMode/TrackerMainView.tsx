@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
+import { activeFileRepoPathAtom } from '../../store/atoms/workspaceRepos';
 import { copyToClipboard, MaterialSymbol } from '@nimbalyst/runtime';
 import { TrackerUnreadDot } from '@nimbalyst/runtime/readReceipts/TrackerUnreadDot';
 import type { TrackerIdentity } from '@nimbalyst/runtime';
@@ -195,6 +196,10 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   // See nimbalyst#176.
   const defaultModel = useAtomValue(defaultAgentModelAtom);
   const isWorktreesFeatureAvailable = useAtomValue(worktreesFeatureAvailableAtom);
+  // Branch from the repo the worktree will actually be created in -- in a
+  // multi-root workspace that is not necessarily the primary root.
+  const activeFileRepoPath = useAtomValue(activeFileRepoPathAtom);
+  const worktreeSourceRepoPath = activeFileRepoPath ?? workspacePath ?? '';
   const isGitRepo = useGitRepoProbe(workspacePath);
 
   useEffect(() => {
@@ -1553,7 +1558,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       {workspacePath && pendingWorktreeLaunch && (
         <WorktreeBaseBranchPicker
           isOpen
-          workspacePath={workspacePath}
+          repoPath={worktreeSourceRepoPath}
           initialName={pendingWorktreeLaunch.worktreeName}
           onCreate={handleCreateTrackerWorktree}
           onCancel={() => setPendingWorktreeLaunch(null)}

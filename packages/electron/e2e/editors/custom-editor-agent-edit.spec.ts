@@ -36,6 +36,8 @@ let workspaceDir: string;
 
 const FILE_NAME = 'agent-edit-test.excalidraw';
 const DUAL_FILE_NAME = 'dual-attach-test.excalidraw';
+const REPEATED_FILE_NAME = 'repeated-agent-writes.excalidraw';
+const LATE_REGISTRATION_FILE_NAME = 'late-registration.excalidraw';
 
 function makeRect(id: string, x: number): Record<string, unknown> {
   return {
@@ -75,6 +77,8 @@ test.beforeAll(async () => {
   workspaceDir = await createTempWorkspace();
   await fs.writeFile(path.join(workspaceDir, FILE_NAME), excalidrawFile([makeRect('seed-rect', 10)]), 'utf8');
   await fs.writeFile(path.join(workspaceDir, DUAL_FILE_NAME), excalidrawFile([makeRect('seed-rect', 10)]), 'utf8');
+  await fs.writeFile(path.join(workspaceDir, REPEATED_FILE_NAME), excalidrawFile([makeRect('seed-rect', 10)]), 'utf8');
+  await fs.writeFile(path.join(workspaceDir, LATE_REGISTRATION_FILE_NAME), excalidrawFile([makeRect('seed-rect', 10)]), 'utf8');
 
   electronApp = await launchElectronApp({ workspace: workspaceDir });
   page = await electronApp.firstWindow();
@@ -206,4 +210,107 @@ test('dual attachment (Files + Agent mode): AI edit refreshes, nothing sticks in
   expect(ids.sort()).toEqual(['agent-rect-1', 'external-rect-2', 'seed-rect']);
 
   await switchToFilesMode(page);
+});
+
+// ===========================================================================
+// NIM-5359 (plan item 1h) -- shared-path parity for custom editors.
+//
+// Both tests below describe the contract after the consolidation in
+// nimbalyst-local/plans/mount-diff-path-reverts-agent-writes.md: one
+// presentation path, generation-scoped acknowledgement, and registration as the
+// custom-editor readiness signal.
+// ===========================================================================
+
+// A no-diff-view custom editor takes the auto-accept branch. The resolution
+// promise itself is that editor's completion -- it must not ALSO send a generic
+// apply acknowledgement, or three back-to-back agent writes can resolve more
+// than once (extra pre-edit tags) or leave the model mid-resolution while a
+// newer generation is already queued.
+test('no-diff custom editor auto-accepts repeated agent writes and resolves exactly once', async () => {
+  test.setTimeout(120_000);
+  const filePath = path.join(workspaceDir, REPEATED_FILE_NAME);
+  const baseline = excalidrawFile([makeRect('seed-rect', 10)]);
+  await fs.writeFile(filePath, baseline, 'utf8');
+
+  await switchToFilesMode(page);
+  await openFileFromTree(page, REPEATED_FILE_NAME);
+  await expect(
+    page.locator(`[data-file-path="${filePath}"].multi-editor-instance .excalidraw-editor`)
+  ).toBeVisible({ timeout: TEST_TIMEOUTS.EDITOR_LOAD });
+
+  await page.evaluate(async ({ workspacePath, fp, content }) => {
+    await (window as any).electronAPI.history.createTag(
+      workspacePath, fp, 'repeated-writes-tag', content, 'repeated-writes-session', 'tool-repeated',
+    );
+  }, { workspacePath: workspaceDir, fp: filePath, content: baseline });
+  await page.waitForTimeout(200);
+
+  // Three generations, the last two inside the previous apply's settle window.
+  const rects = ['agent-rect-1', 'agent-rect-2', 'agent-rect-3'];
+  for (let i = 0; i < rects.length; i++) {
+    const elements = [makeRect('seed-rect', 10), ...rects.slice(0, i + 1).map((id, n) => makeRect(id, 200 + n * 120))];
+    await fs.writeFile(filePath, excalidrawFile(elements), 'utf8');
+    await page.waitForTimeout(i === 0 ? 900 : 150);
+  }
+  await page.waitForTimeout(2500);
+
+  // The open editor shows the NEWEST generation, not a frozen earlier one.
+  const ids = await getSceneElementIds(filePath);
+  expect(ids.sort()).toEqual(['agent-rect-1', 'agent-rect-2', 'agent-rect-3', 'seed-rect']);
+
+  // Exactly one resolution: one pre-edit tag, nothing left pending.
+  const tags: Array<{ type: string; status: string }> = await page.evaluate(
+    (fp) => (window as any).electronAPI.invoke('history:get-all-tags', fp), filePath,
+  );
+  expect(tags.filter((t) => t.type === 'pre-edit')).toHaveLength(1);
+  expect(tags.filter((t) => t.status === 'pending-review')).toHaveLength(0);
+
+  // Disk holds the newest generation -- no auto-accept wrote an older one back.
+  const diskIds = (JSON.parse(await fs.readFile(filePath, 'utf8')).elements || [])
+    .map((e: { id: string }) => e.id).sort();
+  expect(diskIds).toEqual(['agent-rect-1', 'agent-rect-2', 'agent-rect-3', 'seed-rect']);
+});
+
+// Phase 6 (remove the 50ms custom-editor registration delay).
+//
+// `checkAndApplyPendingDiffs` sleeps 50ms hoping the custom editor registered
+// its diff callback. The replacement makes callback registration itself the
+// readiness signal: a generation with no capable presenter stays
+// `awaiting-presenter` and is delivered the moment a presenter registers,
+// however late that is. This test opens a file that ALREADY has a pending diff
+// (no watcher event follows), so the only way the editor can learn about it is
+// that replay -- which is what the 50ms guess is standing in for today.
+test('custom editor registering after mount still receives the pending generation', async () => {
+  test.setTimeout(120_000);
+  const filePath = path.join(workspaceDir, LATE_REGISTRATION_FILE_NAME);
+  const baseline = excalidrawFile([makeRect('seed-rect', 10)]);
+  const agentContent = excalidrawFile([makeRect('seed-rect', 10), makeRect('late-rect', 200)]);
+
+  // Tag + agent write happen while the file is CLOSED, so there is no
+  // file-changed event for the editor to ride in on.
+  await fs.writeFile(filePath, baseline, 'utf8');
+  await page.evaluate(async ({ workspacePath, fp, content }) => {
+    await (window as any).electronAPI.history.createTag(
+      workspacePath, fp, 'late-registration-tag', content, 'late-registration-session', 'tool-late-reg',
+    );
+  }, { workspacePath: workspaceDir, fp: filePath, content: baseline });
+  await fs.writeFile(filePath, agentContent, 'utf8');
+  await page.waitForTimeout(300);
+
+  await switchToFilesMode(page);
+  await openFileFromTree(page, LATE_REGISTRATION_FILE_NAME);
+  await expect(
+    page.locator(`[data-file-path="${filePath}"].multi-editor-instance .excalidraw-editor`)
+  ).toBeVisible({ timeout: TEST_TIMEOUTS.EDITOR_LOAD });
+
+  // The generation reaches the editor regardless of registration timing.
+  await expect.poll(() => getSceneElementIds(filePath), { timeout: 10000 })
+    .toContain('late-rect');
+
+  // Auto-accept resolved the pending review exactly once and disk is untouched.
+  const tags: Array<{ type: string; status: string }> = await page.evaluate(
+    (fp) => (window as any).electronAPI.invoke('history:get-all-tags', fp), filePath,
+  );
+  expect(tags.filter((t) => t.status === 'pending-review')).toHaveLength(0);
+  expect(await fs.readFile(filePath, 'utf8')).toBe(agentContent);
 });

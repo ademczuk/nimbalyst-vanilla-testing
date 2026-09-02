@@ -28,6 +28,7 @@ import {
     addWorkspaceRecentFile,
     store,
     getWorkspaceState,
+    getWorkspaceRoots,
     updateWorkspaceState,
     getAppSetting
 } from '../utils/store';
@@ -218,6 +219,39 @@ async function runRipgrepFiles(rootPath: string, options?: { noIgnore?: boolean 
         .map(file => path.normalize(file));
 }
 
+/**
+ * Quick-open index for one root: every file, plus every directory on the way
+ * to one. Built per root rather than per workspace so attaching or detaching a
+ * folder only reindexes that folder.
+ */
+async function buildQuickOpenCacheForRoot(
+    rootPath: string,
+): Promise<Array<{ path: string; name: string; type: 'file' | 'directory' }>> {
+    const files = await findWorkspaceFiles(rootPath);
+    const cache: Array<{ path: string; name: string; type: 'file' | 'directory' }> = [];
+
+    // Extract unique directories from file paths
+    const dirs = new Set<string>();
+    for (const file of files) {
+        // Walk up the directory tree from each file
+        let dir = dirname(file);
+        while (dir.length > rootPath.length) {
+            if (dirs.has(dir)) break; // Already seen this dir and its parents
+            dirs.add(dir);
+            dir = dirname(dir);
+        }
+    }
+
+    for (const dir of dirs) {
+        cache.push({ path: dir, name: basename(dir).toLowerCase(), type: 'directory' });
+    }
+    for (const file of files) {
+        cache.push({ path: file, name: basename(file).toLowerCase(), type: 'file' });
+    }
+
+    return cache;
+}
+
 // Cross-platform file finder using ripgrep --files.
 // Respects .gitignore for the general workspace scan, but explicitly includes
 // nimbalyst-local/ so local plan files remain mentionable in @ typeahead.
@@ -378,46 +412,18 @@ export function registerWorkspaceHandlers() {
         }
     });
 
-    // Build file name cache for quick open
+    // Build file name cache for quick open, one entry per workspace root so a
+    // detached folder's files leave the index with it.
     safeHandle('build-quick-open-cache', async (event, workspacePath: string) => {
         try {
-            // Use cross-platform Node.js file walking instead of Unix find command
-            const files = await findWorkspaceFiles(workspacePath);
-
-            const cache: Array<{ path: string; name: string; type: 'file' | 'directory' }> = [];
-
-            // Extract unique directories from file paths
-            const dirs = new Set<string>();
-            for (const file of files) {
-                // Walk up the directory tree from each file
-                let dir = dirname(file);
-                while (dir.length > workspacePath.length) {
-                    if (dirs.has(dir)) break; // Already seen this dir and its parents
-                    dirs.add(dir);
-                    dir = dirname(dir);
-                }
+            const roots = getWorkspaceRoots(workspacePath);
+            let fileCount = 0;
+            for (const rootPath of roots) {
+                const cache = await buildQuickOpenCacheForRoot(rootPath);
+                fileNameCaches.set(rootPath, cache);
+                fileCount += cache.length;
             }
-
-            // Add directories to cache
-            for (const dir of dirs) {
-                cache.push({
-                    path: dir,
-                    name: basename(dir).toLowerCase(),
-                    type: 'directory'
-                });
-            }
-
-            // Add files to cache
-            for (const file of files) {
-                cache.push({
-                    path: file,
-                    name: basename(file).toLowerCase(),
-                    type: 'file'
-                });
-            }
-
-            fileNameCaches.set(workspacePath, cache);
-            return { success: true, fileCount: cache.length };
+            return { success: true, fileCount };
         } catch (error) {
             console.error('Error building quick open cache:', error);
             return { success: false, error: String(error) };
@@ -436,9 +442,11 @@ export function registerWorkspaceHandlers() {
             const trimmedQuery = query.trim();
             const maskPatterns = parseFileMask(options?.fileMask);
 
-            // Use cache if available
-            const cache = fileNameCaches.get(workspacePath);
-            if (!cache) {
+            // Union the per-root caches: quick open spans every root the
+            // workspace shows, in root order.
+            const roots = getWorkspaceRoots(workspacePath);
+            const cache = roots.flatMap(rootPath => fileNameCaches.get(rootPath) ?? []);
+            if (cache.length === 0) {
                 console.warn('Quick open cache not built for workspace:', workspacePath);
                 return [];
             }
@@ -506,7 +514,9 @@ export function registerWorkspaceHandlers() {
                 '--json',
                 ...RIPGREP_EXCLUDE_ARGS_ARRAY,
                 trimmedQuery,
-                workspacePath
+                // ripgrep takes N search roots directly, so a multi-root
+                // workspace is one invocation, not one per root.
+                ...getWorkspaceRoots(workspacePath)
             ];
 
             let stdout = '';
@@ -568,7 +578,10 @@ export function registerWorkspaceHandlers() {
 
             // First, search file names using ripgrep --files
             try {
-                const allFiles = await findWorkspaceFiles(workspacePath);
+                const perRoot = await Promise.all(
+                    getWorkspaceRoots(workspacePath).map(rootPath => findWorkspaceFiles(rootPath)),
+                );
+                const allFiles = perRoot.flat();
                 const queryLower = trimmedQuery.toLowerCase();
                 const matchingFiles = allFiles
                     .filter(file => basename(file).toLowerCase().includes(queryLower))
@@ -594,7 +607,7 @@ export function registerWorkspaceHandlers() {
                     '--json',
                     ...RIPGREP_EXCLUDE_ARGS_ARRAY,
                     trimmedQuery,
-                    workspacePath
+                    ...getWorkspaceRoots(workspacePath)
                 ];
 
                 let stdout = '';

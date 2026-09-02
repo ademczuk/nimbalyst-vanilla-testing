@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 /**
  * A recipient without the owning extension must be told which extension the
  * shared document needs -- the regression this guards is silent: the tab still

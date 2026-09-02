@@ -107,6 +107,12 @@ test.beforeAll(async () => {
     '# Source Mode Test\n\nOriginal content.\n',
     'utf8'
   );
+  // NIM-5359 (plan item 1h): source mode entered while an AI review is pending.
+  await fs.writeFile(
+    path.join(workspaceDir, 'source-mode-diff-test.md'),
+    '# Source Mode Diff\n\nGENERATION Zeroth\n\nStable trailing paragraph.\n',
+    'utf8'
+  );
   await fs.writeFile(
     path.join(workspaceDir, 'dual-attach-diff.md'),
     '# Dual Attach Diff\n\nFirst paragraph baseline content.\n\nSecond paragraph baseline content.\n',
@@ -828,6 +834,124 @@ test('source-mode toggle does not silently overwrite external disk changes', asy
   await page.waitForTimeout(200);
 
   await closeTabByFileName(page, 'source-mode-test.md');
+});
+
+// ===========================================================================
+// NIM-5359 (plan item 1h) -- source mode during a pending AI review.
+//
+// Today source mode is undefined behaviour in the diff lifecycle:
+// `checkAndApplyPendingDiffs` returns early on `sourceMode` (TabEditor.tsx:681)
+// but `sourceMode` is NOT in the diff-subscription effect's dependencies, so
+// the attachment stays registered as a generation recipient while presenting
+// nothing, and its save path is not blocked.
+//
+// Phase 6 defines it: while source mode is active the attachment is not a
+// presenter and its saves are blocked whenever the model has a pending diff;
+// the model stays `awaiting-presenter`, replaces its target with each newer
+// serialized disk generation, and publishes the latest generation immediately
+// on mode exit.
+// ===========================================================================
+test('source mode blocks saving during a pending review and replays the latest generation on exit', async () => {
+  test.setTimeout(120_000);
+  const mdPath = path.join(workspaceDir, 'source-mode-diff-test.md');
+  const gen = (marker: string) =>
+    `# Source Mode Diff\n\nGENERATION ${marker}\n\nStable trailing paragraph.\n`;
+  await fs.writeFile(mdPath, gen('Zeroth'), 'utf8');
+
+  await openFileFromTree(page, 'source-mode-diff-test.md');
+  await page.waitForSelector(ACTIVE_EDITOR_SELECTOR, { timeout: TEST_TIMEOUTS.EDITOR_LOAD });
+  await page.waitForTimeout(400);
+
+  await page.evaluate(async ({ wp, fp, content }) => {
+    await window.electronAPI.history.createTag(
+      wp, fp, 'source-mode-diff-tag', content, 'source-mode-diff-session', 'tool-source-mode-diff',
+    );
+  }, { wp: workspaceDir, fp: mdPath, content: gen('Zeroth') });
+  await page.waitForTimeout(200);
+
+  // C1: review goes live in the rich editor.
+  await fs.writeFile(mdPath, gen('Foxtrot'), 'utf8');
+  await expect(page.locator(PLAYWRIGHT_TEST_SELECTORS.unifiedDiffHeader)).toBeVisible({ timeout: 5000 });
+
+  // Enter source mode with the review still pending.
+  const tabEditor = page.locator('.tab-editor[data-file-path$="source-mode-diff-test.md"]');
+  await tabEditor.locator('button[title="More actions"]').click();
+  await page.waitForTimeout(150);
+  await page.locator('button.dropdown-item', { hasText: 'Toggle Source Mode' }).click();
+  await expect(page.locator('.monaco-markdown-toolbar')).toBeVisible({ timeout: 5000 });
+
+  // Source mode presents no inline diff, but it is not a resolution: the tag
+  // stays pending while the agent keeps writing.
+  await fs.writeFile(mdPath, gen('Juliett'), 'utf8');
+  await page.waitForTimeout(800);
+  await fs.writeFile(mdPath, gen('Whiskey'), 'utf8');
+  await page.waitForTimeout(2000);
+
+  const pendingInSource: Array<{ id: string }> = await page.evaluate(
+    (fp) => window.electronAPI.history.getPendingTags(fp), mdPath,
+  );
+  expect(pendingInSource.map((t) => t.id)).toContain('source-mode-diff-tag');
+
+  // A save from source mode must be refused while the review is pending --
+  // raw source editing cannot save across an unresolved agent write.
+  await page.locator('.monaco-code-editor .view-lines').click();
+  await page.keyboard.type('\ntyped in source mode\n');
+  await page.waitForTimeout(300);
+  // Same two-step read as e2e/editors/monaco.spec.ts: the global monaco API is
+  // not always exposed in this window, so fall back to the rendered view lines.
+  const readSourceBuffer = () => page.evaluate(() => {
+    const editors = (window as any).monaco?.editor?.getEditors?.();
+    if (editors?.length) return editors[0].getValue() as string;
+    const wrapper = document.querySelector('.monaco-code-editor');
+    return Array.from(wrapper?.querySelectorAll('.view-line') ?? [])
+      .map((line) => line.textContent || '')
+      .join('\n')
+      .replace(/\u00A0/g, ' ');
+  });
+  // The premise of everything below: these bytes exist only in this buffer.
+  expect(await readSourceBuffer()).toContain('typed in source mode');
+  await electronApp.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getFocusedWindow()?.webContents.send('file-save');
+  });
+  await page.waitForTimeout(1500);
+  expect(await fs.readFile(mdPath, 'utf-8')).toBe(gen('Whiskey'));
+
+  // Leaving source mode reloads from disk, so those unsaved bytes exist nowhere
+  // else. They may not be destroyed on the user's behalf: the toggle asks, and
+  // declining keeps both the buffer and source mode exactly as they are
+  // (NIM-5359, finding 3). Playwright auto-dismisses a dialog with no listener,
+  // which is the "Cancel" case.
+  const exitSourceMode = async () => {
+    await tabEditor.locator('button[title="More actions"]').click();
+    await page.waitForTimeout(150);
+    // The same menu item reads "Exit Source Mode" once source mode is active.
+    await page.locator('button.dropdown-item', { hasText: 'Exit Source Mode' }).click();
+  };
+
+  await exitSourceMode();
+  await page.waitForTimeout(500);
+  await expect(page.locator('.monaco-markdown-toolbar')).toBeVisible();
+  expect(await readSourceBuffer()).toContain('typed in source mode');
+
+  // Accepting the same prompt discards them deliberately, and the toggle
+  // completes: the rich editor re-registers as a presenter and the model
+  // immediately publishes the LATEST generation, not the one that was live when
+  // source mode was entered.
+  page.once('dialog', (dialog) => { void dialog.accept(); });
+  await exitSourceMode();
+  await expect(page.locator(PLAYWRIGHT_TEST_SELECTORS.unifiedDiffHeader)).toBeVisible({ timeout: 5000 });
+
+  const editorText = (await page.locator(ACTIVE_EDITOR_SELECTOR).textContent()) ?? '';
+  expect(editorText).toContain('Whiskey');
+  expect(editorText).not.toContain('Juliett');
+
+  // dispatchEvent, like the other accept-all clicks here: the chat sidebar
+  // overlays the header button in this layout.
+  await page.locator(PLAYWRIGHT_TEST_SELECTORS.unifiedDiffAcceptAllButton).dispatchEvent('click');
+  await page.waitForTimeout(1000);
+  expect(await fs.readFile(mdPath, 'utf-8')).toBe(gen('Whiskey'));
+
+  await closeTabByFileName(page, 'source-mode-diff-test.md');
 });
 
 test('clean editor picks up content saved by sibling editor via DocumentModel', async () => {

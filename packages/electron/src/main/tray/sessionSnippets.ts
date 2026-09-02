@@ -58,6 +58,30 @@ export function toSnippetLine(text: string | null | undefined): string | null {
 }
 
 /**
+ * The current title for each of `sessionIds`, in one query.
+ *
+ * The tray cache fills a row's title once, when the session first enters it, and
+ * a session is routinely renamed after that -- by the agent's own
+ * `update_session_meta`, by the naming service, by the user. The panel was
+ * showing whatever the title happened to be at first sight, sometimes hours
+ * stale. This is read on the same trigger as the snippets (island open only),
+ * against a small table, so it costs one more round trip on a surface the user
+ * is looking at.
+ *
+ * Separate from the snippet query rather than joined into it: that one is shaped
+ * to plan off `idx_ai_agent_messages_session` over the largest table in the
+ * database, and widening it to reach `ai_sessions` for a string would be paying
+ * in the wrong place.
+ */
+export function sessionTitlesSql(sessionIds: readonly string[]): string | null {
+  const ids = sessionIds.filter((id) => SAFE_ID.test(id));
+  if (ids.length === 0) return null;
+
+  const list = ids.map((id) => `'${id}'`).join(', ');
+  return `SELECT id, title FROM ai_sessions WHERE id IN (${list})`;
+}
+
+/**
  * The latest assistant text for each of `sessionIds`, in one query.
  *
  * Returns null when there is nothing to ask about, so the caller can skip the

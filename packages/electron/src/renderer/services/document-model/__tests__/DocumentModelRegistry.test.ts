@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DocumentModel } from '../DocumentModel';
-import { DocumentModelRegistry } from '../DocumentModelRegistry';
+import { DocumentModelRegistry, createHistoryAdapters } from '../DocumentModelRegistry';
 import type { DocumentBackingStore } from '../types';
 
 function createMockStore(): DocumentBackingStore & { dispose: () => void } {
@@ -184,6 +184,49 @@ describe('DocumentModelRegistry', () => {
 
       h1.detach();
       h2.detach();
+    });
+  });
+
+  describe('history adapters', () => {
+    const originalApi = (globalThis as { window?: unknown }).window;
+
+    function stubHistoryApi(history: unknown): void {
+      (globalThis as { window?: unknown }).window = { electronAPI: { history, invoke: vi.fn() } };
+    }
+
+    afterEach(() => {
+      (globalThis as { window?: unknown }).window = originalApi;
+    });
+
+    /**
+     * Absence and transport failure must not share a return value. A swallowed
+     * `updateTagStatus` failure reads as a completed review, so resolution tears
+     * the session down while the tag is still pending -- reopening the file then
+     * finds an invisible diff (NIM-5359, defect I).
+     */
+    it('propagates a typed failure instead of reporting success or emptiness', async () => {
+      stubHistoryApi({
+        getPendingTags: vi.fn(async () => { throw new Error('history db busy'); }),
+        updateTagStatus: vi.fn(async () => { throw new Error('history db busy'); }),
+      });
+      const adapters = createHistoryAdapters();
+
+      await expect(adapters.getPendingTags('/test/a.md')).rejects.toMatchObject({
+        name: 'HistoryAdapterError',
+        operation: 'getPendingTags',
+      });
+      await expect(adapters.updateTagStatus('/test/a.md', 'tag-1', 'reviewed')).rejects.toMatchObject({
+        name: 'HistoryAdapterError',
+        operation: 'updateTagStatus',
+      });
+    });
+
+    it('still treats a missing history API as ordinary absence', async () => {
+      stubHistoryApi(undefined);
+      const adapters = createHistoryAdapters();
+
+      await expect(adapters.getPendingTags('/test/a.md')).resolves.toEqual([]);
+      await expect(adapters.updateTagStatus('/test/a.md', 'tag-1', 'reviewed')).resolves.toBeUndefined();
     });
   });
 });

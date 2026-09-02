@@ -162,6 +162,12 @@ test.beforeAll(async () => {
 `,
     'utf8'
   );
+  // NIM-5359 (plan item 1h): repeated agent writes into a live Monaco diff.
+  await fs.writeFile(
+    path.join(workspaceDir, 'diff-repeated-test.ts'),
+    `export const generation = "Zeroth";\n`,
+    'utf8'
+  );
   // Test file for the encoding-fidelity diff test. Includes non-ASCII bytes
   // (accented chars, em-dash, emoji, CJK) so chardet auto-detection in
   // read-file-content has a chance to misclassify it as latin1/utf16/etc.
@@ -508,6 +514,77 @@ test('rejecting diff reverts to original content', async () => {
   await closeTabByFileName(page, 'diff-reject-test.tsx');
 });
 
+// NIM-5359 (plan item 1h) -- Monaco diff bar / session parity across the two
+// implementations of "enter diff mode".
+//
+// The mount path calls `showDiff` + `setShowMonacoDiffBar` + `fetchDiffSessionInfo`
+// at TabEditor.tsx:772; `applyDiffState` does the same at :1686. Phase 7 deletes
+// the first, so a Monaco tab must behave identically whether it entered diff mode
+// from a watcher event or from a remount, and must keep tracking the newest
+// generation while the review is open.
+//
+test('Monaco diff bar and session follow the latest agent write across a remount', async () => {
+  test.setTimeout(120_000);
+  const tsPath = path.join(workspaceDir, 'diff-repeated-test.ts');
+  const fileName = 'diff-repeated-test.ts';
+  const gen = (marker: string) => `export const generation = "${marker}";\n`;
+  await fs.writeFile(tsPath, gen('Zeroth'), 'utf8');
+
+  await openFileFromTree(page, fileName);
+  await page.waitForSelector(VISIBLE_MONACO_SELECTOR, { timeout: TEST_TIMEOUTS.EDITOR_LOAD });
+  await page.waitForTimeout(500);
+
+  await page.evaluate(async ({ workspacePath, filePath, content }) => {
+    await window.electronAPI.history.createTag(
+      workspacePath, filePath, 'monaco-repeated-tag', content, 'monaco-repeated-session', 'tool-monaco-repeated',
+    );
+  }, { workspacePath: workspaceDir, filePath: tsPath, content: gen('Zeroth') });
+
+  // C1 opens the review; C2 lands inside C1's settle window.
+  await fs.writeFile(tsPath, gen('Foxtrot'), 'utf8');
+  await page.waitForSelector(PLAYWRIGHT_TEST_SELECTORS.unifiedDiffHeader, { timeout: 5000 });
+  await fs.writeFile(tsPath, gen('Juliett'), 'utf8');
+  await page.waitForTimeout(1500);
+
+  // Remount: close and reopen. The bar and the session info must come back, and
+  // the diff editor must still be comparing against the pre-session baseline.
+  await closeTabByFileName(page, fileName);
+  await openFileFromTree(page, fileName);
+  await page.waitForSelector(VISIBLE_MONACO_SELECTOR, { timeout: TEST_TIMEOUTS.EDITOR_LOAD });
+  await expect(page.locator(PLAYWRIGHT_TEST_SELECTORS.unifiedDiffHeader)).toBeVisible({ timeout: 5000 });
+  await expect(getTabByFileName(page, fileName).locator(PLAYWRIGHT_TEST_SELECTORS.tabUnacceptedIndicator))
+    .toBeVisible({ timeout: 2000 });
+
+  // C3 arrives after the remount -- the diff must move forward, not freeze.
+  // This is the write that hydration used to swallow: it carries the reopened
+  // store's first signal sequence, which the model had already spent on
+  // hydration and therefore read as an observation it had committed.
+  await fs.writeFile(tsPath, gen('Whiskey'), 'utf8');
+
+  const readPanes = () => page.evaluate(() => {
+    const wrapper = document.querySelector('.monaco-code-editor[data-diff-mode="true"]');
+    const diffRoot = wrapper?.querySelector('.monaco-diff-editor');
+    const read = (sel: string) =>
+      Array.from(diffRoot?.querySelectorAll(`${sel} .view-line`) || [])
+        .map((l) => (l as HTMLElement).innerText).join('\n');
+    return { original: read('.editor.original'), modified: read('.editor.modified') };
+  });
+
+  // Deliberately below DEFAULT_DIFF_APPLY_WATCHDOG_MS (5s): the newest write has
+  // to arrive through ordinary delivery, not through failure recovery.
+  await expect.poll(async () => (await readPanes()).modified, { timeout: 3000 })
+    .toContain('Whiskey');
+  const panes = await readPanes();
+  expect(panes.original).toContain('Zeroth');
+  expect(panes.modified).not.toContain('Juliett');
+
+  await page.locator(PLAYWRIGHT_TEST_SELECTORS.unifiedDiffAcceptAllButton).click();
+  await page.waitForTimeout(1000);
+  expect(await fs.readFile(tsPath, 'utf-8')).toBe(gen('Whiskey'));
+
+  await closeTabByFileName(page, fileName);
+});
+
 test('user edits persist through autosave and appear in history', async () => {
   const tsPath = path.join(workspaceDir, 'history-test.ts');
 
@@ -639,6 +716,9 @@ test('Codex-style diff preserves non-ASCII bytes round-trip', async () => {
   // by reaching through the rendered DOM, but the safest cross-version path
   // is to extract the text from the view-lines and normalize NBSP back to
   // space. For non-ASCII fidelity testing we just need the codepoints.
+  // Monaco lays the diff panes out after the approval bar appears, so a read
+  // straight through the selector can catch a pane with one line rendered.
+  await page.waitForTimeout(600);
   const diffPanes = await page.evaluate(() => {
     const wrapper = document.querySelector('.monaco-code-editor[data-diff-mode="true"]');
     if (!wrapper) return { error: 'no diff-mode wrapper' };
@@ -1013,6 +1093,10 @@ test('Accept All preserves NBSP-leading lines that Codex inserts', async () => {
 
   await page.waitForSelector(PLAYWRIGHT_TEST_SELECTORS.unifiedDiffHeader, { timeout: 5000 });
 
+  // The approval bar appears as soon as showDiff is called; Monaco lays the
+  // diff panes out asynchronously after that, and reading straight through the
+  // selector can catch the modified pane with a single line rendered.
+  await page.waitForTimeout(600);
   // Read the modified pane via Monaco DOM and assert NBSP is still there.
   // If Monaco silently normalized NBSP -> space in the diff editor, this
   // would fail (and Accept would write the wrong bytes).

@@ -125,6 +125,88 @@ function withReversedKeys(value: unknown): unknown {
 }
 
 describe('Project Canvas format and codec', () => {
+  /*
+   * An unfilled sticky and an unplaced image card are ordinary authoring
+   * states: the surface creates the node the moment you drop it and you type
+   * into it afterwards. Refusing to serialize them made a board editable but
+   * not saveable, which broke local `.canvas` save (`onSaveRequested`), every
+   * headless collab read, and source mode in the web console -- the one case
+   * source mode exists for. Observed on both real shared boards.
+   *
+   * Only the native card payloads are allowed to be empty. `id`, `type`, a
+   * file node's `file`, and every edge endpoint stay strict.
+   */
+  it('serializes a board holding an empty sticky and an empty image card', () => {
+    const halfAuthored: CanvasDocument = {
+      nodes: [
+        {
+          id: 'text-7724a26f8d9e',
+          type: 'text',
+          x: 3180,
+          y: 1440,
+          width: 320,
+          height: 200,
+          text: '',
+          [NIMBALYST_CANVAS_NAMESPACE]: {
+            reference: { kind: 'native', nativeKind: 'text' },
+          },
+        },
+        {
+          id: 'image-4923b31fe158',
+          type: 'link',
+          x: 3160,
+          y: 1420,
+          width: 360,
+          height: 260,
+          url: '',
+          [NIMBALYST_CANVAS_NAMESPACE]: {
+            reference: { kind: 'native', nativeKind: 'image' },
+          },
+        },
+      ],
+      edges: [],
+    } as unknown as CanvasDocument;
+
+    const source = serializeCanvasDocument(halfAuthored);
+    const parsed = parseCanvasDocument(source);
+    expect(parsed.nodes?.[0].text).toBe('');
+    expect(parsed.nodes?.[1].url).toBe('');
+    expect(serializeCanvasDocument(parsed)).toBe(source);
+
+    // The codec is the path that actually broke: exportToFile is
+    // serializeCanvasDocument, and the console's source mode calls it.
+    const yDoc = new Y.Doc();
+    canvasCollabCodec.seedFromFile(yDoc, source);
+    expect(canvasCollabCodec.exportToFile(yDoc)).toBe(source);
+  });
+
+  it('still rejects an empty id, node type, file path, or edge endpoint', () => {
+    const node = {
+      id: 'n',
+      type: 'file',
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+      file: 'a.md',
+    };
+    expect(() =>
+      serializeCanvasDocument({ nodes: [{ ...node, id: '' }] } as unknown as CanvasDocument)
+    ).toThrow(/id must be a non-empty string/);
+    expect(() =>
+      serializeCanvasDocument({ nodes: [{ ...node, type: '' }] } as unknown as CanvasDocument)
+    ).toThrow(/type must be a non-empty string/);
+    expect(() =>
+      serializeCanvasDocument({ nodes: [{ ...node, file: '' }] } as unknown as CanvasDocument)
+    ).toThrow(/file must be a non-empty string/);
+    expect(() =>
+      serializeCanvasDocument({
+        nodes: [node],
+        edges: [{ id: 'e', fromNode: 'n', toNode: '' }],
+      } as unknown as CanvasDocument)
+    ).toThrow(/toNode must be a non-empty string/);
+  });
+
   it('serializes canonically and idempotently without dropping foreign fields', () => {
     const source = serializeCanvasDocument(representativeBoard());
     const parsed = parseCanvasDocument(source);

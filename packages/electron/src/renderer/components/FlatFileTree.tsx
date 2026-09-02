@@ -17,9 +17,11 @@ import {
   focusedIndexAtom,
   dragStateAtom,
   visibleNodesAtom,
+  workspaceRootPathsAtom,
   type RendererFileTreeItem,
   type FlatTreeNode,
 } from '../store';
+import { detachWorkspaceFolder } from '../store/actions/workspaceFolders';
 import { dialogRef } from '../contexts/DialogContext';
 import { DIALOG_IDS } from '../dialogs/registry';
 
@@ -63,6 +65,7 @@ export function FlatFileTree({
 
   // Atoms
   const visibleNodes = useAtomValue(visibleNodesAtom);
+  const workspaceRootPaths = useAtomValue(workspaceRootPathsAtom);
   const expandedDirs = useAtomValue(expandedDirsAtom);
   const setExpandedDirs = useSetAtom(expandedDirsAtom);
   const [revealRequest, setRevealRequest] = useAtom(revealRequestAtom);
@@ -109,6 +112,7 @@ export function FlatFileTree({
     filePath: string;
     fileName: string;
     fileType: 'file' | 'directory';
+    isWorkspaceRoot: boolean;
   } | null>(null);
 
   // Track user interaction for auto-scroll suppression
@@ -410,10 +414,17 @@ export function FlatFileTree({
       filePath: node.path,
       fileName: node.name,
       fileType: node.type,
+      isWorkspaceRoot: node.isWorkspaceRoot,
     });
   }, [selectedPaths, setSelectedPaths, setLastSelectedPath]);
 
   // == Context menu actions ==
+  const handleDetachFolder = useCallback((folderPath: string) => {
+    const primaryRoot = workspaceRootPaths[0];
+    if (!primaryRoot) return;
+    void detachWorkspaceFolder(primaryRoot, folderPath);
+  }, [workspaceRootPaths]);
+
   const handleRename = useCallback(async (filePath: string, newName: string) => {
     const result = await window.electronAPI.renameFile(filePath, newName);
     if (!result.success) {
@@ -1017,6 +1028,9 @@ export function FlatFileTree({
           onViewWorkspaceHistory={onViewWorkspaceHistory}
           selectedPaths={selectedPaths}
           extensionFileTypes={extensionFileTypes}
+          isWorkspaceRoot={contextMenu.isWorkspaceRoot}
+          isPrimaryRoot={contextMenu.filePath === workspaceRootPaths[0]}
+          onDetachFolder={handleDetachFolder}
         />
       )}
     </>

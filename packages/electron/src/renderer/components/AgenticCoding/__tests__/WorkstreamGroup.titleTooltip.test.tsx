@@ -23,6 +23,7 @@ vi.mock('../../../store', () => ({
   groupSessionStatusAtom: () => ({}),
   reparentSessionAtom: () => ({}),
   refreshSessionListAtom: () => ({}),
+  markSessionsReadAtom: () => ({}),
   sessionShareAtom: () => ({}),
   removeSessionShareAtom: () => ({}),
   shareKeysAtom: () => ({}),

@@ -10,16 +10,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.76.2] - 2026-09-01
+
+
+### Added
+<!-- New features go here -->
+- Claude Fable 5.1 is now available in the model picker, with Fable 5 kept as a selectable previous-generation option.
+- A project can span several folders: attach one from the File menu or quick open and it appears in the explorer, in search, and to your agents, with git status, branches and commits tracked per repository.
 - Quick open's Files tab can narrow to just your local files or just your team's shared documents, and remembers the choice.
+- A workstream's context menu can mark every session in it as read at once.
+- `/planning:nimbalyst-coach` reviews your project and recent sessions and suggests extensions that match your files, features you have not tried, and instructions worth adding, changing nothing until you approve it.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
 - The title bar now carries two create buttons: one on the left that makes a new file, shared doc or tracker item in the list you are looking at, with a menu of every type it can create, and one on the right that starts a new session.
 - Accepting a team invitation now opens your team in the browser and lands you on its documents, instead of asking you to download the desktop app first; the app is offered alongside it for the work only it can do.
 - Inviting someone now asks what they get — their role, any extra projects, and folders to share with the team — so a new teammate arrives to real work instead of an empty organization.
+- Shared documents in the web console can be opened as editable source text, so a document its editor cannot render is still reachable in the browser.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Agent edits to a file already open in diff mode could be reverted by an autosave or freeze at an old version; repeated writes now stay ordered, accept/reject and manual save can no longer overwrite newer content, and large documents keep their approval bar.
+- A canvas board holding a sticky or an image card you had not filled in yet could not be saved, read by an agent, or opened as source.
 - Phone-started sessions now run on one desktop instead of starting duplicate agents across every connected install.
 - `nim tracker show` no longer presents linked work, triage metadata, or derived signals as custom fields.
 - Cmd+N in Shared Docs opened the local new-file dialog instead of creating a shared document, and did nothing in the tracker.
@@ -29,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opening a markdown file with a pending AI edit could lock up the app for half a minute and then show no diff at all; very large files now skip the inline highlighting and go straight to the approve/reject bar.
 - A shared tracker item could arrive with no issue key at all, leaving it unreachable by `Fixes NIM-123`, by deep link, and by key lookup; new items keep the key they are given and existing ones get theirs back.
 - The tracker's Display Settings — view, grouping, ordering and sort — are now remembered per tracker type, so grouping bugs by status no longer regroups every other tracker (#1412).
+- A compaction that failed left no way forward: the transcript showed a bare error and the Compact button stayed stuck on "Compacting..."; it now reports the failure with the error that caused it and lets you retry (#1414).
+- Clicking a desktop notification from a session running in a worktree reported that the session could not be found in its originating project; it now opens the session.
+- Typing in quick open over an open spreadsheet lost everything after the first letter to the selected cell.
+- A session working through a long build or test run dropped out of the menu bar's Running list after fifteen minutes and was labelled as not responding until its turn ended.
+- Worktree actions were greyed out inside a git repository until another part of the app happened to check first.
+- A Claude Code turn that ended in an error completed twice, so its token usage and turn-end snapshot were dropped.
 
 ### Removed
 <!-- Removed features go here -->

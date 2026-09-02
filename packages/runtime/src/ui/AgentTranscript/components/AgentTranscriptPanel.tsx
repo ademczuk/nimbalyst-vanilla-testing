@@ -99,7 +99,7 @@ interface AgentTranscriptPanelProps {
   /** Optional: Display name for external editor (e.g., "VS Code") */
   externalEditorName?: string;
   /** Optional: Callback to trigger /compact command */
-  onCompact?: () => void;
+  onCompact?: () => void | Promise<void>;
   /** Optional: Prompt additions for debugging (system prompt, user message, and attachments) */
   promptAdditions?: {
     systemPromptAddition: string | null;

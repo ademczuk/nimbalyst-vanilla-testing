@@ -481,8 +481,12 @@ describe('resolveClaudeCliModelArg', () => {
 
   it('passes the fable variant through as the CLI `fable` alias', () => {
     expect(resolveClaudeCliModelArg('claude-code-cli:fable')).toBe('fable');
-    expect(resolveClaudeCliModelArg('claude-code-cli:fable-5')).toBe('fable');
     expect(resolveClaudeCliModelArg('fable')).toBe('fable');
+  });
+
+  it('resolves pinned fable-5 to the full model id (CLI does not accept `fable-5` as alias)', () => {
+    expect(resolveClaudeCliModelArg('claude-code-cli:fable-5')).toBe('claude-fable-5');
+    expect(resolveClaudeCliModelArg('fable-5')).toBe('claude-fable-5');
   });
 
   // Plain `fable` is 1M on a plan that auto-upgrades, but NOT behind an

@@ -18,6 +18,7 @@ import path from 'path';
 
 import {
   isStalled,
+  lastSignOfLife,
   type FleetSnapshot,
   type TraySessionInfo,
 } from './fleetSnapshot';
@@ -132,7 +133,12 @@ function sinceOf(session: TraySessionInfo, state: FleetActivityRowState): number
   // useful number is how long the session has said nothing, not how long it has
   // been over the threshold. It also means the row's timer keeps meaning the
   // same thing if the threshold is ever retuned.
-  if (state === 'stalled') return session.updatedAt ?? 0;
+  //
+  // Off the same stamp `isStalled` judged it on, not `updatedAt`: a turn whose
+  // last lifecycle transition is far older than its last liveness tick would
+  // otherwise tell the phone it had been silent for forty minutes when the
+  // desktop stalled it for fifteen.
+  if (state === 'stalled') return lastSignOfLife(session) ?? 0;
   return session.wantingSince ?? session.updatedAt ?? 0;
 }
 

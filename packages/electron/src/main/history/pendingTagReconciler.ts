@@ -12,10 +12,8 @@
  * baseline stay in `document_history`. Nothing here deletes.
  */
 import * as fs from 'fs';
-import * as path from 'path';
 import type { HistoryManager, HistoryTag } from '../HistoryManager';
-import { findGitRootForFile } from '../services/GitStatusService';
-import { getCachedTrackedFiles, getCachedUncommittedFiles } from '../utils/gitUncommittedFiles';
+import { getGitFactsForFile, UNKNOWN_GIT_FACTS } from './fileGitFacts';
 import { isSessionSubscribedAnywhere } from '../file/WorkspaceEventBus';
 import { logger } from '../utils/logger';
 import {
@@ -30,44 +28,6 @@ import {
  * fallback (no disk content -> `keep`) is the safe direction.
  */
 const MAX_DISK_COMPARE_BYTES = 10 * 1024 * 1024;
-
-/** Git facts for one path, or nulls when git could not answer. */
-interface GitFacts {
-  isTracked: boolean | null;
-  isUncommitted: boolean | null;
-}
-
-const UNKNOWN_GIT_FACTS: GitFacts = { isTracked: null, isUncommitted: null };
-
-async function getGitFacts(filePath: string): Promise<GitFacts> {
-  // The repo that owns a file is its nearest `.git` ancestor — which is also
-  // correct inside a worktree, where `.git` is a file rather than a directory.
-  const repoRoot = findGitRootForFile(filePath, path.parse(filePath).root);
-  if (!repoRoot) return UNKNOWN_GIT_FACTS;
-
-  try {
-    const [tracked, uncommitted] = await Promise.all([
-      getCachedTrackedFiles(repoRoot),
-      getCachedUncommittedFiles(repoRoot),
-    ]);
-
-    // An empty tracked set means the listing failed or this is not a repo, not
-    // that nothing is tracked. Treat it as no signal.
-    if (tracked.size === 0) return UNKNOWN_GIT_FACTS;
-
-    // git speaks forward slashes on every platform.
-    const relative = path.relative(repoRoot, filePath).split(path.sep).join('/');
-
-    return {
-      isTracked: tracked.has(relative),
-      isUncommitted: uncommitted.has(relative),
-    };
-  } catch (error) {
-    // A timed-out or failed git call is not evidence the edit landed.
-    logger.main.debug('[pendingTagReconciler] Git facts unavailable:', { filePath, error });
-    return UNKNOWN_GIT_FACTS;
-  }
-}
 
 function readDiskContent(filePath: string): { fileExists: boolean; diskContent: string | null } {
   try {
@@ -107,7 +67,7 @@ export async function reconcilePendingTagsForFile(
   // Only pay for git when content alone can't settle it. Every surviving tag
   // here already differs from disk, which is the case the git signal exists for.
   const needsGit = tags.some((tag) => diskContent === null || tag.content !== diskContent);
-  const gitFacts = fileExists && needsGit ? await getGitFacts(filePath) : UNKNOWN_GIT_FACTS;
+  const gitFacts = fileExists && needsGit ? await getGitFactsForFile(filePath) : UNKNOWN_GIT_FACTS;
 
   const now = Date.now();
   const survivors: HistoryTag[] = [];

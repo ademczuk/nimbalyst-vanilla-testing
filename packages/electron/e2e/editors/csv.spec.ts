@@ -107,6 +107,7 @@ test.beforeAll(async () => {
   await fs.writeFile(path.join(workspaceDir, 'external-change-test.csv'), 'Name,Value\nOriginal,100\n', 'utf8');
   await fs.writeFile(path.join(workspaceDir, 'column-format-test.csv'), 'Name,Price\nApple,1.5\nBanana,2.25\nCherry,3.99\n', 'utf8');
   await fs.writeFile(path.join(workspaceDir, 'diff-delete-test.csv'), 'Name,Color,Price\nApple,Red,1.50\nBanana,Yellow,0.75\nCherry,Red,2.00\nDate,Brown,3.50\nElderberry,Purple,4.00\n', 'utf8');
+  await fs.writeFile(path.join(workspaceDir, 'diff-repeated-test.csv'), 'Name,Color,Price\nApple,Red,1.50\nBanana,Yellow,0.75\n', 'utf8');
   await fs.writeFile(path.join(workspaceDir, 'keyboard-test.csv'), 'A,B,C\n1,2,3\n4,5,6\n7,8,9\n', 'utf8');
   await fs.writeFile(path.join(workspaceDir, 'quick-open-test.csv'), 'Name,Value\nAlice,100\nBob,200\n', 'utf8');
   await fs.writeFile(path.join(workspaceDir, 'trailing-test.csv'), 'A,B,,,\n1,2,,,\n', 'utf8');
@@ -349,6 +350,65 @@ Fig,Green,2.50
   await closeTabByFileName(page, 'diff-delete-test.csv');
 });
 
+// NIM-5359 (plan item 1h) -- a diff-capable custom editor (CSV declares
+// supportsDiffMode: true) is a real generation recipient, so it must show the
+// LATEST agent write while a review is open, not whichever generation happened
+// to arrive before the session stalled.
+//
+// Before Phase 3 (generation-scoped `completeDiffApply`) and Phase 7 (single
+// presentation path) the mount path never acknowledged an apply, so once a
+// remount presented a generation the model's DiffSession sat in `applying` and
+// every later write queued with no reachable drain.
+test('diff-capable custom editor shows the latest of repeated agent writes and resolves once', async () => {
+  test.setTimeout(120_000);
+  const csvPath = path.join(workspaceDir, 'diff-repeated-test.csv');
+  const originalContent = 'Name,Color,Price\nApple,Red,1.50\nBanana,Yellow,0.75\n';
+  await fs.writeFile(csvPath, originalContent, 'utf8');
+
+  await openFileFromTree(page, 'diff-repeated-test.csv');
+  await page.waitForSelector(REVOGRID_SELECTOR, { timeout: TEST_TIMEOUTS.EDITOR_LOAD });
+  await page.waitForTimeout(500);
+
+  await page.evaluate(async ({ workspacePath, filePath, content }) => {
+    await window.electronAPI.history.createTag(
+      workspacePath, filePath, 'csv-repeated-tag', content, 'csv-repeated-session', 'tool-csv-repeated',
+    );
+  }, { workspacePath: workspaceDir, filePath: csvPath, content: originalContent });
+  await page.waitForTimeout(200);
+
+  // Three generations; the diff bar must stay up across all of them.
+  const gen1 = `${originalContent}Cherry,Red,2.00\n`;
+  const gen2 = `${originalContent}Cherry,Red,2.00\nDate,Brown,3.50\n`;
+  const gen3 = `${originalContent}Cherry,Red,2.00\nDate,Brown,3.50\nElderberry,Purple,4.00\n`;
+  await fs.writeFile(csvPath, gen1, 'utf8');
+  await page.waitForSelector('.unified-diff-header', { timeout: 5000 });
+  await fs.writeFile(csvPath, gen2, 'utf8');
+  await page.waitForTimeout(150);
+  await fs.writeFile(csvPath, gen3, 'utf8');
+  await page.waitForTimeout(2000);
+
+  await expect(page.locator('.unified-diff-header')).toBeVisible();
+
+  await page.locator('.unified-diff-header button', { hasText: 'Keep' }).click();
+  await page.waitForTimeout(1000);
+
+  // The grid holds every row from the newest generation.
+  const gridAfterAccept = await getFirstColumnValues(page);
+  for (const name of ['Apple', 'Banana', 'Cherry', 'Date', 'Elderberry']) {
+    expect(gridAfterAccept).toContain(name);
+  }
+
+  // Disk holds exactly the newest generation, and the review resolved once.
+  expect(await fs.readFile(csvPath, 'utf8')).toBe(gen3);
+  const tags: Array<{ type: string; status: string }> = await page.evaluate(
+    (fp) => window.electronAPI.invoke('history:get-all-tags', fp), csvPath,
+  );
+  expect(tags.filter((t) => t.type === 'pre-edit')).toHaveLength(1);
+  expect(tags.filter((t) => t.status === 'pending-review')).toHaveLength(0);
+
+  await closeTabByFileName(page, 'diff-repeated-test.csv');
+});
+
 // ============================================================================
 // KEYBOARD NAVIGATION TESTS
 // ============================================================================
@@ -375,6 +435,29 @@ test('double-click to edit should work', async () => {
 
   const inputValue = await editInput.inputValue();
   expect(inputValue).toBe('edited');
+
+  await page.keyboard.press('Escape'); // Cancel edit
+  await closeTabByFileName(page, 'keyboard-test.csv');
+});
+
+// The other half of the quick-open guard below: declining keystrokes by origin
+// must not decline the grid's own. Typing a printable key over a focused cell
+// is how RevoGrid opens the editor without a double-click.
+test('typing over a focused cell opens the cell editor', async () => {
+  await fs.writeFile(path.join(workspaceDir, 'keyboard-test.csv'), 'A,B,C\n1,2,3\n4,5,6\n7,8,9\n', 'utf8');
+
+  await openFileFromTree(page, 'keyboard-test.csv');
+  await page.waitForSelector(REVOGRID_SELECTOR, { timeout: TEST_TIMEOUTS.EDITOR_LOAD });
+  await page.waitForTimeout(500);
+
+  await page.locator('revogr-data [role="gridcell"]').nth(6).click();
+  await page.waitForTimeout(300);
+
+  await page.keyboard.type('Z');
+
+  const editInput = page.locator('revo-grid input');
+  await editInput.waitFor({ state: 'visible', timeout: 2000 });
+  expect(await editInput.inputValue()).toBe('Z');
 
   await page.keyboard.press('Escape'); // Cancel edit
   await closeTabByFileName(page, 'keyboard-test.csv');

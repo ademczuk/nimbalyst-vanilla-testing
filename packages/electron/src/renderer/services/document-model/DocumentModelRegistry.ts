@@ -8,12 +8,59 @@
  * All components that create EditorHosts must go through this registry:
  * - TabEditor (EditorMode, AgentMode)
  * - HiddenTabManager
- * - OffscreenEditorRenderer
  */
 
 import { DocumentModel, type DocumentModelOptions } from './DocumentModel';
 import { DiskBackedStore } from './DiskBackedStore';
+import { HistoryAdapterError } from './historyAdapterErrors';
 import type { DocumentModelEditorHandle, DocumentModelState } from './types';
+
+/** The history lookups a DocumentModel needs from the main process. */
+export type HistoryAdapters = Required<
+  Pick<DocumentModelOptions, 'getPendingTags' | 'updateTagStatus' | 'getDiffBaseline'>
+>;
+
+/**
+ * Adapters over the history IPC surface.
+ *
+ * Absence and transport failure must not share a return value. These used to
+ * swallow every error -- a failed `getPendingTags` looked like "no pending tags"
+ * and a failed `updateTagStatus` looked like a completed review, which is how a
+ * resolution could write the baseline to disk while leaving the tag pending and
+ * the reopened file showing an invisible diff (NIM-5359, defect I). They log at
+ * the boundary and rethrow a typed error instead; a missing history API is still
+ * ordinary absence, because a workspace without one has no tags either.
+ */
+export function createHistoryAdapters(): HistoryAdapters {
+  return {
+    getPendingTags: async (filePath: string) => {
+      if (!window.electronAPI?.history) return [];
+      try {
+        return (await window.electronAPI.history.getPendingTags(filePath)) ?? [];
+      } catch (err) {
+        console.error('[DocumentModelRegistry] Failed to get pending tags:', err);
+        throw new HistoryAdapterError('getPendingTags', filePath, err);
+      }
+    },
+    updateTagStatus: async (filePath: string, tagId: string, status: string) => {
+      if (!window.electronAPI?.history) return;
+      try {
+        await window.electronAPI.history.updateTagStatus(filePath, tagId, status);
+      } catch (err) {
+        console.error('[DocumentModelRegistry] Failed to update tag status:', err);
+        throw new HistoryAdapterError('updateTagStatus', filePath, err);
+      }
+    },
+    getDiffBaseline: async (filePath: string) => {
+      try {
+        return (await window.electronAPI.invoke('history:get-diff-baseline', filePath)) ?? null;
+      } catch (err) {
+        console.error('[DocumentModelRegistry] Failed to get diff baseline:', err);
+        throw new HistoryAdapterError('getDiffBaseline', filePath, err);
+      }
+    },
+  };
+}
 
 interface RegistryEntry {
   currentPath: string;
@@ -179,37 +226,13 @@ class DocumentModelRegistryImpl {
 
   private createDefaultModel(filePath: string, options?: DocumentModelOptions): DocumentModel {
     const backingStore = new DiskBackedStore(filePath);
+    const adapters = createHistoryAdapters();
 
-    // Wire up getPendingTags and updateTagStatus via electronAPI
     const modelOptions: DocumentModelOptions = {
       ...options,
-      getPendingTags: options?.getPendingTags ?? (async (fp: string) => {
-        try {
-          if (window.electronAPI?.history) {
-            return await window.electronAPI.history.getPendingTags(fp) ?? [];
-          }
-        } catch (err) {
-          console.error('[DocumentModelRegistry] Failed to get pending tags:', err);
-        }
-        return [];
-      }),
-      updateTagStatus: options?.updateTagStatus ?? (async (fp: string, tagId: string, status: string) => {
-        try {
-          if (window.electronAPI?.history) {
-            await window.electronAPI.history.updateTagStatus(fp, tagId, status);
-          }
-        } catch (err) {
-          console.error('[DocumentModelRegistry] Failed to update tag status:', err);
-        }
-      }),
-      getDiffBaseline: options?.getDiffBaseline ?? (async (fp: string) => {
-        try {
-          return await window.electronAPI.invoke('history:get-diff-baseline', fp) ?? null;
-        } catch (err) {
-          console.error('[DocumentModelRegistry] Failed to get diff baseline:', err);
-          return null;
-        }
-      }),
+      getPendingTags: options?.getPendingTags ?? adapters.getPendingTags,
+      updateTagStatus: options?.updateTagStatus ?? adapters.updateTagStatus,
+      getDiffBaseline: options?.getDiffBaseline ?? adapters.getDiffBaseline,
     };
 
     return new DocumentModel(filePath, backingStore, modelOptions);

@@ -21,7 +21,13 @@ import { createMonacoCollabBinding } from './monacoCollabBinding';
 import { waitForMonacoModel } from './monacoModelReady';
 import { useCollaborativeEditor } from '../extensions/useCollaborativeEditor';
 import type { EditorHost } from '../extensions/editorHost';
-import type { ConfigTheme } from '../editor';
+// Deep path, not the `../editor` barrel: that barrel is the Lexical editor's
+// entry point, and importing it here drags the whole Lexical tree into every
+// graph that contains Monaco -- including the web console, which loads Monaco
+// but deliberately does not ship Lexical's editor surface. `ConfigTheme` is a
+// string union in a leaf module, so there is nothing to gain by routing it
+// through the barrel.
+import type { Theme as ConfigTheme } from '../editor/EditorConfig';
 import type { editor as MonacoEditorType } from 'monaco-editor';
 
 /**

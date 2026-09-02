@@ -54,10 +54,30 @@ export interface WindowTopBarGitActivity {
   latest: WindowTopBarGitActivityEntry | null;
 }
 
+/** One repository of a multi-root workspace, as the git menu lists it. */
+export interface WindowTopBarGitRepo {
+  path: string;
+  /** Folder name, disambiguated with a parent segment when two collide. */
+  label: string;
+  /** Current branch, filled in when the menu opens. */
+  branch?: string;
+}
+
 export interface WindowTopBarGitActions {
   onPull: () => void;
   onPush: () => void;
   onOpenLog: () => void;
+  /**
+   * Repositories this workspace spans. Fewer than two means an ordinary
+   * single-repo project and the menu shows no repository section at all.
+   */
+  repos?: WindowTopBarGitRepo[];
+  /** Repository the indicator is currently reporting on. */
+  activeRepoPath?: string | null;
+  /** Target a different repository; the indicator and pull/push follow it. */
+  onSelectRepo?: (repoPath: string) => void;
+  /** Fired when the menu opens, so per-repo branches are read only on demand. */
+  onMenuOpen?: () => void;
   /** Open the Git Log panel on its Output tab. Falls back to `onOpenLog`. */
   onOpenActivity?: () => void;
   onOpenExtensionSettings?: () => void;
@@ -352,6 +372,15 @@ function GitStatusMenu({
   const runningActivity = actions.activity?.running ?? [];
   const latestActivity = actions.activity?.latest ?? null;
   const additionalRunning = Math.max(0, runningActivity.length - 1);
+  // Only a workspace spanning repos gets a repository section; a single-folder
+  // project's menu is byte-identical to what it was before multi-root.
+  const repos = actions.repos ?? [];
+  const showRepos = repos.length > 1;
+
+  const openMenu = () => {
+    if (!menu.isOpen) actions.onMenuOpen?.();
+    menu.setIsOpen(!menu.isOpen);
+  };
 
   return (
     <>
@@ -366,9 +395,17 @@ function GitStatusMenu({
         aria-label={`Git actions: ${branchTitle}`}
         aria-haspopup="menu"
         aria-expanded={menu.isOpen}
-        onClick={() => menu.setIsOpen(!menu.isOpen)}
+        onClick={openMenu}
       >
         <MaterialSymbol icon="account_tree" size={16} />
+        {showRepos && (
+          <span
+            className="window-top-bar__git-repo min-w-0 shrink-0 overflow-hidden text-nim-muted text-ellipsis whitespace-nowrap"
+            data-testid="window-top-bar-git-repo"
+          >
+            {repos.find(repo => repo.path === actions.activeRepoPath)?.label ?? ''}
+          </span>
+        )}
         {gitStatus ? (
           <>
             <span className="window-top-bar__branch min-w-0 overflow-hidden text-nim text-ellipsis whitespace-nowrap">
@@ -439,6 +476,40 @@ function GitStatusMenu({
             className={`window-top-bar__menu window-top-bar__git-menu min-w-[210px] max-w-[min(420px,calc(100vw-24px))] ${MENU_SURFACE} ${NO_DRAG_REGION}`}
             data-testid="window-top-bar-git-menu"
           >
+            {showRepos && (
+              <>
+                <div className="window-top-bar__menu-heading px-2 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-nim-faint">
+                  Repositories
+                </div>
+                {repos.map((repo) => (
+                  <button
+                    key={repo.path}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={repo.path === actions.activeRepoPath}
+                    className={`window-top-bar__menu-item window-top-bar__git-repo-item ${MENU_ITEM}`}
+                    data-testid="window-top-bar-git-repo-item"
+                    title={repo.path}
+                    onClick={() => {
+                      actions.onSelectRepo?.(repo.path);
+                      menu.setIsOpen(false);
+                    }}
+                  >
+                    <MaterialSymbol
+                      icon={repo.path === actions.activeRepoPath ? 'check' : 'folder'}
+                      size={17}
+                    />
+                    <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                      {repo.label}
+                    </span>
+                    {repo.branch && (
+                      <span className="shrink-0 text-[11px] text-nim-faint">{repo.branch}</span>
+                    )}
+                  </button>
+                ))}
+                <div className="window-top-bar__menu-separator h-px my-1 mx-0.5 bg-[var(--nim-border)]" />
+              </>
+            )}
             {runningActivity.length > 0 && (
               <>
                 {runningActivity.map((entry) => (

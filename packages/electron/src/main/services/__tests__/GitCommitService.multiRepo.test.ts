@@ -1,0 +1,169 @@
+/**
+ * Cross-repo commit splitting, against real git repositories.
+ *
+ * Git has no cross-repository commit, so a proposal spanning two roots either
+ * splits or silently commits only part of what the user approved. These cases
+ * pin the split, and pin that the single-repo path -- every ordinary commit --
+ * is untouched.
+ */
+import { execFile } from 'child_process';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+import { promisify } from 'util';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { assertGitSandbox, gitSandboxEnv } from '../testSupport/gitTestSandbox';
+
+const execFileAsync = promisify(execFile);
+const testTempRoot = process.env.NIMBALYST_TEST_TEMP_DIR ?? os.tmpdir();
+
+const rootsByWorkspace = new Map<string, string[]>();
+vi.mock('../../utils/store', () => ({
+  getWorkspaceRoots: (workspacePath: string) => rootsByWorkspace.get(workspacePath) ?? [workspacePath],
+}));
+
+const { executeGitCommitAcrossRepos, createGitCommitProposalResponse } = await import('../GitCommitService');
+const { clearWorkspaceRepoCache } = await import('../workspaceRepos');
+const { __resetGitRootCache } = await import('../GitStatusService');
+
+let tmpRoot: string;
+let appRepo: string;
+let infraRepo: string;
+let plainFolder: string;
+
+async function git(args: string[], cwd: string): Promise<void> {
+  await execFileAsync('git', args, { cwd, env: gitSandboxEnv(testTempRoot) });
+}
+
+async function gitOutput(args: string[], cwd: string): Promise<string> {
+  const { stdout } = await execFileAsync('git', args, { cwd, env: gitSandboxEnv(testTempRoot) });
+  return stdout;
+}
+
+async function initScratchRepo(cwd: string): Promise<void> {
+  await fs.mkdir(cwd, { recursive: true });
+  await git(['init', '-q'], cwd);
+  await git(['config', 'user.email', 'test@example.com'], cwd);
+  await git(['config', 'user.name', 'Test User'], cwd);
+  await git(['config', 'commit.gpgsign', 'false'], cwd);
+  assertGitSandbox(cwd, testTempRoot);
+}
+
+beforeEach(async () => {
+  await fs.mkdir(testTempRoot, { recursive: true });
+  tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(testTempRoot, 'nim-git-multirepo-')));
+  appRepo = path.join(tmpRoot, 'app');
+  infraRepo = path.join(tmpRoot, 'infra');
+  plainFolder = path.join(tmpRoot, 'docs');
+
+  await initScratchRepo(appRepo);
+  await initScratchRepo(infraRepo);
+  await fs.mkdir(plainFolder, { recursive: true });
+
+  rootsByWorkspace.clear();
+  clearWorkspaceRepoCache();
+  __resetGitRootCache();
+});
+
+afterEach(async () => {
+  await fs.rm(tmpRoot, { recursive: true, force: true });
+});
+
+describe('executeGitCommitAcrossRepos', () => {
+  it('commits into the resolved repo when every file is in one repository', async () => {
+    rootsByWorkspace.set(appRepo, [appRepo, infraRepo]);
+    await fs.writeFile(path.join(appRepo, 'a.txt'), 'one\n', 'utf8');
+
+    const result = await executeGitCommitAcrossRepos(appRepo, 'feat: one repo', ['a.txt']);
+
+    expect(result.success).toBe(true);
+    // Single-repo commits keep the flat shape older callers read.
+    expect(result.repoResults).toBeUndefined();
+    expect(await gitOutput(['log', '--oneline'], appRepo)).toContain('feat: one repo');
+    expect(await gitOutput(['log', '--oneline'], infraRepo).catch(() => '')).not.toContain('feat: one repo');
+  });
+
+  it('splits a proposal spanning two repos into one commit each', async () => {
+    rootsByWorkspace.set(appRepo, [appRepo, infraRepo]);
+    await fs.writeFile(path.join(appRepo, 'a.txt'), 'one\n', 'utf8');
+    await fs.writeFile(path.join(infraRepo, 'main.tf'), 'two\n', 'utf8');
+
+    const result = await executeGitCommitAcrossRepos(appRepo, 'feat: spans repos', [
+      path.join(appRepo, 'a.txt'),
+      path.join(infraRepo, 'main.tf'),
+    ]);
+
+    expect(result.success).toBe(true);
+    expect(result.repoResults?.map((entry) => entry.repoPath)).toEqual([appRepo, infraRepo]);
+    expect(await gitOutput(['log', '--oneline'], appRepo)).toContain('feat: spans repos');
+    expect(await gitOutput(['log', '--oneline'], infraRepo)).toContain('feat: spans repos');
+    // Each repo committed only its own file.
+    expect(await gitOutput(['show', '--name-only', '--format=', 'HEAD'], appRepo)).toContain('a.txt');
+    expect(await gitOutput(['show', '--name-only', '--format=', 'HEAD'], infraRepo)).toContain('main.tf');
+  });
+
+  it('reports files that belong to no repository instead of dropping them', async () => {
+    rootsByWorkspace.set(appRepo, [appRepo, plainFolder]);
+    await fs.writeFile(path.join(appRepo, 'a.txt'), 'one\n', 'utf8');
+    await fs.writeFile(path.join(plainFolder, 'notes.md'), 'loose\n', 'utf8');
+
+    const result = await executeGitCommitAcrossRepos(appRepo, 'feat: partly loose', [
+      path.join(appRepo, 'a.txt'),
+      path.join(plainFolder, 'notes.md'),
+    ]);
+
+    expect(result.success).toBe(true);
+    expect(result.uncommittableFiles).toEqual([path.join(plainFolder, 'notes.md')]);
+    // The proposal response is built from this: a file that landed nowhere must
+    // not be reported back to the user as committed.
+    expect(result.committedFiles).toEqual([path.join(appRepo, 'a.txt')]);
+
+    const response = createGitCommitProposalResponse(
+      result,
+      [path.join(appRepo, 'a.txt'), path.join(plainFolder, 'notes.md')],
+      'feat: partly loose',
+    );
+    expect(response.action).toBe('committed');
+    expect(response.filesCommitted).toEqual([path.join(appRepo, 'a.txt')]);
+    expect(response.uncommittableFiles).toEqual([path.join(plainFolder, 'notes.md')]);
+  });
+
+  it('reports committed files in the caller own path strings', async () => {
+    // The panel selects by whatever strings it holds and clears exactly those.
+    // Resolution makes paths absolute internally, so the answer has to come
+    // back in the caller's terms or nothing matches and the whole selection is
+    // cleared after a partial commit.
+    rootsByWorkspace.set(appRepo, [appRepo]);
+    await fs.writeFile(path.join(appRepo, 'a.txt'), 'one\n', 'utf8');
+
+    const result = await executeGitCommitAcrossRepos(appRepo, 'feat: relative', ['a.txt']);
+
+    expect(result.success).toBe(true);
+    expect(result.committedFiles).toEqual(['a.txt']);
+  });
+
+  it('fails clearly when no selected file is in a repository', async () => {
+    rootsByWorkspace.set(plainFolder, [plainFolder]);
+    await fs.writeFile(path.join(plainFolder, 'notes.md'), 'loose\n', 'utf8');
+
+    const result = await executeGitCommitAcrossRepos(plainFolder, 'feat: nothing', [
+      path.join(plainFolder, 'notes.md'),
+    ]);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('git repository');
+    expect(result.uncommittableFiles).toEqual([path.join(plainFolder, 'notes.md')]);
+  });
+
+  it('honours an explicit repoPath without resolving', async () => {
+    rootsByWorkspace.set(appRepo, [appRepo, infraRepo]);
+    await fs.writeFile(path.join(infraRepo, 'main.tf'), 'two\n', 'utf8');
+
+    const result = await executeGitCommitAcrossRepos(appRepo, 'feat: explicit repo', ['main.tf'], {
+      repoPath: infraRepo,
+    });
+
+    expect(result.success).toBe(true);
+    expect(await gitOutput(['log', '--oneline'], infraRepo)).toContain('feat: explicit repo');
+  });
+});

@@ -10,14 +10,30 @@ import * as workspaceEventBus from './WorkspaceEventBus';
  * Subscribes to WorkspaceEventBus (which owns the single fs.watch/chokidar
  * watcher per workspace tree) and translates events into file tree updates
  * and file-changed-on-disk notifications for the renderer.
+ *
+ * A window watches a SET of roots -- the primary workspace plus every attached
+ * folder -- not one root. Each root gets its own bus subscription and its own
+ * debounce timer, and tree updates name the root they rebuilt so the renderer
+ * can replace exactly that subtree.
  */
 export class OptimizedWorkspaceWatcher {
-    private updateTimers = new Map<number, NodeJS.Timeout>();
-    private workspacePaths = new Map<number, string>();
+    /** Debounce timers, keyed `${windowId}:${rootPath}` -- one per root. */
+    private updateTimers = new Map<string, NodeJS.Timeout>();
+    /** Roots each window watches, in attachment order (primary first). */
+    private roots = new Map<number, Set<string>>();
     private watchedPaths = new Map<number, Set<string>>();
     /** Subscriber IDs we've registered with the bus, keyed by windowId */
     private subscriberIds = new Map<number, string>();
 
+    private timerKey(windowId: number, rootPath: string): string {
+        return `${windowId}:${rootPath}`;
+    }
+
+    /**
+     * Begin watching one root for a window. Idempotent, and additive: starting
+     * a second root leaves the first running. Callers that want a clean slate
+     * (a rail switch) call `stop(windowId)` first.
+     */
     async start(window: BrowserWindow, workspacePath: string) {
         const windowId = getWindowId(window);
         if (windowId === null) {
@@ -25,14 +41,28 @@ export class OptimizedWorkspaceWatcher {
             return;
         }
 
-        this.stop(windowId);
+        const existingRoots = this.roots.get(windowId);
+        if (existingRoots?.has(workspacePath)) {
+            return;
+        }
 
-        this.workspacePaths.set(windowId, workspacePath);
-        this.watchedPaths.set(windowId, new Set([workspacePath]));
+        if (existingRoots) {
+            existingRoots.add(workspacePath);
+        } else {
+            this.roots.set(windowId, new Set([workspacePath]));
+        }
+
+        const watched = this.watchedPaths.get(windowId);
+        if (watched) {
+            watched.add(workspacePath);
+        } else {
+            this.watchedPaths.set(windowId, new Set([workspacePath]));
+        }
 
         // Debounced update function
         const triggerUpdate = () => {
-            const existingTimer = this.updateTimers.get(windowId);
+            const key = this.timerKey(windowId, workspacePath);
+            const existingTimer = this.updateTimers.get(key);
             if (existingTimer) {
                 clearTimeout(existingTimer);
             }
@@ -43,13 +73,18 @@ export class OptimizedWorkspaceWatcher {
                     if (!window || window.isDestroyed()) {
                         return;
                     }
-                    window.webContents.send('workspace-file-tree-updated', { fileTree });
+                    // `rootPath` tells a multi-root renderer which subtree this
+                    // rebuild replaces. Single-root windows ignore it.
+                    window.webContents.send('workspace-file-tree-updated', {
+                        rootPath: workspacePath,
+                        fileTree,
+                    });
                 }).catch((error) => {
                     logger.workspaceWatcher.error('Failed to update file tree:', error);
                 });
             }, 500);
 
-            this.updateTimers.set(windowId, timer);
+            this.updateTimers.set(key, timer);
         };
 
         const subscriberId = `workspace-watcher-${windowId}`;
@@ -115,14 +150,16 @@ export class OptimizedWorkspaceWatcher {
      */
     addWatchedFolder(windowId: number, folderPath: string) {
         const watchedPaths = this.watchedPaths.get(windowId);
-        const workspacePath = this.workspacePaths.get(windowId);
 
         if (!watchedPaths) {
             return;
         }
 
-        // Guard: only watch folders within the workspace
-        if (workspacePath && !folderPath.startsWith(workspacePath + '/') && folderPath !== workspacePath) {
+        // Guard: only watch folders inside one of this window's roots. Which
+        // root owns the folder also decides which bus subscription gets the
+        // Linux chokidar expansion.
+        const owningRoot = this.resolveOwningRoot(windowId, folderPath);
+        if (!owningRoot) {
             return;
         }
 
@@ -133,9 +170,7 @@ export class OptimizedWorkspaceWatcher {
         watchedPaths.add(folderPath);
 
         // Forward to bus for Linux chokidar expansion
-        if (workspacePath) {
-            workspaceEventBus.addWatchedPath(workspacePath, folderPath);
-        }
+        workspaceEventBus.addWatchedPath(owningRoot, folderPath);
     }
 
     /**
@@ -143,45 +178,102 @@ export class OptimizedWorkspaceWatcher {
      */
     removeWatchedFolder(windowId: number, folderPath: string) {
         const watchedPaths = this.watchedPaths.get(windowId);
-        const workspacePath = this.workspacePaths.get(windowId);
         if (!watchedPaths || !watchedPaths.has(folderPath)) {
             return;
         }
 
         watchedPaths.delete(folderPath);
 
-        if (workspacePath) {
-            workspaceEventBus.removeWatchedPath(workspacePath, folderPath);
+        const owningRoot = this.resolveOwningRoot(windowId, folderPath);
+        if (owningRoot) {
+            workspaceEventBus.removeWatchedPath(owningRoot, folderPath);
         }
+    }
+
+    /**
+     * The watched root that contains `folderPath`, or null when the folder sits
+     * outside every root this window shows. Deepest root wins, so a folder
+     * attached inside another root is attributed to the nearer one.
+     */
+    private resolveOwningRoot(windowId: number, folderPath: string): string | null {
+        const roots = this.roots.get(windowId);
+        if (!roots) return null;
+
+        let best: string | null = null;
+        for (const root of roots) {
+            if (folderPath === root || folderPath.startsWith(root + '/')) {
+                if (!best || root.length > best.length) {
+                    best = root;
+                }
+            }
+        }
+        return best;
+    }
+
+    /** Roots this window currently watches, in the order they were started. */
+    getRoots(windowId: number): string[] {
+        return [...(this.roots.get(windowId) ?? [])];
     }
 
     // ---------------------------------------------------------------
     // Lifecycle
     // ---------------------------------------------------------------
 
-    stop(windowId: number) {
-        const subscriberId = this.subscriberIds.get(windowId);
-        const workspacePath = this.workspacePaths.get(windowId);
-
-        if (subscriberId && workspacePath) {
-            workspaceEventBus.unsubscribe(workspacePath, subscriberId);
+    /**
+     * Stop watching a single root, leaving the window's other roots running.
+     * Used when a folder is detached.
+     */
+    stopRoot(windowId: number, rootPath: string) {
+        const roots = this.roots.get(windowId);
+        if (!roots?.has(rootPath)) {
+            return;
         }
 
-        this.subscriberIds.delete(windowId);
-        this.workspacePaths.delete(windowId);
-        this.watchedPaths.delete(windowId);
+        const subscriberId = this.subscriberIds.get(windowId);
+        if (subscriberId) {
+            workspaceEventBus.unsubscribe(rootPath, subscriberId);
+        }
 
-        const timer = this.updateTimers.get(windowId);
+        roots.delete(rootPath);
+        if (roots.size === 0) {
+            this.roots.delete(windowId);
+            this.subscriberIds.delete(windowId);
+        }
+
+        // Drop expanded-folder tracking for anything under the departing root,
+        // or a re-attach would see them as already watched and never re-add
+        // them to the bus.
+        const watched = this.watchedPaths.get(windowId);
+        if (watched) {
+            for (const folderPath of [...watched]) {
+                if (folderPath === rootPath || folderPath.startsWith(rootPath + '/')) {
+                    watched.delete(folderPath);
+                }
+            }
+        }
+
+        const key = this.timerKey(windowId, rootPath);
+        const timer = this.updateTimers.get(key);
         if (timer) {
             clearTimeout(timer);
-            this.updateTimers.delete(windowId);
+            this.updateTimers.delete(key);
         }
     }
 
-    async stopAll() {
-        logger.workspaceWatcher.info(`[CLEANUP] Stopping all workspace watchers (${this.workspacePaths.size} windows)`);
+    stop(windowId: number) {
+        for (const rootPath of [...(this.roots.get(windowId) ?? [])]) {
+            this.stopRoot(windowId, rootPath);
+        }
 
-        for (const windowId of [...this.subscriberIds.keys()]) {
+        this.subscriberIds.delete(windowId);
+        this.roots.delete(windowId);
+        this.watchedPaths.delete(windowId);
+    }
+
+    async stopAll() {
+        logger.workspaceWatcher.info(`[CLEANUP] Stopping all workspace watchers (${this.roots.size} windows)`);
+
+        for (const windowId of [...this.roots.keys()]) {
             this.stop(windowId);
         }
 
@@ -193,19 +285,23 @@ export class OptimizedWorkspaceWatcher {
 
     getStats() {
         const stats: Array<{ windowId: number; workspacePath: string; watchedFolders: number }> = [];
-        for (const [windowId, workspacePath] of this.workspacePaths.entries()) {
+        for (const [windowId, roots] of this.roots.entries()) {
             const watchedPaths = this.watchedPaths.get(windowId);
-            stats.push({
-                windowId,
-                workspacePath,
-                watchedFolders: watchedPaths?.size ?? 0,
-            });
+            for (const workspacePath of roots) {
+                stats.push({
+                    windowId,
+                    workspacePath,
+                    watchedFolders: [...(watchedPaths ?? [])].filter(
+                        (p) => p === workspacePath || p.startsWith(workspacePath + '/'),
+                    ).length,
+                });
+            }
         }
 
         const busStats = workspaceEventBus.getStats();
         return {
             type: busStats.type,
-            activeWorkspaces: this.workspacePaths.size,
+            activeWorkspaces: stats.length,
             workspaces: stats,
         };
     }

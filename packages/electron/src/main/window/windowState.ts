@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import type { WindowState } from '../types';
+import { getAttachedFolders } from '../utils/store';
 
 // Shared window maps used across main-process modules.
 // Keeping these in a lightweight module avoids importing WindowManager
@@ -67,22 +68,43 @@ export function resolveDocumentServicePath(state: WindowState | undefined): stri
 }
 
 /**
- * Whether a window has any interest in a workspace path — either as its
- * primary path or as a warm "additional" path in the project rail. Used
- * by service-cleanup logic so destroying a window only frees a workspace's
- * services when no other window references it.
+ * Whether a window has any interest in a workspace path — as its primary path,
+ * as a warm "additional" path in the project rail, or as a folder attached to
+ * one of those. Used by service-cleanup logic so destroying a window only frees
+ * a workspace's services when no other window references it.
+ *
+ * Attached folders count: detaching a folder from one workspace must not
+ * destroy services another window still holds it open through.
  */
 export function windowReferencesWorkspace(state: WindowState | undefined, path: string): boolean {
     if (!state) return false;
     if (state.workspacePath === path) return true;
-    return state.additionalWorkspacePaths?.includes(path) === true;
+    if (state.additionalWorkspacePaths?.includes(path) === true) return true;
+    return listWindowRootPaths(state).includes(path);
+}
+
+/**
+ * Every root a window shows: its rail projects plus the folders attached to
+ * each of them. The rail paths themselves are excluded -- callers that need
+ * those already check them directly.
+ */
+function listWindowRootPaths(state: WindowState): string[] {
+    const roots: string[] = [];
+    const railPaths = [state.workspacePath, ...(state.additionalWorkspacePaths ?? [])];
+    for (const railPath of railPaths) {
+        if (!railPath) continue;
+        roots.push(...getAttachedFolders(railPath));
+    }
+    return roots;
 }
 
 /**
  * Every workspace path an open window references, primary and rail alike.
  *
  * Used by the post-sign-in project walk to ask "is the user already working in
- * one of their organization's projects?" before interrupting them.
+ * one of their organization's projects?" before interrupting them. Attached
+ * folders are deliberately NOT included: they have no workspace identity of
+ * their own, so they can never be "one of the user's org projects".
  */
 export function listOpenWorkspacePaths(): string[] {
     const paths = new Set<string>();

@@ -12,11 +12,17 @@ export interface ModelDefinition {
 
 export const CLAUDE_MODELS: ModelDefinition[] = [
   {
+    id: 'claude-fable-5-1',
+    displayName: 'Claude Fable 5.1 (1M)',
+    shortName: 'Fable 5.1',
+    maxTokens: 8192,
+    contextWindow: 1000000,
+  },
+  {
     id: 'claude-fable-5',
     displayName: 'Claude Fable 5 (1M)',
     shortName: 'Fable 5',
     maxTokens: 8192,
-    // Fable 5 is the tier above Opus — 1M context natively, dateless alias.
     contextWindow: 1000000,
   },
   {
@@ -248,8 +254,8 @@ export const OPENAI_MODELS: ModelDefinition[] = [
  *   the previous-generation Opus selectable after bumping the canonical
  *   `opus` to the next version.
  */
-export type ClaudeCodeVariant = 'fable' | 'opus' | 'sonnet' | 'haiku' | 'opus-4-8' | 'opus-4-7' | 'opus-4-6' | 'sonnet-4-6';
-export type ClaudeCodeVariantInput = ClaudeCodeVariant | 'opus-5' | 'sonnet-5' | 'fable-5';
+export type ClaudeCodeVariant = 'fable' | 'fable-5' | 'opus' | 'sonnet' | 'haiku' | 'opus-4-8' | 'opus-4-7' | 'opus-4-6' | 'sonnet-4-6';
+export type ClaudeCodeVariantInput = ClaudeCodeVariant | 'opus-5' | 'sonnet-5' | 'fable-5-1';
 
 /**
  * Accepted input aliases for Claude Agent model identifiers.
@@ -264,6 +270,7 @@ export type ClaudeCodeVariantInput = ClaudeCodeVariant | 'opus-5' | 'sonnet-5' |
  */
 export const CLAUDE_CODE_ACCEPTED_VARIANT_INPUTS: readonly ClaudeCodeVariantInput[] = [
   'fable',
+  'fable-5-1',
   'fable-5',
   'opus',
   'opus-5',
@@ -278,7 +285,8 @@ export const CLAUDE_CODE_ACCEPTED_VARIANT_INPUTS: readonly ClaudeCodeVariantInpu
 
 const CLAUDE_CODE_VARIANT_INPUT_MAP: Readonly<Record<ClaudeCodeVariantInput, ClaudeCodeVariant>> = {
   fable: 'fable',
-  'fable-5': 'fable',
+  'fable-5-1': 'fable',
+  'fable-5': 'fable-5',
   opus: 'opus',
   'opus-5': 'opus',
   'opus-4-8': 'opus-4-8',
@@ -295,7 +303,8 @@ export function normalizeClaudeCodeVariant(variant: string): ClaudeCodeVariant |
 }
 
 export const CLAUDE_CODE_VARIANT_VERSIONS: Record<ClaudeCodeVariant, string> = {
-  fable: '5',
+  fable: '5.1',
+  'fable-5': '5',
   opus: '5',
   sonnet: '5',
   haiku: '4.5',
@@ -307,6 +316,7 @@ export const CLAUDE_CODE_VARIANT_VERSIONS: Record<ClaudeCodeVariant, string> = {
 
 export const CLAUDE_CODE_MODEL_LABELS: Record<ClaudeCodeVariant, string> = {
   fable: 'Fable',
+  'fable-5': 'Fable',
   opus: 'Opus',
   sonnet: 'Sonnet',
   haiku: 'Haiku',
@@ -322,12 +332,8 @@ export const CLAUDE_CODE_MODEL_LABELS: Record<ClaudeCodeVariant, string> = {
  * string (or missing entry) means "pass the variant name straight through".
  */
 export const CLAUDE_CODE_PINNED_SDK_MODELS: Partial<Record<ClaudeCodeVariant, string>> = {
-  // The Agent SDK's bundled CLI rejects the bare `fable` alias ("There's an
-  // issue with the selected model (fable)…", 2026-06-12) — version skew with
-  // the user's interactive CLI, which does accept it. Pin the full model id;
-  // the interactive-CLI path (`resolveClaudeCliModelArg`) does not read this
-  // map and keeps sending the working `fable` alias to the PTY.
-  fable: 'claude-fable-5',
+  fable: 'claude-fable-5-1',
+  'fable-5': 'claude-fable-5',
   'opus-4-8': 'claude-opus-4-8',
   'opus-4-7': 'claude-opus-4-7',
   'opus-4-6': 'claude-opus-4-6',
@@ -365,6 +371,7 @@ export const CLAUDE_CODE_PINNED_SDK_MODELS: Partial<Record<ClaudeCodeVariant, st
  */
 export const CLAUDE_CODE_NATIVE_1M_VARIANTS: readonly ClaudeCodeVariant[] = [
   'fable',
+  'fable-5',
   'opus',
   'sonnet',
   'opus-4-8',

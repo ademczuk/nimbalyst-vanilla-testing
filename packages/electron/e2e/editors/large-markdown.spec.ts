@@ -57,6 +57,7 @@ test.describe.configure({ mode: 'serial' });
 const TEST_FILES = {
   plainOpen: 'large-plain.md',
   pendingDiffOpen: 'large-with-pending-diff.md',
+  fallbackPending: 'large-fallback-pending.md',
 };
 
 // CHANGELOG shape: headings + nested bullets, NO tables (the table-row
@@ -125,6 +126,11 @@ test.beforeAll(async () => {
   await fs.writeFile(path.join(workspaceDir, TEST_FILES.plainOpen), largeMarkdown, 'utf8');
   await fs.writeFile(
     path.join(workspaceDir, TEST_FILES.pendingDiffOpen),
+    largeMarkdown,
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(workspaceDir, TEST_FILES.fallbackPending),
     largeMarkdown,
     'utf8',
   );
@@ -250,4 +256,70 @@ test('opening a 280 KB markdown file WITH a pending AI diff does not hang the re
   expect(openMs).toBeLessThan(10_000);
 
   await closeTabByFileName(page, TEST_FILES.pendingDiffOpen);
+});
+
+// ===========================================================================
+// NIM-5359 (plan item 1h) -- the large-document fallback is a PRESENTATION
+// decision, not a resolution.
+//
+// Both fixtures are well over LEXICAL_DIFF_MAX_BYTES (200_000), so the diff
+// path bails before rendering any inline diff nodes. It still sets the pending
+// AI edit tag, so the approval bar appears and the user is supposed to be able
+// to accept or reject from there.
+//
+// `settleDiffBeforeAutosave` only knows two states: "diff nodes exist" (skip)
+// and "no diff nodes" (the user resolved everything by hand -> mark the tag
+// reviewed and let the save through). A fallback presentation looks exactly
+// like the second one, so the next autosave tick silently consumes the pending
+// review the user never saw. That is the "no inline diff is not the same as
+// manually resolved" gotcha in the plan.
+//
+// Phase 6 must give `settleDiffBeforeAutosave` the presentation mode and keep
+// autosave blocked for a `presented-without-inline` generation.
+// ===========================================================================
+test('large-document fallback keeps the approval bar pending through an autosave window', async () => {
+  test.setTimeout(120_000);
+
+  const filePath = path.join(workspaceDir, TEST_FILES.fallbackPending);
+  const tagId = 'large-fallback-pending-tag';
+
+  await page.evaluate(
+    async ({ wp, fp, preTrim, tag }) => {
+      await (window as any).electronAPI.history.createTag(
+        wp, fp, tag, preTrim, 'large-fallback-session', 'test-large-fallback',
+      );
+    },
+    { wp: workspaceDir, fp: filePath, preTrim: largeMarkdownPreTrim, tag: tagId },
+  );
+  await page.waitForTimeout(200);
+
+  await openFileFromTree(page, TEST_FILES.fallbackPending);
+  await page.waitForSelector(ACTIVE_EDITOR_SELECTOR, {
+    timeout: TEST_TIMEOUTS.EDITOR_LOAD * 6,
+  });
+
+  // The approval bar is the whole point of the fallback: no inline diff, but
+  // the review is still open.
+  await expect(page.locator(PLAYWRIGHT_TEST_SELECTORS.unifiedDiffHeader))
+    .toBeVisible({ timeout: 5000 });
+
+  // Confirm we really took the fallback -- zero inline diff markers.
+  expect(await page.locator('.nim-diff-add, .nim-diff-remove').count()).toBe(0);
+
+  // Wait past the 2s autosave interval without touching anything.
+  await page.waitForTimeout(5000);
+
+  // The pending review must survive: nothing the user did resolved it.
+  const pending: Array<{ id: string }> = await page.evaluate(
+    (fp) => (window as any).electronAPI.history.getPendingTags(fp),
+    filePath,
+  );
+  expect(pending.map((t) => t.id)).toContain(tagId);
+  await expect(page.locator(PLAYWRIGHT_TEST_SELECTORS.unifiedDiffHeader)).toBeVisible();
+
+  // And disk still holds the agent's content -- the fallback must never let an
+  // autosave write the baseline back over it.
+  expect(await fs.readFile(filePath, 'utf8')).toBe(largeMarkdown);
+
+  await closeTabByFileName(page, TEST_FILES.fallbackPending);
 });

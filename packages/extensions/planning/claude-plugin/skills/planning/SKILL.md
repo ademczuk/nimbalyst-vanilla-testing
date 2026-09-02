@@ -89,6 +89,7 @@ Defined in `.nimbalyst/trackers/*.yaml`. Examples:
 - **Progress updates**: When completing work, update plan status and progress
 - **Implementation**: Use /implement to execute a plan with progress tracking
 - **Board cleanup**: Use /session-cleanup to tidy the Sessions board -- fix session phases, mark finished work complete, and flag old sessions to archive
+- **Getting more from Nimbalyst**: Use /planning:nimbalyst-coach to review this project and recent sessions and suggest extensions, features, and agent-instruction changes
 
 ## File Naming
 

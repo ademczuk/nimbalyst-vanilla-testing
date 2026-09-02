@@ -78,12 +78,19 @@ function deferAwarenessChangeEvents(awareness: Awareness): {
   const wrapped = new Proxy(awareness, {
     get(target, prop) {
       if (prop === 'on' || prop === 'off' || prop === 'once') {
-        return (eventName: string, listener: AwarenessListener) => {
-          const effective = eventName === 'change' ? wrapListener(listener) : listener;
-          return (target as unknown as Record<string, (...a: unknown[]) => unknown>)[
-            prop as string
-          ].call(target, eventName, effective);
-        };
+        const method = (
+          target as unknown as Record<string, ((...a: unknown[]) => unknown) | undefined>
+        )[prop];
+        // Awareness always defines all three, so this only ever takes the
+        // `function` branch. The check is what makes that provable under
+        // `noUncheckedIndexedAccess`; falling through to the generic path below
+        // is the same thing the proxy would do for any other property.
+        if (typeof method === 'function') {
+          return (eventName: string, listener: AwarenessListener) => {
+            const effective = eventName === 'change' ? wrapListener(listener) : listener;
+            return method.call(target, eventName, effective);
+          };
+        }
       }
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;

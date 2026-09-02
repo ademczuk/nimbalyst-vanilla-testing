@@ -1900,6 +1900,32 @@ class PGLiteWorker {
       throw error;
     }
 
+    // Add source_folder_path column to worktrees (migration)
+    //
+    // Which root of a multi-root workspace the worktree was branched from.
+    // `workspace_id` is the workspace's PRIMARY root and stays the identity
+    // anchor, so it no longer answers "which repository did this come from"
+    // once a workspace spans folders. Backfilled to `workspace_id`: every
+    // worktree created before multi-root came from the primary root.
+    try {
+      await this.db.exec(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'worktrees' AND column_name = 'source_folder_path'
+          ) THEN
+            ALTER TABLE worktrees ADD COLUMN source_folder_path TEXT;
+            UPDATE worktrees SET source_folder_path = workspace_id WHERE source_folder_path IS NULL;
+          END IF;
+        END $$;
+      `);
+      console.log('[PGLite Worker] source_folder_path column added to worktrees');
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to add source_folder_path column:', error);
+      throw error;
+    }
+
     // Add is_pinned column to ai_sessions (migration)
     try {
       await this.db.exec(`

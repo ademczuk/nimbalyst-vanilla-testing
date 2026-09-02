@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
-import { getAgentPermissions, getRecentItems, setWorkspaceTrusted } from './store';
+import { getAgentPermissions, getAttachedFolders, getRecentItems, setWorkspaceTrusted } from './store';
 
 /**
  * NOTE: isPathInWorkspace and getRelativeWorkspacePath have similar implementations
@@ -529,9 +529,17 @@ export function ensureExtensionSDKDocsTrusted(docsPath: string): void {
 /**
  * Gets additional directories that should be accessible to the agent for the
  * given workspace. This includes:
+ * - Folders attached to this workspace (multi-root)
  * - Extension SDK documentation when working on an extension project
  * - Parent project directory when working in a worktree
  * - Sibling worktrees (unless opted out — see includeSiblingWorktrees)
+ *
+ * Attached folders are workspace-level, so every session in the workspace gets
+ * them, and they inherit the primary root's trust level rather than carrying
+ * one of their own -- attaching is the consent point, and the folder picker
+ * says so. The session cwd stays the primary root, so a bare relative path
+ * from the agent still resolves there and attached folders must be addressed
+ * absolutely.
  *
  * @param workspacePath - The current workspace path
  * @param options.includeSiblingWorktrees - default true. The Claude Code
@@ -550,6 +558,12 @@ export function getAdditionalDirectoriesForWorkspace(
   const additionalDirs = new Set<string>();
   const workspaceIdentity = resolveWorktreeIdentity(workspacePath);
   const projectPath = resolveProjectPath(workspacePath);
+
+  // Folders attached to this workspace are roots the user can see in the
+  // explorer, so the agent must be able to read and write them too.
+  for (const attached of getAttachedFolders(workspacePath)) {
+    additionalDirs.add(attached);
+  }
 
   // If this is a worktree, add the parent project directory so the agent can
   // read shared configs (.claude/settings.json, package.json) and reach the

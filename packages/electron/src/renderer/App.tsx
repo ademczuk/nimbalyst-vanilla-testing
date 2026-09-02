@@ -29,6 +29,7 @@ import { useOnboarding } from './hooks/useOnboarding';
 import { handleWorkspaceFileSelect as handleWorkspaceFileSelectUtil } from './utils/workspaceFileOperations';
 import { createInitialFileContent } from './utils/fileUtils';
 import { resolveHistoryDocumentPath } from './utils/historyDocumentResolver';
+import { parseExtensionInstallLink } from './utils/extensionInstallDeepLink';
 import { loadActiveExtensionPanel, persistActiveExtensionPanel } from './utils/activeExtensionPanelPersistence';
 import { aiToolService } from './services/AIToolService';
 import { editorRegistry } from '@nimbalyst/runtime/ai/EditorRegistry';
@@ -234,6 +235,8 @@ import {
   sidebarCollapsedAtomFamily,
 } from './store/atoms/workspaceLayout';
 import { gitStatusAtom } from './store/atoms/gitOperations';
+import { activeFileRepoPathAtom, workspaceRepoPathsAtom } from './store/atoms/workspaceRepos';
+import { repoLabels } from './utils/workspaceRepos';
 import { normalizeGitStatus } from './utils/gitStatus';
 import { useGitActivity, type GitActivityEntry } from './hooks/useGitActivity';
 import {
@@ -683,6 +686,58 @@ export default function App() {
     busyAction: 'pull' | 'push' | null;
     feedback: { kind: 'success' | 'error'; message: string } | null;
   }>({ busyAction: null, feedback: null });
+
+  /**
+   * Which repository the title-bar indicator reports on.
+   *
+   * It follows the active file, so editing a file in an attached folder shows
+   * that folder's branch. Picking a repo from the menu pins it until the active
+   * file moves to a different repo, which is the point at which the pin has
+   * clearly stopped describing what the user is looking at.
+   *
+   * A single-folder project has exactly one repo, so this is the workspace path
+   * and nothing about the indicator changes.
+   */
+  const workspaceRepoPaths = useAtomValue(workspaceRepoPathsAtom);
+  const activeFileRepoPath = useAtomValue(activeFileRepoPathAtom);
+  const [pinnedGitRepoPath, setPinnedGitRepoPath] = useState<string | null>(null);
+  useEffect(() => {
+    setPinnedGitRepoPath(null);
+  }, [activeFileRepoPath]);
+  const gitRepoPath =
+    (pinnedGitRepoPath && workspaceRepoPaths.includes(pinnedGitRepoPath) ? pinnedGitRepoPath : null)
+    ?? activeFileRepoPath
+    ?? workspacePath;
+
+  // Branch per repo for the git menu's repository rows. Read on menu open
+  // rather than kept live: N repos would otherwise mean N `git status` reads
+  // on every status event, for a list that is usually not on screen.
+  const [gitBranchByRepo, setGitBranchByRepo] = useState<Record<string, string>>({});
+  const loadGitRepoBranches = useCallback(() => {
+    if (workspaceRepoPaths.length < 2) return;
+    void Promise.all(
+      workspaceRepoPaths.map(async (repoPath) => {
+        try {
+          const result = await window.electronAPI?.invoke('git:status', repoPath);
+          return [repoPath, normalizeGitStatus(result)?.branch ?? ''] as const;
+        } catch {
+          return [repoPath, ''] as const;
+        }
+      }),
+    ).then((entries) => {
+      setGitBranchByRepo(Object.fromEntries(entries.filter(([, branch]) => branch)));
+    });
+  }, [workspaceRepoPaths]);
+
+  const gitReposForTopBar = useMemo(() => {
+    if (workspaceRepoPaths.length < 2) return [];
+    const labels = repoLabels(workspaceRepoPaths);
+    return workspaceRepoPaths.map((repoPath) => ({
+      path: repoPath,
+      label: labels[repoPath] ?? repoPath,
+      branch: gitBranchByRepo[repoPath],
+    }));
+  }, [workspaceRepoPaths, gitBranchByRepo]);
   const [agentPanelState, setAgentPanelState] = useState<AgentModePanelState>({
     available: false,
     visible: false,
@@ -712,7 +767,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     setGitStatus(null);
-    if (!workspacePath) return () => {
+    if (!gitRepoPath) return () => {
       cancelled = true;
     };
 
@@ -736,7 +791,7 @@ export default function App() {
     const refreshGitStatus = async () => {
       const requested = ++generation;
       try {
-        const result = await window.electronAPI?.invoke('git:status', workspacePath);
+        const result = await window.electronAPI?.invoke('git:status', gitRepoPath);
         if (cancelled || requested < appliedGeneration) return;
         appliedGeneration = requested;
         setGitStatus(normalizeGitStatus(result));
@@ -751,7 +806,11 @@ export default function App() {
 
     void refreshGitStatus();
     const unsubscribe = window.electronAPI?.git?.onStatusChanged?.((data) => {
-      if (data.workspacePath !== workspacePath) return;
+      // Multi-root: a move in a repo the indicator is not showing must not
+      // repaint it, and must never have its snapshot applied. Payloads without
+      // `repoPath` predate multi-root and only ever concern the one repo.
+      const eventRepo = data.repoPath ?? data.workspacePath;
+      if (eventRepo !== gitRepoPath) return;
       // Main computes the snapshot when it publishes a revision; the index and
       // ref watchers still send the legacy path-only shape, which needs a read.
       if (data.status) {
@@ -765,7 +824,7 @@ export default function App() {
       cancelled = true;
       unsubscribe?.();
     };
-  }, [setGitStatus, workspacePath]);
+  }, [setGitStatus, gitRepoPath]);
 
   useEffect(() => {
     if (activeMode === 'pr-review' && !developerMode) {
@@ -1412,10 +1471,10 @@ export default function App() {
    * that broadcast and could put the older answer on screen.
    */
   const runTitleBarGitAction = useCallback(async (action: 'pull' | 'push') => {
-    if (!workspacePath || gitActionState.busyAction) return;
+    if (!gitRepoPath || gitActionState.busyAction) return;
     setGitActionState({ busyAction: action, feedback: null });
     try {
-      const result = await window.electronAPI.invoke(`git:${action}`, workspacePath);
+      const result = await window.electronAPI.invoke(`git:${action}`, gitRepoPath);
       if (!result?.success) {
         throw new Error(result?.error || `Git ${action} failed`);
       }
@@ -1435,7 +1494,7 @@ export default function App() {
         },
       });
     }
-  }, [gitActionState.busyAction, workspacePath]);
+  }, [gitActionState.busyAction, gitRepoPath]);
 
   const handleOpenGitLog = useCallback((options?: { showOutput?: boolean }) => {
     const panelId = 'com.nimbalyst.git.git-log';
@@ -2724,6 +2783,20 @@ export default function App() {
           const anchor = target as HTMLAnchorElement;
           const href = anchor.getAttribute('href');
 
+          // `nimbalyst://install/<extensionId>` -- the affordance /planning:nimbalyst-coach
+          // uses to recommend an extension. The OS-level deep-link handler
+          // already routes this scheme when it arrives from outside the app;
+          // a click on the same link *inside* the renderer had no branch here
+          // and silently did nothing. Opens Settings > Marketplace at that
+          // extension; it never installs on its own.
+          const installExtensionId = parseExtensionInstallLink(href);
+          if (installExtensionId) {
+            event.preventDefault();
+            event.stopPropagation();
+            openMarketplaceInstallRequest({ extensionId: installExtensionId });
+            return;
+          }
+
           if (href?.startsWith('nimbalyst://conversation/')) {
             event.preventDefault();
             event.stopPropagation();
@@ -2784,7 +2857,10 @@ export default function App() {
     return () => {
       document.removeEventListener('click', handleClick, true);
     };
-  }, []);
+    // openMarketplaceInstallRequest is declared here rather than relying on it
+    // being incidentally stable -- an empty dep array would freeze the first
+    // closure, which is the stale-listener trap in docs/IPC_LISTENERS.md.
+  }, [openMarketplaceInstallRequest]);
 
   // Wait for both initial state and extensions to be ready before rendering editors
   // This ensures extension nodes (like DataModelNode) are published into the runtime extension stores.
@@ -2828,6 +2904,10 @@ export default function App() {
             onOpenLog: () => handleOpenGitLog(),
             onOpenActivity: handleOpenGitActivity,
             onOpenExtensionSettings: handleOpenGitExtensionSettings,
+            repos: gitReposForTopBar,
+            activeRepoPath: gitRepoPath,
+            onSelectRepo: setPinnedGitRepoPath,
+            onMenuOpen: loadGitRepoBranches,
             gitLogAvailable:
               getPanelById('com.nimbalyst.git.git-log')?.placement === 'bottom',
             busyAction: gitActionState.busyAction,

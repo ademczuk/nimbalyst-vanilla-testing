@@ -2105,6 +2105,16 @@ export const markSessionReadAtom = atom(null, (get, set, sessionId: string) => {
 });
 
 /**
+ * Mark several sessions as read at once (e.g. a whole workstream).
+ * Deduplicates so a parent id that also appears in its child list is only sent once.
+ */
+export const markSessionsReadAtom = atom(null, (get, set, sessionIds: string[]) => {
+  for (const sessionId of new Set(sessionIds)) {
+    set(markSessionReadAtom, sessionId);
+  }
+});
+
+/**
  * Set session as active.
  * Also marks it as read.
  */

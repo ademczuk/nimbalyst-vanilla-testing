@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   findWindowByWorkspace: vi.fn(),
   createWindow: vi.fn(),
   getMostRecentlyFocusedWorkspaceWindow: vi.fn(),
+  getSession: vi.fn(),
 }));
 
 vi.mock('electron', () => {
@@ -92,6 +93,10 @@ vi.mock('../../utils/store', () => ({
   isOSNotificationsEnabled: mocks.osNotificationsEnabled,
   isNotifyWhenFocusedEnabled: mocks.notifyWhenFocusedEnabled,
   isSessionBlockedNotificationsEnabled: mocks.sessionBlockedNotificationsEnabled,
+}));
+
+vi.mock('@nimbalyst/runtime/storage/repositories/AISessionsRepository', () => ({
+  AISessionsRepository: { get: mocks.getSession },
 }));
 
 vi.mock('../../window/WindowManager', () => ({
@@ -184,6 +189,7 @@ describe('NotificationService agent notifications', () => {
     mocks.findWindowByWorkspace.mockReturnValue(null);
     mocks.getMostRecentlyFocusedWorkspaceWindow.mockReturnValue(null);
     mocks.createWindow.mockReturnValue(makeFakeWindow());
+    mocks.getSession.mockResolvedValue(null);
     clearNotificationIconCache();
   });
 
@@ -335,6 +341,74 @@ describe('NotificationService agent notifications', () => {
       workspacePath: '/workspace/alpha',
       sourceLabel: 'Build release',
     });
+  });
+
+  it('routes a worktree session to the project that owns it', async () => {
+    // Blocking notifications carry the path the agent runs in, which for a
+    // worktree session is the worktree. Sessions are stored under the project
+    // path, so routing on the worktree makes the renderer look the session up
+    // in a workspace that has none and report it as missing.
+    const send = vi.fn();
+    mocks.getSession.mockResolvedValue({
+      id: 'session-worktree',
+      workspacePath: '/workspace/alpha',
+    });
+    mocks.findWindowByWorkspace.mockReturnValue({
+      isDestroyed: () => false,
+      isMinimized: () => false,
+      focus: vi.fn(),
+      show: vi.fn(),
+      webContents: { send },
+    });
+
+    await notificationService.showBlockedNotification(
+      'session-worktree',
+      'Build release',
+      'question',
+      '/workspace/alpha_worktrees/feature',
+    );
+    mocks.notificationListeners.get('click')?.();
+
+    expect(mocks.findWindowByWorkspace).toHaveBeenCalledWith('/workspace/alpha');
+    expect(send).toHaveBeenCalledWith('notification-clicked', {
+      sessionId: 'session-worktree',
+      workspacePath: '/workspace/alpha',
+      sourceLabel: 'Build release',
+    });
+  });
+
+  it('queues an unloaded workspace under the owning project, not the worktree', async () => {
+    // The renderer drains the queue with its own active workspace path, so a
+    // worktree-keyed entry could never be consumed.
+    mocks.getSession.mockResolvedValue({
+      id: 'session-worktree-cold',
+      workspacePath: '/workspace/cold',
+    });
+
+    await clickNotification({
+      sessionId: 'session-worktree-cold',
+      workspacePath: '/workspace/cold_worktrees/feature',
+      sourceLabel: 'Cold task',
+    });
+
+    expect(mocks.createWindow).toHaveBeenCalledWith(false, true, '/workspace/cold');
+    expect(notificationService.consumePendingNavigation('/workspace/cold')).toEqual({
+      sessionId: 'session-worktree-cold',
+      workspacePath: '/workspace/cold',
+      sourceLabel: 'Cold task',
+    });
+  });
+
+  it('falls back to the notified workspace when the session cannot be read', async () => {
+    mocks.getSession.mockRejectedValue(new Error('database is closed'));
+
+    await clickNotification({
+      sessionId: 'session-unreadable',
+      workspacePath: '/workspace/unreadable',
+      sourceLabel: 'Unreadable task',
+    });
+
+    expect(mocks.createWindow).toHaveBeenCalledWith(false, true, '/workspace/unreadable');
   });
 
   it('queues navigation and opens an unloaded workspace once', async () => {

@@ -48,8 +48,17 @@ export function resolveClaudeCliModelArg(model: string | undefined): string | un
 
   const variant = normalizeClaudeCodeVariant(variantInput);
   if (variant) {
-    // Collapse pinned opus variants (opus-4-7 / opus-4-6) to the CLI's `opus` alias.
-    const alias = variant.startsWith('opus') ? 'opus' : variant;
+    // The CLI accepts canonical aliases (fable, opus, sonnet, haiku) and full
+    // model ids (claude-fable-5, claude-opus-4-7). For pinned variants the
+    // CLI doesn't accept as short aliases, pass the full model id instead.
+    let alias: string;
+    if (variant.startsWith('opus')) {
+      alias = 'opus';
+    } else if (variant === 'fable-5') {
+      alias = 'claude-fable-5';
+    } else {
+      alias = variant;
+    }
     return isExtended ? `${alias}[1m]` : alias;
   }
 

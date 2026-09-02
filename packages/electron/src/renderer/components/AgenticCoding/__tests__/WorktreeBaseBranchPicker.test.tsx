@@ -18,7 +18,7 @@ function renderPicker() {
   return render(
     <WorktreeBaseBranchPicker
       isOpen
-      workspacePath="/workspace"
+      repoPath="/workspace"
       onCreate={vi.fn().mockResolvedValue(undefined)}
       onCancel={vi.fn()}
     />,

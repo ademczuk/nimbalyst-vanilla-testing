@@ -221,7 +221,9 @@ export async function navigateToNotificationSession(
 
   const hydrated = await hydrateTarget(target);
   if (!hydrated || hydrated.isArchived) {
-    return showUnavailable(target, hydrated?.isArchived ? 'archived' : 'missing');
+    // A registry miss after the pre-flight lookup succeeded is stale renderer
+    // state, not a missing session -- see hydrateTarget.
+    return showUnavailable(target, hydrated?.isArchived ? 'archived' : 'lookup-failed');
   }
 
   store.set(setWindowModeAtom, 'agent');

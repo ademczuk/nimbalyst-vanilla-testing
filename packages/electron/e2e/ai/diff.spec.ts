@@ -42,6 +42,7 @@ import {
   waitForEditorReady,
   createTestMarkdown,
   queryTags,
+  getPendingTags,
   getDiffBaseline,
   countTagsByType,
   triggerManualSave,
@@ -52,6 +53,8 @@ import {
   openFileFromTree,
   closeTabByFileName,
   editDocumentContent,
+  switchToAgentMode,
+  switchToFilesMode,
 } from '../utils/testHelpers';
 
 // All test files created upfront to avoid state conflicts
@@ -83,6 +86,11 @@ const TEST_FILES = {
   incrementalBaseline: 'incremental-baseline.md',
   // Reject then accept all
   rejectThenAccept: 'reject-then-accept.md',
+  // NIM-5359 incident shape: repeated agent writes into a live diff, two
+  // attachments, remounts, autosave.
+  remountRevert: 'remount-revert.md',
+  remountRevertSibling: 'remount-revert-sibling.md',
+  manualSaveMidApply: 'manual-save-mid-apply.md',
 
   // --- Reliability tests ---
   // Complex Structures
@@ -143,6 +151,36 @@ Second paragraph.
 Third paragraph.
 `;
 
+// NIM-5359: five byte-distinct generations of the same document. Only the
+// GENERATION word changes, so the C0-vs-Cn diff is a single word replacement
+// and the marker of whichever generation an editor is actually presenting is
+// directly readable out of its buffer.
+//
+// The markers are single words that share no prefix. Lexical's granular
+// word-level diff splits a replacement at token boundaries and interleaves the
+// remove/add runs, so a marker like `AGENT-C4` renders as `...AGENT-C0C4...`
+// in textContent and defeats a plain substring assertion.
+const GENERATIONS = {
+  c0: 'Zeroth',
+  c1: 'Foxtrot',
+  c2: 'Juliett',
+  c3: 'Sierra',
+  c4: 'Whiskey',
+} as const;
+
+function generationContent(marker: string): string {
+  return [
+    '# Remount Revert',
+    '',
+    'Stable intro paragraph that never changes.',
+    '',
+    `GENERATION ${marker}`,
+    '',
+    'Stable trailing paragraph that never changes.',
+    '',
+  ].join('\n');
+}
+
 test.describe.configure({ mode: 'serial' });
 
 let electronApp: ElectronApplication;
@@ -186,6 +224,9 @@ This is the third paragraph.
     [TEST_FILES.incrementalMixed]: MULTI_SECTION_CONTENT,
     [TEST_FILES.incrementalBaseline]: MULTI_SECTION_CONTENT,
     [TEST_FILES.rejectThenAccept]: THREE_SECTION_CONTENT,
+    [TEST_FILES.remountRevert]: generationContent(GENERATIONS.c0),
+    [TEST_FILES.remountRevertSibling]: SIMPLE_CONTENT,
+    [TEST_FILES.manualSaveMidApply]: generationContent(GENERATIONS.c0),
 
     // Reliability test files
     [TEST_FILES.nestedList]: INITIAL_CONTENT,
@@ -1589,5 +1630,318 @@ Content C
     expect(updatedContent).toContain('Content C Modified');
 
     await closeTabByFileName(page, TEST_FILES.multipleEdits);
+  });
+});
+
+// ============================================================================
+// REPEATED AGENT WRITES INTO A LIVE DIFF (NIM-5359, plan item 1a)
+//
+// The incident: a plan file open in Files mode showing an AI diff had ~30
+// minutes of agent writes reverted by an autosave. `document_history` recorded
+// an `auto-save` row byte-identical to the pre-session state, written 42ms
+// after the pre-edit tag flipped to `reviewed`. The renderer log showed the
+// same tab running `checkAndApplyPendingDiffs` three times (three remounts)
+// before the revert landed.
+//
+// This is the authoritative red-to-green gate for the plan at
+// nimbalyst-local/plans/mount-diff-path-reverts-agent-writes.md. It reproduces
+// the incident shape rather than a single defect, because the defects compose:
+//
+//   A  the mount path takes its "new" side from the tab's in-memory copy and
+//      resets the Lexical buffer to the baseline without moving
+//      lastSavedContentRef -- the exact configuration autosave reverts from
+//   B  a mount-path apply never calls markDiffApplied, so the session stays
+//      'applying' and DiffSession.ingest queues every later write forever
+//   E  watcher delivery is not serialized, so a stagger can land generations
+//      out of order
+//   F  apply completion is global, so one attachment acknowledges the other's
+//      generation
+//
+// Green state (what the fix must produce), asserted below:
+//   - both attachments present C4 (not a frozen earlier generation)
+//   - disk holds exactly C4 after Keep All
+//   - the pre-edit tag resolves exactly once (one tag, zero pending after)
+//   - no `auto-save` history row carries the pre-edit (C0) bytes
+//
+// STATUS 2026-09-01: this passes against main. It is the regression contract,
+// not proof of the bug. With two Lexical attachments the DocumentModel
+// subscription wins every remount race, so `checkAndApplyPendingDiffs` finds
+// `oldContent === newContent` (renderer log: `oldContentLen=127
+// newContentLen=127`, no apply follows) and no-ops -- the mount path never
+// performs the visual apply here, so Defects A/B never fire. The mount path is
+// only the sole diff entry when NO watcher event follows the open, which is the
+// arrangement `e2e/editors/large-markdown.spec.ts` exercises and where the
+// failure is currently reproducible. Keep this test; do not weaken it.
+// ============================================================================
+
+test.describe('Repeated Agent Writes Into A Live Diff (NIM-5359)', () => {
+  // Once the same file is open in an Agent-mode workstream tab, `.tab` and
+  // `.tab-title` match in both tab strips, so the shared openFileFromTree /
+  // closeTabByFileName helpers hit a strict-mode violation. These scope to the
+  // Files-mode strip (`.file-tabs-container`) instead of adding `.first()`.
+  async function openFilesModeTab(fileName: string): Promise<void> {
+    await page.evaluate(async (name) => {
+      const workspace = (window as any).__workspacePath;
+      await (window as any).__handleWorkspaceFileSelect(`${workspace}/${name}`);
+    }, fileName);
+    await expect(page.locator(`.file-tabs-container .tab[data-filename="${fileName}"]`))
+      .toBeVisible({ timeout: TEST_TIMEOUTS.TAB_SWITCH });
+  }
+
+  async function closeFilesModeTab(fileName: string): Promise<void> {
+    const tab = page.locator(`.file-tabs-container .tab[data-filename="${fileName}"]`);
+    await tab.locator(PLAYWRIGHT_TEST_SELECTORS.tabCloseButton).click();
+    await expect(tab).toHaveCount(0, { timeout: TEST_TIMEOUTS.TAB_SWITCH });
+    await page.waitForTimeout(300);
+  }
+
+  // Read every mounted attachment's Lexical buffer for this file, keyed by the
+  // mode that owns it. Both attachments stay in the DOM when their mode is
+  // hidden, so this sees the Agent-mode editor from Files mode and vice versa.
+  async function readAttachmentBuffers(filePath: string): Promise<{ files: string[]; agent: string[] }> {
+    return page.evaluate((fp) => {
+      const textFor = (root: string) =>
+        Array.from(
+          document.querySelectorAll(
+            `${root} .multi-editor-instance[data-file-path="${fp}"] .editor [contenteditable="true"]`
+          )
+        ).map((el) => el.textContent || '');
+      return {
+        files: textFor('.file-tabs-container'),
+        agent: textFor('.workstream-editor-tabs'),
+      };
+    }, filePath);
+  }
+
+  // Contents of every `auto-save` row in document_history for this file.
+  // The incident's signature is an auto-save row holding the pre-edit bytes.
+  async function autoSaveSnapshotContents(filePath: string): Promise<string[]> {
+    return page.evaluate(async (fp) => {
+      const api = (window as any).electronAPI;
+      const snapshots = (await api.history.listSnapshots(fp)) || [];
+      const out: string[] = [];
+      for (const snapshot of snapshots) {
+        if (snapshot.type !== 'auto-save') continue;
+        out.push(await api.history.loadSnapshot(fp, snapshot.timestamp));
+      }
+      return out;
+    }, filePath);
+  }
+
+  test('four staggered agent writes survive two remounts and an autosave window', async () => {
+    // Four staggered watcher generations, two remounts and a full autosave
+    // window do not fit the default 15s per-test budget.
+    test.setTimeout(120_000);
+
+    const filePath = path.join(workspaceDir, TEST_FILES.remountRevert);
+    const c0 = generationContent(GENERATIONS.c0);
+    const c4 = generationContent(GENERATIONS.c4);
+    const filesAttachment = page.locator(
+      `.file-tabs-container .multi-editor-instance[data-file-path="${filePath}"] .editor [contenteditable="true"]`
+    );
+
+    // --- Attachment A: Files mode -------------------------------------------
+    await switchToFilesMode(page);
+    await openFilesModeTab(TEST_FILES.remountRevert);
+    await expect(filesAttachment).toBeVisible({ timeout: TEST_TIMEOUTS.EDITOR_LOAD });
+    await page.waitForTimeout(400);
+
+    // --- Attachment B: the same file in a real Agent-mode workstream tab ------
+    await switchToAgentMode(page);
+    await page.evaluate(async ({ workspacePath, fp }) => {
+      const helpers = (window as any).__testHelpers;
+      if (!helpers?.openFileInAgentMode) {
+        throw new Error('openFileInAgentMode test helper not exposed');
+      }
+      return helpers.openFileInAgentMode(workspacePath, fp);
+    }, { workspacePath: workspaceDir, fp: filePath });
+    await page.waitForFunction(
+      (fp) => document.querySelectorAll(`.multi-editor-instance[data-file-path="${fp}"]`).length >= 2,
+      filePath,
+      { timeout: 10000 }
+    );
+    await page.waitForTimeout(500);
+    await switchToFilesMode(page);
+    await page.waitForTimeout(300);
+
+    // --- C1: pre-edit tag + first agent write, diff goes live ----------------
+    const sessionId = `nim5359-session-${Date.now()}`;
+    await page.evaluate(
+      async ({ wp, fp, content, sid }) => {
+        await window.electronAPI.history.createTag(wp, fp, `tag-${sid}`, content, sid, `tool-${sid}`);
+      },
+      { wp: workspaceDir, fp: filePath, content: c0, sid: sessionId }
+    );
+    await page.waitForTimeout(200);
+
+    await fs.writeFile(filePath, generationContent(GENERATIONS.c1), 'utf8');
+    const filesDiffHeader = page.locator('.file-tabs-container .unified-diff-header');
+    await expect(filesDiffHeader).toBeVisible({ timeout: 3000 });
+
+    // --- C2: staggered so the two presenters are deliberately out of step -----
+    // Agent mode is foregrounded, so B is the visible presenter while A applies
+    // in a hidden subtree. The 150ms gap puts the write inside the 250ms+100ms
+    // reset+settle window of the in-flight C1 apply.
+    await switchToAgentMode(page);
+    await page.waitForTimeout(350);
+    await fs.writeFile(filePath, generationContent(GENERATIONS.c2), 'utf8');
+    await page.waitForTimeout(150);
+    await switchToFilesMode(page);
+    await page.waitForTimeout(1200);
+
+    // --- Remount 1: tab switch away and back (tab-activation diff path) ------
+    await openFilesModeTab(TEST_FILES.remountRevertSibling);
+    await page.waitForTimeout(600);
+    await openFilesModeTab(TEST_FILES.remountRevert);
+    await page.waitForTimeout(900);
+
+    // --- C3: the agent keeps writing after the user moved around -------------
+    await fs.writeFile(filePath, generationContent(GENERATIONS.c3), 'utf8');
+    await page.waitForTimeout(1200);
+
+    // --- Remount 2: close and reopen the Files-mode tab (mount diff path) ----
+    // This is `checkAndApplyPendingDiffs`, the second implementation of "enter
+    // diff mode" that the plan deletes in Phase 7. Attachment B stays mounted
+    // throughout, so this is also a detach/reattach against a shared model.
+    // Once this path performs the visual apply it never calls markDiffApplied,
+    // so the model session is left in 'applying' -- every later write queues
+    // and `drainPending()` is unreachable (Defect B).
+    await closeFilesModeTab(TEST_FILES.remountRevert);
+    await page.waitForTimeout(400);
+    await openFilesModeTab(TEST_FILES.remountRevert);
+    await expect(filesAttachment).toBeVisible({ timeout: TEST_TIMEOUTS.EDITOR_LOAD });
+    await page.waitForTimeout(1000);
+
+    // --- C4: the newest agent write, delivered into the remounted tab --------
+    await fs.writeFile(filePath, c4, 'utf8');
+    await page.waitForTimeout(1500);
+
+    // Nothing resolved yet: disk still holds C4 and the tag is still pending.
+    expect(await fs.readFile(filePath, 'utf8')).toBe(c4);
+
+    // --- Wait past the 2s autosave interval, unresolved --------------------
+    await page.waitForTimeout(3500);
+
+    // The autosave window must not have written anything: disk still C4.
+    expect(await fs.readFile(filePath, 'utf8')).toBe(c4);
+
+    // Both attachments must present the LATEST generation. A frozen queue
+    // (Defect B) leaves one or both showing C1/C2 here.
+    const buffers = await readAttachmentBuffers(filePath);
+    expect(buffers.files.length).toBeGreaterThan(0);
+    expect(buffers.agent.length).toBeGreaterThan(0);
+    for (const buffer of [...buffers.files, ...buffers.agent]) {
+      expect(buffer).toContain(GENERATIONS.c4);
+      expect(buffer).not.toContain(GENERATIONS.c2);
+      expect(buffer).not.toContain(GENERATIONS.c3);
+    }
+
+    // The review is still open and still anchored on the pre-session baseline.
+    await expect(filesDiffHeader).toBeVisible();
+    const pendingBeforeAccept = await getPendingTags(electronApp, filePath);
+    expect(pendingBeforeAccept.length).toBe(1);
+
+    // --- Accept ------------------------------------------------------------
+    await page.locator('.file-tabs-container [data-testid="diff-keep-all"]').click();
+    await expect(filesDiffHeader).toHaveCount(0, { timeout: 3000 });
+    await page.waitForTimeout(1500);
+
+    // Disk holds exactly the newest agent generation -- no revert, no partial.
+    expect(await fs.readFile(filePath, 'utf8')).toBe(c4);
+
+    // The tag resolved exactly once: one pre-edit tag for the session, none
+    // pending. A wedged resolution (Defect C) leaves it reviewed-but-unsaved;
+    // a re-baselined session would show more than one pre-edit tag.
+    expect(await getPendingTags(electronApp, filePath)).toHaveLength(0);
+    expect(await countTagsByType(electronApp, filePath, 'pre-edit')).toBe(1);
+
+    // The incident's signature: an `auto-save` row byte-identical to the
+    // pre-session content. Assert on bytes, not on row counts.
+    const autoSaves = await autoSaveSnapshotContents(filePath);
+    expect(autoSaves).not.toContain(c0);
+
+    await closeFilesModeTab(TEST_FILES.remountRevert);
+    await closeFilesModeTab(TEST_FILES.remountRevertSibling);
+  });
+
+  // -------------------------------------------------------------------------
+  // Cmd+S during the apply window of a reopened review (NIM-5359, finding 2).
+  //
+  // Reopening a file whose agent write is unreviewed hydrates the diff, and the
+  // apply spends ~350ms with the Lexical buffer reset to the PRE-EDIT baseline
+  // before the diff nodes exist. Manual save used to approve whatever it found
+  // (nothing), clear the model's diff state, fire an un-awaited tag update, and
+  // write that baseline -- and because the tab's conflict baseline had just been
+  // set from the agent's bytes on reopen, the revert passed the conflict check
+  // byte for byte. That is the incident, reachable from one keystroke.
+  //
+  // Only one attachment here on purpose: with two, the second presenter masks
+  // the window (see the STATUS note above).
+  // -------------------------------------------------------------------------
+  test('manual save during a reopened review never writes the pre-edit baseline', async () => {
+    test.setTimeout(120_000);
+
+    const filePath = path.join(workspaceDir, TEST_FILES.manualSaveMidApply);
+    const c0 = generationContent(GENERATIONS.c0);
+    const c1 = generationContent(GENERATIONS.c1);
+    const c2 = generationContent(GENERATIONS.c2);
+    const attachment = page.locator(
+      `.file-tabs-container .multi-editor-instance[data-file-path="${filePath}"] .editor [contenteditable="true"]`
+    );
+
+    await switchToFilesMode(page);
+    await openFilesModeTab(TEST_FILES.manualSaveMidApply);
+    await expect(attachment).toBeVisible({ timeout: TEST_TIMEOUTS.EDITOR_LOAD });
+    await page.waitForTimeout(400);
+
+    const sessionId = `nim5359-manual-save-${Date.now()}`;
+    await page.evaluate(
+      async ({ wp, fp, content, sid }) => {
+        await window.electronAPI.history.createTag(wp, fp, `tag-${sid}`, content, sid, `tool-${sid}`);
+      },
+      { wp: workspaceDir, fp: filePath, content: c0, sid: sessionId }
+    );
+    await page.waitForTimeout(200);
+
+    await fs.writeFile(filePath, c1, 'utf8');
+    await expect(page.locator('.file-tabs-container .unified-diff-header'))
+      .toBeVisible({ timeout: 5000 });
+
+    // Close and reopen: hydration republishes the review, and the reopened tab's
+    // conflict baseline is the agent's content -- the incident's configuration.
+    await closeFilesModeTab(TEST_FILES.manualSaveMidApply);
+    await page.waitForTimeout(400);
+    await openFilesModeTab(TEST_FILES.manualSaveMidApply);
+
+    // Hammer Cmd+S across the mount and the apply that follows it.
+    for (let i = 0; i < 12; i++) {
+      await triggerManualSave(electronApp);
+      await page.waitForTimeout(80);
+    }
+    await expect(attachment).toBeVisible({ timeout: TEST_TIMEOUTS.EDITOR_LOAD });
+    await page.waitForTimeout(1500);
+    expect(await fs.readFile(filePath, 'utf8')).toBe(c1);
+
+    // A second agent write opens the window again on demand: the apply resets the
+    // buffer to the pre-edit baseline and only dispatches the diff ~350ms later.
+    // Hammering Cmd+S across it is the keystroke that used to approve nothing,
+    // clear the review and write that baseline back over the agent's content.
+    await fs.writeFile(filePath, c2, 'utf8');
+    for (let i = 0; i < 20; i++) {
+      await triggerManualSave(electronApp);
+      await page.waitForTimeout(60);
+    }
+    await page.waitForTimeout(2000);
+
+    // Whatever the keystrokes did, they may not have rolled the file back to a
+    // generation the agent has already replaced. Either the saves were held
+    // (review still open) or one settled a rendered review as an accept; both
+    // leave the agent's newest write on disk.
+    expect(await fs.readFile(filePath, 'utf8')).toBe(c2);
+
+    // And the incident's own signature: no auto-save row holding C0.
+    expect(await autoSaveSnapshotContents(filePath)).not.toContain(c0);
+
+    await closeFilesModeTab(TEST_FILES.manualSaveMidApply);
   });
 });

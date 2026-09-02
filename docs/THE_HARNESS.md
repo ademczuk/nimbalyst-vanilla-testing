@@ -125,7 +125,8 @@ The only always-loaded internal surface — universal agent↔host glue.
 ### `mcp__nimbalyst-host` — settings, cross-session context, and orchestration (deferred)
 
 - Settings: AI defaults, theme, completion sound, spellcheck, sync, extension enabled state, workspace trust — all settable via MCP.
-- Cross-session context: `list_recent_sessions`, `get_session_summary` (read what another session did), `get_workstream_overview` / `get_workstream_edited_files`, `update_session_board` (change phase/tags on *another* session by ID), `schedule_wakeup`.
+- Cross-session context: `list_recent_sessions`, `get_session_summary` (read what another session did), `get_session_coaching_signals` (bounded structured evidence for one session — tool usage, the user's own prompts, tracker links; workspace-scoped and capped for many-session sweeps), `get_workstream_overview` / `get_workstream_edited_files`, `update_session_board` (change phase/tags on *another* session by ID), `schedule_wakeup`.
+- Extensions: `extensions_list` (installed + enabled state, plus what the marketplace registry offers), `extension_set_enabled`.
 - Orchestrate other sessions: `spawn_session` / `create_session`, `send_prompt`, `get_session_status` / `get_session_result` / `list_spawned_sessions`, `respond_to_prompt`, `list_worktrees`. Used by any "spawn N parallel reviewers" pattern.
 
 ### `mcp__nimbalyst-trackers` — tracker tools (deferred, per-project opt-out)
@@ -444,6 +445,20 @@ The harness improves itself when the user runs `/analyze-sessions`. The command:
 This is how 2026-05-20's tracker-body workstream produced the `end-to-end-verification.md` rule, the `feedback_grep_log_after_trycatch.md` memory, the `feedback_local_state_vs_server_state.md` memory, and the CLAUDE.md "Always Run Your Own Observation Commands" critical-rules section — all in one pass.
 
 Run `/analyze-sessions` after any frustrating session or after a major workstream concludes. The signal decays quickly; capture it while the user can still recall what went wrong.
+
+### `/analyze-sessions` vs `/planning:nimbalyst-coach`
+
+Two commands, two audiences — do not merge them.
+
+| | `/analyze-sessions` | `/planning:nimbalyst-coach` |
+| --- | --- | --- |
+| Lives in | `.claude/commands/` (this repo only) | `planning` extension (ships to every user) |
+| Audience | Nimbalyst developers auditing this repo's harness | Any Nimbalyst user in any project |
+| Writes to | `.claude/rules/`, `agent-mistakes.md`, `MEMORY.md` | `CLAUDE.md` / `AGENTS.md` / `.claude/rules/`, chosen per project |
+| Also covers | — | Extension recommendations from the file census, unused product features, harness structure |
+| Assumes | This repo's rule layout and private memory | Nothing; works on a bare project with no `CLAUDE.md` |
+
+`/planning:nimbalyst-coach` is the productized descendant of `/analyze-sessions`'s "underused tools" section. The repo-local command stays as-is — harness forensics for Nimbalyst development is a different job from onboarding a user to the product.
 
 ---
 

@@ -1,15 +1,14 @@
-import { createTextCollabContentAdapter } from '@nimbalyst/extension-sdk';
-import { MONACO_TEXT_FILE_EXTENSIONS } from './fileTypeDetector';
+/**
+ * The `code` codec now lives in `@nimbalyst/runtime` so the web console binds
+ * the same `documentType` / `textField` / suffix list this renderer does. These
+ * re-exports keep the renderer's existing import sites working.
+ */
+import {
+  CODE_COLLAB_FILE_EXTENSIONS,
+  CodeCollabContentAdapter,
+} from '@nimbalyst/runtime/editors/codeCollabCodec';
 
-export const CODE_COLLAB_FILE_EXTENSIONS = MONACO_TEXT_FILE_EXTENSIONS.filter(
-  suffix => suffix !== '.md' && suffix !== '.markdown' && suffix !== '.mdc',
-);
-
-export const CodeCollabContentAdapter = createTextCollabContentAdapter({
-  documentType: 'code',
-  fileExtensions: CODE_COLLAB_FILE_EXTENSIONS,
-  textField: 'content',
-});
+export { CODE_COLLAB_FILE_EXTENSIONS, CodeCollabContentAdapter };
 
 export function getCodeCollabExportFileName(
   sourceName: string,

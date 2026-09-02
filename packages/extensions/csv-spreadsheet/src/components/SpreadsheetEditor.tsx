@@ -82,6 +82,7 @@ import { snapRowsToVisible } from '../filter/visibleRange';
 import { getAppliedTrimmedRows } from '../filter/filterEngine';
 import { EMPTY_FIND_HIGHLIGHT, type FindHighlight } from '../filter/findHighlight';
 import { SheetsTextEditor } from '../editors/SheetsTextEditor';
+import { useGridKeyOriginGuard } from '../editors/gridKeyOrigin';
 import { buildSpreadsheetSelectionContextItem } from '../selectionContext';
 import {
   notifySpreadsheetCellFlash,
@@ -1429,6 +1430,11 @@ export function SpreadsheetEditor({ host }: EditorHostProps) {
     },
     [translateRowIndex, updateSelection, frozenColumnCount]
   );
+
+  // RevoGrid's document-level keydown listener acts on keys typed anywhere in
+  // the app while a cell is focused -- typing into quick open opened the cell
+  // editor and stole the caret. Decline the keys that did not start in here.
+  useGridKeyOriginGuard(editorRef);
 
   // Own cell drag-selection so ranges can cross the frozen/pinned boundaries
   // that RevoGrid's built-in drag is clamped to.

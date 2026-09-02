@@ -25,7 +25,12 @@ import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 
 interface WorktreeBaseBranchPickerProps {
   isOpen: boolean;
-  workspacePath: string;
+  /**
+   * The repository the worktree will branch FROM -- not the workspace root.
+   * In a multi-root workspace those differ, and listing the primary root's
+   * branches would offer bases that do not exist in the repo being branched.
+   */
+  repoPath: string;
   initialName?: string;
   onCreate: (options: { baseBranch: string; name?: string }) => Promise<void>;
   onCancel: () => void;
@@ -55,9 +60,9 @@ function partition(branches: string[], current: string): BranchSections {
   return { local, remote, current };
 }
 
-async function fetchBranches(workspacePath: string): Promise<BranchSections> {
+async function fetchBranches(repoPath: string): Promise<BranchSections> {
   if (!window.electronAPI) return EMPTY_SECTIONS;
-  const result = (await window.electronAPI.invoke('git:branches', workspacePath)) as {
+  const result = (await window.electronAPI.invoke('git:branches', repoPath)) as {
     branches: string[];
     current: string;
   };
@@ -107,7 +112,7 @@ function validateName(name: string): string | null {
 
 export function WorktreeBaseBranchPicker({
   isOpen,
-  workspacePath,
+  repoPath,
   initialName,
   onCreate,
   onCancel,
@@ -155,7 +160,7 @@ export function WorktreeBaseBranchPicker({
 
     const loadInitial = async () => {
       try {
-        const initial = await fetchBranches(workspacePath);
+        const initial = await fetchBranches(repoPath);
         if (!aliveRef.current) return;
         setSections(initial);
         // Pre-select current branch as a sensible default.
@@ -176,9 +181,9 @@ export function WorktreeBaseBranchPicker({
       if (!window.electronAPI) return;
       setIsRefreshingRemotes(true);
       try {
-        await window.electronAPI.invoke('git:fetch', workspacePath);
+        await window.electronAPI.invoke('git:fetch', repoPath);
         if (!aliveRef.current) return;
-        const refreshed = await fetchBranches(workspacePath);
+        const refreshed = await fetchBranches(repoPath);
         if (!aliveRef.current) return;
         setSections((prev) => ({ ...refreshed, current: refreshed.current || prev.current }));
       } catch (error) {
@@ -195,7 +200,7 @@ export function WorktreeBaseBranchPicker({
     return () => {
       aliveRef.current = false;
     };
-  }, [isOpen, workspacePath]);
+  }, [isOpen, repoPath]);
 
   // Focus name input when modal opens (after initial load completes).
   useEffect(() => {

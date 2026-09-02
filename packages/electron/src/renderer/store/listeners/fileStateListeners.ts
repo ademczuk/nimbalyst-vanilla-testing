@@ -23,7 +23,8 @@ import {
   type FileEditWithSession,
 } from '../atoms/sessionFiles';
 import { workstreamStagedFilesAtom, setWorkstreamStagedFilesAtom } from '../atoms/workstreamState';
-import { getRelativeWorkspacePath } from '../../../shared/pathUtils';
+import { workspaceRootPathsAtom } from '../atoms/fileTree';
+import { getRelativeWorkspacePath, isPathInWorkspace } from '../../../shared/pathUtils';
 import { createToolCallMatchesCoalescer } from './toolCallMatchesCoalescer';
 import { createPerKeyDebouncer } from './perKeyDebounce';
 import { loadSessionFilesResult } from '../../services/sessionFilesLoader';
@@ -60,6 +61,22 @@ function toAbsoluteFilePath(filePath: string, workspacePath: string): string {
  * Used to fetch worktree changed files on git:status-changed.
  */
 const worktreePathRegistry = new Map<string, string>();
+
+/**
+ * Whether a repo lives under one of the current workspace's roots.
+ *
+ * In a multi-root workspace the git-ref watcher is registered per repo, so its
+ * events name a repo inside an attached folder rather than the workspace
+ * itself. Reads the roots from the atom rather than re-querying the host,
+ * because this runs on every git event.
+ */
+function belongsToCurrentWorkspaceRoots(repoPath: string, workspacePath: string | null): boolean {
+  if (!repoPath || !workspacePath) return false;
+  const roots = store.get(workspaceRootPathsAtom);
+  // Only meaningful once the workspace actually spans more than its own root.
+  if (roots.length < 2 || roots[0] !== workspacePath) return false;
+  return roots.some((root) => isPathInWorkspace(repoPath, root));
+}
 
 /**
  * Register a session with its workspace path.
@@ -320,47 +337,57 @@ export function initFileStateListeners(workspacePath: string): () => void {
   // =========================================================================
 
   cleanups.push(
-    window.electronAPI.on('git:status-changed', (data: { workspacePath: string }) => {
+    window.electronAPI.on('git:status-changed', (data: { workspacePath: string; repoPath?: string }) => {
       // Check if event is for current workspace OR any registered worktree
       const isCurrentWorkspace = data.workspacePath === currentWorkspacePath;
       const isRegisteredWorktree = Array.from(worktreePathRegistry.values()).includes(data.workspacePath);
+      // A repo inside an attached folder emits its own path, which is neither
+      // the workspace nor a worktree. Without this branch, every git change in
+      // an attached repo would be silently dropped.
+      const isWorkspaceRepo = !isCurrentWorkspace && !isRegisteredWorktree
+        && belongsToCurrentWorkspaceRoots(data.repoPath ?? data.workspacePath, currentWorkspacePath);
 
-      if (!isCurrentWorkspace && !isRegisteredWorktree) {
+      if (!isCurrentWorkspace && !isRegisteredWorktree && !isWorkspaceRepo) {
         return;
       }
 
+      // Refresh against the workspace, not the repo: the workspace-scoped
+      // handlers fan out across roots, and the atoms are keyed by workspace.
+      // `isWorkspaceRepo` is only true when currentWorkspacePath is set.
+      const refreshPath = (isWorkspaceRepo ? currentWorkspacePath : data.workspacePath) as string;
+
       // Debounce per workspace path to coalesce rapid-fire events during startup
-      const existingTimer = gitStatusDebounceTimers.get(data.workspacePath);
+      const existingTimer = gitStatusDebounceTimers.get(refreshPath);
       if (existingTimer) clearTimeout(existingTimer);
 
-      gitStatusDebounceTimers.set(data.workspacePath, setTimeout(async () => {
-        gitStatusDebounceTimers.delete(data.workspacePath);
+      gitStatusDebounceTimers.set(refreshPath, setTimeout(async () => {
+        gitStatusDebounceTimers.delete(refreshPath);
 
         try {
           // 1. Refresh all uncommitted files for the workspace/worktree
           const uncommittedResult = await window.electronAPI.invoke(
             'git:get-uncommitted-files',
-            data.workspacePath
+            refreshPath
           );
           if (uncommittedResult.success && uncommittedResult.files) {
-            store.set(workspaceUncommittedFilesAtom(data.workspacePath), uncommittedResult.files);
+            store.set(workspaceUncommittedFilesAtom(refreshPath), uncommittedResult.files);
           }
 
           // 2. Refresh git status for ALL sessions in this workspace
           const sessionsInWorkspace = Array.from(sessionWorkspaceRegistry.entries())
-            .filter(([, wsPath]) => wsPath === data.workspacePath)
+            .filter(([, wsPath]) => wsPath === refreshPath)
             .map(([sessionId]) => sessionId);
 
           await Promise.all(sessionsInWorkspace.map(sessionId => refreshSessionGitStatus(sessionId)));
 
           // 3. Auto-prune committed files from staging for all sessions
           for (const sessionId of sessionsInWorkspace) {
-            await pruneCommittedFilesFromStaging(sessionId, data.workspacePath);
+            await pruneCommittedFilesFromStaging(sessionId, refreshPath);
           }
 
           // 4. Refresh worktree changed files and git status for worktrees matching this path
           const matchingWorktrees = Array.from(worktreePathRegistry.entries())
-            .filter(([, worktreePath]) => worktreePath === data.workspacePath);
+            .filter(([, worktreePath]) => worktreePath === refreshPath);
 
           await Promise.all(
             matchingWorktrees.flatMap(([worktreeId, worktreePath]) => [

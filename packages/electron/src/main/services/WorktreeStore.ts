@@ -21,6 +21,15 @@ export interface Worktree {
   branch: string;
   baseBranch: string;
   projectPath: string; // Maps to workspace_id in database
+  /**
+   * Root of the workspace this worktree was branched from.
+   *
+   * `projectPath` is the workspace's PRIMARY root and stays the identity
+   * anchor; once a workspace spans several folders that no longer says which
+   * repository the worktree came out of. Defaults to `projectPath`, which is
+   * also what every pre-multi-root row backfills to.
+   */
+  sourceFolderPath?: string;
   createdAt: number;
   updatedAt?: number;
   isPinned?: boolean; // Whether this worktree is pinned to the top of the list
@@ -42,6 +51,7 @@ interface WorktreeRow {
   path: string;
   branch: string;
   base_branch: string;
+  source_folder_path?: string | null;
   created_at: Date | string | number;
   updated_at: Date | string | number;
   is_pinned?: boolean;
@@ -60,6 +70,7 @@ function mapWorktreeRow(row: WorktreeRow): Worktree {
     branch: row.branch,
     baseBranch: row.base_branch,
     projectPath: row.workspace_id,
+    sourceFolderPath: row.source_folder_path ?? row.workspace_id,
     createdAt: toMillis(row.created_at)!,
     updatedAt: toMillis(row.updated_at)!,
     isPinned: row.is_pinned ?? false,
@@ -110,9 +121,9 @@ export function createWorktreeStore(db: PGliteLike, ensureDbReady?: EnsureReadyF
 
       await db.query(
         `INSERT INTO worktrees (
-          id, workspace_id, name, path, branch, base_branch, created_at, updated_at
+          id, workspace_id, name, path, branch, base_branch, source_folder_path, created_at, updated_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8
+          $1, $2, $3, $4, $5, $6, $7, $8, $9
         )`,
         [
           worktree.id,
@@ -121,6 +132,9 @@ export function createWorktreeStore(db: PGliteLike, ensureDbReady?: EnsureReadyF
           worktree.path,
           worktree.branch,
           worktree.baseBranch,
+          // Single-root workspaces branch from the primary root, so this equals
+          // `projectPath` unless the caller named an attached folder.
+          worktree.sourceFolderPath || worktree.projectPath,
           createdAt,
           updatedAt,
         ]

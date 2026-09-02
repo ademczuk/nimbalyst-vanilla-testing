@@ -40,6 +40,7 @@ vi.mock('../../../store', () => {
     }),
     reparentSessionAtom: setter(async () => true),
     refreshSessionListAtom: setter(async () => undefined),
+    markSessionsReadAtom: setter(async () => undefined),
     sessionShareAtom: () => value(null),
     removeSessionShareAtom: setter(),
     shareKeysAtom: value(new Map()),

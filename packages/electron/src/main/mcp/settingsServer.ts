@@ -17,6 +17,10 @@
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 
 import { SettingsControlService } from "../services/SettingsControlService";
+import {
+  buildExtensionInventory,
+  scanInstalledExtensions,
+} from "../services/extensionInventory";
 
 // ─── Tool descriptors ───────────────────────────────────────────────
 
@@ -173,6 +177,22 @@ const TOOLS = [
     },
   },
   {
+    name: "extensions_list",
+    description:
+      "List this install's extensions: which are installed (with enabled state and whether they are built-in) and which further extensions the marketplace registry offers. Use it before recommending an extension so you can tell installed-but-disabled (needs enabling) from not-installed (needs installing). If the registry is unreachable the installed half is still returned and registryAvailable is false. Never installs anything -- surface nimbalyst://install/<extensionId> and let the user decide.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        includeAvailable: {
+          type: "boolean",
+          description:
+            "Include the registry's not-yet-installed extensions. Defaults to true. Pass false when you only need the installed set, which avoids a registry fetch.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: "extension_set_enabled",
     description:
       "Enable or disable an installed extension by ID. Does not install or uninstall -- use the nimbalyst-extension-dev tools for that.",
@@ -315,6 +335,15 @@ export async function dispatchSettingsTool(
             enabled: !!args.enabled,
           }),
         );
+
+      case "extensions_list": {
+        // Read-only: no rate limit, no audit entry, no settings mutation.
+        if (args.includeAvailable === false) {
+          const installed = await scanInstalledExtensions();
+          return respond({ ok: true, installed, available: [], registryAvailable: false });
+        }
+        return respond({ ok: true, ...(await buildExtensionInventory()) });
+      }
 
       case "extension_set_enabled":
         return respond(

@@ -99,8 +99,11 @@ let pendingMarketplaceInstallRequest: PendingMarketplaceInstallRequest | null = 
 /**
  * Fetch registry data from the live Cloudflare Worker.
  * Falls back to mock data if the live registry is unreachable.
+ *
+ * Exported so the `extensions_list` MCP tool shares this one URL, cache, and
+ * fallback rather than opening a second path to the same endpoint.
  */
-async function fetchRegistry(): Promise<RegistryData> {
+export async function fetchRegistry(): Promise<RegistryData> {
   const now = Date.now();
   if (registryCache && (now - registryCacheTimestamp) < REGISTRY_CACHE_TTL_MS) {
     return registryCache;

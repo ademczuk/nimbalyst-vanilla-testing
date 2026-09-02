@@ -6,7 +6,10 @@
  */
 
 import type { PanelHost, PanelAIContext, ExtensionStorage, ExtensionFileStorage, ExtensionDataAccess, ExecOptions, ExecResult } from '@nimbalyst/runtime';
+import { store } from '@nimbalyst/runtime/store';
 import { ExtensionFileStorageImpl } from './ExtensionFileStorageImpl';
+import { workspaceRootPathsAtom } from '../../store/atoms/fileTree';
+import { isPathInWorkspace } from '../../../shared/pathUtils';
 
 // ============================================================================
 // Types
@@ -141,6 +144,24 @@ class PanelHostImpl implements PanelHost {
     return this._theme;
   }
 
+  /**
+   * Every root of the workspace, primary first. Read live from the atom the
+   * explorer already maintains rather than captured at construction, so a
+   * panel open across an attach or detach sees the current set.
+   *
+   * Falls back to the primary root alone before the explorer has published --
+   * a panel that mounts early gets the single-folder answer, never an empty
+   * list it would have to special-case.
+   */
+  getWorkspaceFolders(): string[] {
+    const roots = store.get(workspaceRootPathsAtom);
+    return roots.length > 0 && roots[0] === this.workspacePath ? roots : [this.workspacePath];
+  }
+
+  getPrimaryFolderPath(): string {
+    return this.workspacePath;
+  }
+
   get isSettingsOpen(): boolean {
     return this._isSettingsOpen;
   }
@@ -173,11 +194,17 @@ class PanelHostImpl implements PanelHost {
   }
 
   onWorkspaceEvent(event: string, callback: (data: unknown) => void): () => void {
-    const workspacePath = this.workspacePath;
     const unsub = window.electronAPI.on(event, (data: unknown) => {
-      // Filter to events for this workspace
+      // Filter to events for this workspace. Watchers are registered per repo,
+      // so a repo inside an attached folder names itself rather than the
+      // primary root -- match against every root or those events are dropped
+      // and the panel never refreshes for the attached repo.
       const d = data as Record<string, unknown> | undefined;
-      if (d?.workspacePath && d.workspacePath !== workspacePath) return;
+      const eventPath = d?.workspacePath;
+      if (typeof eventPath === 'string' && eventPath) {
+        const roots = this.getWorkspaceFolders();
+        if (!roots.some((root) => isPathInWorkspace(eventPath, root))) return;
+      }
       callback(data);
     });
     this.eventCleanups.push(unsub);

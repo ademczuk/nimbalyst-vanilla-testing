@@ -7,6 +7,7 @@ import { LoginRequiredWidget } from './LoginRequiredWidget';
 import { OpenAIAuthWidget } from './OpenAIAuthWidget';
 import { CodexAuthRequiredWidget } from './CodexAuthRequiredWidget';
 import { ContextLimitWidget } from './ContextLimitWidget';
+import { classifyContextFailure, isCompactionFailureText } from './contextFailureDetection';
 import { RateLimitWidget } from './RateLimitWidget';
 import { ApiServiceErrorWidget, isApiServiceError } from './ApiServiceErrorWidget';
 import { FullscreenModal } from './FullscreenModal';
@@ -32,7 +33,7 @@ interface MessageSegmentProps {
   /** Optional: Navigate to a session by ID (for @@session reference links) */
   onOpenSession?: (sessionId: string) => void;
   /** Optional: Callback to trigger /compact command */
-  onCompact?: () => void;
+  onCompact?: () => void | Promise<void>;
   /** Optional: Provider name for provider-specific rendering (e.g., 'openai-codex') */
   provider?: string;
   /** Optional: Session's project/worktree folder, used to open the login terminal there. */
@@ -128,19 +129,6 @@ export const MessageSegment: React.FC<MessageSegmentProps> = ({
     );
   };
 
-  // Helper function to check if content indicates context limit exceeded
-  const isContextLimitError = (text: string): boolean => {
-    const lowerText = text.toLowerCase();
-    return (
-      lowerText.includes('prompt is too long') ||
-      lowerText.includes('prompt too long') ||
-      lowerText.includes('context limit') ||
-      lowerText.includes('context window') ||
-      lowerText.includes('exceeds maximum context') ||
-      lowerText.includes('maximum context length')
-    );
-  };
-
   // Helper function to check if content contains a rate limit marker
   const isRateLimitContent = (text: string): boolean => {
     return text.includes('[RATE_LIMIT_WARNING]') || text.includes('[RATE_LIMIT]');
@@ -195,6 +183,22 @@ export const MessageSegment: React.FC<MessageSegmentProps> = ({
     // see isApiServiceError for the signal definition.
     if (!isUser && isApiServiceError(message.text ?? '')) {
       return <ApiServiceErrorWidget content={message.text ?? ''} />;
+    }
+
+    // #1414: a slash command's failure can arrive as an ordinary result string
+    // rather than an error-flagged message, so the compaction-failure surface
+    // has to be reachable from here too. Deliberately narrower than the error
+    // path -- only the CLI's own framing, never a phrase an agent might write.
+    if (!isUser && isCompactionFailureText(message.text ?? '')) {
+      return (
+        <ContextLimitWidget
+          sessionId={sessionId}
+          isLastMessage={isLastMessage}
+          variant="compaction-failed"
+          detail={message.text ?? ''}
+          onCompact={onCompact}
+        />
+      );
     }
 
     // Check if this is an OpenAI auth error in the message content
@@ -376,9 +380,19 @@ export const MessageSegment: React.FC<MessageSegmentProps> = ({
       return null;
     }
 
-    // Check if this is a context limit error
-    if (isContextLimitError(errorMessage)) {
-      return <ContextLimitWidget sessionId={sessionId} isLastMessage={isLastMessage} onCompact={onCompact} />;
+    // Check if this is a context limit error, or a compaction attempt that
+    // failed -- the widget offers a different action for each (#1414).
+    const contextFailure = classifyContextFailure(errorMessage);
+    if (contextFailure) {
+      return (
+        <ContextLimitWidget
+          sessionId={sessionId}
+          isLastMessage={isLastMessage}
+          variant={contextFailure}
+          detail={errorMessage}
+          onCompact={onCompact}
+        />
+      );
     }
 
     // Check if this is a rate limit event

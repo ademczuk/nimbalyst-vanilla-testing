@@ -1,7 +1,12 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DocumentModel } from '../DocumentModel';
-import type { DocumentBackingStore, ExternalChangeCallback, DiffState } from '../types';
+import type {
+  DocumentBackingStore,
+  DocumentModelEditorHandle,
+  ExternalChangeCallback,
+  DiffState,
+} from '../types';
 
 // -- Mock BackingStore -------------------------------------------------------
 
@@ -704,6 +709,984 @@ describe('DocumentModel', () => {
     it('disposes the backing store', () => {
       model.dispose();
       expect(mockStore.dispose).toHaveBeenCalled();
+    });
+  });
+});
+
+// -- NIM-5359: ordered, recoverable, single-path diff lifecycle ---------------
+//
+// An agent writing to a file that is already in diff mode is the common case:
+// it edits a plan five times in a turn while the user has the diff open. The
+// tests below describe the contract that makes that safe. They are written
+// against a harness that can stall a tag/baseline lookup mid-flight, hand out
+// several attachments, and fail either half of a resolution -- the four things
+// the real system does routinely and the state machine currently assumes away.
+
+interface Deferred {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (err: unknown) => void;
+}
+
+function createDeferred(): Deferred {
+  let resolve!: () => void;
+  let reject!: (err: unknown) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res as () => void;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+interface LifecycleHarness {
+  model: DocumentModel;
+  /**
+   * Deliver a disk-change event the way the file watcher does: fire and forget.
+   * `sequence` mirrors `DiskBackedStore`, which stamps every signal from its own
+   * counter starting at 1 -- pass it when the test cares about the model's
+   * ordering watermark rather than just content.
+   */
+  emit(content: string, opts?: { checkPendingTags?: boolean; sequence?: number }): void;
+  /** Hold the Nth (0-based) pending-tag lookup open until the returned gate is released. */
+  gateTagLookup(callIndex: number): Deferred;
+  /** Hold the Nth (0-based) diff-baseline lookup open. */
+  gateBaselineLookup(callIndex: number): Deferred;
+  failNextSave(err: unknown): void;
+  failNextTagUpdate(err: unknown): void;
+  failNextLoad(err: unknown): void;
+  /** Switch which tag the pending-tag lookup reports from here on. */
+  setTag(tag: { id: string; sessionId: string; createdAt?: string }): void;
+  /** Contents written to the backing store, in order. */
+  saved: string[];
+  /** Conflict baselines the model handed the store for each write. */
+  saveBaselines: (string | undefined)[];
+  tagUpdates: Array<{ tagId: string; status: string }>;
+  /** Errors the model let escape its own callback, as an unhandled rejection would. */
+  escapedErrors: unknown[];
+  loadCalls(): number;
+  disk(): string;
+  attachPresenter(): { handle: DocumentModelEditorHandle; diffCb: ReturnType<typeof vi.fn> };
+  dispose(): void;
+}
+
+function createLifecycleHarness(init: {
+  baseline?: string;
+  /** What disk already holds. Defaults to the baseline (no pending agent write). */
+  diskContent?: string;
+  /**
+   * What the model is seeded with, mimicking TabEditor's synchronous
+   * `setLastPersistedContent(initialContent)`. `null` leaves the model
+   * un-seeded, which is the state hydration has to work from.
+   */
+  seedPersistedContent?: string | null;
+  tag?: { id: string; sessionId: string; createdAt?: string };
+  watchdogMs?: number;
+} = {}): LifecycleHarness {
+  const baseline = init.baseline ?? 'C0';
+  let tag = init.tag ?? { id: 'tag-1', sessionId: 'sess-1', createdAt: '2026-09-01T00:00:00Z' };
+
+  let disk = init.diskContent ?? baseline;
+  let loadCalls = 0;
+  let tagLookupCalls = 0;
+  let baselineLookupCalls = 0;
+  let nextSaveError: unknown = null;
+  let nextTagUpdateError: unknown = null;
+  let nextLoadError: unknown = null;
+
+  const saved: string[] = [];
+  const saveBaselines: (string | undefined)[] = [];
+  const tagUpdates: Array<{ tagId: string; status: string }> = [];
+  const escapedErrors: unknown[] = [];
+  const changeCallbacks = new Set<ExternalChangeCallback>();
+  const tagGates = new Map<number, Deferred>();
+  const baselineGates = new Map<number, Deferred>();
+
+  const store: DocumentBackingStore = {
+    load: async () => {
+      loadCalls++;
+      if (nextLoadError) {
+        const err = nextLoadError;
+        nextLoadError = null;
+        throw err;
+      }
+      return disk;
+    },
+    save: async (content, expectedDiskContent) => {
+      if (nextSaveError) {
+        const err = nextSaveError;
+        nextSaveError = null;
+        throw err;
+      }
+      saved.push(content as string);
+      saveBaselines.push(expectedDiskContent);
+      disk = content as string;
+    },
+    onExternalChange: (cb) => {
+      changeCallbacks.add(cb);
+      return () => {
+        changeCallbacks.delete(cb);
+      };
+    },
+    dispose: () => {},
+  };
+
+  const model = new DocumentModel('/test/lifecycle.md', store, {
+    autosaveInterval: 0,
+    diffApplyWatchdogMs: init.watchdogMs ?? 1000,
+    getPendingTags: async () => {
+      const gate = tagGates.get(tagLookupCalls++);
+      if (gate) await gate.promise;
+      return [tag];
+    },
+    getDiffBaseline: async () => {
+      const gate = baselineGates.get(baselineLookupCalls++);
+      if (gate) await gate.promise;
+      return { content: baseline };
+    },
+    updateTagStatus: async (_filePath, tagId, status) => {
+      if (nextTagUpdateError) {
+        const err = nextTagUpdateError;
+        nextTagUpdateError = null;
+        throw err;
+      }
+      tagUpdates.push({ tagId, status });
+    },
+  });
+
+  // What TabEditor does today: seed the model from the bytes it already loaded.
+  if (init.seedPersistedContent !== null) {
+    model.setLastPersistedContent(init.seedPersistedContent ?? baseline);
+  }
+
+  return {
+    model,
+    emit(content, opts) {
+      disk = content;
+      for (const cb of changeCallbacks) {
+        let result: unknown;
+        try {
+          result = cb({
+            content,
+            timestamp: Date.now(),
+            checkPendingTags: opts?.checkPendingTags,
+            sequence: opts?.sequence,
+          });
+        } catch (err) {
+          escapedErrors.push(err);
+          continue;
+        }
+        // DiskBackedStore invokes the model callback without awaiting it, so an
+        // async failure inside the model escapes as an unhandled rejection.
+        if (result instanceof Promise) {
+          result.catch((err) => escapedErrors.push(err));
+        }
+      }
+    },
+    gateTagLookup(callIndex) {
+      const gate = createDeferred();
+      tagGates.set(callIndex, gate);
+      return gate;
+    },
+    gateBaselineLookup(callIndex) {
+      const gate = createDeferred();
+      baselineGates.set(callIndex, gate);
+      return gate;
+    },
+    failNextSave(err) {
+      nextSaveError = err;
+    },
+    failNextTagUpdate(err) {
+      nextTagUpdateError = err;
+    },
+    failNextLoad(err) {
+      nextLoadError = err;
+    },
+    setTag(next) {
+      tag = next;
+    },
+    saved,
+    saveBaselines,
+    tagUpdates,
+    escapedErrors,
+    loadCalls: () => loadCalls,
+    disk: () => disk,
+    attachPresenter() {
+      const handle = model.attach();
+      const diffCb = vi.fn();
+      handle.onDiffRequested(diffCb);
+      return { handle, diffCb };
+    },
+    dispose() {
+      model.dispose();
+    },
+  };
+}
+
+/** Let queued microtasks and any 0/1ms timers run. */
+async function settle(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(1);
+}
+
+function contentsOf(cb: ReturnType<typeof vi.fn>): string[] {
+  return cb.mock.calls.map((call) => (call[0] as DiffState).newContent);
+}
+
+function generationOf(cb: ReturnType<typeof vi.fn>, index: number): number {
+  return (cb.mock.calls[index][0] as DiffState).generation;
+}
+
+function lastGeneration(cb: ReturnType<typeof vi.fn>): number {
+  return generationOf(cb, cb.mock.calls.length - 1);
+}
+
+describe('DocumentModel diff lifecycle (NIM-5359)', () => {
+  let harness: LifecycleHarness;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    harness?.dispose();
+    vi.useRealTimers();
+  });
+
+  // -- 1b. Reordered external changes (defect E) -----------------------------
+
+  describe('ordering of external changes', () => {
+    /**
+     * Every watcher event starts its own un-awaited async handler, and the
+     * handler awaits a tag lookup and a baseline lookup before it touches the
+     * session. If C1's lookup stalls while C2's returns, C2 enters the session
+     * first and C1 arrives afterwards holding older bytes -- which the queue
+     * happily accepts as "the newest payload". The next drain then moves the
+     * visible diff backwards onto content disk no longer has.
+     */
+    it('never lets a stalled older change replace or queue behind a newer one', async () => {
+      harness = createLifecycleHarness();
+      const gate = harness.gateTagLookup(0);
+      const { diffCb } = harness.attachPresenter();
+
+      harness.emit('C1');
+      await settle();
+      expect(diffCb).not.toHaveBeenCalled();
+
+      harness.emit('C2');
+      await settle();
+      expect(contentsOf(diffCb)).toEqual(['C2']);
+
+      gate.resolve();
+      await settle();
+
+      expect(contentsOf(diffCb)).toEqual(['C2']);
+      const snapshot = harness.model.getDiffSessionSnapshot()!;
+      expect(snapshot.appliedContent).toBe('C2');
+      // C1 is older than what the session already presents. Queuing it means the
+      // next drain shows the user content that is not on disk.
+      expect(snapshot.pendingContent).toBeNull();
+    });
+
+    /**
+     * The same reordering through the other awaited lookup: baseline resolution
+     * is a second, independent stall point.
+     */
+    it('orders changes even when the baseline lookup is the slow half', async () => {
+      harness = createLifecycleHarness();
+      const gate = harness.gateBaselineLookup(0);
+      const { diffCb } = harness.attachPresenter();
+
+      harness.emit('C1');
+      await settle();
+      harness.emit('C2');
+      await settle();
+      gate.resolve();
+      await settle();
+
+      expect(contentsOf(diffCb)).toEqual(['C2']);
+      expect(harness.model.getDiffSessionSnapshot()!.appliedContent).toBe('C2');
+      expect(harness.model.getDiffSessionSnapshot()!.pendingContent).toBeNull();
+    });
+
+    /**
+     * A serial executor built as `previous.then(next)` stops forever the first
+     * time an operation rejects. A failed tag lookup is an ordinary transient
+     * (the history DB is busy), so the queue must survive it -- and the failure
+     * must be contained by the model rather than escaping the un-awaited
+     * callback as an unhandled rejection.
+     */
+    it('keeps processing later events after one operation rejects', async () => {
+      harness = createLifecycleHarness();
+      harness.gateTagLookup(0).reject(new Error('history db busy'));
+      const { handle, diffCb } = harness.attachPresenter();
+
+      harness.emit('C1');
+      await settle();
+      expect(diffCb).not.toHaveBeenCalled();
+      expect(harness.escapedErrors).toEqual([]);
+
+      harness.emit('C2');
+      await settle();
+      expect(contentsOf(diffCb)).toEqual(['C2']);
+
+      // A rejection from *inside* a queued operation. The lookup failure above
+      // rejects before anything reaches the queue, so on its own it would pass
+      // against a queue that wedges on the first rejected task; the resolution
+      // write is a task that genuinely runs there and can be refused.
+      handle.completeDiffApply({ generation: lastGeneration(diffCb), outcome: 'applied' });
+      await settle();
+      harness.failNextSave(new Error('conflict: disk changed'));
+      await expect(handle.resolveDiff(true)).rejects.toThrow();
+      await settle();
+
+      // The refused write recovered the current disk bytes under a new
+      // generation; acknowledge it, then prove the queue still moves.
+      handle.completeDiffApply({ generation: lastGeneration(diffCb), outcome: 'applied' });
+      await settle();
+      harness.emit('C3');
+      await settle();
+      expect(contentsOf(diffCb).at(-1)).toBe('C3');
+    });
+
+    /**
+     * A baseline lookup that *fails* is not the same fact as "no baseline
+     * recorded". Substituting the editor's own bytes builds a session whose old
+     * side is the agent's write: the user sees C1->C2 instead of C0->C2, and
+     * rejecting restores C1 -- the agent's edit -- rather than the pre-edit
+     * content. Nothing ever asks again, so the wrong baseline is permanent
+     * (NIM-5359, defect I).
+     */
+    it('never manufactures a diff baseline from editor state when the lookup fails', async () => {
+      harness = createLifecycleHarness({
+        baseline: 'C0',
+        diskContent: 'C1',
+        // What a reopened tab seeds the model with: the agent's content.
+        seedPersistedContent: 'C1',
+      });
+      harness.gateBaselineLookup(0).reject(new Error('history db busy'));
+      const { diffCb } = harness.attachPresenter();
+
+      harness.emit('C2');
+      await settle();
+      expect(diffCb).not.toHaveBeenCalled();
+      expect(harness.escapedErrors).toEqual([]);
+
+      // The bounded retry re-reads disk rather than replaying the stale payload.
+      await vi.advanceTimersByTimeAsync(600);
+      expect(contentsOf(diffCb)).toEqual(['C2']);
+      expect((diffCb.mock.calls[0][0] as DiffState).oldContent).toBe('C0');
+      expect(harness.model.getDiffSessionSnapshot()!.baselineContent).toBe('C0');
+    });
+  });
+
+  // -- 1c. Generation-scoped acknowledgement (defect F) ----------------------
+
+  describe('generation-scoped apply completion', () => {
+    /**
+     * One DocumentModel is shared by Files mode, Agent mode and hidden editors.
+     * With A and B both presenting C1, A finishing first must not settle the
+     * generation on B's behalf: B is still mid-replay, and draining now starts
+     * C2 on top of a render that has not finished.
+     */
+    it('holds a generation until every recipient has completed it', async () => {
+      harness = createLifecycleHarness();
+      const a = harness.attachPresenter();
+      const b = harness.attachPresenter();
+
+      harness.emit('C1');
+      await settle();
+      expect(contentsOf(a.diffCb)).toEqual(['C1']);
+      expect(contentsOf(b.diffCb)).toEqual(['C1']);
+      const g1 = lastGeneration(a.diffCb);
+      expect(lastGeneration(b.diffCb)).toBe(g1);
+
+      harness.emit('C2');
+      await settle();
+      expect(contentsOf(a.diffCb)).toEqual(['C1']);
+
+      a.handle.completeDiffApply({ generation: g1, outcome: 'applied' });
+      await settle();
+
+      // B still owes an outcome for C1, so C2 stays queued.
+      expect(contentsOf(a.diffCb)).toEqual(['C1']);
+      expect(contentsOf(b.diffCb)).toEqual(['C1']);
+      expect(harness.model.getPendingDiffRecipients()).toContain(b.handle.id);
+
+      b.handle.completeDiffApply({ generation: g1, outcome: 'applied' });
+      await settle();
+
+      expect(contentsOf(a.diffCb)).toEqual(['C1', 'C2']);
+      expect(contentsOf(b.diffCb)).toEqual(['C1', 'C2']);
+    });
+
+    /**
+     * The parameterless acknowledgement carries no identity, so a late
+     * completion for C1 lands on whatever the model currently has in flight.
+     * That is how C3 gets published on top of a C2 render nobody finished.
+     */
+    it('ignores a completion that names a superseded generation', async () => {
+      harness = createLifecycleHarness();
+      const a = harness.attachPresenter();
+      const b = harness.attachPresenter();
+
+      harness.emit('C1');
+      await settle();
+      const g1 = lastGeneration(a.diffCb);
+      a.handle.completeDiffApply({ generation: g1, outcome: 'applied' });
+      b.handle.completeDiffApply({ generation: g1, outcome: 'applied' });
+      await settle();
+
+      harness.emit('C2');
+      await settle();
+      expect(contentsOf(a.diffCb)).toEqual(['C1', 'C2']);
+
+      harness.emit('C3');
+      await settle();
+
+      // B's duplicate, late acknowledgement of C1 arrives while C2 is still
+      // rendering. It must not settle C2 and release C3.
+      b.handle.completeDiffApply({ generation: g1, outcome: 'applied' });
+      await settle();
+
+      expect(contentsOf(a.diffCb)).toEqual(['C1', 'C2']);
+      expect(contentsOf(b.diffCb)).toEqual(['C1', 'C2']);
+    });
+  });
+
+  // -- 1d. Missing and failed acknowledgements (defect G) --------------------
+
+  describe('failed, detached and missing apply completions', () => {
+    /**
+     * `applyDiffState` catches its own errors and acknowledges success in
+     * `finally`. A failed apply that reports success advances the model past a
+     * generation no editor is showing; the honest outcome is to recover it by
+     * re-reading disk and re-publishing, with the tag still pending.
+     */
+    it('recovers a failed apply from disk instead of marking it applied', async () => {
+      harness = createLifecycleHarness();
+      const a = harness.attachPresenter();
+
+      harness.emit('C1');
+      await settle();
+      const g1 = lastGeneration(a.diffCb);
+
+      a.handle.completeDiffApply({ generation: g1, outcome: 'failed' });
+      await settle();
+
+      expect(harness.loadCalls()).toBeGreaterThan(0);
+      expect(harness.tagUpdates).toEqual([]);
+      expect(contentsOf(a.diffCb)).toEqual(['C1', 'C1']);
+      expect(lastGeneration(a.diffCb)).toBeGreaterThan(g1);
+    });
+
+    /**
+     * A detached attachment stops being a recipient; its handle must not be able
+     * to acknowledge anything, least of all a generation published after it left.
+     */
+    it('does not let a detached attachment acknowledge a later generation', async () => {
+      harness = createLifecycleHarness();
+      const a = harness.attachPresenter();
+      const b = harness.attachPresenter();
+
+      harness.emit('C1');
+      await settle();
+      const g1 = lastGeneration(a.diffCb);
+
+      b.handle.detach();
+      a.handle.completeDiffApply({ generation: g1, outcome: 'applied' });
+      await settle();
+
+      harness.emit('C2');
+      await settle();
+      expect(contentsOf(a.diffCb)).toEqual(['C1', 'C2']);
+
+      harness.emit('C3');
+      await settle();
+
+      b.handle.completeDiffApply({ generation: g1, outcome: 'applied' });
+      await settle();
+
+      expect(contentsOf(a.diffCb)).toEqual(['C1', 'C2']);
+    });
+
+    /**
+     * Entering source mode unsubscribes the diff callback without detaching the
+     * attachment -- the tab is still there, it just cannot present. Only
+     * `detach` used to release the generation, so the model went on waiting for
+     * an outcome from an editor showing raw text, and every queued agent write
+     * sat behind it until the watchdog fired (NIM-5359 Phase 6).
+     */
+    it('releases the generation when a presenter unsubscribes without detaching', async () => {
+      harness = createLifecycleHarness({ watchdogMs: 0 });
+      const a = harness.attachPresenter();
+      const bHandle = harness.model.attach();
+      const bDiffCb = vi.fn();
+      const unsubscribeB = bHandle.onDiffRequested(bDiffCb);
+
+      harness.emit('C1');
+      await settle();
+      const g1 = lastGeneration(a.diffCb);
+      expect(contentsOf(bDiffCb)).toEqual(['C1']);
+
+      harness.emit('C2');
+      await settle();
+
+      unsubscribeB();
+      a.handle.completeDiffApply({ generation: g1, outcome: 'applied' });
+      await settle();
+
+      // C2 drained to the one presenter left; the unsubscribed attachment is
+      // neither waited on nor delivered to.
+      expect(contentsOf(a.diffCb)).toEqual(['C1', 'C2']);
+      expect(contentsOf(bDiffCb)).toEqual(['C1']);
+      expect(harness.model.getPendingDiffRecipients()).not.toContain(bHandle.id);
+    });
+
+    /**
+     * A presenter that unmounts, hangs, or silently skips leaves the session in
+     * `applying` forever -- every subsequent agent write queues and the queue
+     * never drains. The watchdog is failure recovery, not ordering: it re-reads
+     * disk, keeps the tag pending, and re-publishes the latest content.
+     */
+    it('recovers a generation nobody ever acknowledges', async () => {
+      harness = createLifecycleHarness({ watchdogMs: 1000 });
+      const a = harness.attachPresenter();
+
+      harness.emit('C1');
+      await settle();
+      expect(contentsOf(a.diffCb)).toEqual(['C1']);
+
+      harness.emit('C2');
+      await vi.advanceTimersByTimeAsync(2000);
+
+      expect(harness.loadCalls()).toBeGreaterThan(0);
+      expect(harness.tagUpdates).toEqual([]);
+      expect(contentsOf(a.diffCb).at(-1)).toBe('C2');
+    });
+
+    /**
+     * The recovery budget bounds how many times the model re-reads disk for a
+     * presenter that never acknowledges anything. Spending the last one on a
+     * generation it then declines to watch is the worst of both: the session sits
+     * in `applying` with a recipient that owes an outcome forever, so every later
+     * write queues behind it and no decision can ever be written. When the budget
+     * is gone the generation has to park (NIM-5359, finding 6).
+     */
+    it('parks rather than publishing a generation it will not watch', async () => {
+      harness = createLifecycleHarness({ watchdogMs: 1000 });
+      // A presenter that receives every generation and acknowledges none.
+      harness.attachPresenter();
+
+      harness.emit('C1');
+      await settle();
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(harness.model.getDiffSessionSnapshot()!.phase).toBe('awaiting-presenter');
+      expect(harness.model.getPendingDiffRecipients()).toEqual([]);
+      // The edit is still unreviewed -- parking is not resolution.
+      expect(harness.tagUpdates).toEqual([]);
+    });
+
+    /**
+     * Recovery re-reads disk, and that read can fail. Returning from there left
+     * the session parked but any decision waiting on the dead generation unsettled
+     * forever -- the user's click on Approve simply never returns.
+     */
+    it('settles a parked decision when the recovery read fails', async () => {
+      harness = createLifecycleHarness({ watchdogMs: 1000 });
+      const a = harness.attachPresenter();
+
+      harness.emit('C1');
+      await settle();
+      a.handle.completeDiffApply({ generation: lastGeneration(a.diffCb), outcome: 'applied' });
+      await settle();
+
+      // A newer generation nobody acknowledges, with a third write queued behind
+      // it -- content the user has not seen, so the decision parks rather than
+      // superseding the presentation.
+      harness.emit('C2');
+      await settle();
+      harness.emit('C3');
+      await settle();
+      let settled: 'pending' | 'resolved' | 'rejected' = 'pending';
+      const decision = a.handle.resolveDiff(true).then(
+        () => { settled = 'resolved'; },
+        () => { settled = 'rejected'; },
+      );
+      await settle();
+      expect(settled).toBe('pending');
+
+      harness.failNextLoad(new Error('EIO'));
+      await vi.advanceTimersByTimeAsync(2000);
+      await decision;
+
+      expect(settled).not.toBe('pending');
+    });
+
+    /**
+     * With no capable presenter (source mode, a custom editor whose diff
+     * callback has not registered), a generation has nobody to acknowledge it.
+     * It must absorb newer disk content as its target rather than build a queue
+     * that can only drain through an acknowledgement that will never come -- and
+     * the presenter that shows up later gets the latest content, not the first.
+     */
+    it('absorbs newer content while awaiting a presenter and replays the latest to a late one', async () => {
+      harness = createLifecycleHarness();
+      // Attached, but never subscribes to diff requests -- not a presenter.
+      harness.model.attach();
+
+      harness.emit('C1');
+      await settle();
+      harness.emit('C2');
+      await settle();
+
+      const snapshot = harness.model.getDiffSessionSnapshot()!;
+      expect(snapshot.phase).toBe('awaiting-presenter');
+      expect(snapshot.appliedContent).toBe('C2');
+      expect(snapshot.pendingContent).toBeNull();
+
+      const late = harness.attachPresenter();
+      expect(contentsOf(late.diffCb)).toEqual(['C2']);
+    });
+  });
+
+  // -- 1e. Hydration from production bytes (defect H) ------------------------
+
+  describe('ensureInitialized', () => {
+    /**
+     * Reopening a file whose agent write is still under review. The editor has
+     * already read disk, so hydration must work from those bytes rather than
+     * issuing its own load -- and it must reach the ordinary diff subscription,
+     * because that subscription is about to become the only presentation path.
+     */
+    it('hydrates a pending diff from the bytes the editor loaded, with no second disk read', async () => {
+      harness = createLifecycleHarness({
+        baseline: 'C0',
+        diskContent: 'C1',
+        seedPersistedContent: null,
+      });
+      const { diffCb } = harness.attachPresenter();
+
+      await harness.model.ensureInitialized('C1');
+      await settle();
+
+      expect(contentsOf(diffCb)).toEqual(['C1']);
+      expect((diffCb.mock.calls[0][0] as DiffState).oldContent).toBe('C0');
+      expect(harness.loadCalls()).toBe(0);
+    });
+
+    /**
+     * A tag lookup that fails is not the same fact as "this file has no pending
+     * tags", and memoizing the two together leaves the tab permanently
+     * un-hydrated over an unreviewed agent write.
+     */
+    it('stays retryable when the first tag lookup fails', async () => {
+      harness = createLifecycleHarness({
+        baseline: 'C0',
+        diskContent: 'C1',
+        seedPersistedContent: null,
+      });
+      const { diffCb } = harness.attachPresenter();
+      harness.gateTagLookup(0).reject(new Error('history db busy'));
+
+      await harness.model.ensureInitialized('C1').catch(() => {});
+      await settle();
+      expect(diffCb).not.toHaveBeenCalled();
+
+      await harness.model.ensureInitialized('C1');
+      await settle();
+      expect(contentsOf(diffCb)).toEqual(['C1']);
+    });
+
+    /**
+     * Reopening a file under review and then letting the agent write again --
+     * the everyday case this whole plan is about.
+     *
+     * `DiskBackedStore` stamps each watcher signal from its own counter starting
+     * at 1, so hydration must not spend a number out of that same space: doing so
+     * made the model's ordering watermark treat the very next real write as an
+     * observation it had already committed, and the agent's edit never reached
+     * any editor. Only a second write got through.
+     */
+    it('delivers the first watcher event after hydration created the session', async () => {
+      harness = createLifecycleHarness({
+        baseline: 'C0',
+        diskContent: 'C1',
+        seedPersistedContent: null,
+      });
+      const { handle, diffCb } = harness.attachPresenter();
+
+      await harness.model.ensureInitialized('C1');
+      await settle();
+      expect(contentsOf(diffCb)).toEqual(['C1']);
+      handle.completeDiffApply({ generation: lastGeneration(diffCb), outcome: 'applied' });
+      await settle();
+
+      // The agent's next write, carrying the store's first signal sequence.
+      harness.emit('C2', { sequence: 1 });
+      await settle();
+
+      expect(contentsOf(diffCb)).toEqual(['C1', 'C2']);
+      expect(harness.model.getDiffState()?.newContent).toBe('C2');
+    });
+  });
+
+  // -- 1f. Resolution as a two-store transaction (defects C and I) -----------
+
+  describe('diff resolution', () => {
+    async function reachAppliedState(h: LifecycleHarness) {
+      const a = h.attachPresenter();
+      h.emit('C1');
+      await settle();
+      a.handle.completeDiffApply({ generation: lastGeneration(a.diffCb), outcome: 'applied' });
+      await settle();
+      return a;
+    }
+
+    /**
+     * The tag is marked reviewed before the write is attempted, so a refused
+     * write leaves a reviewed tag over un-accepted content: the diff is gone
+     * from every future lookup and the model is wedged mid-resolution.
+     */
+    it('leaves the tag pending and stays recoverable when the write fails', async () => {
+      harness = createLifecycleHarness();
+      const a = await reachAppliedState(harness);
+
+      harness.failNextSave(new Error('conflict: disk changed'));
+      await expect(a.handle.resolveDiff(true)).rejects.toThrow();
+
+      expect(harness.tagUpdates).toEqual([]);
+      expect(harness.model.getResolutionSnapshot()).toMatchObject({
+        decision: 'accept',
+        diskCommitted: false,
+        tagCommitted: false,
+      });
+      // Recovery re-reads disk and puts the current bytes back through the model.
+      expect(harness.loadCalls()).toBeGreaterThan(0);
+      expect(harness.model.getDiffSessionSnapshot()?.phase).not.toBe('resolving-all');
+    });
+
+    /**
+     * The write is the irreversible half, so it goes first. When the tag update
+     * then fails, the bytes are on disk and only the idempotent tag retry is
+     * outstanding -- the session may not be torn down and saves stay blocked
+     * until it lands.
+     */
+    it('retains the committed disk half when the tag update fails after an accept', async () => {
+      harness = createLifecycleHarness();
+      const a = await reachAppliedState(harness);
+
+      harness.failNextTagUpdate(new Error('history db down'));
+      await a.handle.resolveDiff(true).catch(() => {});
+
+      expect(harness.saved).toEqual(['C1']);
+      expect(harness.model.getResolutionSnapshot()).toMatchObject({
+        decision: 'accept',
+        diskCommitted: true,
+        tagCommitted: false,
+      });
+      expect(harness.model.getDiffState()).not.toBeNull();
+    });
+
+    it('retains the committed disk half when the tag update fails after a reject', async () => {
+      harness = createLifecycleHarness();
+      const a = await reachAppliedState(harness);
+
+      harness.failNextTagUpdate(new Error('history db down'));
+      await a.handle.resolveDiff(false).catch(() => {});
+
+      expect(harness.saved).toEqual(['C0']);
+      expect(harness.model.getResolutionSnapshot()).toMatchObject({
+        decision: 'reject',
+        diskCommitted: true,
+        tagCommitted: false,
+      });
+    });
+
+    /**
+     * Two attachments show the same approval bar. Clicking Approve in both (or
+     * one twice) must produce one decision, not two writes.
+     */
+    it('joins concurrent callers that ask for the same decision', async () => {
+      harness = createLifecycleHarness();
+      const a = await reachAppliedState(harness);
+      const b = harness.attachPresenter();
+
+      await Promise.allSettled([a.handle.resolveDiff(true), b.handle.resolveDiff(true)]);
+
+      expect(harness.saved).toEqual(['C1']);
+      expect(harness.tagUpdates.filter((u) => u.status === 'reviewed')).toHaveLength(1);
+    });
+
+    /**
+     * Approve in Files mode, Reject in Agent mode. The loser must be refused
+     * without writing -- today the second write simply lands last, so a reject
+     * that arrives a millisecond late silently reverts an accepted change.
+     */
+    it('refuses an opposite decision while one is in flight, without writing', async () => {
+      harness = createLifecycleHarness();
+      const a = await reachAppliedState(harness);
+      const b = harness.attachPresenter();
+
+      const results = await Promise.allSettled([
+        a.handle.resolveDiff(true),
+        b.handle.resolveDiff(false),
+      ]);
+
+      expect(harness.saved).toEqual(['C1']);
+      expect(harness.disk()).toBe('C1');
+      expect(results[1].status).toBe('rejected');
+    });
+
+    /**
+     * Resolving against a generation that is still being applied writes the
+     * content the model last drained, not what disk holds. With C3 already on
+     * disk, that write silently drops it.
+     */
+    it('waits for in-flight and queued generations before writing a decision', async () => {
+      harness = createLifecycleHarness();
+      const a = await reachAppliedState(harness);
+
+      harness.emit('C2');
+      await settle();
+      harness.emit('C3');
+      await settle();
+
+      const resolution = a.handle.resolveDiff(true);
+      await settle();
+      expect(harness.saved).toEqual([]);
+
+      a.handle.completeDiffApply({ generation: lastGeneration(a.diffCb), outcome: 'applied' });
+      await settle();
+      a.handle.completeDiffApply({ generation: lastGeneration(a.diffCb), outcome: 'applied' });
+      await settle();
+      await resolution.catch(() => {});
+
+      expect(harness.saved).toEqual(['C3']);
+      expect(harness.saveBaselines).toEqual(['C3']);
+    });
+
+    /**
+     * A Lexical accept-all does not write "the session's applied content" -- the
+     * user may have kept some groups and dropped others, so the editor serializes
+     * its buffer and hands those bytes over. The editor used to write them itself
+     * and mark the tag reviewed in two separate steps, which reads the conflict
+     * baseline outside the model's serial queue. Through the model both halves are
+     * one ordered transaction (NIM-5359, defect I).
+     */
+    it('writes an editor-serialized buffer as one transaction against the agent content', async () => {
+      harness = createLifecycleHarness();
+      const a = await reachAppliedState(harness);
+
+      await a.handle.resolveDiff(true, {
+        finalContent: 'C1-with-one-group-dropped',
+        generation: harness.model.getCurrentDiffGeneration()!,
+      });
+
+      expect(harness.saved).toEqual(['C1-with-one-group-dropped']);
+      // The honest baseline is what the agent last wrote, not the pre-edit content.
+      expect(harness.saveBaselines).toEqual(['C1']);
+      expect(harness.tagUpdates).toEqual([{ tagId: 'tag-1', status: 'reviewed' }]);
+      expect(harness.model.getDiffState()).toBeNull();
+    });
+
+    /**
+     * The incident shape. The user clicks Approve; between the buffer being
+     * serialized and the write reaching disk, the agent writes C2. The editor's
+     * own write path read `DiffState.newContent` at write time, so it handed the
+     * store C2 as the expected baseline and its C1 buffer sailed through the
+     * conflict check straight over C2. The decision names the generation it was
+     * made against, so the model refuses it instead.
+     */
+    it('refuses a decision whose generation the agent has already superseded', async () => {
+      harness = createLifecycleHarness();
+      const a = await reachAppliedState(harness);
+      const decidedGeneration = harness.model.getCurrentDiffGeneration()!;
+
+      harness.emit('C2');
+      await settle();
+
+      await expect(
+        a.handle.resolveDiff(true, { finalContent: 'C1-approved', generation: decidedGeneration }),
+      ).rejects.toThrow(/generation/i);
+
+      expect(harness.saved).toEqual([]);
+      expect(harness.disk()).toBe('C2');
+      // The review stays open over the content the user has not seen yet.
+      expect(harness.tagUpdates).toEqual([]);
+      expect(harness.model.getDiffState()).not.toBeNull();
+    });
+
+    /**
+     * A serialized buffer must not park either: parking waits for the newer
+     * generation to reach the screen and then writes bytes that predate it.
+     */
+    it('refuses a serialized buffer rather than parking it behind queued content', async () => {
+      harness = createLifecycleHarness();
+      const a = await reachAppliedState(harness);
+
+      harness.emit('C2');
+      await settle();
+      const presented = harness.model.getCurrentDiffGeneration()!;
+      harness.emit('C3');
+      await settle();
+
+      await expect(
+        a.handle.resolveDiff(true, { finalContent: 'C2-approved', generation: presented }),
+      ).rejects.toThrow();
+      expect(harness.saved).toEqual([]);
+    });
+
+    /**
+     * After the write lands and the tag update fails, saves are blocked but typing
+     * is not. The retry used to clear every attachment's dirty flag and replay the
+     * old resolved content over it, destroying edits made while recovery was
+     * pending (NIM-5359, finding 4).
+     */
+    it('preserves a buffer that went dirty while the tag retry was outstanding', async () => {
+      harness = createLifecycleHarness();
+      const a = await reachAppliedState(harness);
+      const sibling = harness.model.attach();
+      const siblingContent = vi.fn();
+      sibling.onFileChanged(siblingContent);
+
+      harness.failNextTagUpdate(new Error('history db down'));
+      await a.handle.resolveDiff(true).catch(() => {});
+      expect(harness.model.isSaveBlockedByPendingResolution()).toBe(true);
+      siblingContent.mockClear();
+
+      // The user types in the other attachment while the retry is outstanding.
+      sibling.setDirty(true);
+
+      await harness.model.retryPendingResolution();
+
+      expect(harness.tagUpdates).toEqual([{ tagId: 'tag-1', status: 'reviewed' }]);
+      expect(siblingContent).not.toHaveBeenCalled();
+      expect(harness.model.isDirty()).toBe(true);
+    });
+
+    /**
+     * The retry used to read the tag id off the live session. A second agent
+     * session writing while the history DB is down replaces that session, so the
+     * retry marked *its* tag reviewed -- ending a review the user never saw, and
+     * leaving the original one pending forever.
+     */
+    it('retries the tag the decision was made against, not whatever the session now holds', async () => {
+      harness = createLifecycleHarness();
+      const a = await reachAppliedState(harness);
+
+      harness.failNextTagUpdate(new Error('history db down'));
+      await a.handle.resolveDiff(true).catch(() => {});
+
+      // A different agent session starts its own edit on the same file.
+      harness.setTag({ id: 'tag-2', sessionId: 'sess-2', createdAt: '2026-09-01T01:00:00Z' });
+      harness.emit('C4');
+      await settle();
+      expect(harness.model.getDiffState()?.tagId).toBe('tag-2');
+
+      await harness.model.retryPendingResolution();
+
+      expect(harness.tagUpdates).toEqual([{ tagId: 'tag-1', status: 'reviewed' }]);
     });
   });
 });

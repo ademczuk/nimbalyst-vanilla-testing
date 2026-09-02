@@ -16,6 +16,13 @@ export interface GitBranchStatusSnapshot {
  */
 export interface GitStatusChangedPayload {
   workspacePath: string;
+  /**
+   * The repository the snapshot describes. In a multi-root workspace this is
+   * NOT necessarily the primary root, so a consumer showing one repo must
+   * check it before applying `status` -- otherwise an attached repo's branch
+   * lands on the primary repo's indicator.
+   */
+  repoPath?: string;
   /** Monotonic per-process. Lets a renderer discard an out-of-order snapshot. */
   revision?: number;
   /** Present when main already computed the status, saving a round-trip. */
@@ -101,7 +108,15 @@ export class GitStatusRefreshCoordinator {
     }
     if (!status) return;
 
-    this.broadcast({ workspacePath, revision: ++this.revision, status });
+    // Every caller asks for a refresh of the path a git command ran in, which
+    // is the repository -- so the two fields carry the same value here and
+    // consumers that route on `repoPath` get an answer they can trust.
+    this.broadcast({
+      workspacePath,
+      repoPath: workspacePath,
+      revision: ++this.revision,
+      status,
+    });
   }
 
   private canonicalize(workspacePath: string): string {

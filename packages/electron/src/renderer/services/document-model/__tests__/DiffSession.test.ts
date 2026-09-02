@@ -110,6 +110,64 @@ describe('DiffSession', () => {
     });
   });
 
+  describe('awaiting a presenter (NIM-5359)', () => {
+    it('absorbs newer content in place instead of queueing behind an unpresented target', () => {
+      const s = DiffSession.create(baseInput);
+      s.markAwaitingPresenter();
+      expect(s.phase).toBe('awaiting-presenter');
+
+      // Queueing here would need an acknowledgement that can never arrive.
+      const result = s.ingest('baseline\nsecond-edit\n');
+      expect(result.kind).toBe('apply');
+      expect(s.phase).toBe('applying');
+      expect(s.appliedContent).toBe('baseline\nsecond-edit\n');
+      expect(s.pendingContent).toBeNull();
+
+      s.markAwaitingPresenter();
+      expect(s.ingest('baseline\nsecond-edit\n').kind).toBe('duplicate');
+    });
+
+    it('republishes a parked target under a fresh generation', () => {
+      const s = DiffSession.create(baseInput);
+      const parked = s.snapshot().generation;
+      s.markAwaitingPresenter();
+
+      s.beginPresenting();
+
+      expect(s.phase).toBe('applying');
+      expect(s.appliedContent).toBe(baseInput.initialContent);
+      // Otherwise an acknowledgement of the parked generation settles this one.
+      expect(s.snapshot().generation).toBeGreaterThan(parked);
+    });
+  });
+
+  describe('failed apply (NIM-5359)', () => {
+    it('parks without advancing the target, and recovery discards the queue', () => {
+      const s = DiffSession.create(baseInput);
+      s.ingest('baseline\nsecond-edit\n'); // queued behind the in-flight apply
+      const failed = s.snapshot().generation;
+
+      s.markApplyFailed();
+      expect(s.phase).toBe('awaiting-presenter');
+      expect(s.appliedContent).toBe(baseInput.initialContent);
+
+      // Disk is by definition newer than anything the queue holds.
+      s.adoptRecoveredTarget('baseline\nwhat-disk-holds\n');
+      expect(s.phase).toBe('applying');
+      expect(s.appliedContent).toBe('baseline\nwhat-disk-holds\n');
+      expect(s.pendingContent).toBeNull();
+      expect(s.snapshot().generation).toBeGreaterThan(failed);
+    });
+
+    it('rejects presentation transitions taken from the wrong phase', () => {
+      const s = DiffSession.create(baseInput);
+      s.markApplied();
+      expect(() => s.markApplyFailed()).toThrow();
+      expect(() => s.markAwaitingPresenter()).toThrow();
+      expect(() => s.beginPresenting()).toThrow();
+    });
+  });
+
   describe('partial resolve', () => {
     it('rotates tag and re-baselines, returning to applied', () => {
       const s = DiffSession.create(baseInput);
@@ -208,7 +266,23 @@ describe('DiffSession', () => {
         appliedContentHash: hashContent('baseline\nai-edit\n'),
         pendingContent: null,
         createdAt: 1234,
+        generation: expect.any(Number),
       });
+    });
+
+    /**
+     * Generations identify which published target a presenter is acknowledging.
+     * Reusing one across applies is what lets a late completion for the previous
+     * content settle the current one (NIM-5359, defect F).
+     */
+    it('advances the generation on every apply', () => {
+      const s = DiffSession.create(baseInput);
+      const first = s.snapshot().generation;
+
+      s.markApplied();
+      s.beginApply('baseline\nsecond-edit\n');
+
+      expect(s.snapshot().generation).toBeGreaterThan(first);
     });
   });
 });

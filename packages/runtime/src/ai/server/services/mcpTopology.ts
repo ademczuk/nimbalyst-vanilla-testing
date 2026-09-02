@@ -131,11 +131,13 @@ export const HOST_TOOLS: readonly string[] = [
   'appearance_set_theme',
   'appearance_set_completion_sound',
   'appearance_set_spellcheck',
+  'appearance_set_spellcheck_languages',
   'ai_set_default_model',
   'ai_set_preferred_language',
   'analytics_set_enabled',
   'features_toggle',
   'extension_set_enabled',
+  'extensions_list',
   'sync_set_for_project',
   'workspace_create',
   // Keeps `workspace_open` (consistent with workspace_create / workspace_set_trust);
@@ -144,6 +146,7 @@ export const HOST_TOOLS: readonly string[] = [
   'workspace_set_trust',
   // Session-context (was nimbalyst-session-context)
   'get_session_summary',
+  'get_session_coaching_signals',
   'get_workstream_overview',
   'get_workstream_edited_files',
   'list_recent_sessions',

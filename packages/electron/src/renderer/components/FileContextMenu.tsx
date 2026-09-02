@@ -22,6 +22,16 @@ interface FileContextMenuProps {
   selectedPaths?: Set<string>;
   /** Extension-contributed file types */
   extensionFileTypes?: ExtensionFileType[];
+  /**
+   * This row is a top-level root of a multi-root workspace. Rename and Delete
+   * are suppressed: the row stands for the workspace's membership of that
+   * folder, and "Delete" on it would read as removing it from the workspace
+   * while actually erasing it from disk.
+   */
+  isWorkspaceRoot?: boolean;
+  /** The primary root cannot be detached -- it is the workspace's identity. */
+  isPrimaryRoot?: boolean;
+  onDetachFolder?: (folderPath: string) => void;
 }
 
 export function FileContextMenu({
@@ -38,7 +48,10 @@ export function FileContextMenu({
   onNewFolder,
   onViewWorkspaceHistory,
   selectedPaths,
-  extensionFileTypes = []
+  extensionFileTypes = [],
+  isWorkspaceRoot = false,
+  isPrimaryRoot = false,
+  onDetachFolder,
 }: FileContextMenuProps) {
   const openHistoryDialog = useSetAtom(historyDialogFileAtom);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -256,23 +269,41 @@ export function FileContextMenu({
           isDirectory={fileType === 'directory'}
         />
 
-        <div className={separatorClasses} />
+        {isWorkspaceRoot ? (
+          !isPrimaryRoot && onDetachFolder && (
+            <>
+              <div className={separatorClasses} />
+              <div
+                className={menuItemClasses}
+                data-testid="context-menu-detach-folder"
+                onClick={() => { onDetachFolder(filePath); onClose(); }}
+              >
+                <MaterialSymbol icon="link_off" size={18} />
+                <span>Detach Folder from Workspace</span>
+              </div>
+            </>
+          )
+        ) : (
+          <>
+            <div className={separatorClasses} />
 
-        <div className={menuItemClasses} onClick={handleRenameClick}>
-          <MaterialSymbol icon="edit" size={18} />
-          <span>Rename</span>
-        </div>
+            <div className={menuItemClasses} onClick={handleRenameClick}>
+              <MaterialSymbol icon="edit" size={18} />
+              <span>Rename</span>
+            </div>
 
-        <div className={separatorClasses} />
+            <div className={separatorClasses} />
 
-        <div
-          className={dangerItemClasses}
-          data-testid="context-menu-delete"
-          onClick={handleDelete}
-        >
-          <MaterialSymbol icon="delete" size={18} />
-          <span>Delete</span>
-        </div>
+            <div
+              className={dangerItemClasses}
+              data-testid="context-menu-delete"
+              onClick={handleDelete}
+            >
+              <MaterialSymbol icon="delete" size={18} />
+              <span>Delete</span>
+            </div>
+          </>
+        )}
       </div>
     </FloatingPortal>
   );

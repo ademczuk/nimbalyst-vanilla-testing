@@ -429,6 +429,7 @@ export interface BrowserEditorGrantedCapabilities {
   binaryContent?: boolean;
   externalLinks?: boolean;
   viewport?: boolean;
+  sourceMode?: boolean;
 }
 
 export declare function createBrowserEditorCapabilities(
@@ -521,6 +522,14 @@ export interface BrowserExtensionEditorHostOptions {
   onEditorAPIChange?(api: unknown | null): void;
   openExternal?(url: string): Promise<void>;
   onViewportRegistered?(viewport: EditorViewport | null): void;
+  /**
+   * Supplying `toggleSourceMode` grants the `sourceMode` capability. All three
+   * move together: a host that can toggle but cannot report the current state
+   * leaves an editor showing a stale toggle label.
+   */
+  toggleSourceMode?(): void;
+  isSourceModeActive?(): boolean;
+  subscribeToSourceModeChanges?(callback: (active: boolean) => void): () => void;
   embedded?: boolean;
   onCapabilityRefused?(error: BrowserEditorCapabilityError): void;
 }
@@ -592,6 +601,14 @@ export interface ExtensionEditorMountOptions {
   onRevisionAdapterChange?(adapter: RevisionSnapshotAdapter | null): void;
   openExternal?(url: string): Promise<void>;
   onViewportRegistered?(viewport: EditorViewport | null): void;
+  /**
+   * Offer this document a raw-source view, granting the `sourceMode`
+   * capability. The mount owns the flag so the extension's
+   * `host.toggleSourceMode()` and the page's own control cannot disagree, and
+   * so a toggle is a React render rather than a remount.
+   */
+  enableSourceMode?: boolean;
+  onSourceModeChange?(active: boolean): void;
   embedded?: boolean;
 }
 
@@ -613,6 +630,10 @@ export interface ExtensionEditorHandle {
   markClean(): void;
   /** Re-publish comment capability to the mounted extension. */
   refreshCommentAccess(): void;
+  /** Whether the raw-source view is showing. False when it was not granted. */
+  isSourceModeActive(): boolean;
+  /** Drive the source view from the page's control. No-op when not granted. */
+  setSourceMode(active: boolean): void;
   destroy(): void;
 }
 

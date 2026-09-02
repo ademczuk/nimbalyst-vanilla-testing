@@ -10,6 +10,7 @@ import {
   groupSessionStatusAtom,
   reparentSessionAtom,
   refreshSessionListAtom,
+  markSessionsReadAtom,
   sessionShareAtom,
   removeSessionShareAtom,
   shareKeysAtom,
@@ -195,6 +196,7 @@ export const WorkstreamGroup: React.FC<WorkstreamGroupProps> = ({
   const [isValidDropTarget, setIsValidDropTarget] = useState(false);
   const reparentSession = useSetAtom(reparentSessionAtom);
   const refreshSessionList = useSetAtom(refreshSessionListAtom);
+  const markSessionsRead = useSetAtom(markSessionsReadAtom);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (type !== 'workstream' || !projectPath) return;
@@ -450,6 +452,14 @@ export const WorkstreamGroup: React.FC<WorkstreamGroupProps> = ({
       onSessionDelete(id);
     }
   }, [type, id, onSessionDelete]);
+
+  const handleWorkstreamMarkAllRead = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowContextMenu(false);
+    if (type !== 'workstream') return;
+    // The workstream row itself is a session too, so clear it alongside its children.
+    markSessionsRead([id, ...sessions.map((s) => s.id)]);
+  }, [type, id, sessions, markSessionsRead]);
 
   const handleWorkstreamCopySessionId = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -863,6 +873,15 @@ export const WorkstreamGroup: React.FC<WorkstreamGroupProps> = ({
             >
               <MaterialSymbol icon="push_pin" size={14} />
               {isPinned ? 'Unpin' : 'Pin'}
+            </button>
+          )}
+          {type === 'workstream' && (
+            <button
+              className="workstream-group-context-menu-item flex items-center gap-2 w-full py-2 px-3 bg-transparent border-none cursor-pointer text-[0.8125rem] text-[var(--nim-text)] text-left rounded transition-colors duration-150 hover:bg-[var(--nim-bg-hover)]"
+              onClick={handleWorkstreamMarkAllRead}
+            >
+              <MaterialSymbol icon="done_all" size={14} />
+              Mark All Read
             </button>
           )}
           {type === 'workstream' && onSessionBranch && (

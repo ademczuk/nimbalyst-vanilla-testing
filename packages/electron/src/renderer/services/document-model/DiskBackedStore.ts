@@ -29,6 +29,13 @@ export class DiskBackedStore implements DocumentBackingStore {
    */
   private recentSaveTimestamps = new Set<number>();
 
+  /**
+   * Order stamp handed to the model with each change. Taken when the watcher
+   * signal arrives, before the asynchronous read below, so two reads that
+   * resolve out of order are still recognisable as older and newer.
+   */
+  private nextSignalSequence = 0;
+
   constructor(filePath: string) {
     this.filePath = filePath;
     this.setupFileWatcher();
@@ -96,9 +103,9 @@ export class DiskBackedStore implements DocumentBackingStore {
    *    bypassed to check for AI edits
    */
   private setupFileWatcher(): void {
-    const emitChange = async (checkPendingTags: boolean) => {
+    const emitChange = async (checkPendingTags: boolean, sequence: number) => {
       const tStart = performance.now();
-      diffTrace('DiskBackedStore.emitChange start', { path: this.filePath, checkPendingTags, t: tStart });
+      diffTrace('DiskBackedStore.emitChange start', { path: this.filePath, checkPendingTags, sequence, t: tStart });
       let content: string;
       try {
         const result = await window.electronAPI.readFileContent(this.filePath);
@@ -121,6 +128,7 @@ export class DiskBackedStore implements DocumentBackingStore {
         content,
         timestamp: Date.now(),
         checkPendingTags,
+        sequence,
       };
 
       for (const cb of this.changeCallbacks) {
@@ -139,11 +147,11 @@ export class DiskBackedStore implements DocumentBackingStore {
 
     const unsubFileChange = store.sub(fileChangeAtom, () => {
       if (store.get(fileChangeAtom) === initialFileChangeVersion) return;
-      void emitChange(false);
+      void emitChange(false, ++this.nextSignalSequence);
     });
     const unsubTagCreated = store.sub(tagCreatedAtom, () => {
       if (store.get(tagCreatedAtom) === initialTagCreatedVersion) return;
-      void emitChange(true);
+      void emitChange(true, ++this.nextSignalSequence);
     });
 
     this.ipcCleanup = () => {

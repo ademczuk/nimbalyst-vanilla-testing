@@ -25,6 +25,7 @@ import { mobileKeepAwakeTip } from './mobile-keep-awake';
 import { mobilePairedTip } from './mobile-paired';
 import { mockupDiscoverTip } from './mockup-discover';
 import { quickOpenTip } from './quick-open';
+import { nimbalystCoachTip } from './nimbalyst-coach';
 import { sessionCleanupTip } from './session-cleanup';
 import { sessionLaunchShortcutTip } from './session-launch-shortcut';
 import { sessionSharedTip } from './session-shared';
@@ -69,4 +70,5 @@ export const tips: TipDefinition[] = [
   actionPromptsTip,
   lightningInterruptTip,
   sessionCleanupTip,
+  nimbalystCoachTip,
 ];

@@ -24,6 +24,14 @@ export type { MonacoCodeEditorProps, MonacoDiffModeConfig } from './MonacoCodeEd
 
 export { getMonacoTheme, getMonacoLanguage, toMonacoExtensionThemeName } from './monacoUtils';
 
+export {
+  MONACO_LANGUAGE_BY_EXTENSION,
+  MONACO_TEXT_FILE_EXTENSIONS,
+  CODE_COLLAB_FILE_EXTENSIONS,
+} from './monacoLanguages';
+
+export { CodeCollabContentAdapter, CODE_COLLAB_TEXT_FIELD } from './codeCollabCodec';
+
 export { createMonacoCollabBinding } from './monacoCollabBinding';
 export type {
   MonacoCollabBindingOptions,

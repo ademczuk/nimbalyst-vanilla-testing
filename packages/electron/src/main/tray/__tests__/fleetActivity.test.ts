@@ -75,6 +75,23 @@ describe('rankFleetActivityRows', () => {
     expect(rows[0]).toMatchObject({ sessionId: 'silent', state: 'stalled', since: NOW - STALL_AFTER_MS });
   });
 
+  // The phone renders the elapsed time from `since`, so a stalled row has to
+  // count from the same evidence of progress the desktop stalled it on. Reading
+  // `updatedAt` here would show a wedged session as silent for far longer than
+  // it was, and disagree with the panel row next to it.
+  it('counts a stalled row from the liveness stamp, not the last transition', () => {
+    const { rows } = rankFleetActivityRows([
+      session({
+        sessionId: 'wedged',
+        updatedAt: NOW - 40 * 60_000,
+        liveAt: NOW - STALL_AFTER_MS,
+        turnInFlight: true,
+      }),
+    ], NOW);
+
+    expect(rows[0]).toMatchObject({ state: 'stalled', since: NOW - STALL_AFTER_MS });
+  });
+
   it('reports what did not fit rather than silently dropping it', () => {
     const { rows, overflow } = rankFleetActivityRows([
       blocked('a', 'approval', NOW - 5_000),

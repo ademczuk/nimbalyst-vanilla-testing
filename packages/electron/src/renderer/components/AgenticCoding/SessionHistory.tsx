@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
+import { activeFileRepoPathAtom } from '../../store/atoms/workspaceRepos';
 import {
   setTitleBarCreateMenuAtom,
   type TitleBarCreateMenuItem,
@@ -226,6 +227,10 @@ const SessionHistoryComponent: React.FC = () => {
   const isGitRepo = useGitRepoProbe(workspacePath);
   const isNotGitRepo = isGitRepo === false;
   const isWorktreesFeatureAvailable = useAtomValue(worktreesFeatureAvailableAtom);
+  // The repo a new worktree branches from -- the same one `createWorktreeSession`
+  // sends as `sourceFolderPath`, so the offered bases exist in that repo.
+  const activeFileRepoPath = useAtomValue(activeFileRepoPathAtom);
+  const worktreeSourceRepoPath = activeFileRepoPath ?? workspacePath;
   const isBlitzAlphaAvailable = useAtomValue(alphaFeatureEnabledAtom('blitz'));
 
   const renamedSession = useAtomValue(recentlyRenamedSessionAtom);
@@ -3000,7 +3005,7 @@ const SessionHistoryComponent: React.FC = () => {
   const worktreeBaseBranchPickerPortal = onNewWorktreeSession && (
     <WorktreeBaseBranchPicker
       isOpen={worktreeBaseBranchPickerOpen}
-      workspacePath={workspacePath}
+      repoPath={worktreeSourceRepoPath}
       onCreate={async ({ baseBranch, name }) => {
         // Await the parent's create handler so the picker can keep its
         // submitting state until creation actually resolves (and surface

@@ -236,6 +236,11 @@ export function getMigrations(schemaDir: string): Migration[] {
       name: 'drop_unique_issue_number_index',
       sqlFile: path.join(schemaDir, '0039_drop_unique_issue_number_index.sql'),
     },
+    {
+      version: 40,
+      name: 'worktree_source_folder',
+      sqlFile: path.join(schemaDir, '0040_worktree_source_folder.sql'),
+    },
   ];
 }
 

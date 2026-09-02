@@ -39,6 +39,7 @@ import {
   markSessionReadAtom,
 } from '../index';
 import { activeWorkspacePathAtom } from '../atoms/openProjects';
+import { activeFileRepoPathAtom } from '../atoms/workspaceRepos';
 import { defaultAgentModelAtom, worktreesFeatureAvailableAtom, alphaFeatureEnabledAtom } from '../atoms/appSettings';
 import {
   workstreamStateAtom,
@@ -504,8 +505,12 @@ export const createNewWorktreeSessionActionAtom = atom(
     const defaultModel = get(defaultAgentModelAtom);
 
     try {
-      const ipcOptions = options?.baseBranch || options?.name
-        ? { baseBranch: options.baseBranch, name: options.name }
+      // Which root the worktree is branched from. Follows the active file's
+      // repo, so a workspace spanning two repos branches the one being worked
+      // in; a single-folder project resolves to the workspace itself.
+      const sourceFolderPath = get(activeFileRepoPathAtom) ?? undefined;
+      const ipcOptions = options?.baseBranch || options?.name || sourceFolderPath
+        ? { baseBranch: options?.baseBranch, name: options?.name, sourceFolderPath }
         : undefined;
       const worktreeResult: WorktreeCreateResult = await window.electronAPI.invoke(
         'worktree:create',

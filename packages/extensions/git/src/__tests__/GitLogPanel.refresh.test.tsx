@@ -50,6 +50,8 @@ describe('GitLogPanel refresh', () => {
           return Promise.resolve({ branches: ['main'], current: 'main' });
         case 'git:log':
           return Promise.resolve([]);
+        case 'git:list-workspace-repos':
+          return Promise.resolve({ success: true, repos: [WORKSPACE] });
         default:
           return Promise.resolve(null);
       }
@@ -75,5 +77,42 @@ describe('GitLogPanel refresh', () => {
     await waitFor(() => {
       expect(workingChangesCalls()).toBeGreaterThan(beforeRefresh);
     });
+  });
+
+  // Multi-root: every git call in the panel has to target the picked repo, not
+  // the workspace. Getting this wrong shows the primary repo's branch and log
+  // under the attached repo's name.
+  it('hides the repo picker and targets the workspace when there is one repo', async () => {
+    render(<GitLogPanel host={makeHost()} />);
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('git:branches', WORKSPACE));
+    expect(screen.queryByRole('button', { name: /^Repository:/ })).toBeNull();
+  });
+
+  it('runs git against the selected repo once the workspace spans two', async () => {
+    const ATTACHED = '/other/collab';
+    invoke.mockImplementation((channel: string) => {
+      switch (channel) {
+        case 'git:list-workspace-repos':
+          return Promise.resolve({ success: true, repos: [WORKSPACE, ATTACHED] });
+        case 'git:status':
+          return Promise.resolve({ branch: 'main', ahead: 0, behind: 0, hasUncommitted: false });
+        case 'git:branches':
+          return Promise.resolve({ branches: ['main'], current: 'main' });
+        case 'git:log':
+          return Promise.resolve([]);
+        default:
+          return Promise.resolve(null);
+      }
+    });
+
+    render(<GitLogPanel host={makeHost()} />);
+
+    const picker = await screen.findByRole('button', { name: `Repository: repo` });
+    fireEvent.click(picker);
+    fireEvent.click(await screen.findByTitle(ATTACHED));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('git:branches', ATTACHED));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('git:log', ATTACHED, 100, expect.anything()));
   });
 });

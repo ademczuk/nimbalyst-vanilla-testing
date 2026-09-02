@@ -69,6 +69,8 @@ import { revealEditorPosition } from './TabEditor/editorRevealCommand';
 import { parseFileMask, matchesFileMask } from '@nimbalyst/extension-sdk/file-mask';
 import type { TrackerItem } from '@nimbalyst/runtime/core/DocumentService';
 
+import { attachWorkspaceFolderWithPicker } from '../store/actions/workspaceFolders';
+
 const isMac =
   typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
 
@@ -2525,6 +2527,17 @@ interface ProjectItem {
   isCurrent: boolean;
 }
 
+/**
+ * A Projects-pane row. The attach action shares the list so one arrow-key model
+ * covers both, rather than a separate focus trap for a single button.
+ */
+type ProjectsPaneRow =
+  | { kind: 'attach' }
+  | { kind: 'project'; project: ProjectItem };
+
+/** Query words that surface the attach action. */
+const ATTACH_FOLDER_KEYWORDS = ['attach', 'folder', 'workspace', 'add'];
+
 interface RecentWorkspaceItem {
   path: string;
   name?: string;
@@ -2589,6 +2602,22 @@ const ProjectsPane: React.FC<ProjectsPaneProps> = memo(({
     );
   }, [visibleQuery, projects]);
 
+  /**
+   * Rows the pane navigates. "Attach Folder to Workspace..." leads, because it
+   * acts on the project you already have open rather than switching away from
+   * it -- the same reason it sits under File rather than under Open Recent.
+   */
+  const rows = useMemo<ProjectsPaneRow[]>(() => {
+    const projectRows = displayProjects.map<ProjectsPaneRow>((project) => ({
+      kind: 'project',
+      project,
+    }));
+    if (!currentWorkspacePath) return projectRows;
+    const q = visibleQuery.trim().toLowerCase();
+    const matchesAttach = !q || ATTACH_FOLDER_KEYWORDS.some((word) => word.includes(q));
+    return matchesAttach ? [{ kind: 'attach' }, ...projectRows] : projectRows;
+  }, [displayProjects, currentWorkspacePath, visibleQuery]);
+
   useEffect(() => {
     if (!isOpen) return;
     const onMove = () => setMouseHasMoved(true);
@@ -2604,11 +2633,19 @@ const ProjectsPane: React.FC<ProjectsPaneProps> = memo(({
   }, [selectedIndex]);
 
   const handleSelect = useCallback(
-    async (p: ProjectItem) => {
+    async (row: ProjectsPaneRow) => {
       onClose();
-      await window.electronAPI.workspaceManager.openWorkspace(p.path);
+      if (row.kind === 'attach') {
+        if (!currentWorkspacePath) return;
+        const outcome = await attachWorkspaceFolderWithPicker(currentWorkspacePath);
+        if (!outcome.success && outcome.error) {
+          console.error('[ProjectsPane] Attach folder failed:', outcome.error);
+        }
+        return;
+      }
+      await window.electronAPI.workspaceManager.openWorkspace(row.project.path);
     },
-    [onClose],
+    [onClose, currentWorkspacePath],
   );
 
   useEffect(() => {
@@ -2618,7 +2655,7 @@ const ProjectsPane: React.FC<ProjectsPaneProps> = memo(({
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
-          setSelectedIndex((i) => (i < displayProjects.length - 1 ? i + 1 : i));
+          setSelectedIndex((i) => (i < rows.length - 1 ? i + 1 : i));
           break;
         case 'ArrowUp':
           e.preventDefault();
@@ -2626,7 +2663,7 @@ const ProjectsPane: React.FC<ProjectsPaneProps> = memo(({
           break;
         case 'Enter':
           e.preventDefault();
-          if (displayProjects[selectedIndex]) handleSelect(displayProjects[selectedIndex]);
+          if (rows[selectedIndex]) handleSelect(rows[selectedIndex]);
           break;
         case 'Escape':
           e.preventDefault();
@@ -2636,11 +2673,11 @@ const ProjectsPane: React.FC<ProjectsPaneProps> = memo(({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, isActive, displayProjects, selectedIndex, handleSelect, onClose]);
+  }, [isOpen, isActive, rows, selectedIndex, handleSelect, onClose]);
 
   return (
     <div className="projects-pane flex-1 overflow-y-auto">
-      {displayProjects.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="p-10 text-center text-nim-faint">
           {query ? 'No projects found' : 'No recent projects'}
         </div>
@@ -2649,23 +2686,69 @@ const ProjectsPane: React.FC<ProjectsPaneProps> = memo(({
           ref={listRef}
           className={`list-none m-0 p-0 ${mouseHasMoved ? '' : 'pointer-events-none'}`}
         >
-          {displayProjects.map((project, index) => (
+          {rows.map((row, index) => row.kind === 'attach' ? (
             <li
-              key={project.path}
-              className={`unified-quick-open-item flex items-center gap-3 py-2.5 px-4 cursor-pointer border-l-[3px] transition-all duration-100 ${
+              key="attach-folder"
+              className={`unified-quick-open-item projects-pane-attach flex items-center gap-3 py-2.5 px-4 cursor-pointer border-l-[3px] transition-all duration-100 ${
                 index === selectedIndex
                   ? 'selected bg-nim-selected border-l-nim-primary'
                   : 'border-transparent hover:bg-nim-hover'
               }`}
-              onClick={() => handleSelect(project)}
+              onClick={() => handleSelect(row)}
               onMouseEnter={() => {
                 if (mouseHasMoved) setSelectedIndex(index);
               }}
             >
               <div className="shrink-0 flex items-center justify-center w-5 h-5 text-nim-muted">
-                <MaterialSymbol icon="folder" size={16} fill={project.isOpen} />
+                <MaterialSymbol icon="create_new_folder" size={16} />
               </div>
               <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-nim overflow-hidden text-ellipsis whitespace-nowrap">
+                  Attach Folder to Workspace...
+                </div>
+                <div className="text-xs text-nim-faint mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap">
+                  Browse it here and let agents read it, without leaving this project
+                </div>
+              </div>
+            </li>
+          ) : (
+            <ProjectRow
+              key={row.project.path}
+              project={row.project}
+              isSelected={index === selectedIndex}
+              onSelect={() => handleSelect(row)}
+              onHover={() => {
+                if (mouseHasMoved) setSelectedIndex(index);
+              }}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+});
+
+/** One recent-project row in the Projects pane. */
+const ProjectRow: React.FC<{
+  project: ProjectItem;
+  isSelected: boolean;
+  onSelect: () => void;
+  onHover: () => void;
+}> = memo(({ project, isSelected, onSelect, onHover }) => {
+  return (
+    <li
+      className={`unified-quick-open-item flex items-center gap-3 py-2.5 px-4 cursor-pointer border-l-[3px] transition-all duration-100 ${
+        isSelected
+          ? 'selected bg-nim-selected border-l-nim-primary'
+          : 'border-transparent hover:bg-nim-hover'
+      }`}
+      onClick={onSelect}
+      onMouseEnter={onHover}
+    >
+      <div className="shrink-0 flex items-center justify-center w-5 h-5 text-nim-muted">
+        <MaterialSymbol icon="folder" size={16} fill={project.isOpen} />
+      </div>
+      <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-nim flex items-center gap-2 overflow-hidden text-ellipsis whitespace-nowrap">
                   {project.name}
                   {project.isCurrent && (
@@ -2679,15 +2762,11 @@ const ProjectsPane: React.FC<ProjectsPaneProps> = memo(({
                     </span>
                   )}
                 </div>
-                <div className="text-xs text-nim-faint mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap direction-rtl text-left">
-                  {project.path}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+        <div className="text-xs text-nim-faint mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap direction-rtl text-left">
+          {project.path}
+        </div>
+      </div>
+    </li>
   );
 });
 

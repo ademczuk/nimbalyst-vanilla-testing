@@ -347,8 +347,104 @@ const SPECIAL_DIRECTORIES = ['nimbalyst-local'];
  * The raw (unfiltered) file tree from the workspace watcher.
  * Written by the centralized file tree listener (fileTreeListeners.ts).
  * WorkspaceSidebar reads this and applies filters before passing to FlatFileTree.
+ *
+ * In a multi-root workspace this holds a FOREST: one synthetic directory node
+ * per root, whose children are that root's contents. With no attached folders
+ * it holds the primary root's contents directly, exactly as before -- so a
+ * single-folder workspace shows no root header row and nothing downstream
+ * changes.
  */
 export const rawFileTreeAtom = atom<RendererFileTreeItem[]>([]);
+
+/**
+ * Every root the workspace spans, primary first. Empty or single-entry for an
+ * ordinary workspace. Read by the tree flattener to mark root header rows and
+ * by the explorer to offer "Detach Folder".
+ */
+export const workspaceRootPathsAtom = atom<string[]>([]);
+
+/**
+ * Build the explorer forest from per-root trees.
+ *
+ * Roots with no loaded tree yet render as empty folders rather than vanishing,
+ * so an attached folder appears the moment it is attached instead of popping in
+ * when its first scan lands.
+ *
+ * Pure and exported for testing.
+ */
+export function buildFileTreeForest(
+  rootPaths: string[],
+  treesByRoot: Record<string, RendererFileTreeItem[]>,
+): RendererFileTreeItem[] {
+  // One root is the single-folder case: no synthetic wrapper, no header row.
+  if (rootPaths.length <= 1) {
+    const only = rootPaths[0];
+    return only ? (treesByRoot[only] ?? []) : [];
+  }
+
+  return rootPaths.map((rootPath) => ({
+    name: basenameOfPath(rootPath),
+    path: rootPath,
+    type: 'directory' as const,
+    children: treesByRoot[rootPath] ?? [],
+  }));
+}
+
+/** Last path segment, tolerant of trailing slashes and Windows separators. */
+function basenameOfPath(rootPath: string): string {
+  const trimmed = rootPath.replace(/[\\/]+$/, '');
+  const segments = trimmed.split(/[\\/]/);
+  return segments[segments.length - 1] || trimmed;
+}
+
+/** Forward slashes, no trailing slash (except a bare drive root). */
+export function normalizeTreePath(path: string): string {
+  if (!path) return '';
+  let normalized = path.replace(/\\/g, '/');
+  if (/^[a-zA-Z]:\/$/i.test(normalized)) {
+    return normalized;
+  }
+  if (normalized !== '/' && normalized.endsWith('/')) {
+    normalized = normalized.replace(/\/+$/, '');
+  }
+  return normalized;
+}
+
+/**
+ * Replace one folder's children within a tree, returning the new tree and
+ * whether anything matched. Structurally shares untouched branches so React
+ * only re-renders the subtree that actually changed.
+ */
+export function replaceFolderChildren(
+  items: RendererFileTreeItem[],
+  normalizedFolderPath: string,
+  newChildren: RendererFileTreeItem[],
+): [RendererFileTreeItem[], boolean] {
+  let mutated = false;
+
+  const updatedItems = items.map(item => {
+    if (item.type !== 'directory') {
+      return item;
+    }
+
+    if (normalizeTreePath(item.path) === normalizedFolderPath) {
+      mutated = true;
+      return { ...item, children: newChildren };
+    }
+
+    if (item.children && item.children.length > 0) {
+      const [nextChildren, childMutated] = replaceFolderChildren(item.children, normalizedFolderPath, newChildren);
+      if (childMutated) {
+        mutated = true;
+        return { ...item, children: nextChildren };
+      }
+    }
+
+    return item;
+  });
+
+  return [mutated ? updatedItems : items, mutated];
+}
 
 /**
  * Whether the initial file tree load has completed.
@@ -419,6 +515,12 @@ export interface FlatTreeNode {
   isMultiSelected: boolean;
   isDragOver: boolean;
   isSpecialDirectory: boolean;
+  /**
+   * A top-level root of a multi-root workspace. Only ever true when the
+   * workspace has attached folders -- a single-folder workspace has no root
+   * header rows at all.
+   */
+  isWorkspaceRoot: boolean;
 }
 
 /**
@@ -432,10 +534,19 @@ export interface FlattenTreeOptions {
   selectedFolder: string | null;
   selectedPaths: Set<string>;
   dragState: DragState | null;
+  /**
+   * Roots of a multi-root workspace. Nodes at depth 0 whose path is in this set
+   * render as root header rows. Omit (or pass a set with fewer than two
+   * entries) for an ordinary single-folder workspace.
+   */
+  workspaceRootPaths?: Set<string>;
 }
 
 export function flattenTree(options: FlattenTreeOptions): FlatTreeNode[] {
   const { items, expanded, activeFile, selectedFolder, selectedPaths, dragState } = options;
+  const rootPaths = options.workspaceRootPaths;
+  // One root is a plain workspace: nothing is a "root header row".
+  const marksRoots = (rootPaths?.size ?? 0) > 1;
   const result: FlatTreeNode[] = [];
 
   function walk(treeItems: RendererFileTreeItem[], depth: number, parentPath: string | null) {
@@ -457,6 +568,7 @@ export function flattenTree(options: FlattenTreeOptions): FlatTreeNode[] {
         isMultiSelected: selectedPaths.has(item.path),
         isDragOver: dragState?.dropTargetPath === item.path,
         isSpecialDirectory: isDir && SPECIAL_DIRECTORIES.includes(item.name),
+        isWorkspaceRoot: marksRoots && depth === 0 && rootPaths!.has(item.path),
       });
 
       if (isExpanded && item.children) {
@@ -484,5 +596,6 @@ export const visibleNodesAtom = atom<FlatTreeNode[]>((get) => {
     selectedFolder: get(selectedFolderPathAtom),
     selectedPaths: get(selectedPathsAtom),
     dragState: get(dragStateAtom),
+    workspaceRootPaths: new Set(get(workspaceRootPathsAtom)),
   });
 });

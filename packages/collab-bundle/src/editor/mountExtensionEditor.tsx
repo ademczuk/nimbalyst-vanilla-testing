@@ -120,6 +120,24 @@ export interface ExtensionEditorMountOptions {
   onViewportRegistered?(viewport: EditorViewport | null): void;
 
   /**
+   * Offer this document a raw-source view, granting the `sourceMode`
+   * capability. Only a page that has somewhere to render one and a codec that
+   * can project this document to text and back may set it.
+   *
+   * **The mount owns the flag, not the page.** Two things drive it -- the
+   * extension calling `host.toggleSourceMode()`, and the page's own control --
+   * and a second copy of the answer is a second copy that can be wrong. It also
+   * has to survive a page re-render, because the alternative shape (swap which
+   * component the page passes) makes the toggle a mount dependency, and a new
+   * `component` destroys a live Y.Doc behind a flush. The component this mount
+   * is given renders both modes and picks between them from
+   * `host.onSourceModeChanged`, so a toggle costs nothing but a React render.
+   */
+  enableSourceMode?: boolean;
+  /** Told whenever the mode changes, so the page can update its own chrome. */
+  onSourceModeChange?(active: boolean): void;
+
+  /**
    * Render as an embed rather than a full page, so the extension drops chrome
    * that only makes sense at page scale. An inline preview or a detail popover
    * sets this; the document page does not.
@@ -161,6 +179,17 @@ export interface ExtensionEditorHandle {
    * correctly absent; this is what makes it appear once the real answer lands.
    */
   refreshCommentAccess(): void;
+  /**
+   * Whether the raw-source view is showing. Always false for a mount that was
+   * not granted source mode.
+   */
+  isSourceModeActive(): boolean;
+  /**
+   * Drive the source view from the page's own control, the counterpart of the
+   * extension calling `host.toggleSourceMode()`. Both end up here, so the two
+   * can never disagree. A no-op when source mode was not granted.
+   */
+  setSourceMode(active: boolean): void;
   destroy(): void;
 }
 
@@ -214,6 +243,14 @@ export function mountExtensionEditor(
   // Same reason, and the same guard: the session reports its first status from
   // inside its own construction, before this has been built.
   let hostedComments: HostedExtensionComments | null = null;
+  let sourceModeActive = false;
+  const sourceModeListeners = new Set<(active: boolean) => void>();
+  const setSourceMode = (active: boolean): void => {
+    if (destroyed || !options.enableSourceMode || sourceModeActive === active) return;
+    sourceModeActive = active;
+    for (const listener of sourceModeListeners) listener(active);
+    options.onSourceModeChange?.(active);
+  };
 
   const hostCanComment = (): boolean => options.comments?.canComment?.() ?? true;
 
@@ -342,6 +379,18 @@ export function mountExtensionEditor(
     onEditorContextItemsChange: options.onEditorContextItemsChange,
     openExternal: options.openExternal,
     onViewportRegistered: options.onViewportRegistered,
+    // Supplying `toggleSourceMode` is the grant, so it stays undefined unless
+    // the page asked for it -- the capability table reads exactly this.
+    toggleSourceMode: options.enableSourceMode
+      ? () => setSourceMode(!sourceModeActive)
+      : undefined,
+    isSourceModeActive: () => sourceModeActive,
+    subscribeToSourceModeChanges: (callback) => {
+      sourceModeListeners.add(callback);
+      return () => {
+        sourceModeListeners.delete(callback);
+      };
+    },
     embedded: options.embedded,
     onCapabilityRefused: options.onCapabilityRefused,
   });
@@ -382,10 +431,13 @@ export function mountExtensionEditor(
     flush: (flushOptions) => session.flush(flushOptions),
     markClean: () => session.markClean(),
     refreshCommentAccess: () => hostedComments?.notifyCapabilitiesChanged(),
+    isSourceModeActive: () => sourceModeActive,
+    setSourceMode: (active) => setSourceMode(active),
     destroy() {
       if (destroyed) return;
       destroyed = true;
       statusListeners.clear();
+      sourceModeListeners.clear();
       hostedComments?.destroy();
       session.destroy({
         beforeTransportTeardown: () => {

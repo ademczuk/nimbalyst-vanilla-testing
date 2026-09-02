@@ -62,6 +62,17 @@ describe('the plan the admin reads before sending', () => {
       .toBe('Send invitation only');
   });
 
+  /**
+   * "Nothing shared yet" is a statement about the team. A team that already
+   * publishes documents makes it false, and the admin reading it is being told
+   * to fix something that is not broken.
+   */
+  it('does not claim nothing is shared when the team already has content', () => {
+    expect(summarizeInvitePlan({
+      people: 1, extraProjects: 0, folders: 0, teamHasSharedContent: true,
+    })).toBe('1 person · the team already has shared content');
+  });
+
   it('counts both halves of what they get', () => {
     const plan = { people: 2, extraProjects: 1, folders: 3 };
     expect(summarizeInvitePlan(plan)).toBe('2 people · 1 extra project · 3 folders published');

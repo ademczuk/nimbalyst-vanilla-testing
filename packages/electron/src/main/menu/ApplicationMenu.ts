@@ -482,6 +482,30 @@ export async function createApplicationMenu() {
                         createWorkspaceManagerWindow();
                     }
                 },
+                {
+                    id: 'file-attach-folder',
+                    label: 'Attach Folder to Workspace...',
+                    click: async () => {
+                        const focusedWindow = getFocusedWindow();
+                        if (!focusedWindow) return;
+
+                        const windowId = getWindowId(focusedWindow);
+                        if (windowId === null) return;
+
+                        const state = windowStates.get(windowId);
+                        if (state?.mode !== 'workspace' || !state.workspacePath) return;
+
+                        AnalyticsService.getInstance().sendEvent('menu_action_used', {
+                            menu: 'file',
+                            action: 'attach_folder',
+                            hasKeyboardEquivalent: false,
+                        });
+
+                        // The renderer owns the picker and the trust prompt, so
+                        // every attach entry point runs the same flow.
+                        focusedWindow.webContents.send('workspace-attach-folder-requested');
+                    }
+                },
                 { type: 'separator' },
                 {
                     label: 'Recent Projects',

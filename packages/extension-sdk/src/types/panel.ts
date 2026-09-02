@@ -277,8 +277,31 @@ export interface PanelHost {
 
   /**
    * Absolute path to current workspace.
+   *
+   * Always the workspace's PRIMARY root, including when the workspace spans
+   * several folders — so an extension written before multi-root keeps working
+   * unchanged. Use `getWorkspaceFolders()` when the extension needs every root.
    */
   readonly workspacePath: string;
+
+  /**
+   * Every top-level folder this workspace spans, primary root first.
+   *
+   * Returns a single entry for an ordinary single-folder workspace. Use this
+   * instead of `workspacePath` when the extension operates over the whole
+   * workspace — listing files, resolving repositories, offering a folder or
+   * repo picker.
+   */
+  getWorkspaceFolders(): string[];
+
+  /**
+   * The workspace's primary root — the folder the user opened, and the anchor
+   * for workspace identity (settings, sessions, trackers).
+   *
+   * Identical to `workspacePath`; provided so multi-root-aware code can say
+   * which of the two meanings it wants.
+   */
+  getPrimaryFolderPath(): string;
 
   /**
    * Subscribe to theme changes.

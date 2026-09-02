@@ -456,14 +456,29 @@ function assertCanvasNode(value: unknown): asserts value is CanvasAnyNode {
   }
 
   switch (value.type) {
+    /*
+     * A native card's own payload may be empty, and only it.
+     *
+     * The surface creates a sticky or an image card the moment it is dropped
+     * and the author fills it in afterwards, so `text: ''` and `url: ''` are
+     * states a real board sits in. Refusing them made a board editable but not
+     * serializable, which broke local `.canvas` save, every headless collab
+     * read, and the console's source mode -- the escape hatch meant for
+     * exactly the board that will not open. See NIM-5378.
+     *
+     * The field must still be present and a string: a `text` node with no
+     * `text` at all is malformed, not half-authored. Everything else on the
+     * node -- `id`, `type`, a file node's `file` -- stays strict, because an
+     * empty value there names nothing.
+     */
     case 'text':
-      requireString(value, 'text', 'Canvas text node');
+      requirePossiblyEmptyString(value, 'text', 'Canvas text node');
       break;
     case 'file':
       requireString(value, 'file', 'Canvas file node');
       break;
     case 'link':
-      requireString(value, 'url', 'Canvas link node');
+      requirePossiblyEmptyString(value, 'url', 'Canvas link node');
       break;
     default:
       // 'group' has no required payload, and an unrecognised type is carried
@@ -490,6 +505,17 @@ function requireString(
 ): void {
   if (typeof value[key] !== 'string' || value[key].length === 0) {
     throw new TypeError(`${owner} ${key} must be a non-empty string`);
+  }
+}
+
+/** Present and a string, but allowed to be empty. See the native-card note above. */
+function requirePossiblyEmptyString(
+  value: Record<string, unknown>,
+  key: string,
+  owner: string
+): void {
+  if (typeof value[key] !== 'string') {
+    throw new TypeError(`${owner} ${key} must be a string`);
   }
 }
 

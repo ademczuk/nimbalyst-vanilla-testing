@@ -101,6 +101,7 @@ export type {
 export {
   clearFileSystemService,
   clearFileSystemServiceFor,
+  getFileSystemServiceForPath,
   setFileSystemService,
   setFileSystemServiceFor,
 } from './core/FileSystemService';

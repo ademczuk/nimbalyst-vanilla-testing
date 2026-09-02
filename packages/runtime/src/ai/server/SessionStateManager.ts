@@ -197,6 +197,40 @@ export class SessionStateManager extends EventEmitter {
   }
 
   /**
+   * Report that a turn is still progressing, without claiming anything changed.
+   *
+   * The ambient surfaces (menu bar strip, island panel, iOS Live Activity) call
+   * a running session "not responding" once it has been silent past a threshold.
+   * Silence used to be measured against the last lifecycle *transition*, which a
+   * turn sitting inside one long tool call never produces -- so every long turn
+   * eventually read as stalled. This is the signal that makes that measurement
+   * mean what it says.
+   *
+   * Deliberately cheaper than `updateActivity`:
+   * - No database write. `last_activity` is read at recovery time and is
+   *   already written by every transition; a per-minute heartbeat on it would be
+   *   pure churn on the busiest table path in the app.
+   * - No status change, so nothing downstream re-buckets the session.
+   * - `session:activity` is not forwarded to mobile (`pushExecutionStateToMobile`
+   *   filters to the lifecycle events), so this stays a desktop-local fact.
+   *
+   * Emitting for a session this manager is not tracking is intentional: a
+   * meta-agent child's row may not be committed when its first tick fires, and
+   * the tray keys liveness by session id alone.
+   */
+  markTurnAlive(sessionId: string): void {
+    const state = this.activeSessions.get(sessionId);
+    if (state) state.lastActivity = new Date();
+
+    this.emitEvent({
+      type: 'session:activity',
+      sessionId,
+      workspacePath: state?.workspacePath,
+      timestamp: new Date(),
+    });
+  }
+
+  /**
    * End a session (mark as idle)
    */
   async endSession(sessionId: string): Promise<void> {

@@ -58,7 +58,7 @@ export class RendererWorktreeService {
    */
   async createWorktree(
     workspacePath: string,
-    options?: { name?: string; baseBranch?: string }
+    options?: { name?: string; baseBranch?: string; sourceFolderPath?: string }
   ): Promise<Worktree> {
     if (!window.electronAPI) {
       throw new Error('electronAPI not available');

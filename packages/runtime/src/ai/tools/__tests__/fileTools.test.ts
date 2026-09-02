@@ -350,6 +350,63 @@ describe('File Tools', () => {
       expect(result.results[0].file).toBe('active.ts');
     });
 
+    it('routes an absolute path to the root that owns it, over the context workspace', async () => {
+      // Multi-root: every session in a workspace carries the PRIMARY root as
+      // its ctx.workspacePath, so an absolute path into an attached folder
+      // would otherwise be handed to a service that does not contain the file.
+      setFileSystemServiceFor('/ws/attached', inactiveWorkspaceService);
+
+      const result = await readFileTool.handler!(
+        { path: '/ws/attached/notes.md' },
+        { workspacePath: '/ws/active' },
+      );
+
+      expect(inactiveWorkspaceService.readFile).toHaveBeenCalledOnce();
+      expect(activeWorkspaceService.readFile).not.toHaveBeenCalled();
+      expect(result.content).toBe('inactive content');
+
+      clearFileSystemServiceFor('/ws/attached');
+    });
+
+    it('hands the owning service a path relative to its own root', async () => {
+      // Routing to the right service is only half the job: every
+      // FileSystemService sandboxes to its root and REJECTS absolute paths, so
+      // passing the absolute string straight through fails validation and the
+      // tool call dies with "Path contains dangerous patterns".
+      const attachedService: FileSystemService = {
+        getWorkspacePath: vi.fn(() => '/ws/attached'),
+        searchFiles: vi.fn(async () => ({ success: true, results: [], totalResults: 0 })),
+        listFiles: vi.fn(async () => ({ success: true, files: [] })),
+        readFile: vi.fn(async () => ({ success: true, content: 'attached', size: 8 })),
+      };
+      setFileSystemServiceFor('/ws/attached', attachedService);
+
+      await readFileTool.handler!(
+        { path: '/ws/attached/docs/notes.md' },
+        { workspacePath: '/ws/active' },
+      );
+      await listFilesTool.handler!({ path: '/ws/attached/docs' }, { workspacePath: '/ws/active' });
+
+      expect(attachedService.readFile).toHaveBeenCalledWith('docs/notes.md', { encoding: undefined });
+      expect(attachedService.listFiles).toHaveBeenCalledWith(
+        expect.objectContaining({ path: 'docs' }),
+      );
+
+      clearFileSystemServiceFor('/ws/attached');
+    });
+
+    it('keeps a relative path on the context workspace', async () => {
+      // A bare relative path must still resolve against the primary root --
+      // it is the session cwd, and nothing about it names another root.
+      const result = await readFileTool.handler!(
+        { path: 'src/index.ts' },
+        { workspacePath: '/ws/inactive' },
+      );
+
+      expect(inactiveWorkspaceService.readFile).toHaveBeenCalledOnce();
+      expect(result.content).toBe('inactive content');
+    });
+
     it('falls back to the global when the per-path entry is missing', async () => {
       const result = await searchFilesTool.handler!({ query: 'pattern' }, { workspacePath: '/ws/unknown' });
 

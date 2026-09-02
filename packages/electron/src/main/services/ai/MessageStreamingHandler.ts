@@ -35,6 +35,7 @@ import {
   type DocumentContext,
 } from '@nimbalyst/runtime/ai/server/types';
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
+import { startTurnLivenessTicker } from './turnLivenessTicker';
 import { agentCapabilitiesForProviderType } from '@nimbalyst/runtime/ai/server/agentCapabilities';
 import { isBedrockToolSearchError } from '@nimbalyst/runtime/ai/server/utils/errorDetection';
 import { resolveEffortLevel, resolveThinkingMode } from '@nimbalyst/runtime/ai/server/effortLevels';
@@ -1301,6 +1302,16 @@ export class MessageStreamingHandler {
         logger.main.error('[AIService] Failed to record agent Git activity:', gitActivityError);
       }
     };
+
+    // The turn is in flight from here. The tray's ambient surfaces call a
+    // running session "not responding" after a silence, and a turn sitting
+    // inside one long tool call emits nothing they can hear -- so the tick, not
+    // the chunk stream, is what tells them it is still working. Stopped in the
+    // `finally` below, for the same reason the git activity journal is.
+    const stopTurnLiveness = startTurnLivenessTicker({
+      sessionId: session.id,
+      markAlive: (sessionId) => stateManager.markTurnAlive(sessionId),
+    });
 
     try {
       let fullResponse = '';
@@ -3125,6 +3136,13 @@ export class MessageStreamingHandler {
 
       throw error;
     } finally {
+      // First, and outside anything that can throw: a session that keeps
+      // reporting itself alive after its turn died is worse than the bug this
+      // ticker fixes, because nothing downstream will ever correct it. The
+      // parked-generator case reaches neither exit and is covered by the
+      // ticker's own expiry.
+      stopTurnLiveness();
+
       // A cancelled turn or a provider that disconnected mid-command never sends
       // the completion, so anything still open here will never settle on its
       // own. In a `finally` so both exits terminalize the journal. A turn whose

@@ -225,7 +225,7 @@ The canonical property allowlists live in `packages/electron/src/shared/analytic
 | Event family | Events | Authoritative success seam |
 | --- | --- | --- |
 | Organization and membership | `team_surface_opened`, `team_organization_created`, `team_organization_switched`, `team_invitation_sent`, `team_invitation_accepted`, `team_sign_in_completed`, `team_member_role_changed`, `team_member_removed`, `team_organization_merged`, `team_organization_deleted`, `team_operation_failed` | Organization service response, resolved invitation deep link, completed sign-in, or explicit surface transition |
-| Invitation landing | `invite_landing_viewed`, `invite_first_open`, `invite_deep_link_followed`, `invite_download_clicked` | Web-console invitation callback, the invitee's first opened document/tracker item/request, or an explicit desktop-offer action |
+| Invitation landing | `invite_landing_viewed`, `invite_landing_failed`, `invite_first_open`, `invite_deep_link_followed`, `invite_download_clicked` | Web-console invitation callback, the invitee's first opened document/tracker item/request, or an explicit desktop-offer action |
 | Project walk | `team_project_walk_presented`, `team_project_walk_completed` | Visible desktop project-walk dialog or its completed/skipped outcome |
 | Project sharing and access | `team_project_added`, `team_project_identity_changed`, `team_project_moved`, `team_project_access_changed` | Project-sharing service response |
 | Shared-document discovery | `collab_home_opened`, `collab_home_searched` | Visible Shared Docs home and debounced committed search |

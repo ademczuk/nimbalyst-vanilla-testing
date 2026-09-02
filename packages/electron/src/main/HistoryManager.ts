@@ -8,6 +8,7 @@ import { database } from './database/PGLiteDatabaseWorker';
 import { logger } from './utils/logger';
 import { parseJsonObjectColumn } from './utils/jsonColumn';
 import { jsonKeyExpr } from './database/jsonKeyExpr';
+import { getWorkspaceRoots } from './utils/store';
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
@@ -101,6 +102,40 @@ export class HistoryManager {
    */
   private md(key: string): string {
     return jsonKeyExpr(database.getEngine(), 'metadata', key);
+  }
+
+  /**
+   * Predicate matching every file under a workspace, across all of its roots.
+   *
+   * A project can span several folders, so "in this workspace" stopped being
+   * "under one path prefix". Every pending query used to be a bare
+   * `file_path LIKE workspacePath || '%'`, which skipped anything under an
+   * attached folder: no review dot, an under-reported count, and rows that
+   * "Clear all pending" could never reach (#1403 by another route).
+   *
+   * `workspace_id` is not usable as the key here despite being on the row and
+   * indexed — real rows carry a *directory* there, not the workspace root
+   * (16k rows on one machine, many set to the file's own parent), so matching
+   * on it would lose more than it found.
+   *
+   * `firstParam` is the 1-based index this predicate's first bind takes, since
+   * callers place it at different positions in their parameter list.
+   *
+   * The trailing separator matters: without it `/proj/app` also swept
+   * `/proj/app-legacy`. That was survivable with one root and is not with
+   * several, so it is fixed here rather than left as a known nit.
+   */
+  private workspaceScope(
+    workspacePath: string,
+    firstParam: number,
+  ): { sql: string; params: string[] } {
+    // An unknown key (a worktree root, say) yields just itself, so callers
+    // outside the workspace-settings world keep their plain prefix behavior.
+    const roots = getWorkspaceRoots(workspacePath);
+    return {
+      sql: `(${roots.map((_, i) => `file_path LIKE $${firstParam + i}`).join(' OR ')})`,
+      params: roots.map((root) => `${root.replace(/[/\\]+$/, '')}${path.sep}%`),
+    };
   }
 
   /**
@@ -476,6 +511,7 @@ export class HistoryManager {
       }
 
       // Query files that are in this workspace or in subdirectories of it
+      const scope = this.workspaceScope(workspacePath, 1);
       const result = await database.query<{
         file_path: string;
         latest: number;
@@ -483,10 +519,10 @@ export class HistoryManager {
       }>(`
         SELECT file_path, MAX(timestamp) as latest, COUNT(*) as count
         FROM document_history
-        WHERE file_path LIKE $1
+        WHERE ${scope.sql}
         GROUP BY file_path
         ORDER BY latest DESC
-      `, [workspacePath + '/%']);
+      `, scope.params);
 
       return result.rows.map(row => ({
         path: row.file_path,
@@ -1098,14 +1134,13 @@ export class HistoryManager {
       // The status predicate must textually match the partial index
       // idx_history_one_pending_per_file or the planner falls back to a full
       // table scan (~100ms).
-      //
-      // Use file_path LIKE to match all files within the workspace directory
+      const scope = this.workspaceScope(workspacePath, 1);
       const result = await database.query<{ count: string }>(`
         SELECT COUNT(DISTINCT file_path) as count
         FROM document_history
-        WHERE file_path LIKE $1
+        WHERE ${scope.sql}
           AND ${this.md('status')} = 'pending-review'
-      `, [workspacePath + '%']);
+      `, scope.params);
 
       return parseInt(result.rows[0]?.count || '0', 10);
     } catch (error) {
@@ -1134,13 +1169,14 @@ export class HistoryManager {
         // Both predicates must match idx_history_pending_session_file
         // (migration 2) -- the indexed sessionId expression and the partial
         // index's own status clause.
+        const scope = this.workspaceScope(workspacePath, 2);
         const result = await database.query<{ file_path: string }>(`
           SELECT DISTINCT file_path
           FROM document_history
           WHERE ${this.md('sessionId')} = $1
             AND ${this.md('status')} = 'pending-review'
-            AND file_path LIKE $2
-        `, [sessionId, workspacePath + '%']);
+            AND ${scope.sql}
+        `, [sessionId, ...scope.params]);
 
         return result.rows.map((row: { file_path: string }) => row.file_path);
       } catch (error) {
@@ -1169,13 +1205,14 @@ export class HistoryManager {
         await database.initialize();
       }
 
+      const scope = this.workspaceScope(workspacePath, 2);
       const result = await database.query<{ file_path: string }>(`
         SELECT DISTINCT file_path
         FROM document_history
-        WHERE file_path LIKE $1
-          AND ${this.md('sessionId')} = $2
+        WHERE ${scope.sql}
+          AND ${this.md('sessionId')} = $1
           AND ${this.md('type')} IN ('pre-edit', 'incremental-approval')
-      `, [workspacePath + '%', sessionId]);
+      `, [sessionId, ...scope.params]);
 
       return result.rows.map((row: { file_path: string }) => row.file_path);
     } catch (error) {
@@ -1219,13 +1256,14 @@ export class HistoryManager {
         await database.initialize();
       }
 
+      const scope = this.workspaceScope(workspacePath, 2);
       const result = await database.query<{ count: string }>(`
         SELECT COUNT(DISTINCT file_path) as count
         FROM document_history
-        WHERE file_path LIKE $1
+        WHERE ${scope.sql}
           AND ${this.md('status')} = 'pending-review'
-          AND ${this.md('sessionId')} = $2
-      `, [workspacePath + '%', sessionId]);
+          AND ${this.md('sessionId')} = $1
+      `, [sessionId, ...scope.params]);
 
       return parseInt(result.rows[0]?.count || '0', 10);
     } catch (error) {
@@ -1247,28 +1285,29 @@ export class HistoryManager {
       const now = Date.now();
 
       // First get the list of files we're clearing (for notifying tabs)
-      // Use file_path LIKE to match all files within the workspace directory
+      const scope = this.workspaceScope(workspacePath, 1);
       const filesResult = await database.query<{ file_path: string }>(`
         SELECT DISTINCT file_path
         FROM document_history
-        WHERE file_path LIKE $1
+        WHERE ${scope.sql}
           AND ${this.md('status')} = 'pending-review'
-      `, [workspacePath + '%']);
+      `, scope.params);
 
       const clearedFiles = filesResult.rows.map((row: { file_path: string }) => row.file_path);
       const clearedCount = clearedFiles.length;
 
       if (clearedCount > 0) {
         // Update all pending tags to reviewed
+        const updateScope = this.workspaceScope(workspacePath, 2);
         await database.query(`
           UPDATE document_history
           SET metadata = jsonb_set(
                 jsonb_set(metadata, '{status}', '"reviewed"'),
                 '{updatedAt}', to_jsonb($1::bigint)
               )
-          WHERE file_path LIKE $2
+          WHERE ${updateScope.sql}
             AND ${this.md('status')} = 'pending-review'
-        `, [now, workspacePath + '%']);
+        `, [now, ...updateScope.params]);
 
         logger.main.info('[HistoryManager] Cleared all pending tags:', { workspacePath, clearedCount, clearedFiles });
 
@@ -1307,29 +1346,31 @@ export class HistoryManager {
       const now = Date.now();
 
       // First get the list of files we're clearing (for notifying tabs)
+      const scope = this.workspaceScope(workspacePath, 2);
       const filesResult = await database.query<{ file_path: string }>(`
         SELECT DISTINCT file_path
         FROM document_history
-        WHERE file_path LIKE $1
+        WHERE ${scope.sql}
           AND ${this.md('status')} = 'pending-review'
-          AND ${this.md('sessionId')} = $2
-      `, [workspacePath + '%', sessionId]);
+          AND ${this.md('sessionId')} = $1
+      `, [sessionId, ...scope.params]);
 
       const clearedFiles = filesResult.rows.map((row: { file_path: string }) => row.file_path);
       const clearedCount = clearedFiles.length;
 
       if (clearedCount > 0) {
         // Update pending tags for this session to reviewed
+        const updateScope = this.workspaceScope(workspacePath, 3);
         await database.query(`
           UPDATE document_history
           SET metadata = jsonb_set(
                 jsonb_set(metadata, '{status}', '"reviewed"'),
                 '{updatedAt}', to_jsonb($1::bigint)
               )
-          WHERE file_path LIKE $2
+          WHERE ${updateScope.sql}
             AND ${this.md('status')} = 'pending-review'
-            AND ${this.md('sessionId')} = $3
-        `, [now, workspacePath + '%', sessionId]);
+            AND ${this.md('sessionId')} = $2
+        `, [now, sessionId, ...updateScope.params]);
 
         logger.main.info('[HistoryManager] Cleared pending tags for session:', { workspacePath, sessionId, clearedCount, clearedFiles });
 

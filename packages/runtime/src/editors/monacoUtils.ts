@@ -4,8 +4,15 @@
  * Shared utilities for Monaco editor integration.
  */
 
-import type { ConfigTheme } from '../editor';
+// Deep path, not the `../editor` barrel: that barrel is the Lexical editor's
+// entry point, and importing it here drags the whole Lexical tree into every
+// graph that contains Monaco -- including the web console, which loads Monaco
+// but deliberately does not ship Lexical's editor surface. `ConfigTheme` is a
+// string union in a leaf module, so there is nothing to gain by routing it
+// through the barrel.
+import type { Theme as ConfigTheme } from '../editor/EditorConfig';
 import { getTheme } from '../editor/themes/registry';
+import { MONACO_LANGUAGE_BY_EXTENSION } from './monacoLanguages';
 
 /**
  * Pick the Monaco theme name to use for an extension-contributed theme.
@@ -130,87 +137,7 @@ function getBasename(filePath: string): string {
 export function getMonacoLanguage(filePath: string): string {
   const ext = getExtname(filePath).toLowerCase();
 
-  const languageMap: Record<string, string> = {
-    // JavaScript/TypeScript
-    '.js': 'javascript',
-    '.jsx': 'javascript',
-    '.mjs': 'javascript',
-    '.cjs': 'javascript',
-    '.ts': 'typescript',
-    '.tsx': 'typescript',
-    '.d.ts': 'typescript',
-
-    // Web
-    '.html': 'html',
-    '.htm': 'html',
-    '.css': 'css',
-    '.scss': 'scss',
-    '.sass': 'sass',
-    '.less': 'less',
-
-    // Data formats
-    '.json': 'json',
-    '.jsonc': 'json',
-    '.xml': 'xml',
-    '.yaml': 'yaml',
-    '.yml': 'yaml',
-    '.toml': 'ini',
-
-    // Python
-    '.py': 'python',
-    '.pyw': 'python',
-    '.pyi': 'python',
-
-    // Shell
-    '.sh': 'shell',
-    '.bash': 'shell',
-    '.zsh': 'shell',
-    '.fish': 'shell',
-
-    // C/C++
-    '.c': 'c',
-    '.h': 'c',
-    '.cpp': 'cpp',
-    '.cc': 'cpp',
-    '.cxx': 'cpp',
-    '.hpp': 'cpp',
-    '.hxx': 'cpp',
-
-    // Other compiled languages
-    '.rs': 'rust',
-    '.go': 'go',
-    '.java': 'java',
-    '.kt': 'kotlin',
-    '.swift': 'swift',
-    '.cs': 'csharp',
-
-    // Scripting
-    '.rb': 'ruby',
-    '.php': 'php',
-    '.pl': 'perl',
-    '.lua': 'lua',
-
-    // Functional
-    '.hs': 'haskell',
-    '.scala': 'scala',
-    '.clj': 'clojure',
-    '.fs': 'fsharp',
-    '.fsx': 'fsharp',
-
-    // Markup/Config
-    '.md': 'markdown',
-    '.markdown': 'markdown',
-    '.sql': 'sql',
-    '.graphql': 'graphql',
-    '.dockerfile': 'dockerfile',
-    '.dockerignore': 'plaintext',
-    '.gitignore': 'plaintext',
-    '.env': 'plaintext',
-
-    // Text
-    '.txt': 'plaintext',
-    '.log': 'plaintext',
-  };
+  const languageMap: Readonly<Record<string, string>> = MONACO_LANGUAGE_BY_EXTENSION;
 
   // Special case: files without extensions
   if (!ext) {

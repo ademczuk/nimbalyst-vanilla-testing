@@ -94,6 +94,12 @@ export interface InvitePlanSummary {
   people: number;
   extraProjects: number;
   folders: number;
+  /**
+   * Whether the team already has shared content. "Nothing shared yet" is a
+   * claim about the team, not about this form, and it is false the moment the
+   * team has documents of its own.
+   */
+  teamHasSharedContent?: boolean;
 }
 
 /**
@@ -112,7 +118,11 @@ export function summarizeInvitePlan(plan: InvitePlanSummary): string {
   if (plan.folders > 0) {
     parts.push(`${plan.folders} ${plan.folders === 1 ? 'folder' : 'folders'} published`);
   }
-  if (parts.length === 1) parts.push('nothing shared yet');
+  if (parts.length === 1) {
+    parts.push(plan.teamHasSharedContent
+      ? 'the team already has shared content'
+      : 'nothing shared yet');
+  }
   return parts.join(' · ');
 }
 

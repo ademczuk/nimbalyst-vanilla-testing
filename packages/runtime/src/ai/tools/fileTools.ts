@@ -3,22 +3,65 @@
  */
 
 import type { ToolContext, ToolDefinition } from './index';
-import { getFileSystemService, getFileSystemServiceFor } from '../../core/FileSystemService';
+import {
+  getFileSystemService,
+  getFileSystemServiceFor,
+  getFileSystemServiceForPath,
+} from '../../core/FileSystemService';
 
 /**
  * Resolve the FileSystemService for the workspace this tool call belongs
- * to. Prefer the per-path registry when the dispatcher hands us an
- * explicit `workspacePath`; fall back to the legacy global only when
- * the call site genuinely has no workspace context. The fallback exists
- * to keep older single-project paths working — multi-project rail
- * dispatch always supplies the path.
+ * to, in decreasing order of confidence:
+ *
+ * 1. An absolute `path` argument, which names the root that owns the file.
+ *    In a multi-root workspace this is the only signal that distinguishes an
+ *    attached folder from the primary root — `ctx.workspacePath` is the
+ *    primary root for every session in the workspace, and its service does
+ *    not contain the attached folder's files.
+ * 2. The dispatcher's explicit `workspacePath`.
+ * 3. The legacy global, only when the call site genuinely has no workspace
+ *    context (the renderer-side chat providers). It points at whichever
+ *    workspace is visible, which is why it is last.
  */
-function resolveFileSystemServiceForCall(ctx?: ToolContext) {
+function resolveFileSystemServiceForCall(ctx?: ToolContext, argPath?: unknown) {
+  if (typeof argPath === 'string') {
+    const owning = getFileSystemServiceForPath(argPath);
+    if (owning) return owning;
+  }
   if (ctx?.workspacePath) {
     const scoped = getFileSystemServiceFor(ctx.workspacePath);
     if (scoped) return scoped;
   }
   return getFileSystemService();
+}
+
+/**
+ * The service that should run this call, and the path expressed the way that
+ * service accepts it.
+ *
+ * Every `FileSystemService` sandboxes to its own root and REJECTS absolute
+ * paths -- so resolving the right service for `/attached/repo/src/a.ts` and
+ * then handing it that same absolute string fails validation and the tool call
+ * dies. Relativize against the service's own root once the service is known.
+ * Paths outside that root are passed through unchanged so the sandbox, not this
+ * helper, is what refuses them.
+ */
+function resolveCallTarget(ctx: ToolContext | undefined, argPath: unknown) {
+  const service = resolveFileSystemServiceForCall(ctx, argPath);
+  if (!service || typeof argPath !== 'string' || !argPath) {
+    return { service, path: typeof argPath === 'string' ? argPath : undefined };
+  }
+
+  const root = service.getWorkspacePath()?.replace(/[\\/]+$/, '');
+  if (!root) return { service, path: argPath };
+
+  const normalizedArg = argPath.replace(/\\/g, '/');
+  const normalizedRoot = root.replace(/\\/g, '/');
+  if (normalizedArg === normalizedRoot) return { service, path: undefined };
+  if (normalizedArg.startsWith(`${normalizedRoot}/`)) {
+    return { service, path: normalizedArg.slice(normalizedRoot.length + 1) };
+  }
+  return { service, path: argPath };
 }
 
 /**
@@ -36,7 +79,7 @@ export const searchFilesTool: ToolDefinition = {
       },
       path: {
         type: 'string',
-        description: 'Optional relative path within workspace to search (defaults to entire workspace)'
+        description: 'Optional path to search. Relative paths resolve against the primary workspace root; use an absolute path to search inside a folder attached to this workspace. Defaults to the entire primary root.'
       },
       filePattern: {
         type: 'string',
@@ -54,7 +97,7 @@ export const searchFilesTool: ToolDefinition = {
     required: ['query']
   },
   handler: async (args: any, ctx?: ToolContext) => {
-    const fileSystemService = resolveFileSystemServiceForCall(ctx);
+    const { service: fileSystemService, path: scopedPath } = resolveCallTarget(ctx, args.path);
     if (!fileSystemService) {
       return {
         success: false,
@@ -63,7 +106,7 @@ export const searchFilesTool: ToolDefinition = {
     }
 
     return fileSystemService.searchFiles(args.query, {
-      path: args.path,
+      path: scopedPath,
       filePattern: args.filePattern,
       caseSensitive: args.caseSensitive,
       maxResults: args.maxResults
@@ -83,7 +126,7 @@ export const listFilesTool: ToolDefinition = {
     properties: {
       path: {
         type: 'string',
-        description: 'Relative path within workspace to list (defaults to workspace root)'
+        description: 'Path to list. Relative paths resolve against the primary workspace root; use an absolute path to list a folder attached to this workspace. Defaults to the primary root.'
       },
       pattern: {
         type: 'string',
@@ -105,7 +148,7 @@ export const listFilesTool: ToolDefinition = {
     required: []
   },
   handler: async (args: any, ctx?: ToolContext) => {
-    const fileSystemService = resolveFileSystemServiceForCall(ctx);
+    const { service: fileSystemService, path: scopedPath } = resolveCallTarget(ctx, args.path);
     if (!fileSystemService) {
       return {
         success: false,
@@ -114,7 +157,7 @@ export const listFilesTool: ToolDefinition = {
     }
 
     return fileSystemService.listFiles({
-      path: args.path,
+      path: scopedPath,
       pattern: args.pattern,
       recursive: args.recursive,
       includeHidden: args.includeHidden,
@@ -135,7 +178,7 @@ export const readFileTool: ToolDefinition = {
     properties: {
       path: {
         type: 'string',
-        description: 'Relative path to the file within the workspace'
+        description: 'Path to the file. Relative paths resolve against the primary workspace root; use an absolute path to read a file in a folder attached to this workspace.'
       },
       encoding: {
         type: 'string',
@@ -146,7 +189,7 @@ export const readFileTool: ToolDefinition = {
     required: ['path']
   },
   handler: async (args: any, ctx?: ToolContext) => {
-    const fileSystemService = resolveFileSystemServiceForCall(ctx);
+    const { service: fileSystemService, path: scopedPath } = resolveCallTarget(ctx, args.path);
     if (!fileSystemService) {
       return {
         success: false,
@@ -154,7 +197,7 @@ export const readFileTool: ToolDefinition = {
       };
     }
 
-    return fileSystemService.readFile(args.path, {
+    return fileSystemService.readFile(scopedPath ?? args.path, {
       encoding: args.encoding
     });
   },

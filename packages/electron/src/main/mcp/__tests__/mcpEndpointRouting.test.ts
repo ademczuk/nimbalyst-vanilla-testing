@@ -11,7 +11,10 @@ import {
   MCP_CORE,
   MCP_TRACKERS,
   MCP_SITUATIONAL,
+  FIRST_PARTY_TOOL_TO_SERVER,
 } from '@nimbalyst/runtime/ai/server';
+import { SESSION_CONTEXT_TOOL_SCHEMAS } from '../sessionContextServer';
+import { settingsToolSchemas } from '../settingsServer';
 
 describe('mcpEndpointRouting', () => {
   describe('isMcpEndpoint', () => {
@@ -86,6 +89,20 @@ describe('mcpEndpointRouting', () => {
     it('selects only tracker tools for the tracker endpoint', () => {
       const trackers = selectFirstPartyToolsForEndpoint(builtIn, MCP_TRACKERS).map((t) => t.name);
       expect(trackers.sort()).toEqual(['tracker_create', 'tracker_list']);
+    });
+
+    // A tool schema with no entry in the topology reverse index is filtered
+    // out of every first-party endpoint and simply never reaches the model.
+    // Nothing fails: typecheck passes, unit tests pass, the dispatch case is
+    // right there in the switch -- the tool is just absent from tools/list.
+    // Both host tools added for /planning:nimbalyst-coach shipped this way until a live
+    // tools/list against the running app showed them missing.
+    it('gives every declared host tool schema a topology mapping', () => {
+      const unmapped = [...SESSION_CONTEXT_TOOL_SCHEMAS, ...settingsToolSchemas]
+        .map((tool) => tool.name)
+        .filter((name) => !FIRST_PARTY_TOOL_TO_SERVER.has(name));
+
+      expect(unmapped).toEqual([]);
     });
 
     it('excludes retired tools (open_workspace) from every first-party endpoint', () => {

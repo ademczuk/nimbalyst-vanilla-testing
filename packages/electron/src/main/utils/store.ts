@@ -526,6 +526,16 @@ export type AgentFileScopeMode = 'current-changes' | 'session-files' | 'all-chan
 
 export interface WorkspaceState {
   workspacePath: string;
+  /**
+   * Additional top-level folders attached to this workspace, as absolute paths.
+   *
+   * Multi-root is asymmetric: `workspacePath` remains the workspace identity
+   * (settings key, tabs, sessions, trackers, collab org), and attached folders
+   * are extra roots the explorer shows, watchers watch, search fans out over,
+   * and AI sessions reach through `additionalDirectories`. An empty list is the
+   * single-folder workspace every user has today.
+   */
+  attachedFolders?: string[];
   windowState?: SessionWindow;
   // only when separate agentic coding window is open
   agenticCodingWindowState?: AgenticCodingWindowState;
@@ -853,6 +863,47 @@ function workspaceKey(workspacePath: string): string {
 }
 
 /**
+ * Soft cap on attached folders. Each attached folder costs a recursive file
+ * watcher, an event bus, and a git-ref watcher per discovered repo, so this
+ * matches the rail's warm-project limit until watcher cost is measured.
+ */
+export const MAX_ATTACHED_FOLDERS = 8;
+
+/**
+ * Normalize a root path the same way `workspaceKey` does, so the primary root
+ * and an attached folder that differ only by a trailing slash compare equal.
+ */
+function normalizeRootPath(rootPath: string): string {
+  return path.normalize(rootPath).replace(/\/+$/, '');
+}
+
+/**
+ * Drop malformed, duplicate, and self-referential entries from a persisted
+ * attached-folder list. Deliberately does NOT truncate to the cap: state
+ * written by a build with a higher cap is the user's data, not corruption.
+ */
+function sanitizeAttachedFolders(raw: unknown, workspacePath: string): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const primary = normalizeRootPath(workspacePath);
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string' || !entry.trim()) {
+      continue;
+    }
+    const normalized = normalizeRootPath(entry);
+    if (normalized === primary || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+/**
  * Deep merge utility for workspace state.
  * Recursively merges source into target, replacing primitives and arrays.
  */
@@ -892,6 +943,7 @@ function deepMerge<T extends Record<string, any>>(target: T, source: any): T {
 function createDefaultWorkspaceState(workspacePath: string): WorkspaceState {
   return {
     workspacePath,
+    attachedFolders: [],
     windowState: undefined,
     agenticCodingWindowState: undefined,
     activeMode: undefined,
@@ -964,6 +1016,8 @@ function normalizeWorkspaceState(raw: any, wsPath: string): WorkspaceState {
   if (Array.isArray(state.recentDocuments)) {
     state.recentDocuments = state.recentDocuments.slice(0, 50);
   }
+
+  state.attachedFolders = sanitizeAttachedFolders(state.attachedFolders, wsPath);
 
   // Ensure tabs has required structure
   if (!state.tabs || typeof state.tabs !== 'object') {
@@ -1252,6 +1306,65 @@ export function getTakenLocalKeyPrefixes(excludeWorkspacePath?: string): string[
     .filter(([key]) => key.startsWith('ws:') && key !== excludeKey)
     .map(([, state]) => state?.localKeyPrefix)
     .filter((prefix): prefix is string => typeof prefix === 'string' && prefix.length > 0);
+}
+
+/**
+ * Folders attached to this workspace, absolute and normalized. Never includes
+ * the primary root.
+ */
+export function getAttachedFolders(workspacePath: string): string[] {
+  return getWorkspaceState(workspacePath).attachedFolders ?? [];
+}
+
+/**
+ * Every root this workspace spans: the primary root first, then attached
+ * folders in attachment order. Explorer order, search order, and watcher
+ * registration all read this, so "primary first" is the single definition of
+ * root ordering.
+ */
+export function getWorkspaceRoots(workspacePath: string): string[] {
+  return [normalizeRootPath(workspacePath), ...getAttachedFolders(workspacePath)];
+}
+
+export type AttachFolderResult =
+  | { ok: true; attachedFolders: string[] }
+  | { ok: false; reason: 'already-attached' | 'is-primary-root' | 'cap-reached'; attachedFolders: string[] };
+
+/**
+ * Attach a folder to the workspace. Idempotent: attaching a folder that is
+ * already a root reports why rather than duplicating it.
+ */
+export function attachFolderToWorkspace(workspacePath: string, folderPath: string): AttachFolderResult {
+  const normalized = normalizeRootPath(folderPath);
+  const primary = normalizeRootPath(workspacePath);
+  const current = getAttachedFolders(workspacePath);
+
+  if (normalized === primary) {
+    return { ok: false, reason: 'is-primary-root', attachedFolders: current };
+  }
+  if (current.includes(normalized)) {
+    return { ok: false, reason: 'already-attached', attachedFolders: current };
+  }
+  if (current.length >= MAX_ATTACHED_FOLDERS) {
+    return { ok: false, reason: 'cap-reached', attachedFolders: current };
+  }
+
+  const next = updateWorkspaceState(workspacePath, state => {
+    state.attachedFolders = [...(state.attachedFolders ?? []), normalized];
+  });
+  return { ok: true, attachedFolders: next.attachedFolders ?? [] };
+}
+
+/**
+ * Detach a folder. Tabs opened from it stay open -- they are files, not the
+ * folder -- so this only removes the root from the workspace.
+ */
+export function detachFolderFromWorkspace(workspacePath: string, folderPath: string): string[] {
+  const normalized = normalizeRootPath(folderPath);
+  const next = updateWorkspaceState(workspacePath, state => {
+    state.attachedFolders = (state.attachedFolders ?? []).filter(entry => entry !== normalized);
+  });
+  return next.attachedFolders ?? [];
 }
 
 export function getWorkspaceRecentFiles(workspacePath: string): string[] {

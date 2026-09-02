@@ -29,9 +29,23 @@ import { hashContent } from './contentHash';
 
 export type DiffPhase =
   | 'applying'
+  /**
+   * A generation exists but nobody capable of presenting it is subscribed (source
+   * mode, a custom editor whose diff callback has not registered yet, no visible
+   * tab), or the presenter that had it failed. It absorbs newer disk content as
+   * its target instead of building an undrainable queue, and publishes as soon
+   * as a presenter appears.
+   */
+  | 'awaiting-presenter'
   | 'applied'
   | 'resolving-partial'
   | 'resolving-all';
+
+/**
+ * Monotonic generation counter. Process-global rather than per-session so a
+ * generation id is never ambiguous across sessions or in a log line.
+ */
+let nextDiffGeneration = 0;
 
 export interface DiffSessionSnapshot {
   tagId: string;
@@ -50,6 +64,12 @@ export interface DiffSessionSnapshot {
    */
   pendingContent: string | null;
   createdAt: number;
+  /**
+   * Identity of the currently-presented target. Bumped by `create` and every
+   * `beginApply`, so a completion that names an older generation is recognizably
+   * stale. The owning DocumentModel keys its recipient accounting off it.
+   */
+  generation: number;
 }
 
 export interface CreateDiffSessionInput {
@@ -79,6 +99,7 @@ export class DiffSession {
   private _appliedContentHash: string;
   private _pendingContent: string | null;
   private _createdAt: number;
+  private _generation: number;
 
   private constructor(snapshot: DiffSessionSnapshot) {
     this._tagId = snapshot.tagId;
@@ -89,6 +110,7 @@ export class DiffSession {
     this._appliedContentHash = snapshot.appliedContentHash;
     this._pendingContent = snapshot.pendingContent;
     this._createdAt = snapshot.createdAt;
+    this._generation = snapshot.generation;
   }
 
   static create(input: CreateDiffSessionInput): DiffSession {
@@ -101,6 +123,7 @@ export class DiffSession {
       appliedContentHash: hashContent(input.initialContent),
       pendingContent: null,
       createdAt: input.createdAt ?? Date.now(),
+      generation: ++nextDiffGeneration,
     });
   }
 
@@ -114,6 +137,7 @@ export class DiffSession {
   get appliedContentHash(): string { return this._appliedContentHash; }
   get pendingContent(): string | null { return this._pendingContent; }
   get createdAt(): number { return this._createdAt; }
+  get generation(): number { return this._generation; }
 
   snapshot(): DiffSessionSnapshot {
     return {
@@ -125,6 +149,7 @@ export class DiffSession {
       appliedContentHash: this._appliedContentHash,
       pendingContent: this._pendingContent,
       createdAt: this._createdAt,
+      generation: this._generation,
     };
   }
 
@@ -150,6 +175,16 @@ export class DiffSession {
       return { kind: 'duplicate', session: this };
     }
 
+    // Nobody capable is presenting the current target, so no acknowledgement can
+    // ever drain a payload queued behind it. Replace the target in place instead
+    // of building a queue with no exit (NIM-5359, defect G).
+    if (this._phase === 'awaiting-presenter') {
+      if (incomingHash === this._appliedContentHash) {
+        return { kind: 'duplicate', session: this };
+      }
+      return { kind: 'apply', session: this.beginApply(content) };
+    }
+
     // Currently applying -- queue the latest payload (last-write-wins).
     if (this._phase === 'applying') {
       this._pendingContent = content;
@@ -169,15 +204,17 @@ export class DiffSession {
   }
 
   /**
-   * Begin applying a new target content. Resets phase to 'applying' and updates
-   * appliedContent/hash to the new target. Caller must invoke `markApplied` once the
-   * editor finishes its replay (or `markApplyFailed` to roll back to the previous applied
-   * payload).
+   * Begin applying a new target content under a fresh generation. Resets phase to
+   * 'applying' and updates appliedContent/hash to the new target. Caller must
+   * invoke `markApplied` once every recipient reports success, `markApplyFailed`
+   * when one could not present it, or `markAwaitingPresenter` when nobody capable
+   * received it at all.
    */
   beginApply(content: string): DiffSession {
     this._phase = 'applying';
     this._appliedContent = content;
     this._appliedContentHash = hashContent(content);
+    this._generation = ++nextDiffGeneration;
     return this;
   }
 
@@ -191,6 +228,54 @@ export class DiffSession {
     }
     this._phase = 'applied';
     return this;
+  }
+
+  /**
+   * A presenter could not render the current target. The target is deliberately
+   * NOT advanced and the generation is NOT applied -- treating a failed apply as
+   * applied moves the conflict baseline onto content no editor is showing. The
+   * session parks until the model republishes freshly-read disk bytes.
+   */
+  markApplyFailed(): DiffSession {
+    if (this._phase !== 'applying') {
+      throw new Error(`DiffSession.markApplyFailed: invalid phase ${this._phase}`);
+    }
+    this._phase = 'awaiting-presenter';
+    return this;
+  }
+
+  /**
+   * The current target reached no capable presenter (or every recipient went away
+   * before presenting it). Same parked state as a failed apply: newer disk content
+   * replaces the target rather than queueing behind it.
+   */
+  markAwaitingPresenter(): DiffSession {
+    if (this._phase !== 'applying') {
+      throw new Error(`DiffSession.markAwaitingPresenter: invalid phase ${this._phase}`);
+    }
+    this._phase = 'awaiting-presenter';
+    return this;
+  }
+
+  /**
+   * A capable presenter appeared for a parked target. Republishes it under a fresh
+   * generation so an acknowledgement of the parked one cannot settle it.
+   */
+  beginPresenting(): DiffSession {
+    if (this._phase !== 'awaiting-presenter') {
+      throw new Error(`DiffSession.beginPresenting: invalid phase ${this._phase}`);
+    }
+    return this.beginApply(this._appliedContent);
+  }
+
+  /**
+   * Recovery: adopt freshly-read disk bytes as the target under a new generation.
+   * Anything queued behind the lost generation is discarded -- disk is by
+   * definition newer than what the queue holds.
+   */
+  adoptRecoveredTarget(content: string): DiffSession {
+    this._pendingContent = null;
+    return this.beginApply(content);
   }
 
   /**

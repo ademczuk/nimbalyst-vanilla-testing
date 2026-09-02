@@ -77,9 +77,9 @@ export const BROWSER_EDITOR_SUPPORTED_CAPABILITIES = [
  * Capabilities a browser collaborative host cannot provide, each with the
  * reason an extension author would need to understand the gap.
  *
- * `history`, `menuItems`, `aiContext` and `binaryContent` are absent from BOTH
- * lists: they are conditional on what the embedding page wired up, so
- * {@link createBrowserEditorCapabilities} resolves them per mount.
+ * `history`, `menuItems`, `aiContext`, `binaryContent` and `sourceMode` are
+ * absent from BOTH lists: they are conditional on what the embedding page wired
+ * up, so {@link createBrowserEditorCapabilities} resolves them per mount.
  */
 export const BROWSER_EDITOR_CAPABILITY_GAPS = [
   {
@@ -104,12 +104,6 @@ export const BROWSER_EDITOR_CAPABILITY_GAPS = [
   {
     capability: 'workspace',
     reason: 'A browser host opens one shared document, not a workspace.',
-  },
-  {
-    capability: 'sourceMode',
-    reason:
-      'Source mode renders Monaco, which this bundle deliberately does not '
-      + 'ship. The toggle members are omitted and supportsSourceMode is false.',
   },
   {
     capability: 'diffMode',
@@ -179,6 +173,23 @@ export interface BrowserEditorGrantedCapabilities {
   externalLinks?: boolean;
   /** `registerViewport()` reaches a surface that carries scroll between docs. */
   viewport?: boolean;
+  /**
+   * `toggleSourceMode()` reaches a real raw-source view for this document.
+   *
+   * This used to be a static gap whose reason read "source mode renders Monaco,
+   * which this bundle deliberately does not ship". That was a description of
+   * one build, never a product position, and it is no longer true: the console
+   * ships Monaco behind a lazy import. Whether a source view exists was always
+   * a property of the embedding page rather than of browsers, which is why it
+   * belongs here next to `history` and `menuItems` rather than in the fixed
+   * list.
+   *
+   * A page grants it per mount, and only when it can honour it end to end: it
+   * needs somewhere to render Monaco AND a codec that can project this
+   * document's Y.Doc to text and read the text back. A structured Y.Doc has no
+   * text in it, so without the codec there is nothing honest to show.
+   */
+  sourceMode?: boolean;
 }
 
 const CONDITIONAL_GAP_REASONS: Record<
@@ -198,6 +209,10 @@ const CONDITIONAL_GAP_REASONS: Record<
     'This page shows one document at a time, so there is nothing to carry a '
     + 'scroll position to. Only a surface that steps between documents -- the '
     + 'feedback detail popover -- listens for one.',
+  sourceMode:
+    'This page did not offer a raw-source view for this document. Source mode '
+    + 'needs an editor that declares it and a codec that can project the Y.Doc '
+    + 'to text and read the text back; without both there is nothing to show.',
 };
 
 /**

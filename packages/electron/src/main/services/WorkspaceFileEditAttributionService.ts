@@ -11,7 +11,7 @@ import { toolCallMatcher } from './ToolCallMatcher';
 import { codexEditWindowRegistry } from './CodexEditWindowRegistry';
 import { notifySessionFilesUpdated } from './sessionFilesNotify';
 import { workspaceFileAttributionPolicy } from './WorkspaceFileAttributionPolicy';
-import { getCachedTrackedFiles, getCachedUncommittedFiles } from '../utils/gitUncommittedFiles';
+import { getGitFactsForFile } from '../history/fileGitFacts';
 
 export interface WorkspaceFileEditEvent {
   workspacePath: string;
@@ -228,23 +228,16 @@ class WorkspaceFileEditAttributionServiceImpl {
    * Both signals are required: a path absent from the uncommitted set is either
    * tracked-and-clean or gitignored, and only the first means "landed". Any
    * uncertainty answers `false`, so a missing git signal never suppresses a tag.
+   *
+   * Resolved against the repo that owns the file rather than the workspace
+   * path. A project can span several folders and a root can be a container of
+   * checkouts, so the two are not the same repo — and when the root holds no
+   * `.git` at all, asking about it returns nothing and this guard quietly
+   * stops guarding.
    */
   private async alreadyLandedInGit(event: WorkspaceFileEditEvent): Promise<boolean> {
-    try {
-      const [tracked, uncommitted] = await Promise.all([
-        getCachedTrackedFiles(event.workspacePath),
-        getCachedUncommittedFiles(event.workspacePath),
-      ]);
-      if (tracked.size === 0) return false;
-
-      const relative = path
-        .relative(event.workspacePath, event.filePath)
-        .split(path.sep)
-        .join('/');
-      return tracked.has(relative) && !uncommitted.has(relative);
-    } catch {
-      return false;
-    }
+    const { isTracked, isUncommitted } = await getGitFactsForFile(event.filePath);
+    return isTracked === true && isUncommitted === false;
   }
 
   private async processEvent(event: WorkspaceFileEditEvent, state: WorkspaceQueueState): Promise<void> {

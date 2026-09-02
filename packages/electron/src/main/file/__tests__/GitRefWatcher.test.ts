@@ -174,3 +174,61 @@ describe('GitRefWatcher.start - empty repo handling', () => {
     );
   });
 });
+
+/**
+ * Watchers are registered per repo, and a repo can sit inside an attached
+ * folder rather than at the workspace root. The pending-review side is still
+ * workspace-scoped: `updateTagStatus`'s last argument becomes the key of the
+ * `history:pending-count-changed` broadcast, and the renderer matches sessions
+ * on exact workspace equality. Handing it a repo root means the badge refresh
+ * reaches nobody after a commit in an attached repo.
+ */
+describe('GitRefWatcher - pending-review broadcast scope', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('attributes auto-approvals to the owning workspace, not the repo root', async () => {
+    mockStatus.mockResolvedValue({ current: 'main' });
+    mockLog.mockResolvedValue({ latest: { hash: 'abc123', message: 'Initial commit' } });
+
+    const watcher = new GitRefWatcher();
+    await watcher.start('/elsewhere/attached-repo', '/proj/primary');
+
+    const updateTagStatus = vi.fn();
+    await (watcher as any).autoApprovePendingReviews('/elsewhere/attached-repo', [
+      '/elsewhere/attached-repo/src/a.ts',
+    ], {
+      getPendingTags: vi.fn().mockResolvedValue([{ id: 'tag-1' }]),
+      updateTagStatus,
+    });
+
+    expect(updateTagStatus).toHaveBeenCalledWith(
+      '/elsewhere/attached-repo/src/a.ts',
+      'tag-1',
+      'reviewed',
+      '/proj/primary',
+    );
+  });
+
+  it('falls back to the repo path when no owning workspace was given', async () => {
+    mockStatus.mockResolvedValue({ current: 'main' });
+    mockLog.mockResolvedValue({ latest: { hash: 'abc123', message: 'Initial commit' } });
+
+    const watcher = new GitRefWatcher();
+    await watcher.start('/solo/repo');
+
+    const updateTagStatus = vi.fn();
+    await (watcher as any).autoApprovePendingReviews('/solo/repo', ['/solo/repo/a.ts'], {
+      getPendingTags: vi.fn().mockResolvedValue([{ id: 'tag-1' }]),
+      updateTagStatus,
+    });
+
+    expect(updateTagStatus).toHaveBeenCalledWith(
+      '/solo/repo/a.ts',
+      'tag-1',
+      'reviewed',
+      '/solo/repo',
+    );
+  });
+});

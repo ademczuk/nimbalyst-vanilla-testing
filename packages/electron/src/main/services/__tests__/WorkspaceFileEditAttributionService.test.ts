@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { matchWorkspaceFileEdit, addFileLink, debug } = vi.hoisted(() => ({
+const { matchWorkspaceFileEdit, addFileLink, debug, getGitFactsForFile } = vi.hoisted(() => ({
   matchWorkspaceFileEdit: vi.fn(),
   addFileLink: vi.fn(),
   debug: vi.fn(),
+  getGitFactsForFile: vi.fn(),
+}));
+
+vi.mock('../../history/fileGitFacts', () => ({
+  getGitFactsForFile,
+  UNKNOWN_GIT_FACTS: { isTracked: null, isUncommitted: null },
 }));
 
 vi.mock('@nimbalyst/runtime', () => ({
@@ -80,5 +86,56 @@ describe('WorkspaceFileEditAttributionService', () => {
     });
     expect(matchWorkspaceFileEdit).not.toHaveBeenCalled();
     expect(addFileLink).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The already-landed guard suppresses a pending tag for content a merge or
+ * checkout has already written. It has to ask git about the repo that owns the
+ * file: a project can span several folders, and a root can be a container of
+ * checkouts rather than a repo itself, so relativizing against the workspace
+ * path answers about the wrong repo — or, when the root has no `.git` at all,
+ * answers nothing and turns the guard into a permanent no-op.
+ */
+describe('WorkspaceFileEditAttributionService.alreadyLandedInGit', () => {
+  afterEach(() => {
+    getGitFactsForFile.mockReset();
+  });
+
+  it('asks git about the file, not the workspace root', async () => {
+    getGitFactsForFile.mockResolvedValue({ isTracked: true, isUncommitted: false });
+
+    const landed = await (workspaceFileEditAttributionService as any).alreadyLandedInGit({
+      workspacePath: '/proj/primary',
+      filePath: '/elsewhere/attached-repo/src/a.ts',
+      timestamp: Date.now(),
+    });
+
+    expect(getGitFactsForFile).toHaveBeenCalledWith('/elsewhere/attached-repo/src/a.ts');
+    expect(landed).toBe(true);
+  });
+
+  it('does not claim a tracked-but-modified file has landed', async () => {
+    getGitFactsForFile.mockResolvedValue({ isTracked: true, isUncommitted: true });
+
+    await expect(
+      (workspaceFileEditAttributionService as any).alreadyLandedInGit({
+        workspacePath: '/proj/primary',
+        filePath: '/proj/primary/src/a.ts',
+        timestamp: Date.now(),
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it('answers false when git could not answer, so a live diff is never suppressed', async () => {
+    getGitFactsForFile.mockResolvedValue({ isTracked: null, isUncommitted: null });
+
+    await expect(
+      (workspaceFileEditAttributionService as any).alreadyLandedInGit({
+        workspacePath: '/proj/primary',
+        filePath: '/proj/primary/src/a.ts',
+        timestamp: Date.now(),
+      }),
+    ).resolves.toBe(false);
   });
 });

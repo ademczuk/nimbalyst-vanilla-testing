@@ -303,6 +303,17 @@ jobs:
           fi
           echo "Verified: ${RG_EXPECTED} exists"
 
+      # tracker-core publishes only built `dist`, and the runtime imports it.
+      # Its `prepare` script covers that on a plain `npm ci`, but the Windows
+      # ARM64 path installs with --ignore-scripts, so build it explicitly here
+      # or the runtime build fails with: Failed to resolve entry for package
+      # "@nimbalyst/tracker-core".
+      - name: Build tracker-core
+        working-directory: packages/tracker-core
+        env:
+          NODE_ENV: production
+        run: npm run build
+
       - name: Build extension-sdk
         working-directory: packages/extension-sdk
         env:

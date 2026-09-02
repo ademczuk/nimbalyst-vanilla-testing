@@ -1,7 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+
+/**
+ * Only the attached-folder lookup is faked; everything else in the store stays
+ * real. Writing attachments through the real store would need a writable
+ * electron-store on disk, which this file otherwise avoids.
+ */
+const attachedFoldersByWorkspace = new Map<string, string[]>();
+vi.mock('../store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../store')>()),
+  getAttachedFolders: (workspacePath: string) => attachedFoldersByWorkspace.get(workspacePath) ?? [],
+}));
+
 import {
   resolveProjectPath,
   isWorktreePath,
@@ -215,7 +227,19 @@ describe('getAdditionalDirectoriesForWorkspace', () => {
   });
 
   afterEach(() => {
+    attachedFoldersByWorkspace.clear();
     fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('grants the agent access to folders attached to the workspace', () => {
+    // Attachment is workspace-level, so every session in the workspace gets the
+    // extra roots without per-session UI. Without this the user can see the
+    // attached folder in the explorer but the agent cannot read it.
+    const attached = path.join(tmpRoot, 'infra');
+    fs.mkdirSync(attached);
+    attachedFoldersByWorkspace.set(projectPath, [attached]);
+
+    expect(getAdditionalDirectoriesForWorkspace(projectPath)).toEqual([attached]);
   });
 
   it('returns an empty list for a project with no worktrees and no extension marker', () => {

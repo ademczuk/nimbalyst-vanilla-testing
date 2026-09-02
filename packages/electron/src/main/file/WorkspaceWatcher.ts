@@ -12,7 +12,9 @@ import path from "path";
 import { createHash } from 'crypto';
 import { getProjectFileSyncService } from '../services/ProjectFileSyncService';
 import { isSyncEnabled } from '../services/SyncManager';
-import { getReleaseChannel, getSessionSyncConfig } from '../utils/store';
+import { getReleaseChannel, getSessionSyncConfig, getWorkspaceRoots } from '../utils/store';
+import { anyWindowReferencesWorkspace } from '../window/windowState';
+import { listReposForRoot } from '../services/workspaceRepos';
 
 // Helper function to calculate folder depth relative to workspace
 function calculateFolderDepth(folderPath: string, workspacePath: string): number {
@@ -90,7 +92,12 @@ export function registerWorkspaceWatcherHandlers() {
     });
 }
 
-// Start watching a workspace directory for changes
+/**
+ * Start watching a workspace for changes: the primary root and every folder
+ * attached to it. Each root gets its own tree watcher and its own git-ref
+ * watcher, because roots have independent `.gitignore` files and may be
+ * separate repos (or no repo at all).
+ */
 export function startWorkspaceWatcher(window: BrowserWindow, workspacePath: string) {
     const windowId = getWindowId(window);
     if (windowId === null) {
@@ -98,19 +105,58 @@ export function startWorkspaceWatcher(window: BrowserWindow, workspacePath: stri
         return;
     }
 
-    // Use optimized chokidar-based workspace watcher
-    // logger.workspaceWatcher.info('Using OptimizedWorkspaceWatcher for:', workspacePath);
-    optimizedWorkspaceWatcher.start(window, workspacePath);
+    for (const rootPath of getWorkspaceRoots(workspacePath)) {
+        startRootWatcher(window, rootPath, workspacePath);
+    }
 
-    // Start git ref watcher for this workspace (detects commits and staging changes)
-    gitRefWatcher.start(workspacePath).catch((error) => {
-        logger.workspaceWatcher.error('Failed to start GitRefWatcher:', error);
-    });
-
-    // Start project file sync for .md files (non-blocking, non-fatal)
+    // Project file sync is a workspace-level (primary root) concern: it syncs
+    // the project's own .md documents to mobile, and attached folders have no
+    // workspace identity to sync under.
     startProjectFileSync(workspacePath).catch((error) => {
         logger.workspaceWatcher.error('Failed to start ProjectFileSync:', error);
     });
+}
+
+/**
+ * Start watching one root. Idempotent, and additive -- the window's other roots
+ * keep running. Called for each root at workspace open and again when a folder
+ * is attached.
+ */
+export function startRootWatcher(window: BrowserWindow, rootPath: string, owningWorkspace?: string) {
+    // Use optimized chokidar-based workspace watcher
+    optimizedWorkspaceWatcher.start(window, rootPath);
+
+    // One git-ref watcher per repo the root contains, not per root: a root may
+    // be no repo at all (nothing to watch) or a container holding several
+    // (watching only the container would miss every commit).
+    //
+    // The owning workspace goes with it: git status is routed per repo, but
+    // pending reviews are workspace-scoped, and a repo under an attached folder
+    // has no workspace identity of its own to broadcast under.
+    for (const repoPath of listReposForRoot(rootPath)) {
+        gitRefWatcher.start(repoPath, owningWorkspace ?? rootPath).catch((error) => {
+            logger.workspaceWatcher.error('Failed to start GitRefWatcher:', error);
+        });
+    }
+}
+
+/**
+ * Stop watching one root, leaving the window's other roots alone. Called when a
+ * folder is detached.
+ *
+ * The git-ref watcher is keyed by path rather than window, so it is only
+ * stopped when no window still shows this root.
+ */
+export function stopRootWatcher(windowId: number, rootPath: string) {
+    optimizedWorkspaceWatcher.stopRoot(windowId, rootPath);
+
+    if (!anyWindowReferencesWorkspace(rootPath)) {
+        for (const repoPath of listReposForRoot(rootPath)) {
+            gitRefWatcher.stop(repoPath).catch((error) => {
+                logger.workspaceWatcher.error('Failed to stop GitRefWatcher:', error);
+            });
+        }
+    }
 }
 
 // Stop watching a workspace

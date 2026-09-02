@@ -26,6 +26,11 @@ interface FileEditsSidebarProps {
   fileEdits: FileEditSummary[];
   onFileClick?: (filePath: string) => void;
   workspacePath?: string;
+  /**
+   * Every root of a multi-root workspace, primary first. Defaults to
+   * `[workspacePath]`, which is every ordinary single-folder project.
+   */
+  workspaceRoots?: string[];
   /** Set of file paths that have pending AI edits awaiting review */
   pendingReviewFiles?: Set<string>;
   /** Whether to group files by directory (controlled externally) */
@@ -110,6 +115,7 @@ export const FileEditsSidebar: React.FC<FileEditsSidebarProps> = ({
   fileEdits,
   onFileClick,
   workspacePath,
+  workspaceRoots,
   pendingReviewFiles,
   groupByDirectory: groupByDirectoryProp,
   onGroupByDirectoryChange,
@@ -166,15 +172,22 @@ export const FileEditsSidebar: React.FC<FileEditsSidebarProps> = ({
   const contextMenuRole = useRole(contextMenuContext, { role: 'menu' });
   const { getFloatingProps: getContextMenuFloatingProps } = useInteractions([contextMenuDismiss, contextMenuRole]);
 
-  // Convert absolute path to relative path from workspace root
+  // Roots this workspace spans. A file in an attached root renders under that
+  // root's name rather than as a bare absolute path.
+  const roots = useMemo(
+    () => (workspaceRoots?.length ? workspaceRoots : workspacePath ? [workspacePath] : []),
+    [workspaceRoots, workspacePath],
+  );
+
+  // Convert absolute path to relative path from its owning workspace root
   const getRelativePath = useCallback((filePath: string): string => {
-    return getWorkspaceRelativeFilePath(filePath, workspacePath);
-  }, [workspacePath]);
+    return getWorkspaceRelativeFilePath(filePath, roots);
+  }, [roots]);
 
   // Build directory tree from file list
   const buildDirectoryTree = useCallback((files: EditedFile[]): DirectoryNode => (
-    buildFileDirectoryTree(files, file => file.filePath, workspacePath)
-  ), [workspacePath]);
+    buildFileDirectoryTree(files, file => file.filePath, roots)
+  ), [roots]);
 
   // Group edited files by file path
   const editedFiles = useMemo(() => {
@@ -213,7 +226,10 @@ export const FileEditsSidebar: React.FC<FileEditsSidebarProps> = ({
 
     const fetchGitStatus = async () => {
       try {
-        const filePaths = editedFiles.map(f => getRelativePath(f.filePath));
+        // Absolute paths, so main can attribute each file to the root and repo
+        // that owns it. A relative path is ambiguous once a workspace has more
+        // than one root, and the reply is keyed by whatever we send.
+        const filePaths = editedFiles.map(f => f.filePath);
 
         if (typeof window !== 'undefined' && (window as any).electronAPI) {
           const result = await (window as any).electronAPI.invoke(
@@ -237,9 +253,13 @@ export const FileEditsSidebar: React.FC<FileEditsSidebarProps> = ({
       fetchGitStatus();
     };
 
-    // Listen for git status changes
-    const handleGitStatusChanged = (data: { workspacePath: string }) => {
-      if (data.workspacePath === workspacePath) {
+    // Listen for git status changes. Multi-root payloads name the repository
+    // that moved, which may be inside an attached root rather than under
+    // `workspacePath` -- so match any root of this workspace, not just the
+    // primary one.
+    const handleGitStatusChanged = (data: { workspacePath: string; repoPath?: string }) => {
+      const changed = data.repoPath ?? data.workspacePath;
+      if (roots.some(root => changed === root || changed.startsWith(`${root}/`))) {
         fetchGitStatus();
       }
     };
@@ -251,7 +271,7 @@ export const FileEditsSidebar: React.FC<FileEditsSidebarProps> = ({
       window.removeEventListener('focus', handleFocus);
       unsubscribe?.();
     };
-  }, [editedFiles, workspacePath]);
+  }, [editedFiles, workspacePath, roots]);
 
   const toggleFolder = (folderPath: string) => {
     setExpandedFolders(prev => {
@@ -329,10 +349,9 @@ export const FileEditsSidebar: React.FC<FileEditsSidebarProps> = ({
 
   // Check if file has uncommitted changes (is selectable for commit)
   const isFileCommitted = useCallback((filePath: string): boolean => {
-    const relativePath = getRelativePath(filePath);
-    const status = gitStatus[relativePath];
+    const status = gitStatus[filePath];
     return !status || status.status === 'unchanged';
-  }, [gitStatus, getRelativePath]);
+  }, [gitStatus]);
 
   const isSelectableForCommit = useCallback((filePath: string): boolean => {
     if (isFileCommitted(filePath)) {
@@ -363,8 +382,7 @@ export const FileEditsSidebar: React.FC<FileEditsSidebarProps> = ({
 
   // Get file status color class based on operation and git status
   const getFileStatusColor = (filePath: string, operation?: string): string => {
-    const relativePath = getRelativePath(filePath);
-    const status = gitStatus[relativePath];
+    const status = gitStatus[filePath];
 
     // If file has no git changes (committed/unchanged), use committed color
     const isCommitted = !status || status.status === 'unchanged';
@@ -387,7 +405,7 @@ export const FileEditsSidebar: React.FC<FileEditsSidebarProps> = ({
   // Get tooltip text for file status
   const getFileStatusTooltip = (filePath: string, operation?: string): string => {
     const relativePath = getRelativePath(filePath);
-    const status = gitStatus[relativePath];
+    const status = gitStatus[filePath];
 
     const isCommitted = !status || status.status === 'unchanged';
 
@@ -532,7 +550,7 @@ export const FileEditsSidebar: React.FC<FileEditsSidebarProps> = ({
     const fileColorClass = getFileStatusColor(filePath, operation);
     // Check both operation and git status for deleted files
     const relativePath = getRelativePath(filePath);
-    const gitFileStatus = gitStatus[relativePath];
+    const gitFileStatus = gitStatus[filePath];
     const isDeleted = operation === 'delete' || gitFileStatus?.status === 'deleted';
     const tooltip = getFileStatusTooltip(filePath, operation);
     const committed = isFileCommitted(filePath);

@@ -196,6 +196,20 @@ export interface BrowserExtensionEditorHostOptions {
   onViewportRegistered?(viewport: EditorViewport | null): void;
 
   /**
+   * Flips the document between the extension's editor and a raw-source view.
+   *
+   * Supplying it is what grants the `sourceMode` capability, so a page offers
+   * it only when it can honour it: somewhere to render a source editor, and a
+   * codec that can project this document's Y.Doc to text and read the text
+   * back. The other two members are read through this same grant -- a host
+   * that can toggle but cannot report the current state would leave every
+   * editor built on `useEditorLifecycle` showing a stale toggle label.
+   */
+  toggleSourceMode?(): void;
+  isSourceModeActive?(): boolean;
+  subscribeToSourceModeChanges?(callback: (active: boolean) => void): () => void;
+
+  /**
    * Marks the editor as rendered inside another surface rather than as a full
    * page, so extensions can drop persistent chrome that makes no sense there.
    * An inline preview or a detail popover sets this; the document page does
@@ -244,6 +258,7 @@ export function createBrowserExtensionEditorHost(
     binaryContent: Boolean(options.getInitialBinaryContent),
     externalLinks: Boolean(options.openExternal),
     viewport: Boolean(options.onViewportRegistered),
+    sourceMode: Boolean(options.toggleSourceMode),
   });
   const filesystemPermission = resolveBrowserFilesystemPermission(options.permissions);
 
@@ -379,10 +394,22 @@ export function createBrowserExtensionEditorHost(
       options.onOpenHistory();
     },
 
-    // `fs`, `openExternal`, the diff members, the source-mode members,
-    // `onFindRequested` and `getConfig` are omitted, not stubbed -- absence is
-    // how an extension detects them. `openExternal` is added below only when
-    // the page supplied one.
+    // `fs`, `openExternal`, the diff members, `onFindRequested` and `getConfig`
+    // are omitted, not stubbed -- absence is how an extension detects them.
+    // `openExternal` is added below only when the page supplied one.
+
+    // Source mode, present only when the page granted it. All four members
+    // move together: `supportsSourceMode` is what puts a "View source" control
+    // on screen, and an editor that sees it must be able to act on it.
+    ...(options.toggleSourceMode
+      ? {
+        supportsSourceMode: true,
+        toggleSourceMode: () => options.toggleSourceMode?.(),
+        isSourceModeActive: () => options.isSourceModeActive?.() ?? false,
+        onSourceModeChanged: (callback: (active: boolean) => void) =>
+          options.subscribeToSourceModeChanges?.(callback) ?? (() => {}),
+      }
+      : {}),
 
     storage,
 

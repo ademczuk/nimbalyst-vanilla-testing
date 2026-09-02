@@ -1,6 +1,13 @@
 /** Mirrors the main-process `git:status-changed` payload. */
 interface GitStatusChangedPayload {
   workspacePath: string;
+  /**
+   * The repo whose state changed. In a multi-root workspace this may sit
+   * inside an attached folder rather than under `workspacePath`, so listeners
+   * route on it. Absent from emitters that predate multi-root, in which case
+   * `workspacePath` is the repo.
+   */
+  repoPath?: string;
   revision?: number;
   status?: {
     branch: string;
@@ -1638,7 +1645,7 @@ interface ElectronAPI {
   };
 
   // Worktree operations
-  worktreeCreate: (workspacePath: string, options?: { name?: string; baseBranch?: string }) => Promise<{
+  worktreeCreate: (workspacePath: string, options?: { name?: string; baseBranch?: string; sourceFolderPath?: string }) => Promise<{
     success: boolean;
     error?: string;
     worktree?: {

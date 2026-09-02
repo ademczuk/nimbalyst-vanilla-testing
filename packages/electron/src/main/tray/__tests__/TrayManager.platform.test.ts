@@ -377,6 +377,69 @@ describe('TrayManager unread actions', () => {
   });
 });
 
+describe('liveness ticks', () => {
+  const NOW = 1_700_000_000_000;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetSingleton();
+    // No project window is open, so a completion here flags the session unread
+    // exactly as it would with the app in the background.
+    browserGetAllWindows.mockReturnValue([]);
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  function cacheRunning(tm: TrayManager, updatedAt: number) {
+    (tm as any).sessionCache.set('s1', {
+      sessionId: 's1',
+      title: 'Working',
+      workspacePath: '/workspace/a',
+      status: 'running',
+      isStreaming: true,
+      hasPendingPrompt: false,
+      hasUnread: false,
+      updatedAt,
+    });
+  }
+
+  // A tick a minute that says "still running" changes nothing on screen. The
+  // island sits in peripheral vision; repainting it for a no-op is the cost this
+  // early return exists to avoid.
+  it('records liveness without repainting when nothing visible changed', async () => {
+    const tm = TrayManager.getInstance();
+    cacheRunning(tm, NOW - 60_000);
+    const rebuild = vi.spyOn(tm as any, 'scheduleMenuRebuild');
+
+    await (tm as any).onSessionStateEvent({ type: 'session:activity', sessionId: 's1', timestamp: new Date() });
+
+    expect((tm as any).sessionCache.get('s1')).toMatchObject({ liveAt: NOW, turnInFlight: true });
+    expect(rebuild).not.toHaveBeenCalled();
+  });
+
+  it('repaints when the tick pulls a session back out of Not responding', async () => {
+    const tm = TrayManager.getInstance();
+    cacheRunning(tm, NOW - STALL_AFTER_MS);
+    const rebuild = vi.spyOn(tm as any, 'scheduleMenuRebuild');
+
+    await (tm as any).onSessionStateEvent({ type: 'session:activity', sessionId: 's1', timestamp: new Date() });
+
+    expect(rebuild).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends the turn on a terminal event, so nothing outlives the ticker', async () => {
+    const tm = TrayManager.getInstance();
+    cacheRunning(tm, NOW - 60_000);
+    await (tm as any).onSessionStateEvent({ type: 'session:activity', sessionId: 's1', timestamp: new Date() });
+
+    await (tm as any).onSessionStateEvent({ type: 'session:completed', sessionId: 's1', timestamp: new Date() });
+
+    expect((tm as any).sessionCache.get('s1')).toMatchObject({ turnInFlight: false });
+  });
+});
+
 describe('groupTraySessions', () => {
   /**
    * A clock just past the newest fixture, so nothing below reads as stalled.
@@ -438,9 +501,20 @@ describe('groupTraySessions', () => {
     const feed = groupTraySessions([
       { ...base, sessionId: 'busy', title: 'Busy', status: 'running', updatedAt: now - 1000 },
       { ...base, sessionId: 'silent', title: 'Silent', status: 'running', updatedAt: now - STALL_AFTER_MS },
+      // Same two states the snapshot splits on: a turn whose last lifecycle
+      // transition is ancient but which is still ticking is running, not silent.
+      {
+        ...base,
+        sessionId: 'long-turn',
+        title: 'Long turn',
+        status: 'running',
+        updatedAt: now - STALL_AFTER_MS,
+        liveAt: now - 30_000,
+        turnInFlight: true,
+      },
     ] as any, now);
 
-    expect(feed.running.map((s) => s.sessionId)).toEqual(['busy']);
+    expect(feed.running.map((s) => s.sessionId)).toEqual(['busy', 'long-turn']);
     expect(feed.stalled.map((s) => s.sessionId)).toEqual(['silent']);
   });
 

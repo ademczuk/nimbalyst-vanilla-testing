@@ -20,6 +20,7 @@ import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { getTerminalSessionManager } from '../services/TerminalSessionManager';
 import { getTerminalsByWorktreeId, deleteTerminalInstance } from '../utils/terminalStore';
 import { gitRefWatcher } from '../file/GitRefWatcher';
+import { listReposForRoot, resolveDefaultRepo } from '../services/workspaceRepos';
 import type { WorktreeCreateResult } from '../../shared/ipc/types';
 import { gitOperationLock } from '../services/GitOperationLock';
 import fs from 'node:fs';
@@ -255,8 +256,12 @@ export async function archiveWorktree(worktreeId: string, workspacePath: string)
         // Update status to show we're removing the worktree
         archiveProgressManager.updateTaskStatus(worktreeId, 'removing-worktree');
 
-        // Remove the git worktree from disk (throws if directory still exists after cleanup)
-        await gitWorktreeService.deleteWorktree(worktree.path, workspacePath);
+        // Remove the git worktree from disk (throws if directory still exists
+        // after cleanup). Unregister it from the repo it was branched from --
+        // `workspacePath` is only the workspace's primary root, and running
+        // `worktree remove` there would delete the directory while leaving the
+        // real repo's registration and branch behind.
+        await gitWorktreeService.deleteWorktree(worktree.path, worktree.sourceFolderPath || workspacePath);
 
         archiveLogger.info('Worktree cleanup completed, now marking as archived in database', { worktreeId });
 
@@ -342,12 +347,24 @@ export function registerWorktreeHandlers(): void {
   ipcMain.handle('worktree:create', async (
     _event,
     workspacePath: string,
-    options?: { name?: string; baseBranch?: string }
+    options?: { name?: string; baseBranch?: string; sourceFolderPath?: string }
   ): Promise<WorktreeCreateResult> => {
     const startTime = Date.now();
     const MAX_RETRIES = 3;
     const name = options?.name;
     const baseBranch = options?.baseBranch;
+    /**
+     * Repository the worktree is branched from. A workspace can span several
+     * roots, so the caller names which one; unnamed falls back to the primary
+     * root's repo, which is the only repo a single-folder workspace has.
+     *
+     * The worktree's IDENTITY stays `workspacePath` (sessions, kanban and
+     * trackers key off it) -- only the git operations move to this repo.
+     */
+    const sourceRepo =
+      (options?.sourceFolderPath ? listReposForRoot(options.sourceFolderPath)[0] ?? null : null)
+      ?? resolveDefaultRepo(workspacePath)
+      ?? workspacePath;
 
     // Retry loop for handling race conditions where concurrent requests pick the same name
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -360,7 +377,7 @@ export function registerWorktreeHandlers(): void {
           throw new Error('workspacePath is required');
         }
 
-        logger.info('Creating worktree', { workspacePath, name, baseBranch, attempt });
+        logger.info('Creating worktree', { workspacePath, sourceRepo, name, baseBranch, attempt });
 
         // Get database early for de-duplication
         const db = getDatabase();
@@ -378,8 +395,8 @@ export function registerWorktreeHandlers(): void {
 
           const [dbNames, filesystemNames, branchNames] = await Promise.all([
             worktreeStore.getAllNames(),
-            Promise.resolve(gitWorktreeService.getExistingWorktreeDirectories(workspacePath)),
-            gitWorktreeService.getAllBranchNames(workspacePath),
+            Promise.resolve(gitWorktreeService.getExistingWorktreeDirectories(sourceRepo)),
+            gitWorktreeService.getAllBranchNames(sourceRepo),
           ]);
 
           timings.deduplication = Date.now() - dedupeStartTime;
@@ -404,7 +421,15 @@ export function registerWorktreeHandlers(): void {
 
         // Create the git worktree
         const gitCreateStartTime = Date.now();
-        const worktree = await gitWorktreeService.createWorktree(workspacePath, { name: finalName, baseBranch });
+        const created = await gitWorktreeService.createWorktree(sourceRepo, { name: finalName, baseBranch });
+        // The service reports the repo it branched from as `projectPath`;
+        // re-anchor to the workspace so identity stays on the primary root and
+        // record the source repo separately.
+        const worktree = {
+          ...created,
+          projectPath: workspacePath,
+          sourceFolderPath: sourceRepo,
+        };
         timings.gitWorktreeCreate = Date.now() - gitCreateStartTime;
 
         // Track the created worktree for potential cleanup
@@ -461,7 +486,7 @@ export function registerWorktreeHandlers(): void {
             worktreePath: createdWorktree.path,
           });
           try {
-            await gitWorktreeService.deleteWorktree(createdWorktree.path, workspacePath);
+            await gitWorktreeService.deleteWorktree(createdWorktree.path, sourceRepo);
             logger.info('Successfully cleaned up orphaned worktree', { worktreePath: createdWorktree.path });
           } catch (cleanupError) {
             logger.error('Failed to clean up orphaned worktree - manual cleanup required', {
@@ -601,8 +626,9 @@ export function registerWorktreeHandlers(): void {
       // Stop the git ref watcher for this worktree
       await gitRefWatcher.stop(worktree.path);
 
-      // Delete the git worktree
-      await gitWorktreeService.deleteWorktree(worktree.path, workspacePath);
+      // Delete the git worktree from the repo it was branched from, not the
+      // workspace's primary root -- see the note in `archiveWorktree`.
+      await gitWorktreeService.deleteWorktree(worktree.path, worktree.sourceFolderPath || workspacePath);
 
       // Delete the database record
       await worktreeStore.delete(worktreeId);
@@ -1142,7 +1168,8 @@ export function registerWorktreeHandlers(): void {
    * Merge worktree branch to main
    *
    * @param worktreePath - Path to the worktree
-   * @param mainRepoPath - Path to the main repository
+   * @param mainRepoPath - Path to the workspace's primary root; only a fallback
+   *   for worktrees with no stored source repository
    * @returns Merge result
    */
   ipcMain.handle('worktree:merge', async (_event, worktreePath: string, mainRepoPath: string) => {
@@ -1154,9 +1181,16 @@ export function registerWorktreeHandlers(): void {
         throw new Error('mainRepoPath is required');
       }
 
-      logger.info('Merging worktree to main', { worktreePath, mainRepoPath });
+      // Merge back into the repo the worktree was branched from. The renderer
+      // only knows the workspace's primary root, which in a multi-root
+      // workspace is a different repository -- or no repository at all.
+      const db = getDatabase();
+      const stored = db ? await createWorktreeStore(db).getByPath(worktreePath) : null;
+      const targetRepoPath = stored?.sourceFolderPath || mainRepoPath;
 
-      const result = await gitWorktreeService.mergeToMain(worktreePath, mainRepoPath);
+      logger.info('Merging worktree to main', { worktreePath, targetRepoPath });
+
+      const result = await gitWorktreeService.mergeToMain(worktreePath, targetRepoPath);
 
       // Track merge attempt
       const analyticsService = AnalyticsService.getInstance();

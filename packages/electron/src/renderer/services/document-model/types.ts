@@ -67,6 +67,17 @@ export interface ExternalChangeInfo {
   /** Timestamp of the change (ms since epoch). */
   timestamp: number;
   /**
+   * Monotonic order stamp for the signal that produced this change, captured
+   * before the store's own asynchronous read. The model uses it to recognise a
+   * read that resolved out of order and drop the older observation rather than
+   * accepting it as the newest payload (NIM-5359, defect E). `timestamp` cannot
+   * serve that purpose -- it is assigned after the read.
+   *
+   * Optional: a store that delivers strictly in order may omit it, and the model
+   * falls back to counting arrivals itself.
+   */
+  sequence?: number;
+  /**
    * When true, forces pending-tag check even if content matches lastPersistedContent.
    * Set by the tag-created signal from HistoryManager.
    */
@@ -96,6 +107,90 @@ export interface DiffState {
   newContentHash: string;
   /** Timestamp when the AI edit was detected. */
   createdAt: number;
+  /**
+   * Monotonic, per-model counter identifying this published target. Bumped every
+   * time the model starts presenting new content, so a presenter's completion can
+   * be matched against the generation it actually received -- a late completion
+   * for generation N must not settle generation N+1 (NIM-5359, defect F).
+   */
+  generation: number;
+}
+
+/**
+ * How a presenter finished with a generation it was handed.
+ *
+ * - `applied`                    -- inline diff verifiably rendered for this target
+ * - `presented-without-inline`   -- deliberately no inline diff (large-document
+ *                                   fallback); the buffer was verified against disk
+ *                                   truth and the approval bar stays pending
+ * - `failed`                     -- the apply threw or could not be verified; the
+ *                                   generation must NOT advance the conflict baseline
+ * - `detached`                   -- the presenter went away mid-apply
+ */
+export type DiffApplyOutcome =
+  | 'applied'
+  | 'presented-without-inline'
+  | 'failed'
+  | 'detached';
+
+export interface DiffApplyCompletion {
+  /** Attachment that received the generation. */
+  editorId: string;
+  /** `DiffState.generation` the presenter was handed. Stale values are ignored. */
+  generation: number;
+  outcome: DiffApplyOutcome;
+}
+
+export type DiffResolutionDecision = 'accept' | 'reject';
+
+/**
+ * Retained state for an in-flight or half-finished diff resolution.
+ *
+ * The disk write and the history-tag update are two stores and cannot be atomic,
+ * so the model keeps which half is confirmed. A save that failed leaves the tag
+ * pending; a tag update that failed after a successful save leaves
+ * `diskCommitted: true` and blocks saves until the idempotent tag retry lands
+ * (NIM-5359, defects C and I).
+ */
+export interface DiffResolutionSnapshot {
+  decision: DiffResolutionDecision;
+  /**
+   * The tag this decision ends, captured when the decision was claimed.
+   *
+   * Read from the snapshot rather than from the live session, because a retry of
+   * the tag half can run after a second agent session has replaced the session
+   * with one carrying a different tag -- and marking *that* tag reviewed silently
+   * ends a review the user never saw (NIM-5359, defect I).
+   */
+  tagId: string;
+  finalContent: string;
+  /** What the model believes disk holds -- the latest observed agent content. */
+  expectedDiskContent: string;
+  diskCommitted: boolean;
+  tagCommitted: boolean;
+}
+
+/**
+ * Optional detail an editor attaches to its accept/reject.
+ *
+ * A Lexical accept-all is not "write the session's applied content": the buffer
+ * may carry per-group decisions the user made by hand, so the editor serializes
+ * it and hands those exact bytes over. That buffer is only honest for the
+ * generation it was serialized from, which is why `generation` travels with it --
+ * the model refuses the decision outright rather than writing a buffer that a
+ * newer agent write has already outdated (NIM-5359, defects C/F/I).
+ */
+export interface DiffResolutionRequest {
+  /**
+   * Bytes to write. Omitted for a plain accept/reject, where the model uses the
+   * session's applied (accept) or baseline (reject) content.
+   */
+  finalContent?: string;
+  /**
+   * `DiffState.generation` the user acted on. When it no longer matches the
+   * model's session the decision is refused without writing.
+   */
+  generation?: number;
 }
 
 // -- Editor Attachment ------------------------------------------------------
@@ -154,9 +249,19 @@ export interface DocumentModelEditorHandle {
 
   /**
    * Resolve a pending diff (accept or reject).
-   * DocumentModel saves the final content and notifies all other editors.
+   *
+   * DocumentModel owns the whole transaction: it writes the final content with
+   * the latest observed agent content as the conflict baseline, marks the history
+   * tag reviewed, and only then tears the session down and notifies siblings.
+   * Editors must not sequence those steps themselves -- doing so reads the
+   * baseline outside the model's serial queue, so a write that lands between the
+   * two silently disappears.
+   *
+   * Pass `request.finalContent` when the editor has its own serialized buffer
+   * (a Lexical accept-all after per-group edits), together with the
+   * `request.generation` it was serialized from.
    */
-  resolveDiff(accepted: boolean): Promise<void>;
+  resolveDiff(accepted: boolean, request?: DiffResolutionRequest): Promise<void>;
 
   /**
    * Tell the DocumentModel that the editor has finished applying the current diff target.
@@ -164,8 +269,24 @@ export interface DocumentModelEditorHandle {
    * any payload that was queued during the apply -- if a fresh payload was waiting, the
    * model fires `onDiffRequested` again with the drained content. Editors must call this
    * after their own apply work settles, otherwise the queue never drains.
+   *
+   * @deprecated Parameterless acknowledgement cannot say *which* generation
+   * settled, so a late completion from one attachment silently settles another
+   * attachment's newer in-flight generation (NIM-5359, defect F). Use
+   * `completeDiffApply` instead; this remains only until TabEditor is migrated.
    */
   markDiffApplied(): void;
+
+  /**
+   * Report the outcome of applying one specific diff generation.
+   *
+   * Replaces `markDiffApplied`. The model matches `generation` against what it
+   * currently has in flight, tracks which recipients still owe a completion, and
+   * only drains queued disk content once every participating recipient has
+   * finished successfully. A `failed` or `detached` outcome must never advance
+   * the conflict baseline or mark the generation applied.
+   */
+  completeDiffApply(input: Omit<DiffApplyCompletion, 'editorId'>): void;
 
   /**
    * Notify the DocumentModel that the user has just accepted/rejected a single change

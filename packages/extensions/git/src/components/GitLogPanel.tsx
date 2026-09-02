@@ -12,6 +12,7 @@ import { CommitHoverCard } from './CommitHoverCard';
 import { CommitContextMenu } from './CommitContextMenu';
 import { CommitDetailContent, type CommitDetail } from './CommitDetailContent';
 import { BranchPicker } from './BranchPicker';
+import { RepoPicker } from './RepoPicker';
 import { ChangesTab } from './ChangesTab';
 import { OutputTab } from './OutputTab';
 import { GitStatusBar } from './GitStatusBar';
@@ -39,10 +40,12 @@ interface GitStatusResult {
 /**
  * `git:status-changed` payload. The index and ref watchers send `workspacePath`
  * alone; main adds a computed snapshot and a monotonic revision when it
- * refreshes after a Git operation settles.
+ * refreshes after a Git operation settles, and `repoPath` naming the repository
+ * that actually moved (absent on older payloads).
  */
 interface GitStatusChangedPayload {
   workspacePath: string;
+  repoPath?: string;
   revision?: number;
   status?: GitStatusResult;
 }
@@ -103,6 +106,70 @@ function formatRelativeDate(dateStr: string): string {
 export function GitLogPanel({ host }: PanelHostProps) {
   const workspacePath = host.workspacePath;
 
+  // Every git command in this panel runs against `repoPath`, not the workspace.
+  // A single-folder project resolves to one repo equal to the workspace path,
+  // so the panel behaves exactly as it did before multi-root workspaces.
+  const [repos, setRepos] = useState<string[]>([]);
+  const [selectedRepo, setSelectedRepo] = useState<string | null>(
+    () => host.storage.get<string>('selectedRepo') ?? null,
+  );
+  const [branchByRepo, setBranchByRepo] = useState<Record<string, string>>({});
+  const repoPath = selectedRepo && repos.includes(selectedRepo)
+    ? selectedRepo
+    : repos[0] ?? workspacePath;
+
+  // The repo set only changes when a folder is attached or detached, and the
+  // host republishes its folder list at the same time -- so that is the signal
+  // to re-enumerate rather than a poll.
+  useEffect(() => {
+    let cancelled = false;
+    const loadRepos = async () => {
+      try {
+        const result = await ipc.invoke('git:list-workspace-repos', workspacePath) as
+          { repos?: string[] } | undefined;
+        if (!cancelled && Array.isArray(result?.repos)) setRepos(result.repos);
+      } catch {
+        // Non-fatal: the picker stays hidden and the panel targets the workspace.
+      }
+    };
+    void loadRepos();
+    return host.onWorkspaceEvent('workspace:folders-changed', () => { void loadRepos(); });
+  }, [host, workspacePath]);
+
+  // Extension storage can hydrate after mount, so the constructor read above
+  // may have missed a persisted choice. Take it then -- unless the user has
+  // already picked in this session, whose choice must win.
+  const repoChoiceDirtyRef = useRef(false);
+  useEffect(() => {
+    const hydrateSelectedRepo = () => {
+      if (repoChoiceDirtyRef.current) return;
+      setSelectedRepo(host.storage.get<string>('selectedRepo') ?? null);
+    };
+    window.addEventListener('nimbalyst:extension-storage-hydrated', hydrateSelectedRepo);
+    return () => window.removeEventListener('nimbalyst:extension-storage-hydrated', hydrateSelectedRepo);
+  }, [host.storage]);
+
+  const chooseRepo = useCallback((next: string) => {
+    repoChoiceDirtyRef.current = true;
+    setSelectedRepo(next);
+    void host.storage.set('selectedRepo', next);
+  }, [host.storage]);
+
+  /** Read each repo's current branch, for the picker's per-repo rows. */
+  const loadRepoBranches = useCallback(() => {
+    if (repos.length < 2) return;
+    void Promise.all(repos.map(async (repo) => {
+      try {
+        const result = await ipc.invoke('git:status', repo) as GitStatusResult;
+        return [repo, result?.branch ?? ''] as const;
+      } catch {
+        return [repo, ''] as const;
+      }
+    })).then((entries) => {
+      setBranchByRepo(Object.fromEntries(entries.filter(([, branch]) => branch)));
+    });
+  }, [repos]);
+
   const [unfilteredCommits, setUnfilteredCommits] = useState<GitCommit[]>([]);
   const [status, setStatus] = useState<GitStatusResult | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
@@ -148,7 +215,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
   const detailResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   // Tab + selection state (persisted across panel close/open per workspace)
-  const { activeTab, selectedHash, setActiveTab, setSelectedHash } = usePanelState(workspacePath);
+  const { activeTab, selectedHash, setActiveTab, setSelectedHash } = usePanelState(repoPath);
   const commits = useMemo(
     () => filterCommits(unfilteredCommits, searchFilter),
     [unfilteredCommits, searchFilter],
@@ -167,7 +234,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
   // whose closures are otherwise stale.
   const setSelectedIndex = useCallback(
     (next: number | null | ((prev: number | null) => number | null)) => {
-      const liveHash = readSelectedHash(workspacePath);
+      const liveHash = readSelectedHash(repoPath);
       const liveIndex = liveHash ? commits.findIndex(c => c.hash === liveHash) : -1;
       const prev = liveIndex >= 0 ? liveIndex : null;
       const resolved = typeof next === 'function' ? next(prev) : next;
@@ -177,7 +244,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
         setSelectedHash(commits[resolved].hash);
       }
     },
-    [workspacePath, commits, setSelectedHash],
+    [repoPath, commits, setSelectedHash],
   );
   const subscribeToGitEvents = useCallback(
     (event: string, callback: (data: unknown) => void) => host.onWorkspaceEvent(event, callback),
@@ -192,7 +259,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
   );
   const [changesRefreshToken, setChangesRefreshToken] = useState(0);
   const { entries: logEntries, clearLog, withLog } = useOperationLog(
-    workspacePath,
+    repoPath,
     subscribeToGitEvents,
   );
   const runningEntry = useMemo(
@@ -330,9 +397,20 @@ export function GitLogPanel({ host }: PanelHostProps) {
     setActionErrorCommand(undefined);
   }, []);
 
+  // The repo the panel is currently showing, readable from an async callback.
+  // Every load below captures the repo it asked about and drops its answer if
+  // the user has switched since -- a slow `git:log` in a big repo would
+  // otherwise repaint the panel with the wrong repo's commits.
+  const repoPathRef = useRef(repoPath);
+  useEffect(() => {
+    repoPathRef.current = repoPath;
+  }, [repoPath]);
+
   const loadBranches = useCallback(async () => {
+    const requestedRepo = repoPath;
     try {
-      const result = await ipc.invoke('git:branches', workspacePath) as GitBranchResult;
+      const result = await ipc.invoke('git:branches', requestedRepo) as GitBranchResult;
+      if (repoPathRef.current !== requestedRepo) return;
       setBranches(result.branches);
       if (result.current) {
         setSelectedBranch(current => current || result.current);
@@ -340,7 +418,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
     } catch {
       // Non-fatal: branch selector stays empty
     }
-  }, [workspacePath]);
+  }, [repoPath]);
 
   // Ordering guards for the status snapshot. `generation` stops an older
   // `git:status` response from overwriting a newer one; `appliedRevision` does
@@ -358,31 +436,47 @@ export function GitLogPanel({ host }: PanelHostProps) {
 
   const loadStatus = useCallback(async () => {
     const requested = ++statusGenerationRef.current;
+    const requestedRepo = repoPath;
     try {
-      const result = await ipc.invoke('git:status', workspacePath) as GitStatusResult;
+      const result = await ipc.invoke('git:status', requestedRepo) as GitStatusResult;
+      if (repoPathRef.current !== requestedRepo) return;
       if (requested < appliedStatusGenerationRef.current) return;
       appliedStatusGenerationRef.current = requested;
       applyStatus(result);
     } catch {
       // Non-fatal
     }
-  }, [applyStatus, workspacePath]);
+  }, [applyStatus, repoPath]);
 
   const loadCommits = useCallback(async () => {
+    const requestedRepo = repoPath;
     setLoading(true);
     try {
-      const result = await ipc.invoke('git:log', workspacePath, 100, {
+      const result = await ipc.invoke('git:log', requestedRepo, 100, {
         branch: selectedBranch || undefined,
         aheadBehind: true,
       }) as GitCommit[];
 
+      if (repoPathRef.current !== requestedRepo) return;
       setUnfilteredCommits(result);
     } catch (err) {
       console.error('[GitLogPanel] Failed to load commits:', err);
     } finally {
-      setLoading(false);
+      // A stale response must not clear the spinner the current request set.
+      if (repoPathRef.current === requestedRepo) setLoading(false);
     }
-  }, [workspacePath, selectedBranch]);
+  }, [repoPath, selectedBranch]);
+
+  // Switching repos has to drop the previous repo's branch selection: `git:log`
+  // against a branch the new repo does not have returns nothing at all.
+  const previousRepoRef = useRef(repoPath);
+  useEffect(() => {
+    if (previousRepoRef.current === repoPath) return;
+    previousRepoRef.current = repoPath;
+    setSelectedBranch('');
+    setStatus(null);
+    setSelectedHash(null);
+  }, [repoPath, setSelectedHash]);
 
   // Initial load
   useEffect(() => {
@@ -392,16 +486,19 @@ export function GitLogPanel({ host }: PanelHostProps) {
 
   // Reload commits when filters change
   useEffect(() => {
-    if (workspacePath) {
+    if (repoPath) {
       loadCommits();
     }
-  }, [loadCommits, workspacePath]);
+  }, [loadCommits, repoPath]);
 
   // Auto-refresh when git HEAD changes (commits, checkouts, merges, etc.)
   // Uses PanelHost.onWorkspaceEvent which filters to the current workspace centrally.
   useEffect(() => {
     return host.onWorkspaceEvent('git:status-changed', (data) => {
       const payload = data as GitStatusChangedPayload | undefined;
+      // A move in a repo this panel is not showing is not this panel's event.
+      // Payloads without `repoPath` predate multi-root and are always ours.
+      if (payload?.repoPath && payload.repoPath !== repoPath) return;
       // Main already computed the snapshot when it stamped a revision; taking it
       // directly is what keeps this panel and the menu-bar indicator settling on
       // the same counts instead of racing two independent reads.
@@ -422,7 +519,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
       loadBranches();
       loadCommits();
     });
-  }, [host, applyStatus, loadStatus, loadBranches, loadCommits]);
+  }, [host, repoPath, applyStatus, loadStatus, loadBranches, loadCommits]);
 
   // The menu-bar Git indicator can ask to show running-command detail. It has no
   // handle on this panel's tab state, so it states the intent and we honour it.
@@ -468,7 +565,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
     try {
       const result = await withLog(
         'git push origin',
-        () => ipc.invoke('git:push', workspacePath) as Promise<PushResult>,
+        () => ipc.invoke('git:push', repoPath) as Promise<PushResult>,
         {
           isError: (r) => !r.success,
           getError: (r) => r.error,
@@ -488,7 +585,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
     } finally {
       setActionLoading(null);
     }
-  }, [workspacePath, showMessage, loadStatus, loadCommits, withLog]);
+  }, [repoPath, showMessage, loadStatus, loadCommits, withLog]);
 
   const handlePull = useCallback(async () => {
     setActionLoading('pull');
@@ -497,7 +594,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
       const opts = pullStrategy === 'rebase' ? { rebase: true } : pullStrategy === 'ff-only' ? { ffOnly: true } : {};
       const result = await withLog(
         `git pull${strategyLabel} origin`,
-        () => ipc.invoke('git:pull', workspacePath, opts) as Promise<PullResult>,
+        () => ipc.invoke('git:pull', repoPath, opts) as Promise<PullResult>,
         {
           isError: (r) => !r.success,
           getError: (r) => r.error,
@@ -517,7 +614,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
     } finally {
       setActionLoading(null);
     }
-  }, [workspacePath, showMessage, loadStatus, loadCommits, pullStrategy, withLog]);
+  }, [repoPath, showMessage, loadStatus, loadCommits, pullStrategy, withLog]);
 
   const handleChangePullStrategy = useCallback((strategy: PullStrategy) => {
     setPullStrategy(strategy);
@@ -530,7 +627,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
     try {
       const result = await withLog(
         'git fetch origin',
-        () => ipc.invoke('git:fetch', workspacePath) as Promise<FetchResult>,
+        () => ipc.invoke('git:fetch', repoPath) as Promise<FetchResult>,
         {
           isError: (r) => !r.success,
           getError: (r) => r.error,
@@ -549,7 +646,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
     } finally {
       setActionLoading(null);
     }
-  }, [workspacePath, showMessage, loadStatus, withLog]);
+  }, [repoPath, showMessage, loadStatus, withLog]);
 
   const handleRefresh = useCallback(() => {
     loadStatus();
@@ -585,7 +682,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
       setDetailLoading(true);
       setCommitDetail(null);
       try {
-        const detail = await ipc.invoke('git:commit-detail', workspacePath, hash) as CommitDetail;
+        const detail = await ipc.invoke('git:commit-detail', repoPath, hash) as CommitDetail;
         setCommitDetail(detail);
       } catch {
         // non-fatal
@@ -593,7 +690,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
         setDetailLoading(false);
       }
     }, 350);
-  }, [workspacePath, clearHideTimer, selectedIndex]);
+  }, [repoPath, clearHideTimer, selectedIndex]);
 
   const handleRowMouseLeave = useCallback(() => {
     if (showTimerRef.current) { clearTimeout(showTimerRef.current); showTimerRef.current = null; }
@@ -617,12 +714,12 @@ export function GitLogPanel({ host }: PanelHostProps) {
     let cancelled = false;
     setSelectedLoading(true);
     setSelectedDetail(null);
-    ipc.invoke('git:commit-detail', workspacePath, hash)
+    ipc.invoke('git:commit-detail', repoPath, hash)
       .then((d) => { if (!cancelled) setSelectedDetail(d as CommitDetail); })
       .catch(() => {})
       .finally(() => { if (!cancelled) setSelectedLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedIndex, commits, workspacePath]);
+  }, [selectedIndex, commits, repoPath]);
 
   // Scroll selected row into view
   useEffect(() => {
@@ -702,6 +799,15 @@ export function GitLogPanel({ host }: PanelHostProps) {
               {logEntries.some(e => e.status === 'error') ? <span className="git-tab-dot git-tab-dot--error" /> : null}
             </button>
           </div>
+
+          {/* Repo selector — renders nothing unless the workspace spans repos */}
+          <RepoPicker
+            repos={repos}
+            current={repoPath}
+            onChange={chooseRepo}
+            branchByRepo={branchByRepo}
+            onRequestBranches={loadRepoBranches}
+          />
 
           {/* Branch selector */}
           <BranchPicker
@@ -881,7 +987,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
           commit={contextMenu.commit}
           x={contextMenu.x}
           y={contextMenu.y}
-          workspacePath={workspacePath}
+          workspacePath={repoPath}
           onClose={() => setContextMenu(null)}
           onMessage={showMessage}
           onRefresh={handleRefresh}
@@ -999,7 +1105,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
                 author={commits[selectedIndex].author}
                 date={commits[selectedIndex].date}
                 layout="vertical"
-                workspacePath={workspacePath}
+                workspacePath={repoPath}
                 commitHash={commits[selectedIndex].hash}
                 sessionLink={sessionLinks[commits[selectedIndex].hash] ?? null}
                 onOpenSession={(sessionId) => openSession(sessionId, workspacePath)}
@@ -1011,7 +1117,7 @@ export function GitLogPanel({ host }: PanelHostProps) {
 
       {activeTab === 'changes' && (
         <ChangesTab
-          workspacePath={workspacePath}
+          workspacePath={repoPath}
           withLog={withLog}
           onWorkspaceEvent={subscribeToWorkspaceEvents}
           onShowOutput={() => setActiveTab('output')}

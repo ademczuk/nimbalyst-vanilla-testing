@@ -987,7 +987,7 @@ export async function handleGitCommitProposal(
 
     const {
       createGitCommitProposalResponse,
-      executeGitCommit,
+      executeGitCommitAcrossRepos,
     } = await import("../../services/GitCommitService");
 
     let commitResult: {
@@ -997,7 +997,7 @@ export async function handleGitCommitProposal(
       error?: string;
     };
     try {
-      commitResult = await executeGitCommit(
+      commitResult = await executeGitCommitAcrossRepos(
         workspacePath,
         commitMessage,
         filePaths,

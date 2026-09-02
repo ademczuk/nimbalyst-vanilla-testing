@@ -68,6 +68,27 @@ export interface TraySessionInfo {
   model?: string;
   /** Last activity, so the panel can show a relative time like the in-app popover. */
   updatedAt?: number;
+  /**
+   * When this session last produced evidence that its turn is still progressing.
+   *
+   * Distinct from `updatedAt`, which only moves on a lifecycle *transition*
+   * (started, blocked, completed). A turn that spends forty minutes inside one
+   * tool call makes no transitions at all, so measuring silence against
+   * `updatedAt` called every long turn stalled -- the bug this field exists to
+   * fix. Stamped from the per-turn liveness tick emitted by the streaming
+   * handler; absent for a provider that does not emit one, which is why
+   * `isStalled` takes the newest of the two rather than preferring this.
+   */
+  liveAt?: number;
+  /**
+   * Whether a turn is currently in flight for this session.
+   *
+   * Not consulted by `isStalled` today -- the threshold deliberately did not
+   * move when liveness landed. It is carried so the panel can tell "running and
+   * ticking" from "status says running and nothing is happening" without
+   * re-deriving it, and so a later retune is a change to one predicate.
+   */
+  turnInFlight?: boolean;
   /** Kanban phase. `complete` sessions are hidden, matching the in-app popover. */
   phase?: string;
   /** Archived sessions are hidden, matching the in-app popover. */
@@ -194,12 +215,38 @@ export function isWantingState(state: PriorityState): state is WantingState {
  * measuring the thing that would be broken: a session that claims to be running
  * and has not said anything.
  *
- * A session with no `updatedAt` is never stalled. That is the just-restored
- * case, where the absence of a timestamp means "not observed", not "silent".
+ * *Anything*, which is the correction: this used to read `updatedAt` alone, and
+ * `updatedAt` only moves on a lifecycle transition. A turn sitting in a
+ * thirty-minute test run makes none, so every long turn fell out of Running
+ * after fifteen minutes and stayed out until it finished. The threshold was
+ * never the problem -- it was being applied to "time since the last transition"
+ * while claiming to mean "time since anything happened".
+ *
+ * The newest of the two stamps wins rather than liveness alone: a provider that
+ * emits no liveness tick still transitions, and reading only `liveAt` there
+ * would stall a session on the absence of a signal it never sends. Liveness is
+ * additional evidence and can only ever make a session look more alive.
+ *
+ * A session with neither stamp is never stalled. That is the just-restored case,
+ * where the absence of a timestamp means "not observed", not "silent".
  */
 export function isStalled(session: TraySessionInfo, now: number): boolean {
-  if (session.updatedAt === undefined) return false;
-  return now - session.updatedAt >= STALL_AFTER_MS;
+  const lastSign = lastSignOfLife(session);
+  if (lastSign === undefined) return false;
+  return now - lastSign >= STALL_AFTER_MS;
+}
+
+/**
+ * The newest evidence that this session is doing something, of any kind.
+ *
+ * Shared with `fleetActivity`, whose stalled rows report "silent for" from it:
+ * a row that counted from `updatedAt` while the desktop stalled on `liveAt`
+ * would put two different durations on the same fact.
+ */
+export function lastSignOfLife(session: TraySessionInfo): number | undefined {
+  if (session.liveAt === undefined) return session.updatedAt;
+  if (session.updatedAt === undefined) return session.liveAt;
+  return Math.max(session.liveAt, session.updatedAt);
 }
 
 function wantingStateOf(session: TraySessionInfo): WantingState | null {
@@ -292,8 +339,10 @@ export function deriveFleetSnapshot(
         // read as one more thing making progress.
         if (isStalled(session, now)) {
           snapshot.stalled += 1;
-          // `updatedAt` is defined by construction here -- isStalled requires it.
-          considerPriority(session, 'stalled', session.updatedAt! + STALL_AFTER_MS);
+          // The moment it *became* stalled, counted from the same stamp
+          // `isStalled` judged it on -- which is defined by construction here,
+          // since `isStalled` is false without one.
+          considerPriority(session, 'stalled', lastSignOfLife(session)! + STALL_AFTER_MS);
         } else {
           snapshot.running += 1;
           // Same guard as `completedAt` below: only a start this process

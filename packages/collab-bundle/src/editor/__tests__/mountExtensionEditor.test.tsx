@@ -197,3 +197,55 @@ describe('the comments service the mount puts on the collaboration context', () 
     expect(comments.getCapabilities().comment).toBe(true);
   });
 });
+
+/**
+ * Source mode swaps what the reader sees, not the document they are reading.
+ *
+ * The obvious implementation -- hand the mount a different `component` -- makes
+ * the toggle a mount dependency, and a new component destroys a live Y.Doc
+ * behind a flush. So the flag lives in the mount and the mounted component
+ * picks a view from it; these tests pin both halves of that.
+ */
+describe('source mode', () => {
+  it('withholds the capability and every member when the page did not grant it', async () => {
+    const { handle, observed } = await mount();
+
+    expect(observed.host!.supportsSourceMode).toBeUndefined();
+    expect(observed.host!.toggleSourceMode).toBeUndefined();
+    expect(observed.host!.onSourceModeChanged).toBeUndefined();
+    expect(handle.capabilities.supports('sourceMode')).toBe(false);
+    // An ungranted mount still answers the question, it just always says no --
+    // and a page control that calls it anyway must not flip anything.
+    handle.setSourceMode(true);
+    expect(handle.isSourceModeActive()).toBe(false);
+  });
+
+  it('keeps the extension and the page looking at one flag, over one Y.Doc', async () => {
+    const changes: boolean[] = [];
+    const { handle, observed } = await mount({
+      enableSourceMode: true,
+      onSourceModeChange: (active) => changes.push(active),
+    });
+    const editorHost = observed.host!;
+    const document = handle.getDocument();
+    const seen: boolean[] = [];
+    editorHost.onSourceModeChanged!((active) => seen.push(active));
+
+    expect(editorHost.supportsSourceMode).toBe(true);
+    expect(handle.capabilities.supports('sourceMode')).toBe(true);
+
+    // The extension's own control...
+    editorHost.toggleSourceMode!();
+    expect(editorHost.isSourceModeActive!()).toBe(true);
+    expect(handle.isSourceModeActive()).toBe(true);
+    // ...and the page's, which is a different caller reading the same answer.
+    handle.setSourceMode(false);
+    expect(editorHost.isSourceModeActive!()).toBe(false);
+
+    expect(seen).toEqual([true, false]);
+    expect(changes).toEqual([true, false]);
+    // The point of putting the flag here: the room is untouched by a toggle.
+    expect(handle.getDocument()).toBe(document);
+    expect(document.getText('csv').toString()).toBe('name,total\nAda,7\n');
+  });
+});

@@ -61,7 +61,7 @@ import { isFleetActivityAvailable, sendFleetActivity } from '../services/ai/flee
 import { isIdleView, StripStateMachine, stripViewKey, type StripView } from './stripStateMachine';
 import { TrayStripRenderer } from './TrayStripRenderer';
 import { ISLAND_STRIP_KEY, toIslandStrip } from './islandStrip';
-import { latestAssistantTextSql, toSnippetLine } from './sessionSnippets';
+import { latestAssistantTextSql, sessionTitlesSql, toSnippetLine } from './sessionSnippets';
 import { unreadSeedQuery } from './unreadSeedQuery';
 import {
   closeMenuBarIsland,
@@ -688,8 +688,44 @@ export class TrayManager {
       }
 
       case 'session:activity': {
-        // Activity events don't change tray state, skip rebuild
+        // The liveness tick (see turnLivenessTicker). This is the *only* signal
+        // that a long turn is still working: `updatedAt` below moves on
+        // transitions, and a turn inside a thirty-minute tool call makes none,
+        // so measuring silence against it called every long turn stalled.
+        //
+        // It deliberately does not fall through to the rebuild at the bottom.
+        // A tick a minute that says "still running" changes nothing on screen,
+        // and repainting the island for it would be a minute-by-minute redraw
+        // in the user's peripheral vision. The one visible consequence -- a
+        // session climbing back out of the stalled bucket -- is handled below.
+        const alive = this.sessionCache.get(event.sessionId);
+        if (!alive) return;
+
+        const wasStalled = alive.status === 'running'
+          && alive.phase !== 'complete'
+          && !alive.hasPendingPrompt
+          && isStalled(alive, Date.now());
+
+        alive.liveAt = Date.now();
+        alive.turnInFlight = true;
+
+        // Only a bucket change is worth a repaint.
+        if (wasStalled) this.scheduleMenuRebuild();
         return;
+      }
+    }
+
+    // `turnInFlight` tracks the ticker's lifetime, so it flips on exactly the
+    // events that start and end a turn. Not on `session:waiting`: a session
+    // blocked on a prompt still has its turn open (and its ticker running), and
+    // it is bucketed by `hasPendingPrompt` long before liveness matters.
+    const settled = this.sessionCache.get(event.sessionId);
+    if (settled) {
+      if (event.type === 'session:started' || event.type === 'session:streaming') {
+        settled.turnInFlight = true;
+        settled.liveAt = Date.now();
+      } else if (event.type === 'session:completed' || event.type === 'session:error') {
+        settled.turnInFlight = false;
       }
     }
 
@@ -1284,22 +1320,32 @@ export class TrayManager {
   }
 
   /**
-   * Read one line of the latest assistant text for every visible session.
+   * Read what the panel's rows say, for every session it is about to show.
    *
-   * One query for the whole feed, never one per row: this is the largest table
-   * in the database. Skipped entirely while the panel is closed, which is
-   * almost always -- a read per `session:streaming` tick would be indefensible.
+   * Two batched queries, never one per row: the snippet read is against the
+   * largest table in the database. Skipped entirely while the panel is closed,
+   * which is almost always -- a read per `session:streaming` tick would be
+   * indefensible.
+   *
+   * The stalled bucket is included. It was left out when this was written, which
+   * meant the one bucket whose rows say the least ("running, but silent") was
+   * also the only one with no line of context under the title.
    */
   private async refreshSessionSnippets(feed: TrayPanelFeed): Promise<void> {
     if (!this.islandExpanded || !this.database) return;
 
-    const ids = [...feed.needsAttention, ...feed.running, ...feed.unread]
+    const ids = [...feed.needsAttention, ...feed.running, ...feed.stalled, ...feed.unread]
       .map((session) => session.sessionId);
+
+    await Promise.all([this.refreshSnippetLines(ids), this.refreshCachedTitles(ids)]);
+  }
+
+  private async refreshSnippetLines(ids: string[]): Promise<void> {
     const sql = latestAssistantTextSql(ids);
     if (!sql) return;
 
     try {
-      const { rows } = await this.database.query<{ session_id: string; searchable_text: string }>(sql);
+      const { rows } = await this.database!.query<{ session_id: string; searchable_text: string }>(sql);
       this.sessionSnippets.clear();
       for (const row of rows) {
         const line = toSnippetLine(row.searchable_text);
@@ -1308,6 +1354,33 @@ export class TrayManager {
     } catch (error) {
       // A missing snippet costs a line of context; it must never cost the panel.
       logger.main.warn('[TrayManager] Failed to read session snippets:', error);
+    }
+  }
+
+  /**
+   * Re-read the titles of the rows about to be shown.
+   *
+   * The cache fills `title` once, when the session first enters it, and a
+   * session is renamed routinely afterwards -- so the panel was naming sessions
+   * by whatever they were called at first sight. Writing back into the cache
+   * rather than into the feed means the strip, the native menu and the Live
+   * Activity all get the correction too.
+   */
+  private async refreshCachedTitles(ids: string[]): Promise<void> {
+    const sql = sessionTitlesSql(ids);
+    if (!sql) return;
+
+    try {
+      const { rows } = await this.database!.query<{ id: string; title: string | null }>(sql);
+      for (const row of rows) {
+        const session = this.sessionCache.get(row.id);
+        if (session && row.title && row.title !== session.title) {
+          session.title = row.title;
+        }
+      }
+    } catch (error) {
+      // A stale title is a cosmetic loss; it must never cost the panel.
+      logger.main.warn('[TrayManager] Failed to refresh session titles:', error);
     }
   }
 

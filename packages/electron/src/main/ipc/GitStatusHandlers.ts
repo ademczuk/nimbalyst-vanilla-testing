@@ -1,11 +1,56 @@
-import { resolve, relative } from 'path';
+import { resolve, relative, isAbsolute } from 'path';
 import { SessionFilesRepository } from '@nimbalyst/runtime';
 import { GitStatusService } from '../services/GitStatusService';
+import { groupFilesByRoot, listRepoScanPaths, listWorkspaceRepos, resolveRepoForFile } from '../services/workspaceRepos';
 import { safeHandle } from '../utils/ipcRegistry';
 
 const gitStatusService = new GitStatusService();
 
 export function registerGitStatusHandlers(): void {
+  /**
+   * Every repository this workspace spans, in root order.
+   *
+   * The renderer and the Git extension both need this to offer a repo picker
+   * and to attribute a file to a repo. A single-folder workspace that is itself
+   * a repo answers with exactly one entry -- which is what keeps every repo
+   * picker hidden and every git call targeted at the same path as before.
+   */
+  safeHandle('git:list-workspace-repos', async (_event, workspacePath: string) => {
+    if (!workspacePath) throw new Error('workspacePath is required');
+    try {
+      return { success: true, repos: listWorkspaceRepos(workspacePath) };
+    } catch (error) {
+      console.error('[GitStatusHandlers] Failed to list workspace repos:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to list workspace repos',
+        repos: [],
+      };
+    }
+  });
+
+  /**
+   * The repository that owns one file, or null when it is in no repo.
+   *
+   * Unlike `git:list-workspace-repos` this walks up from the file, so it also
+   * answers for submodules and repos nested below a root -- the cases pickers
+   * deliberately leave out.
+   */
+  safeHandle('git:resolve-repo-for-file', async (_event, workspacePath: string, filePath: string) => {
+    if (!workspacePath) throw new Error('workspacePath is required');
+    if (!filePath) throw new Error('filePath is required');
+    try {
+      return { success: true, repoPath: resolveRepoForFile(workspacePath, filePath) };
+    } catch (error) {
+      console.error('[GitStatusHandlers] Failed to resolve repo for file:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to resolve repo for file',
+        repoPath: null,
+      };
+    }
+  });
+
   /**
    * Get git status for a list of files
    *
@@ -15,8 +60,17 @@ export function registerGitStatusHandlers(): void {
    */
   safeHandle('git:get-file-status', async (_event, workspacePath: string, filePaths: string[]) => {
     try {
-      const status = await gitStatusService.getFileStatus(workspacePath, filePaths);
-      return { success: true, status };
+      // `getFileStatus` bounds its repo walk to the path it is given, so a file
+      // in an attached folder resolves to no repo when asked against the
+      // primary root alone. Ask each root for the files it owns and merge; the
+      // reply is keyed by the caller's own path strings, so the merge is a
+      // plain spread.
+      const perRoot = await Promise.all(
+        [...groupFilesByRoot(workspacePath, filePaths)].map(([rootPath, rootFiles]) =>
+          gitStatusService.getFileStatus(rootPath, rootFiles),
+        ),
+      );
+      return { success: true, status: Object.assign({}, ...perRoot) };
     } catch (error) {
       console.error('[GitStatusHandlers] Failed to get file status:', error);
       return {
@@ -35,7 +89,14 @@ export function registerGitStatusHandlers(): void {
    */
   safeHandle('git:get-uncommitted-files', async (_event, workspacePath: string) => {
     try {
-      const files = await gitStatusService.getUncommittedFiles(workspacePath);
+      // Scan every repo, not every root: a container root holding several
+      // checkouts is not itself a repo, so asking git about it returns nothing.
+      const perRepo = await Promise.all(
+        listRepoScanPaths(workspacePath).map((repoPath) =>
+          gitStatusService.getUncommittedFiles(repoPath),
+        ),
+      );
+      const files = [...new Set(perRepo.flat())];
       return { success: true, files };
     } catch (error) {
       console.error('[GitStatusHandlers] Failed to get uncommitted files:', error);
@@ -117,7 +178,16 @@ export function registerGitStatusHandlers(): void {
    */
   safeHandle('git:get-all-file-statuses', async (_event, workspacePath: string) => {
     try {
-      const statuses = await gitStatusService.getAllFileStatuses(workspacePath);
+      // `getAllFileStatuses` bounds its repo walk to the path it is given, so a
+      // multi-root workspace has to ask once per repo or attached folders get
+      // no status badges at all. The result is keyed by absolute path, so the
+      // merge is a plain object spread.
+      const perRepo = await Promise.all(
+        listRepoScanPaths(workspacePath).map((repoPath) =>
+          gitStatusService.getAllFileStatuses(repoPath),
+        ),
+      );
+      const statuses = Object.assign({}, ...perRepo);
       return { success: true, statuses };
     } catch (error) {
       console.error('[GitStatusHandlers] Failed to get all file statuses:', error);
@@ -166,10 +236,30 @@ export function registerGitStatusHandlers(): void {
         // Worktree: return every uncommitted change in the worktree, not just the
         // current session's edits. The worktree isolates one workstream, so all of
         // it is this work.
+        // Statuses for every repo the workspace spans, not just the primary
+        // root -- otherwise an attached repo's changes never reach the prompt.
+        const collectAllStatuses = async () => {
+          const perRepo = await Promise.all(
+            listRepoScanPaths(workspacePath).map((repoPath) =>
+              gitStatusService.getAllFileStatuses(repoPath),
+            ),
+          );
+          return Object.assign({}, ...perRepo) as Record<string, { filePath: string; status: string }>;
+        };
+
+        // Paths go into an AI prompt, so they have to be unambiguous. Files
+        // under the primary root stay workspace-relative (what every consumer
+        // already matches on); a file in an attached folder would relativize to
+        // `../../…`, so it keeps its absolute path instead.
+        const displayPath = (absPath: string): string => {
+          const rel = relative(workspacePath, absPath);
+          return rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel : absPath;
+        };
+
         if (includeAllUncommitted) {
-          const allStatuses = await gitStatusService.getAllFileStatuses(workspacePath);
+          const allStatuses = await collectAllStatuses();
           const files = Object.values(allStatuses).map(s => ({
-            path: relative(workspacePath, s.filePath),
+            path: displayPath(s.filePath),
             status: mapStatus(s.status),
           }));
           return { success: true, files, scenario: 'worktree' as const };
@@ -190,8 +280,8 @@ export function registerGitStatusHandlers(): void {
           return { success: true, files: [], scenario };
         }
 
-        // Get all uncommitted file statuses
-        const allStatuses = await gitStatusService.getAllFileStatuses(workspacePath);
+        // Get all uncommitted file statuses, across every repo in the workspace
+        const allStatuses = await collectAllStatuses();
 
         // Cross-reference: only session-edited files that still have uncommitted changes
         const seen = new Set<string>();
@@ -208,8 +298,7 @@ export function registerGitStatusHandlers(): void {
           const gitStatus = allStatuses[absPath];
           if (!gitStatus) continue;
 
-          const relPath = relative(workspacePath, absPath);
-          files.push({ path: relPath, status: mapStatus(gitStatus.status) });
+          files.push({ path: displayPath(absPath), status: mapStatus(gitStatus.status) });
         }
 
         return { success: true, files, scenario };

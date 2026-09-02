@@ -17,7 +17,7 @@ import { HelpTooltip } from '../help';
 import { store, gitStatusMapAtom, revealRequestAtom, rawFileTreeAtom, fileTreeLoadedAtom, type FileGitStatus as AtomFileGitStatus } from '../store';
 import { sessionFileEditsAtom } from '../store/atoms/sessionFiles';
 import { loadSessionFilesResult } from '../services/sessionFilesLoader';
-import { refreshFileTree } from '../store/listeners/fileTreeListeners';
+import { applyLoadedFolderContents, refreshFileTree } from '../store/listeners/fileTreeListeners';
 import { useTabsActions } from '../contexts/TabsContext';
 import { useProjectOrg } from '../hooks/useProjectOrg';
 import { WorkspaceSummaryHeader } from './WorkspaceSummaryHeader';
@@ -88,38 +88,6 @@ function resolveSessionFilePath(filePath: string, workspacePath?: string): strin
   const base = normalizeFilePath(workspacePath);
   const relative = sanitized.replace(/^\.?\//, '');
   return normalizeFilePath(`${base}/${relative}`);
-}
-
-function replaceFolderChildren(
-  items: FileTreeItem[],
-  normalizedFolderPath: string,
-  newChildren: FileTreeItem[]
-): [FileTreeItem[], boolean] {
-  let mutated = false;
-
-  const updatedItems = items.map(item => {
-    if (item.type !== 'directory') {
-      return item;
-    }
-
-    const normalizedItemPath = normalizeFilePath(item.path);
-    if (normalizedItemPath === normalizedFolderPath) {
-      mutated = true;
-      return { ...item, children: newChildren };
-    }
-
-    if (item.children && item.children.length > 0) {
-      const [nextChildren, childMutated] = replaceFolderChildren(item.children, normalizedFolderPath, newChildren);
-      if (childMutated) {
-        mutated = true;
-        return { ...item, children: nextChildren };
-      }
-    }
-
-    return item;
-  });
-
-  return [mutated ? updatedItems : items, mutated];
 }
 
 export function WorkspaceSidebar({
@@ -212,21 +180,11 @@ export function WorkspaceSidebar({
 
   const handleFolderContentsLoaded = useCallback((folderPath: string, contents: FileTreeItem[]) => {
     if (!folderPath) return;
-
-    const normalizedFolderPath = normalizeFilePath(folderPath);
-    const normalizedWorkspacePath = workspacePath ? normalizeFilePath(workspacePath) : '';
-
-    const prevTree = store.get(rawFileTreeAtom);
-    if (normalizedWorkspacePath && normalizedFolderPath === normalizedWorkspacePath) {
-      store.set(rawFileTreeAtom, contents);
-      return;
-    }
-
-    const [updatedTree, changed] = replaceFolderChildren(prevTree, normalizedFolderPath, contents);
-    if (changed) {
-      store.set(rawFileTreeAtom, updatedTree);
-    }
-  }, [workspacePath]);
+    // Routed through the listener so the per-root cache it republishes from
+    // stays in step -- writing rawFileTreeAtom directly would be undone by the
+    // next watcher rebuild.
+    applyLoadedFolderContents(folderPath, contents);
+  }, []);
 
   // Load file tree settings from workspace state
   useEffect(() => {

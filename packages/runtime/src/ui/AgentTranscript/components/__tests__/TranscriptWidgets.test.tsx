@@ -1544,7 +1544,7 @@ describe('ContextLimitWidget', () => {
   });
 
   it('shows compact button only on last message', () => {
-    const onCompact = vi.fn();
+    const onCompact = vi.fn(() => new Promise<void>(() => {}));
     render(<ContextLimitWidget isLastMessage={true} onCompact={onCompact} />);
     const compactButton = screen.getByText('Compact');
     expect(compactButton).toBeDefined();
@@ -1558,10 +1558,78 @@ describe('ContextLimitWidget', () => {
   });
 
   it('shows "Compacting..." after clicking compact', () => {
-    const onCompact = vi.fn();
+    const onCompact = vi.fn(() => new Promise<void>(() => {}));
     render(<ContextLimitWidget isLastMessage={true} onCompact={onCompact} />);
     fireEvent.click(screen.getByText('Compact'));
     expect(screen.getByText('Compacting...')).toBeDefined();
+  });
+
+  // #1414: the button used to latch on "Compacting..." forever, so the one
+  // recovery affordance disappeared in exactly the case that needs it -- a
+  // compaction the model refused. SessionTranscript's handler swallows its own
+  // errors and resolves, so the failure looks like a completed call here.
+  it('hands the button back once a failed compaction settles', async () => {
+    let settle!: () => void;
+    const onCompact = vi.fn(() => new Promise<void>((resolve) => { settle = resolve; }));
+    render(
+      <ContextLimitWidget isLastMessage={true} variant="compaction-failed" onCompact={onCompact} />
+    );
+
+    fireEvent.click(screen.getByText('Try again'));
+    expect(screen.getByText('Retrying...')).toBeDefined();
+
+    settle();
+    await waitFor(() => expect(screen.getByText('Try again')).toBeDefined());
+    expect((screen.getByText('Try again') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  // The widget renders INSTEAD of the message it matched, so for a failed
+  // compaction it has to carry the detail forward -- that string is the only
+  // thing naming who refused (a router, in #1414). A plain context-limit error
+  // says nothing the widget's own copy doesn't, so it stays suppressed.
+  it('surfaces the failure detail only for a failed compaction', () => {
+    const detail = 'Error during compaction: API Error: 400 All target providers failed.';
+    const { rerender } = render(
+      <ContextLimitWidget isLastMessage={true} variant="compaction-failed" detail={detail} />
+    );
+    expect(screen.getByText(detail)).toBeDefined();
+
+    rerender(<ContextLimitWidget isLastMessage={true} variant="context-limit" detail={detail} />);
+    expect(screen.queryByText(detail)).toBeNull();
+  });
+});
+
+// ============================================================================
+// Context failure classification
+// ============================================================================
+
+describe('classifyContextFailure', () => {
+  let classifyContextFailure: (text: string) => string | null;
+  let isCompactionFailureText: (text: string) => boolean;
+
+  beforeEach(async () => {
+    const mod = await import('../contextFailureDetection');
+    classifyContextFailure = mod.classifyContextFailure;
+    isCompactionFailureText = mod.isCompactionFailureText;
+  });
+
+  // The CLI prefixes its automatic-compaction failure with "Prompt is too
+  // long", so a context-limit-first check routes it to the "just compact"
+  // copy -- advice the user has already taken and watched fail.
+  it('prefers the compaction verdict over the context-limit phrase it embeds', () => {
+    expect(classifyContextFailure('Prompt is too long · automatic compaction failed: API Error: 400'))
+      .toBe('compaction-failed');
+    expect(classifyContextFailure('Error during compaction: API Error: 400 All target providers failed.'))
+      .toBe('compaction-failed');
+    expect(classifyContextFailure('Prompt is too long')).toBe('context-limit');
+    expect(classifyContextFailure('the build succeeded')).toBeNull();
+  });
+
+  // The unflagged-text path renders this widget INSTEAD of the message, so a
+  // loose match would hide an agent's own prose behind an error card.
+  it('only matches the CLI framing on unflagged text', () => {
+    expect(isCompactionFailureText('Error during compaction: API Error: 400')).toBe(true);
+    expect(isCompactionFailureText('I checked the logs and compaction failed twice')).toBe(false);
   });
 });
 

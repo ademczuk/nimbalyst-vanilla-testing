@@ -24,6 +24,7 @@ import {
   type InviteRole,
 } from './inviteToTeamModel';
 import { WorkspaceFolderPicker } from './WorkspaceFolderPicker';
+import { useTeamSharedContent } from './useTeamSharedContent';
 
 const ROLE_OPTIONS: Array<{ value: InviteRole; label: string }> = [
   { value: 'admin', label: 'Admin' },
@@ -65,8 +66,16 @@ export function InviteToTeamDialog({
   const [role, setRole] = useState<InviteRole>('member');
   const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
   const [selectedFolders, setSelectedFolders] = useState<string[]>([]);
+  const [publishOpen, setPublishOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const teamSharedContent = useTeamSharedContent(workspacePath, isOpen);
+  // Three states, three presentations: publishing is urged only for a team
+  // that is confirmed empty, collapsed out of the way once the team has
+  // content, and offered without a claim either way while the answer is still
+  // unknown.
+  const teamHasContent = teamSharedContent === 'has-content';
+  const teamIsEmpty = teamSharedContent === 'empty';
 
   useEffect(() => {
     if (!isOpen) return;
@@ -74,9 +83,16 @@ export function InviteToTeamDialog({
     setRole('member');
     setSelectedProjects(new Set());
     setSelectedFolders([]);
+    setPublishOpen(false);
     setBusy(false);
     setError(null);
   }, [isOpen]);
+
+  // The shared-content answer can arrive after folders were already picked;
+  // collapsing the section then would hide selections the summary still counts.
+  useEffect(() => {
+    if (teamHasContent && selectedFolders.length > 0) setPublishOpen(true);
+  }, [teamHasContent, selectedFolders.length]);
 
   const { emails, invalid } = useMemo(() => parseInviteEmails(emailText), [emailText]);
   const extraProjects = useMemo(
@@ -87,6 +103,7 @@ export function InviteToTeamDialog({
     people: emails.length,
     extraProjects: extraProjects.length,
     folders: selectedFolders.length,
+    teamHasSharedContent: teamSharedContent === 'has-content',
   };
 
   const toggleProject = useCallback((teamProjectId: string) => {
@@ -240,24 +257,53 @@ export function InviteToTeamDialog({
           </div>
 
           {workspacePath && (
-            <div className="mt-3">
-              <p className="m-0 mb-2 text-xs text-[var(--nim-text-muted)]">
-                Publish folders from this workspace so there is something to open. A publish is a
-                one-time copy; files added later stay local.
-              </p>
-              <WorkspaceFolderPicker
-                workspacePath={workspacePath}
-                selected={selectedFolders}
-                onToggle={(folderPath) => setSelectedFolders((current) => (
-                  current.includes(folderPath)
-                    ? current.filter(path => path !== folderPath)
-                    : [...current, folderPath]
-                ))}
-              />
+            <div className="invite-publish-folders mt-3">
+              {teamHasContent ? (
+                <button
+                  type="button"
+                  className="invite-publish-folders-toggle flex items-center gap-1 border-0 bg-transparent p-0 text-xs text-[var(--nim-text-muted)]"
+                  aria-expanded={publishOpen}
+                  onClick={() => setPublishOpen(open => !open)}
+                >
+                  <MaterialSymbol icon={publishOpen ? 'expand_more' : 'chevron_right'} size={16} />
+                  Publish folders from this workspace too
+                </button>
+              ) : (
+                <p className="m-0 mb-2 text-xs text-[var(--nim-text-muted)]">
+                  {teamIsEmpty
+                    ? 'Publish folders from this workspace so there is something to open. A publish is a one-time copy; files added later stay local.'
+                    : 'A publish is a one-time copy; files added later stay local.'}
+                </p>
+              )}
+              {(!teamHasContent || publishOpen) && (
+                <div className={teamHasContent ? 'mt-2' : undefined}>
+                  {teamHasContent && (
+                    <p className="m-0 mb-2 text-xs text-[var(--nim-text-muted)]">
+                      A publish is a one-time copy; files added later stay local.
+                    </p>
+                  )}
+                  <WorkspaceFolderPicker
+                    workspacePath={workspacePath}
+                    selected={selectedFolders}
+                    onToggle={(folderPath) => setSelectedFolders((current) => (
+                      current.includes(folderPath)
+                        ? current.filter(path => path !== folderPath)
+                        : [...current, folderPath]
+                    ))}
+                  />
+                </div>
+              )}
             </div>
           )}
 
-          {plan.people > 0 && plan.extraProjects === 0 && plan.folders === 0 && (
+          {/*
+            The warning is about the team, not about this form: someone joining
+            a team that already publishes documents is not arriving anywhere
+            empty, whatever this invitation adds. It also waits for a confirmed
+            answer rather than firing on the unknown state, so an admin never
+            reads a claim the next render withdraws.
+          */}
+          {teamIsEmpty && plan.people > 0 && plan.extraProjects === 0 && plan.folders === 0 && (
             <p className="mt-3 text-xs text-[var(--nim-warning)]">
               They will arrive to an empty workspace. You can share folders with them later.
             </p>

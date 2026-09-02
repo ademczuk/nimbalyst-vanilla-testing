@@ -108,6 +108,46 @@ export function getFileSystemServiceFor(workspacePath: string): FileSystemServic
   return fileSystemServicesByPath.get(workspacePath) ?? null;
 }
 
+/**
+ * Resolve the service whose root owns an absolute file path.
+ *
+ * A multi-root workspace registers a service per root -- the primary root and
+ * every attached folder -- so an absolute path into an attached folder must
+ * resolve to that folder's service, not to the primary root's (which does not
+ * contain the file) and not to the global (which points at whatever workspace
+ * is visible). Deepest matching root wins, so a root nested inside another is
+ * attributed to the nearer one.
+ *
+ * Returns null for a relative path or one outside every registered root.
+ */
+export function getFileSystemServiceForPath(filePath: string): FileSystemService | null {
+  // POSIX absolute, or a Windows drive/UNC path. Matching on a leading `/`
+  // alone would send every Windows absolute path down the relative branch.
+  if (!filePath || !(filePath.startsWith('/') || /^([A-Za-z]:[\\/]|\\\\)/.test(filePath))) {
+    return null;
+  }
+
+  // Compare with separators normalized: roots are stored as the platform wrote
+  // them, and a mixed `C:/a` vs `C:\a` would otherwise never match.
+  const normalize = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '');
+  const normalizedFile = normalize(filePath);
+
+  let bestRoot: string | null = null;
+  let bestLength = -1;
+  for (const root of fileSystemServicesByPath.keys()) {
+    const normalizedRoot = normalize(root);
+    if (normalizedFile !== normalizedRoot && !normalizedFile.startsWith(normalizedRoot + '/')) {
+      continue;
+    }
+    if (normalizedRoot.length > bestLength) {
+      bestRoot = root;
+      bestLength = normalizedRoot.length;
+    }
+  }
+
+  return bestRoot ? (fileSystemServicesByPath.get(bestRoot) ?? null) : null;
+}
+
 export function clearFileSystemServiceFor(workspacePath: string): void {
   fileSystemServicesByPath.delete(workspacePath);
 }
