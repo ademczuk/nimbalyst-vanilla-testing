@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.76.3] - 2026-09-03
+
+
+### Added
+<!-- New features go here -->
 - Database Settings can recover preserved database copies and explain migration blocks, while recovery and rollback keep the original data intact across restarts.
 - Radar gives shared trackers a since-you-left digest of teammate activity, status moves, bulk sweeps, and stalled work in desktop and the web console.
 - The Git panel's Changes tab can show every repository in the project at once, each with its own file list and commit box.
@@ -24,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Cmd/Ctrl+Alt+1-9 switched tabs instead of applying the heading level while editing (#1429).
+- Pull requests were missing from the Git panel when the project is a fork checkout; they now list against the upstream repository (#1439).
+- The Git tab jumped back to the previously selected repository when you switched between repositories in a multi-repository project.
+- Interrupting a turn could let the next queued prompt start alongside the priority prompt that replaced it (#1018).
+- Claude Code CLI sessions ignored the custom Claude executable path in settings and reported Claude as not installed (#1296).
+- `tracker_get` left out an item's archived state and its comments (#1224).
+- A file a child session edited several times was listed once per edit in the parent's Files modified list (#1244).
+- A background task that finished mid-turn produced no visible follow-up turn, and every tool call in it that needed permission was denied without asking.
+- A queued prompt containing CJK text could have Enter land mid-paste in a Claude CLI session; an undelivered prompt is now reported as failed instead of marked complete (#1387).
 - Animation MP4 exports finish again, and completed HTML, MP4 and GIF exports are revealed in Finder or Explorer.
 - A Vite build error in development no longer covers the top of the screen through the macOS menu bar island.
 - Document sync could delete markdown files from your workspace, including files tracked in git.
