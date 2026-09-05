@@ -20,6 +20,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 <!-- Removed features go here -->
 
+## [0.77.0] - 2026-09-05
+
+
+### Added
+<!-- New features go here -->
+- Project Graph adds Atlas, Pulse, and Evidence Trails with broader source coverage, saved views, and linked source exploration.
+- Session history marks sessions that launched other sessions with an icon and launch-count tooltip.
+- GPT-6 Astra can be selected for Codex sessions, with its Ultra reasoning level.
+- Decision blocks inside documents, with solo or collaborative voting and attributed outcomes preserved in the markdown.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Project Memory now indexes agent instructions and personal memory as separate sources, can use an optional on-device embedding model, and reports semantic-search readiness accurately.
+
+### Fixed
+<!-- Bug fixes go here -->
+- Rapid edits to a shared CSV spreadsheet in the web console no longer let an older asynchronous save overwrite the latest cell value.
+- SQLite migration no longer times out while copying large document histories (#1452).
+- The effort selector offered reasoning levels the selected Codex model does not accept; choosing Max on those models ran at xHigh without saying so.
+- A tool call to an extension that stopped responding waited forever instead of failing, leaving the agent stuck with nothing in the logs.
+- A Codex session's name, tags, or phase could silently stop updating when the agent's tool call was dropped in transit; the update is now re-applied.
+
+### Removed
+<!-- Removed features go here -->
+
 ## [0.76.3] - 2026-09-03
 
 
