@@ -5,6 +5,11 @@ import { safeHandle } from '../utils/ipcRegistry';
 import { SessionManager } from '@nimbalyst/runtime/ai/server';
 import type { AIProviderType, PromptProvenance } from '@nimbalyst/runtime/ai/server/types';
 import { ModelIdentifier } from '@nimbalyst/runtime/ai/server/types';
+import {
+  EFFORT_LEVELS,
+  clampEffortLevel,
+  type EffortLevel,
+} from '@nimbalyst/runtime/ai/server/effortLevels';
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
 import { AgentMessagesRepository } from '@nimbalyst/runtime/storage/repositories/AgentMessagesRepository';
 import { SessionFilesRepository } from '@nimbalyst/runtime/storage/repositories/SessionFilesRepository';
@@ -19,6 +24,7 @@ import { gitRefWatcher } from '../file/GitRefWatcher';
 import { AIService } from './ai/AIService';
 import { setMetaAgentToolFns } from '../mcp/metaAgentServer';
 import { computeNotificationSignature } from './metaAgentNotificationSignature';
+import { deletePendingChildUpdates } from './ai/pendingChildUpdates';
 import { extractMessageText, extractUserPrompts } from './metaAgentMessageText';
 import type { NotificationOptions, NotificationResult } from './NotificationService';
 import type { MobilePushResult } from '@nimbalyst/runtime/sync/types';
@@ -69,6 +75,31 @@ interface CreateChildSessionArgs {
   useWorktree?: boolean;
   worktreeId?: string;
   toolScope?: string;
+  /**
+   * Reasoning effort for the new session. Omit to leave the child on the
+   * app-wide default (what every spawn did before this existed) — an omitted
+   * value is NOT inherited from the caller.
+   */
+  effortLevel?: string;
+}
+
+/**
+ * Validate a caller-supplied effort level. Deliberately throws instead of
+ * using `parseEffortLevel`, which returns the 'high' default for unrecognized
+ * input — that would turn a typo ('mid') into a silent, plausible-looking
+ * choice the caller never made.
+ */
+function validateRequestedEffortLevel(value: string | undefined): EffortLevel | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const match = EFFORT_LEVELS.find((entry) => entry.key === value);
+  if (!match) {
+    throw new Error(
+      `Invalid effortLevel "${value}". Expected one of: ${EFFORT_LEVELS.map((entry) => entry.key).join(', ')}`
+    );
+  }
+  return match.key;
 }
 
 function normalizeStoredChildModelIdentifier(
@@ -115,6 +146,13 @@ interface SpawnSessionArgs {
    * caller's workstream.
    */
   isolated?: boolean;
+  /**
+   * Reasoning effort for the new session (e.g. spawn an
+   * `openai-codex:gpt-6-astra` session at 'medium'). Clamped to the resolved
+   * model's ceiling. Omit to leave the child on the app-wide default; unlike
+   * `model` there is no inherit-from-caller mode.
+   */
+  effortLevel?: string;
 }
 
 interface NotifyUserArgs {
@@ -141,51 +179,6 @@ type RequestMobilePush = (
   body: string,
   options: { force?: boolean; reason?: string }
 ) => Promise<MobilePushResult | null>;
-
-/** Notification-only bound for the reinjected original task text. The stored,
- *  returned `SessionResultData.originalPrompt` value itself stays unbounded --
- *  only the text appended into a `[Child Session Update]` notification (which
- *  lands directly in the parent's own prompt queue) is capped. Fixed, not
- *  user-configurable, matching the other hardcoded bounds nearby
- *  (500 chars for lastResponse, 2,000 chars/message for recentMessages). */
-const CHILD_NOTIFICATION_ORIGINAL_PROMPT_MAX_CHARS = 2_000;
-
-function truncateNotificationPreview(
-  text: string,
-  maxChars: number = CHILD_NOTIFICATION_ORIGINAL_PROMPT_MAX_CHARS,
-): { text: string; truncated: boolean } {
-  if (text.length <= maxChars) {
-    return { text, truncated: false };
-  }
-
-  const marker = '…[original task truncated; call get_session_result for the complete prompt]…';
-  const keepChars = Math.max(0, maxChars - marker.length);
-  const headChars = Math.ceil(keepChars * (13 / 19));
-  const tailChars = keepChars - headChars;
-
-  // Avoid splitting a UTF-16 surrogate pair at either cut point.
-  let headEnd = headChars;
-  if (headEnd > 0 && headEnd < text.length) {
-    const code = text.charCodeAt(headEnd - 1);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      headEnd -= 1;
-    }
-  }
-  let tailStart = text.length - tailChars;
-  if (tailStart > 0 && tailStart < text.length) {
-    // If the tail's first kept unit is a lone low surrogate (its high-surrogate
-    // partner falls in the excluded middle region), advance past it instead of
-    // starting the tail mid-pair.
-    const code = text.charCodeAt(tailStart);
-    if (code >= 0xdc00 && code <= 0xdfff) {
-      tailStart += 1;
-    }
-  }
-
-  const head = text.slice(0, headEnd);
-  const tail = tailChars > 0 ? text.slice(tailStart) : '';
-  return { text: `${head}${marker}${tail}`, truncated: true };
-}
 
 export class MetaAgentService {
   private static instance: MetaAgentService | null = null;
@@ -458,6 +451,8 @@ export class MetaAgentService {
     createdBySessionId: string;
     queuedInitialPrompt: boolean;
     parentSessionId: string | null;
+    /** Effort actually applied, after clamping; null when left on the app default. */
+    effortLevel: string | null;
   }> {
     if (!this.aiService) {
       throw new Error('AI service not initialized');
@@ -465,6 +460,10 @@ export class MetaAgentService {
     if (args.useWorktree && args.worktreeId) {
       throw new Error('useWorktree and worktreeId cannot be combined');
     }
+
+    // Validate before any side effect, so a bad effortLevel can't leave a
+    // half-created worktree or session row behind.
+    const requestedEffortLevel = validateRequestedEffortLevel(args.effortLevel);
 
     // Defense-in-depth: a child-completion notification (built in
     // buildNotificationMessage) starts literally with '[Child Session Update]'.
@@ -675,6 +674,20 @@ export class MetaAgentService {
       await AISessionsRepository.updateMetadata(sessionId, { metadata: { toolScope: childToolScope } });
     }
 
+    // Reasoning effort: every turn reads it back out of session metadata
+    // (MessageStreamingHandler for codex/others, buildClaudeCodeRuntimeConfig
+    // for claude-code), so writing it here is all that's needed. Clamp to the
+    // resolved model's ceiling so the child's effort selector displays the same
+    // level the provider will actually run at, rather than a level the
+    // transport would silently lower. Writing nothing leaves the child on the
+    // app-wide default.
+    const childEffortLevel = requestedEffortLevel
+      ? clampEffortLevel(requestedEffortLevel, normalizedModel)
+      : undefined;
+    if (childEffortLevel) {
+      await AISessionsRepository.updateMetadata(sessionId, { metadata: { effortLevel: childEffortLevel } });
+    }
+
     const initialPrompt = args.prompt?.trim();
     const shouldBypassExecution = this.shouldBypassChildAgentExecutionForTests();
 
@@ -731,6 +744,7 @@ export class MetaAgentService {
       createdBySessionId: metaSessionId,
       queuedInitialPrompt: !!initialPrompt,
       parentSessionId: args.parentSessionIdOverride ?? null,
+      effortLevel: childEffortLevel ?? null,
     };
   }
 
@@ -784,6 +798,7 @@ export class MetaAgentService {
       useWorktree: !!args.useWorktree,
       worktreeId: inheritedWorktreeId,
       model: effectiveModel,
+      effortLevel: args.effortLevel,
       parentSessionIdOverride: workstreamId,
     });
 
@@ -1328,6 +1343,19 @@ export class MetaAgentService {
       }
 
       const notification = this.buildNotificationMessage(eventType, result);
+
+      // Supersede rather than append. The signature dedup above only collapses
+      // duplicates within a single child turn (it resets on
+      // session:started/session:streaming), so a child that cycles
+      // idle -> running -> idle emits a fresh session:completed every cycle and
+      // the parent accumulates one row per cycle per child. Those rows are not
+      // independent facts: each is a snapshot of the same child, and the newest
+      // is the only one still true by the time the parent reads it. Dropping the
+      // stale pending row keeps the parent's queue proportional to the number of
+      // children rather than to the number of turns they take.
+      //
+      await deletePendingChildUpdates(session.createdBySessionId, session.id);
+
       await this.aiService.queuePromptForSession(
         session.createdBySessionId,
         notification,
@@ -1366,11 +1394,13 @@ export class MetaAgentService {
       `Event: ${eventType}`,
     ];
 
-    if (result.originalPrompt) {
-      const preview = truncateNotificationPreview(result.originalPrompt);
-      const label = preview.truncated ? 'Original task preview' : 'Original task';
-      lines.push(`${label}: ${preview.text}`);
-    }
+    // The original task is deliberately not repeated here. This notification is
+    // only ever queued to the child's `createdBySessionId`, which is the session
+    // that wrote that prompt in the first place -- it is already in the parent's
+    // own transcript. Re-embedding up to 2,000 characters of it in every update
+    // was the largest part of each row, repeated once per child turn. The title
+    // and session id above are enough to identify the child; `get_session_result`
+    // returns the full prompt when a parent genuinely needs it.
     if (result.recentMessages.length > 0) {
       lines.push('Recent messages:');
       for (const message of result.recentMessages) {

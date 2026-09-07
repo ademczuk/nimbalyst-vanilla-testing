@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
 
   return {
     provider,
+    deliverCodex: vi.fn(async () => ({ success: true, delivery: 'queued' })),
     getProvider: vi.fn(),
     getSession: vi.fn(),
     createMessage: vi.fn(),
@@ -21,7 +22,10 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('electron', () => ({
+vi.mock('../codexQuestionDelivery', () => ({ deliverCodexQuestionAnswer: mocks.deliverCodex }));
+
+vi.mock('electron', async () => ({
+  app: (await import('../../../../../test-stubs/privateUserData')).testApp,
   ipcMain: {
     listenerCount: mocks.ipcListenerCount,
     emit: mocks.ipcEmit,
@@ -113,6 +117,19 @@ describe('MobileSessionControlHandler', () => {
     );
   });
 
+  it('routes Codex answers through turn-owned delivery instead of provider or IPC listener guesses', async () => {
+    resolveVoicePromptResponse('session-1', {
+      promptType: 'ask_user_question', promptId: 'nimtc|exec-q|100|1',
+      response: { answers: { Scope: 'Everything' }, cancelled: false },
+    });
+    await vi.waitFor(() => expect(mocks.deliverCodex).toHaveBeenCalledWith('session-1', 'nimtc|exec-q|100|1', {
+      answers: { Scope: 'Everything' }, cancelled: false, respondedBy: 'mobile',
+    }));
+    expect(mocks.provider.resolveAskUserQuestion).not.toHaveBeenCalled();
+    expect(mocks.ipcEmit).not.toHaveBeenCalled();
+    expect(mocks.onPromptResolved).toHaveBeenCalledWith('session-1');
+  });
+
   it('uses a native worktree path for mobile commit execution', () => {
     expect(resolveGitCommitWorkspacePath({
       workspacePath: 'D:/project',
@@ -136,6 +153,8 @@ describe('MobileSessionControlHandler', () => {
   });
 
   it('uses the session provider and always persists the mobile response', async () => {
+    mocks.getSession.mockResolvedValue({ provider: 'claude-code' });
+    mocks.getProvider.mockReturnValue(mocks.provider);
     resolveVoicePromptResponse('session-1', {
       promptType: 'ask_user_question',
       promptId: 'call_question_123',
@@ -149,7 +168,7 @@ describe('MobileSessionControlHandler', () => {
       expect(mocks.createMessage).toHaveBeenCalledTimes(1);
     });
 
-    expect(mocks.getProvider).toHaveBeenCalledWith('openai-codex', 'session-1');
+    expect(mocks.getProvider).toHaveBeenCalledWith('claude-code', 'session-1');
     expect(mocks.provider.resolveAskUserQuestion).toHaveBeenCalledWith(
       'call_question_123',
       { Scope: 'Everything' },
@@ -158,7 +177,7 @@ describe('MobileSessionControlHandler', () => {
     );
     expect(mocks.createMessage).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'session-1',
-      source: 'openai-codex',
+      source: 'claude-code',
       direction: 'output',
       content: expect.any(String),
     }));
@@ -173,6 +192,8 @@ describe('MobileSessionControlHandler', () => {
   });
 
   it('wakes the MCP waiter even when the provider consumes the response', async () => {
+    mocks.getSession.mockResolvedValue({ provider: 'claude-code' });
+    mocks.getProvider.mockReturnValue(mocks.provider);
     mocks.ipcListenerCount.mockImplementation((channel: string) =>
       channel === 'ask-user-question-response:session-1:call_question_123' ? 1 : 0,
     );
@@ -201,6 +222,8 @@ describe('MobileSessionControlHandler', () => {
   });
 
   it('persists the response when no in-process provider is available', async () => {
+    mocks.getSession.mockResolvedValue({ provider: 'claude-code' });
+    mocks.getProvider.mockReturnValue(mocks.provider);
     mocks.getProvider.mockReturnValue(null);
 
     resolveVoicePromptResponse('session-1', {
@@ -256,6 +279,8 @@ describe('MobileSessionControlHandler', () => {
   });
 
   it('persists before waking provider and IPC consumers', async () => {
+    mocks.getSession.mockResolvedValue({ provider: 'claude-code' });
+    mocks.getProvider.mockReturnValue(mocks.provider);
     mocks.ipcListenerCount.mockImplementation((channel: string) =>
       channel === 'ask-user-question-response:session-1:call_ordered' ? 1 : 0,
     );
@@ -280,6 +305,8 @@ describe('MobileSessionControlHandler', () => {
   });
 
   it('continues notification cleanup when an IPC listener throws', async () => {
+    mocks.getSession.mockResolvedValue({ provider: 'claude-code' });
+    mocks.getProvider.mockReturnValue(mocks.provider);
     mocks.ipcListenerCount.mockReturnValue(1);
     mocks.ipcEmit.mockImplementationOnce(() => {
       throw new Error('stale listener');
@@ -397,6 +424,8 @@ describe('MobileSessionControlHandler', () => {
   });
 
   it('preserves mobile attribution when cancelling a provider question', async () => {
+    mocks.getSession.mockResolvedValue({ provider: 'claude-code' });
+    mocks.getProvider.mockReturnValue(mocks.provider);
     resolveVoicePromptResponse('session-1', {
       promptType: 'ask_user_question',
       promptId: 'call_question_123',

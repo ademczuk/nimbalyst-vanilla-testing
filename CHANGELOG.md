@@ -20,6 +20,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 <!-- Removed features go here -->
 
+## [0.77.2] - 2026-09-07
+
+
+### Added
+<!-- New features go here -->
+- Send document questions to teammates, collect private answers, and resume the agent after a human settles the outcome.
+- Open and play `.mp4` files in a tab with the new Media Viewer extension, including scrubbing through long recordings.
+- A session that launches another session can request the reasoning effort it runs at, rather than leaving it on the app-wide default.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- Provider API keys are encrypted on disk, settings files keep private permissions, and saved keys remain clearable when a provider is disabled.
+- Workstream session tabs scroll in one row with readable names and a new-session button that stays visible when the strip is full.
+- Codex sessions receive the first answer to a question even when the turn that asked it has already ended.
+- Project Graph keeps loaded data visible instead of repeatedly flashing a blank loading view during startup.
+- Simple document questions and their selection outlines stay at a readable width on wide screens, with controls that wrap on narrow screens.
+- Embedded mockups repaint after their frame is attached or moved, preventing intermittent blank previews.
+- iPhone and iPad share one adaptive layout that preserves the active session and draft through rotation, with a session sidebar on wide screens.
+- Project and session lists show loading until sync finishes instead of prematurely reporting that they are empty.
+- Orchestrating sessions keep up with their children: updates arriving mid-turn are delivered together, and a repeat from the same child replaces the earlier one.
+
+### Removed
+<!-- Removed features go here -->
+
 ## [0.77.0] - 2026-09-05
 
 
