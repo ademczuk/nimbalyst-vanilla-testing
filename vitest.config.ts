@@ -117,9 +117,14 @@ const nodeOnly = [
   // with projects, so they were paying for jsdom while claiming not to.
   'packages/electron/src/shared/analytics/**',
   'packages/runtime/src/ai/**',
+  // The host capability contract is two methods over `process`; it exists
+  // precisely so runtime can run where there is no DOM and no Electron.
+  'packages/runtime/src/host/**',
   'packages/runtime/src/ui/git/__tests__/unifiedDiffModel.test.ts',
   // The recovery planner is a pure function over three numbers.
   'packages/runtime/src/sync/__tests__/trackerIdentityRecovery.test.ts',
+  // Key-derivation vectors are WebCrypto over fixed bytes; no DOM involved.
+  'packages/runtime/src/sync/__tests__/encryptionKey.test.ts',
   // `feedback-ui` is otherwise React components; only the pure scroll-carry
   // arithmetic is routed here, for the same reason as the diff model above.
   'packages/collab-client/src/feedback-ui/__tests__/artifactScrollCarry.test.ts',
@@ -138,6 +143,9 @@ const nodeOnly = [
   // include, paying an environment they cannot use.
   'packages/cli/src/**',
   'packages/tracker-core/src/**',
+  // The headless node host is a terminal process with no Electron and no DOM;
+  // that is the entire point of the package.
+  'packages/node/src/**',
   // The memory engine is host-agnostic with zero app imports, so nothing under
   // it can reach a DOM. Its tests carried `// @vitest-environment node` pragmas
   // that were inert for the same reason as the ones above, and the extension's

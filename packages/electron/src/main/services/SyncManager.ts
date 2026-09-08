@@ -20,6 +20,7 @@ import { asPersonalMemberId } from '@nimbalyst/runtime';
 import type { PersonalJwt, PersonalMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 import type { DeviceInfo } from '@nimbalyst/runtime/sync';
 import * as syncModule from '@nimbalyst/runtime/sync';
+import { deriveEncryptionKey, personalSyncEncryptionSalt } from '@nimbalyst/runtime/sync';
 import { getSessionSyncConfig, setSessionSyncConfig, getReleaseChannel, getDefaultAIModel, getAlphaFeatures, getPreferredAgentLanguage, getAttachmentStagingConfig, store, type SessionSyncConfig } from '../utils/store';
 import { logger } from '../utils/logger';
 import { getCredentials } from './CredentialService';
@@ -31,6 +32,12 @@ import { getProjectFileSyncService } from './ProjectFileSyncService';
 import { startProjectFileSync, stopAllProjectFileSync } from '../file/WorkspaceWatcher';
 import { windowStates } from '../window/WindowManager';
 import { getGitRemoteIdentities } from '../utils/gitUtils';
+import {
+  composeProjectConfig,
+  toSyncedActionPrompts,
+  type ProjectConfigSlices,
+} from './sync/projectConfigComposer';
+import type { ActionPrompt } from './ActionPromptParser';
 import { resolveProjectPath } from '../utils/workspaceDetection';
 import { createHash } from 'crypto';
 import { setSleepPreventionMode, setSyncConnected, shutdownSleepPrevention, type PreventSleepMode } from './PowerSaveService';
@@ -63,33 +70,10 @@ function loadSyncModule() {
   return syncModule;
 }
 
-/**
- * Derive an encryption key from a passphrase using PBKDF2.
- * This is used for E2E encryption in CollabV3.
- */
-async function deriveEncryptionKey(passphrase: string, salt: string): Promise<CryptoKey> {
-  const encoder = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(passphrase),
-    'PBKDF2',
-    false,
-    ['deriveKey']
-  );
-
-  return crypto.subtle.deriveKey(
-    {
-      name: 'PBKDF2',
-      salt: encoder.encode(salt),
-      iterations: 100000,
-      hash: 'SHA-256',
-    },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
-}
+// `deriveEncryptionKey` used to be defined here. It moved to
+// `@nimbalyst/runtime/sync` (src/sync/encryptionKey.ts) so the headless Node
+// host derives bit-identical keys; its parameters are pinned by fixed vectors
+// in that package's tests.
 
 interface SyncManagerState {
   provider: import('@nimbalyst/runtime/sync').SyncProvider | null;
@@ -410,7 +394,7 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
 
     // CollabV3 uses the encryption key seed from CredentialService for E2E encryption
     // Use personalUserId for salt to ensure same encryption key across devices
-    const encryptionKey = await deriveEncryptionKey(credentials.encryptionKeySeed, `nimbalyst:${personalUserId}`);
+    const encryptionKey = await deriveEncryptionKey(credentials.encryptionKeySeed, personalSyncEncryptionSalt(personalUserId));
     state.encryptionKey = encryptionKey;
 
     connectionTime = Date.now(); // Reset connection time on init
@@ -1321,22 +1305,30 @@ export async function syncSettingsToMobile(_legacyOpenaiApiKey?: string): Promis
 // ============================================================================
 
 /**
- * Sync slash commands for a workspace to mobile via the index room.
- * Called after commands are discovered/updated.
- * @param workspacePath The workspace path (used as project ID)
- * @param commands Array of slash commands to sync (name + description + source only)
+ * Latest known value of each project-config slice, per workspace.
+ *
+ * The blob is a whole-object replace on the wire, but its two producers (slash
+ * commands and action prompts) fire independently. Main cannot recompute the
+ * command list on demand -- `listEntries` needs the provider-native commands
+ * that only the running provider knows -- so the last reported value is cached
+ * and every publish sends both slices together.
  */
-export async function syncProjectCommandsToMobile(
-  workspacePath: string,
-  commands: Array<{ name: string; description?: string; source: string }>
-): Promise<void> {
-  const provider = state.provider;
-  if (!provider) {
-    return; // Sync not initialized, silently skip
-  }
+const projectConfigSlices = new Map<string, ProjectConfigSlices>();
 
-  if (!provider.syncProjectConfig) {
-    return;
+function getProjectConfigSlices(workspacePath: string): ProjectConfigSlices {
+  let slices = projectConfigSlices.get(workspacePath);
+  if (!slices) {
+    slices = { commands: [], lastCommandsUpdate: 0, actions: [], lastActionsUpdate: 0 };
+    projectConfigSlices.set(workspacePath, slices);
+  }
+  return slices;
+}
+
+/** Compose both slices and send the whole blob. The only send site. */
+async function publishProjectConfig(workspacePath: string): Promise<void> {
+  const provider = state.provider;
+  if (!provider?.syncProjectConfig) {
+    return; // Sync not initialized or unsupported, silently skip
   }
 
   try {
@@ -1348,18 +1340,57 @@ export async function syncProjectCommandsToMobile(
       gitRemoteHash = createHash('sha256').update(gitRemote.canonical).digest('hex');
     }
 
-    await provider.syncProjectConfig(workspacePath, {
-      commands: commands.map(cmd => ({
-        name: cmd.name,
-        description: cmd.description,
-        source: cmd.source as 'builtin' | 'project' | 'user' | 'plugin',
-      })),
-      lastCommandsUpdate: Date.now(),
-      gitRemoteHash,
-    });
+    const slices = getProjectConfigSlices(workspacePath);
+    await provider.syncProjectConfig(
+      workspacePath,
+      composeProjectConfig({ ...slices, gitRemoteHash })
+    );
   } catch (error) {
-    logger.main.error('[SyncManager] Failed to sync project commands:', error);
+    logger.main.error('[SyncManager] Failed to sync project config:', error);
   }
+}
+
+/**
+ * Update the slash-command slice and republish.
+ * @param workspacePath The workspace path (used as project ID)
+ * @param commands Array of slash commands to sync (name + description + source only)
+ */
+export async function syncProjectCommandsToMobile(
+  workspacePath: string,
+  commands: Array<{ name: string; description?: string; source: string }>
+): Promise<void> {
+  const slices = getProjectConfigSlices(workspacePath);
+  slices.commands = commands.map(cmd => ({
+    name: cmd.name,
+    description: cmd.description,
+    source: cmd.source as 'builtin' | 'project' | 'user' | 'plugin',
+  }));
+  slices.lastCommandsUpdate = Date.now();
+  await publishProjectConfig(workspacePath);
+}
+
+/**
+ * Update the action-prompt slice and republish.
+ *
+ * Unlike commands, these carry their body: mobile pastes the prompt into its
+ * composer for the user to edit, which it cannot do from a name alone.
+ */
+export async function syncProjectActionsToMobile(
+  workspacePath: string,
+  actions: ActionPrompt[]
+): Promise<void> {
+  const slices = getProjectConfigSlices(workspacePath);
+  const projected = toSyncedActionPrompts(actions);
+  if (projected.droppedForCount > 0 || projected.droppedForSize > 0 || projected.truncatedCount > 0) {
+    logger.main.warn(
+      `[SyncManager] ai-actions.md exceeded the sync budget for ${workspacePath}: ` +
+        `${projected.droppedForCount} over the count cap, ${projected.droppedForSize} over the size budget, ` +
+        `${projected.truncatedCount} truncated`
+    );
+  }
+  slices.actions = projected.actions;
+  slices.lastActionsUpdate = Date.now();
+  await publishProjectConfig(workspacePath);
 }
 
 /**
