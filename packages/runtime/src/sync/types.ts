@@ -10,6 +10,7 @@ import type { FleetActivitySnapshot, PushRejectionCause, SkipReason } from '@nim
 import type { AgentMessage } from '../ai/server/types';
 import type { PersonalJwt, PersonalMemberId } from '../auth/jwtScopes';
 import type { SyncedReadReceipt } from '../readReceipts/readReceipts';
+import type { PersonalSyncWriteGateSnapshot } from './personalSyncWriteGate';
 
 /** Caller-side knobs for {@link SyncProvider.requestMobilePush}. */
 export interface MobilePushOptions {
@@ -176,6 +177,11 @@ export interface SyncProvider {
 
   /** Fetch the current server index to compare with local state */
   fetchIndex?(): Promise<{
+    /** Absent on older providers. Partial coverage never permits absence-based reconciliation. */
+    complete?: boolean;
+    indexProtocolVersion?: 1 | 2;
+    /** Explicit server tombstones, including those retained across a full bootstrap. */
+    deletedSessionIds?: string[];
     sessions: Array<{
       sessionId: string;
       projectId: string;
@@ -413,6 +419,17 @@ export interface SyncProvider {
    */
   waitForIndexReady?(timeoutMs?: number): Promise<void>;
 
+  /**
+   * Whether this device may publish personal-sync ciphertext. Closed until a
+   * complete index read decrypts under this key, and after any row that does
+   * not, so a device holding the wrong key never rewrites the shared index
+   * (GitHub #1117). See `personalSyncWriteGate.ts`.
+   */
+  getPersonalSyncWriteGate?(): PersonalSyncWriteGateSnapshot;
+
+  /** Fires when the personal-sync write gate changes state. */
+  onPersonalSyncWriteGateChange?(callback: (snapshot: PersonalSyncWriteGateSnapshot) => void): () => void;
+
   /** Push a file index entry to the IndexRoom (for mobile markdown sync) */
   syncFileToIndex?(file: FileIndexData): void;
 
@@ -468,6 +485,8 @@ export interface SessionIndexData {
   workspaceId?: string;
   workspacePath?: string;
   messageCount: number;
+  /** False when a metadata-only query intentionally did not count messages. */
+  messageCountKnown?: boolean;
   updatedAt: number;
   createdAt: number;
   /** Raw metadata from PGLite - CollabV3Sync extracts what it needs for encrypted client metadata */
