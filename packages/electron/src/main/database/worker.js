@@ -22,6 +22,7 @@ const inspector = require('node:inspector');
 const { performance } = require('node:perf_hooks');
 const { serializeWorkerError } = require('./workerErrorSerialization');
 const { planInitFailureResponse } = require('./pgliteInitRecovery');
+const { runTransactionStatements } = require('./transactionStatements');
 
 /**
  * The install's database root, or null when the spawner did not supply one.
@@ -1592,6 +1593,18 @@ class PGLiteWorker {
       console.error('[PGLite Worker] Failed to create tracker_body_cache table:', error);
       throw error;
     }
+
+    await this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tracker_creation_receipts (
+        item_id TEXT PRIMARY KEY REFERENCES tracker_items(id) ON DELETE CASCADE,
+        workspace TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        publication_status TEXT NOT NULL,
+        error TEXT,
+        updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_tracker_creation_workspace ON tracker_creation_receipts(workspace, publication_status);
+    `);
 
     // Offline transaction queue. Linear's four-state model (D6):
     //   created -> queued -> executing -> persistedEnqueue.
@@ -3400,12 +3413,7 @@ class PGLiteWorker {
     try {
       const execStart = performance.now();
       await this.db.transaction(async (tx) => {
-        for (const statement of statements) {
-          if (!statement || typeof statement.sql !== 'string') {
-            throw new Error('transaction statement sql must be a string');
-          }
-          await tx.query(statement.sql, statement.params);
-        }
+        await runTransactionStatements(tx, statements);
       });
       return {
         id: message.id,
