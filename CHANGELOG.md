@@ -10,12 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Run sessions in your own Cloudflare sandbox with machine navigation, the shared composer, attachments and Actions, and profile/account selections remembered per project.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Accepting large document rewrites preserves paragraph order, and rejecting them restores the original formatting.
+- The GitHub panel no longer shows an unrelated AI session when the selected PR or issue has no matching session.
+- Open files recover from missed disk changes without reloading the app, preserve unsaved edits, and refuse saves when the disk version cannot be verified.
+- Slash-command search ranks exact matches first, then prefixes, with alphabetical ordering among equally relevant matches.
+- SQLite migrations retain progress across navigation, verify the switch after restart, and preserve recovery copies when history rows cannot be copied.
+- Cursor Agent no longer copies your global MCP server settings, including any secrets, into the project folder.
+- Repository-provided MCP servers no longer start for Grok Build or Cursor Agent in a workspace you have not trusted.
+- The macOS menu bar strip and the panel below it now agree on their status colors: running sessions are green, unread ones blue.
 
 ### Removed
 <!-- Removed features go here -->
