@@ -16,8 +16,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
-- Antigravity's Gemini picker now offers the current Flash generations instead of retired ones, so new sessions no longer fail with "Gemini 3.5 Flash is no longer available".
-- Prevent unexpected errors during Git history reads and voice cleanup.
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.78.1] - 2026-09-17
+
+
+### Added
+<!-- New features go here -->
+- Browse trackers comfortably on phones with stacked lists, compact filters, and an explicit plan editing mode.
+- Try GPT Live voice on iOS with session context, spoken prompt handling, audio routing, synced-file access, and desktop announcements.
+- Manage paired computers by hiding, restoring, or renaming devices when using a compatible sync server.
+- Navigate the AI model, effort, and Actions menus entirely by keyboard.
+- Optionally follow external Claude Code and Codex CLI sessions live, including their names, from Agent Features settings.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- Claude sessions use an updated SDK for more reliable MCP tools and resume while respecting enterprise restrictions.
+- iOS computer switching opens from the top-right computer status button.
+- Required Claude approvals default to Deny and allow only one-time approval.
+- Settings diagnostics distinguish agent-verified trust from user-authored configuration.
+
+### Fixed
+<!-- Bug fixes go here -->
+- iOS session search, loading, transcript ordering, and reconnect recovery remain reliable across app lifecycle changes.
+- Consumed prompts stay out of the iOS queue and delivery warnings clear when the desktop starts or finishes processing.
+- iPhone fleet Live Activities recover after expiration or reconnecting and stay visible while using the Mac with an updated sync server.
+- The session sidebar stays visible when rotating iPhone to landscape.
+- Restarting Nimbalyst preserves open projects.
+- File-linked sessions and Actions metadata refresh without missed changes or repeated background lookups.
+- On Windows, Gemini connects to the open Antigravity editor and offers current Flash models.
+- In-app HTML previews render UTF-8 text correctly even when the document omits a charset declaration.
+- Commit proposals stay in the session worktree and reject unsupported checkout overrides.
+- Codex turns survive transient reconnects and keep tracking shell edits after tool failures.
+- Shared CSVs retain all rows and concurrent edits, and custom-editor reviews complete after Keep or Revert.
+- Landscape PDF pages use the correct page size and text alignment.
+- Packaged file search uses the bundled ripgrep reliably.
+- On Linux, the taskbar and window switcher show the Nimbalyst icon instead of a generic one (#697).
+- Internal MCP servers accept Streamable HTTP clients that omit a required response media type.
 
 ### Removed
 <!-- Removed features go here -->

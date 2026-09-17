@@ -3,7 +3,7 @@ import os
 
 /// Device presence and the two token lanes (APNs, ActivityKit) the index room
 /// carries. Split out of `SyncManager` so that file shrinks rather than grows;
-/// nothing here is sequencing-sensitive, it is registration bookkeeping.
+/// Live Activity callbacks preserve their ordering on the main actor.
 ///
 /// All four registration sends go through `SyncRequestRegistry` but are marked
 /// not user-visible: `onConnectionStateChanged` re-drives them on every connect,
@@ -42,11 +42,7 @@ extension SyncManager {
         } else {
             unregisterPushToken()
         }
-        if FleetActivityController.shared.shouldRegister {
-            FleetActivityController.shared.resendTokens()
-        } else {
-            unregisterLiveActivityToken(kind: nil)
-        }
+        FleetActivityController.shared.resendTokens()
     }
 
     func setupPushTokenForwarding() {
@@ -107,14 +103,10 @@ extension SyncManager {
 
     func setupLiveActivityForwarding() {
         FleetActivityController.shared.onTokenReceived = { [weak self] token, kind in
-            Task { @MainActor in
-                self?.registerLiveActivityToken(token, kind: kind)
-            }
+            self?.registerLiveActivityToken(token, kind: kind)
         }
-        FleetActivityController.shared.onTokenInvalidated = { [weak self] kind in
-            Task { @MainActor in
-                self?.unregisterLiveActivityToken(kind: kind)
-            }
+        FleetActivityController.shared.onTokenInvalidated = { [weak self] kind, token in
+            self?.unregisterLiveActivityToken(kind: kind, token: token)
         }
         FleetActivityController.shared.start()
     }
@@ -137,20 +129,21 @@ extension SyncManager {
         if let data = try? JSONEncoder().encode(message),
            let json = String(data: data, encoding: .utf8) {
             requests.send(kind: .liveActivityToken, channel: .index, json: json)
-            logger.info("Registered Live Activity \(kind.rawValue) token with server")
+            logger.info("Sent Live Activity \(kind.rawValue) token registration")
         }
     }
 
-    public func unregisterLiveActivityToken(kind: LiveActivityTokenKind?) {
+    public func unregisterLiveActivityToken(kind: LiveActivityTokenKind?, token: String? = nil) {
         guard registersDeviceTokens else { return }
         let message = UnregisterLiveActivityTokenMessage(
             deviceId: WebSocketClient.deviceId,
-            kind: kind?.rawValue
+            kind: kind?.rawValue,
+            token: token
         )
         if let data = try? JSONEncoder().encode(message),
            let json = String(data: data, encoding: .utf8) {
             requests.send(kind: .liveActivityToken, channel: .index, json: json)
-            logger.info("Unregistered Live Activity token(s) with server")
+            logger.info("Sent Live Activity token unregistration")
         }
     }
 }

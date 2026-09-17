@@ -368,7 +368,7 @@ final class SessionListWindowModel: ObservableObject {
         // not -- a first run, or a meta-agent gate flip that invalidated the stored
         // grouping. Once the rebuild lands, `usedProjection` is true and this stops.
         let projectableButUnused = !snapshot.usedProjection
-            && filter.map { $0.likePattern == nil && !$0.includeArchived } == true
+            && filter.map { $0.likePattern == nil && !$0.includeArchived && $0.hostDeviceId == nil } == true
         if snapshot.pendingProjectionUpdates > 0 || projectableButUnused {
             scheduleProjectionRefresh()
         }

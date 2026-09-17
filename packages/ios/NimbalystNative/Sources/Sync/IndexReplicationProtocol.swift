@@ -52,6 +52,34 @@ struct ServerIndexFileEntry: Codable, Sendable {
     let syncedAt: Int
 }
 
+extension ServerIndexFileEntry {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        docId = try container.decode(String.self, forKey: .docId)
+        encryptedProjectId = try container.decode(String.self, forKey: .encryptedProjectId)
+        projectIdIv = try container.decode(String.self, forKey: .projectIdIv)
+        encryptedRelativePath = try container.decode(String.self, forKey: .encryptedRelativePath)
+        relativePathIv = try container.decode(String.self, forKey: .relativePathIv)
+        encryptedTitle = try container.decode(String.self, forKey: .encryptedTitle)
+        titleIv = try container.decode(String.self, forKey: .titleIv)
+        syncedAt = try container.decode(Int.self, forKey: .syncedAt)
+        // Desktop filesystem mtimeMs can include fractional milliseconds. Match
+        // the file-sync lane's whole-millisecond storage without rejecting the
+        // entire mixed session/file page or trapping on an out-of-range value.
+        if let integer = try? container.decode(Int.self, forKey: .lastModifiedAt) {
+            lastModifiedAt = integer
+        } else {
+            let milliseconds = try container.decode(Double.self, forKey: .lastModifiedAt)
+            guard let integer = Int(exactly: milliseconds.rounded(.down)) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .lastModifiedAt, in: container,
+                    debugDescription: "File modification time is outside the supported millisecond range")
+            }
+            lastModifiedAt = integer
+        }
+    }
+}
+
 struct IndexChangesAvailable: Codable, Sendable {
     let type: String
     let revision: Int

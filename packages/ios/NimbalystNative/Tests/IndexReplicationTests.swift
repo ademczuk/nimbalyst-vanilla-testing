@@ -109,6 +109,38 @@ final class IndexReplicationTests: XCTestCase {
 
     // MARK: - Revisions and tombstones
 
+    func testFractionalFileTimestampDoesNotBlockSessionSearchOrBootstrapCompletion() throws {
+        let db = try DatabaseManager()
+        let store = IndexReplicationStore()
+        var file = try filePayload("fractional-file")
+        // Node's filesystem mtimeMs retains fractional milliseconds on the wire.
+        file["lastModifiedAt"] = 1789159867560.8809
+        let page = try validated(try response(mode: "bootstrap", entries: [
+            change(entity: "file", id: "fractional-file", revision: 1, file: file),
+            change(entity: "session", id: "sdk-session", revision: 2,
+                   session: try sessionPayload("sdk-session", title: "SDK update")),
+        ], cursor: 2), mode: .bootstrap)
+        try apply(page, store: store, database: db, runId: "fractional-run")
+        try IndexReplicationApplier.finalizeBootstrap(runId: "fractional-run", store: store, database: db)
+
+        XCTAssertTrue(try store.cursorState(db).historyComplete)
+        let matches = try db.sessionListPage(
+            filter: SessionListFilter(projectId: projectPath, searchText: "Sdk"), after: nil, limit: 100)
+        XCTAssertEqual(matches.items.map(\.parent.id), ["sdk-session"])
+        let metadata = try db.writer.read { try store.fileMetadata($0, docId: "fractional-file") }
+        XCTAssertEqual(metadata?.lastModifiedAt, 1789159867560)
+    }
+
+    func testFileTimestampRejectsInvalidTypesAndOverflow() throws {
+        for value: Any in ["1789159867560.8809", NSNull(), 1e30] {
+            var file = try filePayload("invalid-file")
+            file["lastModifiedAt"] = value
+            XCTAssertThrowsError(try response(entries: [
+                change(entity: "file", id: "invalid-file", revision: 1, file: file),
+            ], cursor: 1))
+        }
+    }
+
     /// Revision, not arrival order and not a timestamp, decides who wins. A
     /// tombstone keeps winning: absence proven at revision N is not undone by a
     /// page that predates it.

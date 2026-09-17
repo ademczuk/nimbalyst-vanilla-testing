@@ -26,8 +26,30 @@ final class SessionListWindowTests: XCTestCase {
             try database.execute(sql: "UPDATE sessions SET hostDeviceId = 'sandbox' WHERE id = 's-000001'")
             try database.execute(sql: "UPDATE sessions SET hostDeviceId = 'desktop' WHERE id <> 's-000001'")
         }
+        try db.refreshSessionListProjection(projectId: projectId, metaAgentEnabled: true)
         let page = try db.sessionListPage(filter: SessionListFilter(projectId: projectId, hostDeviceId: "sandbox"), after: nil, limit: 100)
         XCTAssertEqual(page.items.map { $0.parent.id }, ["s-000001"])
+    }
+
+    func testDesktopHistoryMatchesSearchWithoutAttributingLegacySessionsToAHost() throws {
+        let db = try makeDatabase()
+        try db.writer.write { database in
+            for (id, host) in [("legacy", nil), ("desktop", "desktop"), ("sandbox", "sandbox"), ("other", "other-desktop")] {
+                try Session(id: id, projectId: "/p", titleDecrypted: "SDK update",
+                            hostDeviceId: host, createdAt: 1, updatedAt: 1).save(database)
+            }
+        }
+        try db.refreshSessionListProjection(projectId: projectId, metaAgentEnabled: true)
+        var desktop = SessionListFilter(projectId: projectId, hostDeviceId: "desktop", includeUnattributedSessions: true)
+        for search in [nil, "Sdk"] {
+            desktop.searchText = search
+            let page = try db.sessionListPage(filter: desktop, after: nil, limit: 100)
+            XCTAssertEqual(Set(page.items.map(\.parent.id)), ["legacy", "desktop"])
+            let sandbox = SessionListFilter(projectId: projectId, searchText: search, hostDeviceId: "sandbox")
+            let remote = try db.sessionListPage(filter: sandbox, after: nil, limit: 100)
+            XCTAssertEqual(remote.items.map(\.parent.id), ["sandbox"])
+        }
+        XCTAssertNil(try db.session(byId: "legacy")?.hostDeviceId, "Visibility is not execution ownership")
     }
 
     // MARK: - Fixtures

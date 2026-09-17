@@ -8,6 +8,29 @@ import XCTest
 final class MetaAgentCreateTests: XCTestCase {
 
     @MainActor
+    func testErrorDismissalDefersPublishingAndPreservesNewErrors() async {
+        let requests = SessionCreationRequests()
+        requests.errorMessage = "Creation failed"
+        requests.dismissError()
+        requests.dismissError() // Both the alert binding and button may dismiss.
+        XCTAssertEqual(requests.errorMessage, "Creation failed", "Do not publish inside SwiftUI's view update")
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        XCTAssertNil(requests.errorMessage)
+
+        for nextError in ["A newer failure", "Creation failed"] {
+            requests.errorMessage = "Creation failed"
+            requests.dismissError()
+            requests.errorMessage = nextError
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+            XCTAssertEqual(requests.errorMessage, nextError, "A newer failure must survive, even with identical text")
+        }
+    }
+
+    @MainActor
     func testDesktopTargetAndRequestOutcomes() throws {
         let requests = SessionCreationRequests()
         let crypto = CryptoManager(seed: SyncIntegrationTests.passphrase, userId: SyncIntegrationTests.userId)

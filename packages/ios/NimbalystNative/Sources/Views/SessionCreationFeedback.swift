@@ -10,9 +10,9 @@ struct SessionCreationFeedback: View {
             .allowsHitTesting(false)
             .alert("Unable to Create Session", isPresented: Binding(
                 get: { requests.errorMessage != nil },
-                set: { if !$0 { requests.errorMessage = nil } }
+                set: { if !$0 { requests.dismissError() } }
             )) {
-                Button("OK", role: .cancel) { requests.errorMessage = nil }
+                Button("OK", role: .cancel) { requests.dismissError() }
             } message: {
                 Text(requests.errorMessage ?? "")
             }

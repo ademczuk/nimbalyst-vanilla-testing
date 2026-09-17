@@ -17,13 +17,27 @@ struct SessionCreationOptions {
 @MainActor
 public final class SessionCreationRequests: ObservableObject {
     @Published public private(set) var pendingCount = 0
-    @Published public var errorMessage: String?
+    @Published public var errorMessage: String? {
+        didSet { errorRevision &+= 1 }
+    }
     var onFailure: ((String, String) -> Void)?
+    private var errorRevision: UInt64 = 0
     private var pending: [String: Task<Void, Never>] = [:]
     private let timeoutNanoseconds: UInt64
 
     init(timeoutNanoseconds: UInt64 = 30_000_000_000) {
         self.timeoutNanoseconds = timeoutNanoseconds
+    }
+
+    /// SwiftUI may dismiss the alert during a view update. Publish afterward,
+    /// and preserve any error that arrived since the dismissal was requested.
+    func dismissError() {
+        guard errorMessage != nil else { return }
+        let revision = errorRevision
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.errorRevision == revision, self.errorMessage != nil else { return }
+            self.errorMessage = nil
+        }
     }
 
     func create(
