@@ -39,6 +39,8 @@ export function ShellTrackingNotice({ sessionIds }: { sessionIds: string[] }) {
     };
   }, [key, revision]);
   const details = shellCoverageDetails(coverage);
+  const recovering = coverage.some(item => item.observation === 'recovering');
+  const historical = coverage.length > 0 && coverage.every(item => item.observation === 'watching');
   if (!failed && !details.length) return null;
   return (
     <details
@@ -46,9 +48,9 @@ export function ShellTrackingNotice({ sessionIds }: { sessionIds: string[] }) {
       data-testid="shell-tracking-notice"
     >
       <summary className="cursor-pointer">
-        {failed ? 'File tracking status unavailable' : 'File tracking incomplete'}
+        {failed ? 'File tracking status unavailable' : recovering ? 'File tracking interrupted' : historical ? 'Earlier file tracking gaps' : 'File tracking incomplete'}
       </summary>
-      <p className="mt-2">Some edits may be missing from this list. Review your changes before committing.</p>
+      <p className="mt-2">{historical ? 'Tracking has resumed. Earlier edits may be missing from this list.' : 'Some edits may be missing from this list.'} Review your changes before committing.</p>
       {details.length > 0 && (
         <ul className="mt-1 list-disc pl-4">
           {details.map((detail) => (

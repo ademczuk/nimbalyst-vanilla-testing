@@ -1,5 +1,4 @@
 import { directoryDeviceId } from './sync/directoryDeviceIdentity';
-import { isRetainedSession } from '@nimbalyst/collab-protocol';
 import { remoteSessions } from './ai/remoteSessions';
 import Store from '../utils/privateSettingsStore';
 import { getProviderCredentials, subscribeProviderCredentialChanges } from './credentials/providerCredentials';
@@ -38,7 +37,7 @@ import { createProjectConfigSync } from './sync/projectConfigSync';
 import { projectConfigSources } from './sync/projectConfigSources';
 import { nextMobileSettingsVersion } from './sync/mobileSettingsVersion';
 import { resolveProjectPath } from '../utils/workspaceDetection';
-import { decideMissingSession } from './sync/missingSessionPolicy';
+import { selectSessionsForIndexSync } from './sync/selectSessionsForIndexSync';
 import { setSleepPreventionMode, setSyncConnected, shutdownSleepPrevention, type PreventSleepMode } from './PowerSaveService';
 import { reconnectAllTrackerSyncs } from './TrackerSyncManager';
 import { BrowserWindow } from 'electron';
@@ -82,6 +81,7 @@ interface SyncManagerState {
   connected: boolean;
   syncing: boolean;
   error: string | null;
+  skippedRowCount?: number;
   sessionKeepAliveInterval: ReturnType<typeof setInterval> | null;
 }
 
@@ -122,12 +122,11 @@ function createEnabledProjectFilter(): (workspaceId: string) => boolean {
 }
 
 // Event emitter for sync status changes
-type SyncStatusListener = (status: { connected: boolean; syncing: boolean; error: string | null }) => void;
+type SyncStatusListener = (status: { connected: boolean; syncing: boolean; error: string | null; skippedRowCount?: number }) => void;
 const statusListeners = new Set<SyncStatusListener>();
 
 /**
- * The provider's personal-sync write gate, mirrored into `state.error` so a
- * device whose key cannot read the index says so instead of showing "Synced".
+ * The provider's update-required block, mirrored into `state.error`.
  * Kept separately because a reconnect clears transport errors but must never
  * clear this one (GitHub #1117).
  */
@@ -141,15 +140,19 @@ let personalSyncGateUnsubscribe: (() => void) | null = null;
 export function onSyncStatusChange(listener: SyncStatusListener): () => void {
   statusListeners.add(listener);
   // Immediately emit current status
-  listener({ connected: state.connected, syncing: state.syncing, error: state.error });
+  listener({ connected: state.connected, syncing: state.syncing, error: state.error, skippedRowCount: state.skippedRowCount });
   return () => statusListeners.delete(listener);
 }
 
 /**
  * Update sync status and notify listeners.
  */
-function updateSyncStatus(update: Partial<{ connected: boolean; syncing: boolean; error: string | null }>) {
+function updateSyncStatus(update: Partial<{ connected: boolean; syncing: boolean; error: string | null; skippedRowCount: number }>) {
   let changed = false;
+  if (update.skippedRowCount !== undefined && update.skippedRowCount !== state.skippedRowCount) {
+    state.skippedRowCount = update.skippedRowCount;
+    changed = true;
+  }
   if (update.connected !== undefined && update.connected !== state.connected) {
     state.connected = update.connected;
     changed = true;
@@ -164,7 +167,7 @@ function updateSyncStatus(update: Partial<{ connected: boolean; syncing: boolean
   }
 
   if (changed) {
-    const status = { connected: state.connected, syncing: state.syncing, error: state.error };
+    const status = { connected: state.connected, syncing: state.syncing, error: state.error, skippedRowCount: state.skippedRowCount };
     statusListeners.forEach(listener => listener(status));
 
     // Manage sleep prevention based on connection state and user preference
@@ -355,10 +358,11 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
     return baseStore;
   }
 
-  // Get encryption key seed from CredentialService (for E2E encryption)
-  const credentials = getCredentials();
-
   try {
+    // Credential failures disable optional sync through the normal error path,
+    // while keeping local sessions available and preserving the existing key.
+    const credentials = getCredentials();
+
     // Use personalUserId for stable identity across team session exchanges.
     // In Stytch B2B, each org has its own member record. After joining a team,
     // the session gets exchanged to the team org and the JWT sub / user_id changes
@@ -589,12 +593,11 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
     state.config = config;
     state.messageSyncHandler = messageSyncHandler;
 
-    // Surface the personal-sync write gate. Decryption failures never reach the
-    // fetch error paths below on the broadcast side, so the gate is the one
-    // signal that covers every way a wrong key shows up (GitHub #1117).
+    // Surface both update requirements and non-blocking unreadable-row counts.
     personalSyncGateUnsubscribe?.();
     personalSyncGateMessage = null;
     personalSyncGateUnsubscribe = provider.onPersonalSyncWriteGateChange?.((gate) => {
+      updateSyncStatus({ skippedRowCount: gate.skippedRowCount ?? 0 });
       const message = syncModule.describePersonalSyncWriteGate(gate);
       if (message) {
         personalSyncGateMessage = message;
@@ -603,7 +606,7 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
       } else if (personalSyncGateMessage !== null) {
         const clearing = state.error === personalSyncGateMessage;
         personalSyncGateMessage = null;
-        logger.main.info('[SyncManager] Personal-sync writes resumed: the index decrypted in full under this device\'s key');
+        logger.main.info('[SyncManager] Personal-sync writes resumed after a complete index read');
         if (clearing) updateSyncStatus({ error: null });
       }
     }) ?? null;
@@ -640,13 +643,6 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
           const fetchTime = performance.now() - fetchStart;
           // logger.main.info(`[SyncManager] Server has ${serverIndex.sessions.length} sessions (fetch took ${fetchTime.toFixed(1)}ms)`);
         } catch (fetchError) {
-          if (syncModule.isIndexEntryDecryptionError(fetchError)) {
-            // Not a transport problem: this device's key cannot read the
-            // index. Reconciliation would republish everything it cannot see,
-            // so it is skipped; the write gate has already paused publishing.
-            logger.main.warn('[SyncManager] Server index could not be decrypted with this device\'s sync key; skipping reconciliation:', fetchError);
-            return;
-          }
           // Don't fall back to full sync - that would load ALL messages for ALL sessions into memory
           // and cause OOM crashes. Instead, skip sync and wait for connection to be restored.
           logger.main.warn('[SyncManager] Failed to fetch server index, skipping sync until connection restored:', fetchError);
@@ -680,79 +676,7 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
         const localTime = performance.now() - localStart;
         // logger.main.info(`[SyncManager] Local has ${allLocalSessions.length} sessions (query took ${localTime.toFixed(1)}ms)`);
 
-        // Step 4: Find sessions that need syncing using timestamp comparison
-        // Compare local updatedAt vs server updatedAt - if local is newer, we have changes to sync
-        const sessionsNeedingIndexUpdate: typeof allLocalSessions = [];
-        const sessionsNeedingMessageSync: string[] = [];
-
-        for (const localSession of allLocalSessions) {
-          if (!isRetainedSession(localSession.updatedAt)) continue;
-          // Skip sessions without a workspace - they shouldn't exist but just in case
-          if (!localSession.workspaceId) {
-            logger.main.warn(`[SyncManager] Skipping session ${localSession.id.slice(0, 8)} - no workspaceId`);
-            continue;
-          }
-
-          const serverSession = serverSessionMap.get(localSession.id);
-
-          if (!serverSession) {
-            // Missing from the server: deleted elsewhere, never published, or
-            // expired by the server TTL. See missingSessionPolicy.ts.
-            const decision = decideMissingSession({
-              sessionId: localSession.id,
-              updatedAt: localSession.updatedAt,
-              isArchived: localSession.isArchived,
-              tombstonedSessionIds,
-              indexProtocolVersion: serverIndex.indexProtocolVersion,
-              now: Date.now(),
-            });
-            if (!decision.publishIndex) continue;
-            sessionsNeedingIndexUpdate.push(localSession);
-            if (decision.syncMessages) {
-              sessionsNeedingMessageSync.push(localSession.id);
-            }
-          } else {
-            // Compare timestamps AND message counts to detect sessions needing sync.
-            // The real-time pushChange sends updatedAt=Date.now() after DB write, so
-            // the server's updatedAt is often ahead of local. Message count comparison
-            // catches sessions with new messages that timestamps miss.
-            const serverUpdatedAt = serverSession.updatedAt || 0;
-            const localUpdatedAt = localSession.updatedAt || 0;
-            const serverMessageCount = serverSession.messageCount || 0;
-            const localMessageCount = localSession.messageCount || 0;
-
-            if (localUpdatedAt > serverUpdatedAt) {
-              sessionsNeedingIndexUpdate.push(localSession);
-              sessionsNeedingMessageSync.push(localSession.id);
-            } else if (localMessageCount > serverMessageCount) {
-              sessionsNeedingIndexUpdate.push(localSession);
-              sessionsNeedingMessageSync.push(localSession.id);
-            } else if (
-              // Detect stale server metadata: desktop has fields the server doesn't.
-              // This happens after server schema migrations add new columns --
-              // existing rows have NULL but the desktop has the real values --
-              // and also when a session was pushed before a given field was
-              // wired into the publish path, leaving the server row permanently
-              // missing a value the desktop has.
-              (localSession.worktreeId && !serverSession.worktreeId) ||
-              (localSession.sessionType && !serverSession.sessionType) ||
-              (localSession.provider && !serverSession.provider) ||
-              (localSession.model && !serverSession.model) ||
-              (localSession.mode && !serverSession.mode) ||
-              // Value-mismatch checks for fields whose changes don't bump
-              // updated_at. updateMetadata intentionally keeps updated_at stable
-              // for pins/reparents/archives/title-edits to avoid resorting the
-              // list on iOS, so the timestamp comparison above can't catch a
-              // real divergence. Heal those on the next reconnect.
-              (Boolean(localSession.isArchived) !== Boolean(serverSession.isArchived)) ||
-              (Boolean(localSession.isPinned) !== Boolean(serverSession.isPinned)) ||
-              ((localSession.parentSessionId ?? null) !== (serverSession.parentSessionId ?? null)) ||
-              (localSession.title !== serverSession.title)
-            ) {
-              sessionsNeedingIndexUpdate.push(localSession);
-            }
-          }
-        }
+        const { sessionsNeedingIndexUpdate, sessionsNeedingMessageSync } = selectSessionsForIndexSync(allLocalSessions, serverIndex);
 
         const archiveMismatches = sessionsNeedingIndexUpdate.filter(s => {
           const server = serverSessionMap.get(s.id);
@@ -1019,7 +943,7 @@ export function shutdownSync(): void {
     state.provider = null;
     state.config = null;
     state.messageSyncHandler = null;
-    updateSyncStatus({ connected: false, syncing: false, error: null });
+    updateSyncStatus({ connected: false, syncing: false, error: null, skippedRowCount: 0 });
   }
 }
 
@@ -1076,12 +1000,6 @@ export async function triggerIncrementalSync(): Promise<void> {
       const fetchTime = performance.now() - fetchStart;
       // logger.main.info(`[SyncManager] Triggered sync: server has ${serverIndex.sessions.length} sessions (fetch took ${fetchTime.toFixed(1)}ms)`);
     } catch (fetchError) {
-      if (syncModule.isIndexEntryDecryptionError(fetchError)) {
-        // A key mismatch, not a dead socket: reconnecting would only re-read
-        // the same rows and fail the same way (GitHub #1117).
-        logger.main.warn('[SyncManager] Server index could not be decrypted with this device\'s sync key; skipping incremental sync:', fetchError);
-        return;
-      }
       // Don't fall back to full sync - that would load ALL messages for ALL sessions into memory
       // and cause OOM crashes. Instead, attempt to reconnect and skip this sync cycle.
       logger.main.warn('[SyncManager] Failed to fetch server index, skipping incremental sync:', fetchError);
@@ -1099,7 +1017,6 @@ export async function triggerIncrementalSync(): Promise<void> {
       logger.main.warn('[SyncManager] Server index coverage is incomplete; skipping incremental sync this cycle');
       return;
     }
-    const tombstonedSessionIds = new Set(serverIndex.deletedSessionIds ?? []);
     // Build a map of server sessions for quick lookup
     const serverSessionMap = new Map(
       serverIndex.sessions.map(s => [s.sessionId, s])
@@ -1114,62 +1031,7 @@ export async function triggerIncrementalSync(): Promise<void> {
     const localTime = performance.now() - localStart;
     // logger.main.info(`[SyncManager] Triggered sync: local has ${allLocalSessions.length} sessions (query took ${localTime.toFixed(1)}ms)`);
 
-    // Find sessions that need syncing using timestamp comparison
-    const sessionsNeedingIndexUpdate: typeof allLocalSessions = [];
-    const sessionsNeedingMessageSync: string[] = [];
-
-    for (const localSession of allLocalSessions) {
-          if (!isRetainedSession(localSession.updatedAt)) continue;
-      if (!localSession.workspaceId) {
-        continue;
-      }
-
-      const serverSession = serverSessionMap.get(localSession.id);
-
-      if (!serverSession) {
-        // See missingSessionPolicy.ts: tombstoned rows are never republished,
-        // and retained history uploads normally once the server stops expiring.
-        const decision = decideMissingSession({
-          sessionId: localSession.id,
-          updatedAt: localSession.updatedAt,
-          isArchived: localSession.isArchived,
-          tombstonedSessionIds,
-          indexProtocolVersion: serverIndex.indexProtocolVersion,
-          now: Date.now(),
-        });
-        if (!decision.publishIndex) continue;
-        sessionsNeedingIndexUpdate.push(localSession);
-        if (decision.syncMessages) {
-          sessionsNeedingMessageSync.push(localSession.id);
-        }
-      } else {
-        // Compare timestamps AND message counts to detect sessions that need syncing.
-        // Note: The real-time pushChange path sends updatedAt=Date.now() AFTER the DB write,
-        // so the server's updatedAt is often slightly ahead of the local DB updated_at.
-        // Timestamp comparison alone misses sessions with new messages. Message count
-        // comparison catches these cases reliably.
-        const serverUpdatedAt = serverSession.updatedAt || 0;
-        const localUpdatedAt = localSession.updatedAt || 0;
-        const serverMessageCount = serverSession.messageCount || 0;
-        const localMessageCount = localSession.messageCount || 0;
-
-        if (localUpdatedAt > serverUpdatedAt) {
-          sessionsNeedingIndexUpdate.push(localSession);
-          sessionsNeedingMessageSync.push(localSession.id);
-          // logger.main.info(`[SyncManager] Session ${localSession.id} needs sync (timestamp): local=${localUpdatedAt} server=${serverUpdatedAt}`);
-        } else if (localMessageCount > serverMessageCount) {
-          sessionsNeedingIndexUpdate.push(localSession);
-          sessionsNeedingMessageSync.push(localSession.id);
-          // logger.main.info(`[SyncManager] Session ${localSession.id} needs sync (messages): local=${localMessageCount} server=${serverMessageCount}`);
-        } else if (Boolean(localSession.isArchived) !== Boolean(serverSession.isArchived)) {
-          // Archive state diverged. updateMetadata doesn't bump updated_at, so the
-          // timestamp comparison above misses it. Push the index entry without
-          // re-uploading messages.
-          sessionsNeedingIndexUpdate.push(localSession);
-          logger.main.info(`[SyncManager] triggered sync: archive mismatch ${localSession.id.slice(0,8)} local=${localSession.isArchived} server=${serverSession.isArchived}`);
-        }
-      }
-    }
+    const { sessionsNeedingIndexUpdate, sessionsNeedingMessageSync } = selectSessionsForIndexSync(allLocalSessions, serverIndex);
 
     // logger.main.info(`[SyncManager] Triggered sync: ${sessionsNeedingIndexUpdate.length}/${allLocalSessions.length} sessions need update, ${sessionsNeedingMessageSync.length} need message sync (server has ${serverIndex.sessions.length})`);
 

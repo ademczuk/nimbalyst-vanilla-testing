@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { parseWeeklyModelLimits, remainingUsagePercent } from '../claudeUsage';
+import { parseWeeklyModelLimits } from '../claudeUsage';
 
 describe('Claude weekly model limits', () => {
   it('reads Fable from the live API shape even when its model id is null', () => {
@@ -12,7 +12,6 @@ describe('Claude weekly model limits', () => {
       { model: 'Fable', utilization: 86, resetsAt: '2026-09-15T18:59:59Z' },
       { model: 'Future', utilization: 0, resetsAt: null },
     ]);
-    expect([86, 0, 100, 110].map(remainingUsagePercent)).toEqual([14, 100, 0, 0]);
   });
 
   it('handles older responses and rejects malformed model limits instead of inventing remaining quota', () => {

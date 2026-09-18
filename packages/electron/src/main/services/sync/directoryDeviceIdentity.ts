@@ -14,7 +14,12 @@ import {
 import { join } from "node:path";
 import type { PersonalMemberId } from "@nimbalyst/runtime/auth/jwtScopes";
 
-/** Directory-owned, account-scoped identity. Never adopts the ambiguous hostname ID. */
+/**
+ * Directory-owned, account-scoped identity. Never adopts the ambiguous hostname ID.
+ * Compatibility contract: the seed format, computer-v1 domain, JSON field order,
+ * decimal filesystem identifiers, and 32-hex truncation must remain unchanged.
+ * App version, release channel, executable location, and hostname are NOT inputs.
+ */
 export function directoryDeviceId(
   userData: string,
   personalMemberId: PersonalMemberId

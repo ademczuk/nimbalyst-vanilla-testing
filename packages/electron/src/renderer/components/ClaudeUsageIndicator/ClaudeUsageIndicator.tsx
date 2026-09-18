@@ -5,7 +5,6 @@
  * in the navigation gutter. Clicking opens a popover with full details.
  */
 
-import { remainingUsagePercent } from '../../../shared/claudeUsage';
 import React, { useState, useRef, useCallback } from 'react';
 import { useAtomValue } from 'jotai';
 import {
@@ -63,9 +62,9 @@ export const ClaudeUsageIndicator: React.FC<ClaudeUsageIndicatorProps> = ({ clas
     ? `Claude usage unavailable: ${usage.error}`
     : usage
       ? [
-          `Session: ${Math.round(utilization)}% (resets ${formatResetTime(usage.fiveHour.resetsAt)})`,
+          `Session: ${Math.round(utilization)}% used (resets ${formatResetTime(usage.fiveHour.resetsAt)})`,
           ...(usage.weeklyModelLimits ?? []).map(limit =>
-            `${limit.model}: ${remainingUsagePercent(limit.utilization)}% remaining this week (resets ${formatResetTime(limit.resetsAt)})`
+            `${limit.model}: ${Math.round(limit.utilization)}% used this week (resets ${formatResetTime(limit.resetsAt)})`
           ),
         ].join('\n')
       : 'Claude usage unavailable';

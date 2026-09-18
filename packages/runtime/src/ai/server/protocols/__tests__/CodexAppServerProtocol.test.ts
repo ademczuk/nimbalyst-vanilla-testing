@@ -1,3 +1,4 @@
+// @vitest-environment node
 import {setCodexShellTrackingHost} from '../codexAppServer/shellTracking';
 // Unit tests for CodexAppServerProtocol against a mock JSON-RPC peer.
 //
@@ -66,6 +67,12 @@ class FakeChildProcess extends EventEmitter {
 
   /** Push a server -> client line. */
   emitLine(msg: unknown): void {
+    // Model the real server's effective-policy response for ordinary fixtures.
+    const frame = msg as any;
+    if (frame.result?.thread && !('sandbox' in frame.result)) {
+      const request = this.writtenLines.find((line: any) => line.id === frame.id) as any;
+      frame.result.sandbox = { type: request?.params?.sandbox === 'danger-full-access' ? 'dangerFullAccess' : 'workspaceWrite' };
+    }
     this.stdout.write(JSON.stringify(msg) + '\n');
   }
 }
@@ -169,6 +176,34 @@ describe('CodexAppServerProtocol', () => {
     expect(toolCompleted.mock.calls).toEqual([['failed-lookup'],['failed-patch'],['exited-shell']]);
     child.emitLine({method:'turn/completed',params:{threadId:'thread-hook',turn:{id:'t',status:'completed'}}});expect(endTurn).toHaveBeenCalled();
     protocol.cleanupSession(session);expect(dispose).toHaveBeenCalled();
+  });
+
+  it.each(['start', 'resume'])('preserves authorized roots on %s', async (kind) => {
+    const protocol = new CodexAppServerProtocol();
+    const options = { workspacePath: '/workspace', raw: { additionalDirectories: ['/parent', '/parent'], codexConfigOverrides: { 'sandbox_workspace_write.network_access': true } } };
+    const pending = kind === 'start' ? protocol.createSession(options) : protocol.resumeSession('existing', options);
+    const init = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: init.id, result: {} });
+    const request = await nextWrittenMatching(child, 'thread/' + kind);
+    child.emitLine({ id: request.id, result: { thread: { id: 'existing' }, sandbox: { type: 'workspaceWrite', writableRoots: ['/parent'] } } });
+    const session = await pending;
+    protocol.cleanupSession(session);
+    expect((request.params as any).config).toMatchObject({ 'sandbox_workspace_write.writable_roots': ['/parent'], 'sandbox_workspace_write.network_access': true });
+    expect((request.params as any).config).not.toHaveProperty('additional_writable_roots');
+  });
+
+  it.each(['start', 'resume'])('rejects a read-only downgrade on %s before any turn', async (kind) => {
+    const protocol = new CodexAppServerProtocol();
+    const options = { workspacePath: '/workspace' };
+    const pending = kind === 'start' ? protocol.createSession(options) : protocol.resumeSession('existing', options);
+    const rejected = expect(pending).rejects.toThrow(/read.only/i);
+    const init = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: init.id, result: {} });
+    const request = await nextWrittenMatching(child, 'thread/' + kind);
+    child.emitLine({ id: request.id, result: { thread: { id: 'existing' }, sandbox: { type: 'readOnly' } } });
+    await rejected;
+    expect(child.killed).toBe(true);
+    expect(child.writtenLines.some((line: any) => line.method === 'turn/start')).toBe(false);
   });
 
   it('spawns the codex binary, completes the initialize handshake, and starts a thread', async () => {

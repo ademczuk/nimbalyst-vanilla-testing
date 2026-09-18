@@ -36,9 +36,8 @@ enum IndexDecryptionPolicy: Sendable {
     /// Legacy responses and broadcasts: an unreadable optional field degrades to
     /// nil, because the alternative is dropping a row the user can otherwise see.
     case lenient
-    /// Versioned pages: any unreadable field fails the whole entry. Applying it
-    /// would commit a revision covering data we never actually read, and the
-    /// cursor would then skip the only chance to fetch it again.
+    /// Versioned pages: any unreadable field skips the entry's payload. Its
+    /// identity and revision still establish coverage without changing the cache.
     case strict
 }
 

@@ -81,6 +81,13 @@ struct SyncErrorBannerHost: View {
 
     var body: some View {
         Group {
+            if let notice = syncManager.indexCoverage.skippedRowsNotice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(NimbalystColors.textMuted)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+            }
             if let error = syncManager.syncError {
                 SyncErrorBanner(error: error) {
                     syncManager.clearSyncError()

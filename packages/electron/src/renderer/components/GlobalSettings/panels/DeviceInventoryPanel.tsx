@@ -103,7 +103,10 @@ export function DeviceInventoryPanel({ enabled }: { enabled: boolean }) {
       <p className="text-[12px] text-nim-muted mb-3">
         Offline computers without history in this project leave the execution
         picker automatically. Hiding a computer keeps its sessions and
-        credentials. It reappears if it reconnects.
+        credentials. Older sessions stay associated with that computer; hiding
+        it does not move sessions or repair sync keys. It reappears if it reconnects.
+        Restoring app data from a backup or moving it to another volume registers
+        a new computer.
       </p>
       {error && (
         <p role="alert" className="text-nim-error text-[12px] select-text">

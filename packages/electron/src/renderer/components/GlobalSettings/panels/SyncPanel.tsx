@@ -1,3 +1,5 @@
+import { refreshOrganizationDirectory } from '../../../store/listeners/stytchAuthListeners';
+import { organizationDirectoryStateAtom } from '../../../store/atoms/settingsDomains';
 import { DeviceInventoryPanel } from './DeviceInventoryPanel';
 import React, { useState, useEffect } from 'react';
 import { usePostHog } from 'posthog-js/react';
@@ -63,7 +65,8 @@ export function SyncPanel({ section }: { section: PersonalSyncSection }) {
   const [allAccounts, setAllAccounts] = useAtom(personalAccountsAtom);
   const organizationDirectory = useAtomValue(organizationDirectoryAtom);
   const [, setPersonalSyncProfiles] = useAtom(personalSyncProfilesAtom);
-  const [refreshingOrganizations, setRefreshingOrganizations] = useState(false);
+  const organizationDirectoryState = useAtomValue(organizationDirectoryStateAtom);
+  const refreshingOrganizations = organizationDirectoryState.status === 'loading';
   // One bucket per signed-in login, in the same order as `allAccounts`, so each
   // account row can render its own organizations inline beneath it.
   const accountOrganizationGroups = React.useMemo(
@@ -71,19 +74,7 @@ export function SyncPanel({ section }: { section: PersonalSyncSection }) {
     [allAccounts, organizationDirectory],
   );
 
-  // Force a server round-trip, then let the central Stytch listener re-derive
-  // the directory atom (components never subscribe to IPC directly).
-  const handleRefreshOrganizations = async () => {
-    setRefreshingOrganizations(true);
-    try {
-      await window.electronAPI?.team?.list({ forceRefresh: true });
-      window.dispatchEvent(new CustomEvent('nimbalyst:organizations-changed'));
-    } catch (error) {
-      console.warn('[SyncPanel] Failed to refresh organizations:', error);
-    } finally {
-      setRefreshingOrganizations(false);
-    }
-  };
+  const handleRefreshOrganizations = () => refreshOrganizationDirectory();
   useEffect(() => {
     setPersonalSyncProfiles(config.personalSyncProfiles ?? {});
   }, [config.personalSyncProfiles, setPersonalSyncProfiles]);
@@ -460,6 +451,12 @@ export function SyncPanel({ section }: { section: PersonalSyncSection }) {
 
       {/* Account Section */}
       <div className={`sync-account-section provider-panel-section py-4 mb-4 border-b border-[var(--nim-border)] last:border-b-0 last:mb-0 last:pb-0 ${sectionClass('accounts')}`}>
+        {allAccounts.length === 0 && organizationDirectoryState.status !== 'signed-out' && !organizationDirectoryState.complete && (
+          <div className="sync-account-directory-status mb-3 text-sm text-nim-muted" role="status">
+            {refreshingOrganizations ? 'Loading accounts and organizations…' : organizationDirectoryState.error}
+            {!refreshingOrganizations && <button type="button" className="ml-2" onClick={handleRefreshOrganizations}>Retry</button>}
+          </div>
+        )}
         {allAccounts.length > 0 ? (
           <div className="sync-account-list flex flex-col gap-2" data-single-account={isSingleAccount || undefined}>
             <div className="sync-account-list-header flex items-center justify-between">

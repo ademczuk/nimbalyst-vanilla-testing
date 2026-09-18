@@ -43,6 +43,10 @@ it('refreshes coverage through the central listener, isolates scopes, and reject
     expect(screen.getByText('File links could not be saved.')).toBeDefined();
     expect(screen.queryByText('The session reached its file tracking limit.')).toBeNull();
 
+    coverage.mockResolvedValue([{ sessionId: 'b', state: 'degraded', observation: 'watching', reasons: { watcherLoss: 1, suspiciousWindow: 3 }, turns: [] }]);
+    act(() => handlers.get('session-files:updated')!('b'));
+    await screen.findByText('Earlier file tracking gaps');
+    expect(screen.queryByText('A tool tracking window could not be reconciled.')).toBeNull();
     coverage.mockRejectedValueOnce(new Error('unavailable'));
     act(() => handlers.get('session-files:updated')!('b'));
     await screen.findByText('File tracking status unavailable');
@@ -52,7 +56,7 @@ it('refreshes coverage through the central listener, isolates scopes, and reject
 
     unmount();
     render(view(['b']));
-    await waitFor(() => expect(coverage).toHaveBeenCalledTimes(6));
+    await waitFor(() => expect(coverage).toHaveBeenCalledTimes(7));
     expect(on.mock.calls.filter(([channel]) => channel === 'session-files:updated')).toHaveLength(1);
   } finally {
     cleanup();

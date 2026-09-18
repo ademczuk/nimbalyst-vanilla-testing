@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, afterAll, beforeEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
   sentSettings: vi.fn(async (_settings: { version: number }) => {}),
   persisted: new Map<string, unknown>(),
   failWrite: false,
+  credentials: vi.fn(() => ({ encryptionKeySeed: 'seed' })),
   hostname: 'original-host', member: 'member', userData: '',
   deviceInfo: undefined as undefined | (() => {deviceId: string}),
 }));
@@ -29,7 +30,7 @@ vi.mock('../../utils/store', () => ({
 vi.mock('../../utils/logger', () => ({ logger: { main: { info: vi.fn(), debug: vi.fn(), warn: h.warn, error: vi.fn() } } }));
 vi.mock('../../utils/privateSettingsStore', () => ({ default: class { get(_key: string, fallback?: unknown) { return fallback; } } }));
 vi.mock('../credentials/providerCredentials', () => ({ subscribeProviderCredentialChanges: vi.fn(), getProviderCredentials: () => ({ availableKeys: () => ({}), mobileOpenAIKey: vi.fn() }) }));
-vi.mock('../CredentialService', () => ({ getCredentials: () => ({ encryptionKeySeed: 'seed' }) }));
+vi.mock('../CredentialService', () => ({ getCredentials: h.credentials }));
 vi.mock('../StytchAuthService', () => ({ isAuthenticated: () => true, getStytchUserId: () => 'member', resolvePersonalUserId: async () => h.member, getPersonalOrgId: () => 'org' }));
 vi.mock('../ai/remoteSessions', () => ({ remoteSessions: { setProvider: vi.fn() } }));
 vi.mock('../ProjectFileSyncService', () => ({ getProjectFileSyncService: vi.fn() }));
@@ -59,12 +60,36 @@ beforeEach(async () => {
   h.joined = undefined;
   h.persisted.clear();
   h.failWrite = false;
+  h.credentials.mockReset().mockReturnValue({ encryptionKeySeed: 'seed' });
   h.userData = mkdtempSync(join(identityRoot, 'profile-'));
   h.member = 'member'; h.hostname = 'original-host';
   await initializeSync({} as never);
   expect(h.joined).toBeTypeOf('function');
 });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+it('preserves unreadable credentials, reports sync failure, and keeps the local store usable', async () => {
+  vi.resetModules();
+  const credentials = await vi.importActual<typeof import('../CredentialService')>('../CredentialService');
+  h.credentials.mockImplementation(credentials.getCredentials);
+  const credentialPath = join(h.userData, 'sync-credentials.enc');
+  const originalBytes = Buffer.from('{damaged credential json');
+  writeFileSync(credentialPath, originalBytes);
+  const manager = await import('../SyncManager');
+  const listener = vi.fn();
+  const unsubscribe = manager.onSyncStatusChange(listener);
+  const baseStore = { local: true };
+  h.joined = undefined;
+  try {
+    await expect(manager.initializeSync(baseStore as never)).resolves.toBe(baseStore);
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ connected: false, syncing: false, error: expect.any(String) }));
+    expect(manager.getSyncProvider()).toBeNull();
+    expect(h.joined).toBeUndefined();
+    expect(readFileSync(credentialPath)).toEqual(originalBytes);
+  } finally {
+    unsubscribe();
+  }
+});
 
 it('publishes config at sync start without waiting for a composer or session reconciliation', async () => {
   expect(h.refresh).toHaveBeenCalledTimes(1);

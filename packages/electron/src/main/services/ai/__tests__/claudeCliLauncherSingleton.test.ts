@@ -19,8 +19,11 @@ vi.mock('../HooklessAgentFileWatcher', () => ({
 vi.mock('../claudeCliSessionAutoNameSingleton', () => ({
   maybeAutoNameClaudeCliSessionProduction: vi.fn(async () => undefined),
 }));
+// #1465: the CLI's `--plugin-dir` inputs come from `getClaudeProviderPluginPaths`
+// (extension + generated plugins), NOT from the picker's discovery aggregate.
+const injectedPluginPaths: Array<{ type: 'local'; path: string }> = [];
 vi.mock('../../AgentWorkflowService', () => ({
-  getAgentWorkflowService: () => ({ getClaudeProviderPluginPaths: async () => [] }),
+  getAgentWorkflowService: () => ({ getClaudeProviderPluginPaths: async () => injectedPluginPaths }),
 }));
 vi.mock('../../PermissionService', () => ({
   getPermissionService: () => ({ getPermissionMode: () => 'default' }),
@@ -86,9 +89,11 @@ describe('claudeCliLauncherSingleton', () => {
     vi.doMock('../claudeCliQueueFlushSingleton', () => ({
       flushNextClaudeCliQueuedPromptForSession: vi.fn(async () => false),
     }));
+    const launcherOptions: { current?: { loadPluginDirs?: (workspacePath: string) => Promise<string[]> } } = {};
     vi.doMock('../ClaudeCliSessionLauncher', () => ({
       ClaudeCliSessionLauncher: class {
-        constructor() {
+        constructor(options: any) {
+          launcherOptions.current = options;
           (this as any).launch = launch;
         }
       },
@@ -111,7 +116,7 @@ describe('claudeCliLauncherSingleton', () => {
     }));
 
     const mod = await import('../claudeCliLauncherSingleton');
-    return { ...mod, manager, stateManager, launch };
+    return { ...mod, manager, stateManager, launch, launcherOptions };
   }
 
   it('coalesces concurrent ensure calls for the same session', async () => {
@@ -184,6 +189,29 @@ describe('claudeCliLauncherSingleton', () => {
       workspacePath: '/project',
       cwd: worktreePath,
     });
+  }, 20000);
+
+  // #1465: `--plugin-dir` carries the injection set (extension + generated
+  // plugins) as bare directory paths. The user's own `/plugin`-installed plugins
+  // are loaded by the CLI itself and must not appear here.
+  it('adapts the injected plugin set to bare --plugin-dir paths', async () => {
+    injectedPluginPaths.length = 0;
+    injectedPluginPaths.push(
+      { type: 'local', path: '/ext/feedback/claude-plugin' },
+      { type: 'local', path: '/work/.claude/plugins/.nimbalyst-generated/repair-tools' },
+    );
+
+    const h = await loadHarness();
+    await h.ensureClaudeCliSession({ sessionId: 'session-1', workspacePath: '/work' });
+
+    const loadPluginDirs = h.launcherOptions.current?.loadPluginDirs;
+    expect(loadPluginDirs).toBeInstanceOf(Function);
+    await expect(loadPluginDirs!('/work')).resolves.toEqual([
+      '/ext/feedback/claude-plugin',
+      '/work/.claude/plugins/.nimbalyst-generated/repair-tools',
+    ]);
+
+    injectedPluginPaths.length = 0;
   }, 20000);
 
   it('leaves the requested cwd unchanged for a non-worktree session', async () => {

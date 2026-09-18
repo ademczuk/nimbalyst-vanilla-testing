@@ -28,6 +28,8 @@ it('fences foreign and ended turns while retaining yielded processes until their
     emit(method, { threadId: 'root', turnId, item: value });
   turn('turn/started', 'first');
   item('item/started', 'first', { type: 'commandExecution', id: 'shell' });
+  item('item/started', 'first', { type: 'fileChange', id: 'patch' });
+  item('item/started', 'first', { type: 'mcpToolCall', id: 'question' });
   item('item/completed', 'first', {
     type: 'commandExecution',
     id: 'shell',
@@ -52,7 +54,7 @@ it('fences foreign and ended turns while retaining yielded processes until their
   turn('turn/completed', 'first');
   item('item/started', 'first', { type: 'commandExecution', id: 'late' });
   expect(registration.endTurn).toHaveBeenCalledTimes(1);
-  expect(registration.toolStarted.mock.calls).toEqual([['shell']]);
+  expect(registration.toolStarted.mock.calls).toEqual([['shell', 'shell'], ['patch', 'patch'], ['question', 'mcp']]);
   expect(registration.toolCompleted.mock.calls).toEqual([['shell'], ['declined']]);
   turn('turn/completed', 'second');
   expect(registration.endTurn).toHaveBeenCalledTimes(2);

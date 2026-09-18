@@ -4,11 +4,9 @@ import type { IndexChangeWire } from './collabV3WireTypes';
 /**
  * Contract check for one row of a v2 page, run BEFORE any decryption.
  *
- * Everything here fails the page rather than skipping the row. A page is the
- * unit that advances the replication cursor: a row we quietly ignore is a row
- * the cursor claims coverage over and the local side never saw. That includes
- * files, whose payload we treat as opaque -- opaque is not the same as
- * unvalidated, and the identity still has to line up.
+ * Malformed identities and envelopes fail the page. Unreadable ciphertext is
+ * classified separately after validation, retaining identity and revision so
+ * coverage advances without treating the row as deletion evidence.
  */
 export function assertValidIndexChange(change: IndexChangeWire): void {
   if (change.removalReason !== undefined && (!change.deleted || change.entity !== 'session'

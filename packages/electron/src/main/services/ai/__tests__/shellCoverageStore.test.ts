@@ -31,13 +31,16 @@ it.each(['pglite', 'sqlite'])(
       const first = new ShellTrackingCoverage({ ...createShellCoverageStore(db), notify: () => {} });
       await first.open('a', 'g');
       first.turn('g', 't');
-      first.record('g', 'missingPre');
+      first.record('g', 'missingPre', 't', 'tool-1');
+      first.observation('g', false);
+      first.observation('g', true);
       first.endTurn('g');
       await first.close('g');
       const second = new ShellTrackingCoverage({ ...createShellCoverageStore(db), notify: () => {} });
       expect((await second.readMany(['a']))[0]).toMatchObject({
         state: 'degraded',
         reasons: { missingPre: 1 },
+        events: [expect.objectContaining({ reason: 'missingPre', toolUseId: 'tool-1' })],
       });
       if (db instanceof PGlite) {
         const migrated = new SQLiteDatabase({
@@ -48,7 +51,7 @@ it.each(['pglite', 'sqlite'])(
         try {
           await migrated.initialize();
           await new PGLiteToSQLiteMigrator().migrate({ pglite: db, sqlite: migrated, spotCheckPerTable: 1 });
-          expect((await createShellCoverageStore(migrated).load('a'))?.reasons).toEqual({ missingPre: 1 });
+          expect((await createShellCoverageStore(migrated).load('a'))?.events).toEqual([expect.objectContaining({ reason: 'missingPre', toolUseId: 'tool-1' })]);
         } finally {
           await migrated.close();
         }

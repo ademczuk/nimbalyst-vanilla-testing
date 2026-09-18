@@ -6,7 +6,7 @@ import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { SessionFilesRepository } from '@nimbalyst/runtime/storage/repositories/SessionFilesRepository';
 import { OpenAICodexProvider } from '@nimbalyst/runtime/ai/server';
-import { subscribe, unsubscribe, getSubscriberIds } from '../../file/WorkspaceEventBus';
+import { subscribe, unsubscribe, getSubscriberIds, drainWorkspaceEvents } from '../../file/WorkspaceEventBus';
 import { contentFingerprint, isKnownFileWrite } from '../../file/knownFileWrites';
 import { getPackageRoot } from '../../utils/appPaths';
 import { shouldExcludePath } from '../../utils/fileFilters';
@@ -16,6 +16,7 @@ import { workspaceAttributionThrottle } from '../WorkspaceAttributionThrottle';
 import { notifySessionFilesUpdated } from '../sessionFilesNotify';
 import { logger } from '../../utils/logger';
 import { ExcludedShellCandidate, ShellFileAttribution } from './ShellFileAttribution';
+import { prepareShellCheckoutBaseline } from './ShellCheckoutBaseline';
 import { ShellTrackingCoverage } from './ShellTrackingCoverage';
 import { createShellCoverageStore } from './shellCoverageStore';
 import { database } from '../../database/PGLiteDatabaseWorker';
@@ -47,12 +48,14 @@ export const shellFileAttribution = new ShellFileAttribution({
     const id = 'shell-hooks:' + workspace;
     let healthy = false;
     await subscribe(workspace, id, {
-      onAdd: changed,
-      onChange: changed,
-      onUnlink: changed,
+      onAdd: () => {},
+      onChange: () => {},
+      onUnlink: () => {},
+      onObserved: (_event, file, at) => changed(file, at),
       onHealthChanged: (health) => {
         healthy = health.state === 'watching';
         if (health.state === 'recovering') shellFileAttribution.watcherLost(workspace);
+        if (healthy) shellFileAttribution.watcherRecovered(workspace);
       },
     });
     if (!healthy || !getSubscriberIds(workspace).includes(id)) {
@@ -61,6 +64,10 @@ export const shellFileAttribution = new ShellFileAttribution({
     }
     return () => unsubscribe(workspace, id);
   },
+  prepareCheckout: prepareShellCheckoutBaseline,
+  activity: (generation, id, active) => shellTrackingCoverage.tool(generation, id, active),
+  drainEvents: drainWorkspaceEvents,
+  observation: (generation, healthy) => shellTrackingCoverage.observation(generation, healthy),
   read: async (file) => {
     if (shouldExcludePath(file)) throw new ExcludedShellCandidate('Excluded path');
     try {
@@ -78,7 +85,7 @@ export const shellFileAttribution = new ShellFileAttribution({
   },
   knownWrite: (file, state) => isKnownFileWrite(file, state?.fingerprint),
   otherSessions: (workspace, filePath) => workspaceFileAttributionPolicy.getSessionIds(workspace, filePath),
-  report: (generation, reason, turnId) => shellTrackingCoverage.record(generation, reason, turnId),
+  report: (generation, reason, turnId, toolUseId, hook) => shellTrackingCoverage.record(generation, reason, turnId, toolUseId, hook),
   currentTurn: (generation) => shellTrackingCoverage.currentTurn(generation),
   persist: async (evidence) => {
     if (!workspaceAttributionThrottle.tryAcquire(evidence.workspacePath)) return 'throttled';
@@ -125,10 +132,12 @@ export async function prepareShellTracking(sessionId: string, workspace: string)
       return;
     }
     let raw = '';
+    let bytes = 0;
     try {
       for await (const chunk of req) {
         raw += chunk;
-        if (raw.length > 4096) {
+        bytes += Buffer.byteLength(chunk);
+        if (bytes > 8192) {
           res.writeHead(413).end();
           return;
         }
@@ -136,8 +145,20 @@ export async function prepareShellTracking(sessionId: string, workspace: string)
       const p = JSON.parse(raw);
       if (typeof p.id !== 'string' || p.id.length > 256 || typeof p.tool !== 'string' || p.tool.length > 256)
         throw new Error('Invalid hook identity');
-      if (p.event === 'PreToolUse') await shellFileAttribution.pre(generation, p.id, p.tool);
-      else if (p.event === 'PostToolUse') await shellFileAttribution.post(generation, p.id);
+      for (const field of ['session_id', 'turn_id', 'agent_type'])
+        if (p[field] !== undefined && (typeof p[field] !== 'string' || p[field].length > 256))
+          throw new Error('Invalid hook context');
+      if (p.command !== undefined && (typeof p.command !== 'string' || p.command.length > 2000))
+        throw new Error('Invalid hook command');
+      const identity = { sessionId: p.session_id, turnId: p.turn_id, agentType: p.agent_type };
+      // Off by default; the real-Codex E2E and manual hook tracing set this.
+      if (process.env.NIMBALYST_SHELL_HOOK_TRACE)
+        logger.main.debug('[CodexShellTracking] Hook', JSON.stringify({
+          sessionId, event: p.event, tool: p.tool, toolUseId: p.id, hookSessionId: p.session_id,
+          hookTurnId: p.turn_id, currentTurnId: shellTrackingCoverage.currentTurn(generation), agentType: p.agent_type,
+        }));
+      if (p.event === 'PreToolUse') await shellFileAttribution.pre(generation, p.id, p.tool, identity, p.command);
+      else if (p.event === 'PostToolUse') await shellFileAttribution.post(generation, p.id, { ...identity, tool: p.tool });
       else throw new Error('Unsupported event');
       res.end('{}');
     } catch {
@@ -169,7 +190,7 @@ export async function prepareShellTracking(sessionId: string, workspace: string)
     env: {
       NIMBALYST_SHELL_HOOK_URL: `http://127.0.0.1:${address.port}/${token}`,
     },
-    toolStarted: (id: string) => shellFileAttribution.started(generation, id),
+    toolStarted: (id: string, kind: 'shell' | 'patch' | 'mcp') => shellFileAttribution.started(generation, id, kind),
     turnStarted: (id: string) => shellTrackingCoverage.turn(generation, id),
     unavailable: () => {
       void shellTrackingCoverage.unavailable(sessionId);

@@ -2,11 +2,12 @@ import type { SessionOptions } from '../ProtocolInterface';
 import type { JsonRpcClient } from './jsonRpcClient';
 import { extractNotificationRouting } from './notificationDiagnostics';
 
+export type CodexShellToolKind = 'shell' | 'patch' | 'mcp';
 export interface CodexShellTrackingRegistration {
   command: string;
   env: Record<string, string>;
   toolCompleted(id: string): void;
-  toolStarted?(id: string): void;
+  toolStarted?(id: string, kind: CodexShellToolKind): void;
   turnStarted?(id: string): void;
   unavailable?(): void;
   endTurn(): void;
@@ -62,7 +63,7 @@ export function observeCodexShellTracking(
       registration.turnStarted?.(turnId);
     }
     if (method === 'item/started') {
-      registration.toolStarted?.(item.id);
+      registration.toolStarted?.(item.id, item.type === 'mcpToolCall' ? 'mcp' : item.type === 'fileChange' ? 'patch' : 'shell');
       return;
     }
     if (!['completed', 'failed', 'declined'].includes(String(item.status))) return;

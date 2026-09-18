@@ -48,7 +48,7 @@ function noopRef() {
 }
 
 describe('usage popover "Disable" hides via the gutter customization atom', () => {
-  it('shows remaining model quota including unused limits without duplicating legacy Opus', () => {
+  it('shows model percent used including unused limits without duplicating legacy Opus', () => {
     const store = createStore();
     store.set(claudeUsageAtom, {
       fiveHour: { utilization: 55, resetsAt: null },
@@ -65,8 +65,8 @@ describe('usage popover "Disable" hides via the gutter customization atom', () =
         <ClaudeUsagePopover anchorRef={noopRef()} onClose={() => {}} onRefresh={async () => {}} />
       </Provider>,
     );
-    getByText('14%');
-    getByText('100%');
+    getByText('86%');
+    getByText('0%');
     expect(getAllByText('Opus (Weekly)')).toHaveLength(1);
   });
 

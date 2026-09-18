@@ -49,7 +49,7 @@ import {
 import { deriveTrackerPersonalStateKey } from './trackerPersonalStateKey';
 import { hasPublishableConfig } from './projectConfig';
 import { publishWithBoundedRetry } from './indexPublishRetry';
-import { assertValidIndexChange } from './indexChangeValidation';
+import { prepareIndexChange } from './prepareIndexChange';
 import { createIndexSendChannel, throwIfUnsent } from './indexSendChannel';
 import {
   IndexProtocolUnsupportedError,
@@ -408,14 +408,8 @@ async function decryptProjectId(
  * entry handed to callers of `fetchIndex`, and the cache row the rest of the
  * provider reads.
  *
- * ANY decryption failure throws `IndexEntryDecryptionError`, on every path. A
- * v2 page is the unit that advances the replication cursor, so silently
- * dropping a field -- or a whole row -- would mark coverage complete over data
- * we never read. The legacy full response and live broadcasts are held to the
- * same rule because the alternative was GitHub #1117: the legacy path used to
- * treat an unreadable row as something to delete from the server and republish
- * under this device's key, which wiped every other device's index. A row this
- * key cannot read is a key problem on this device, never server state to fix.
+ * Decryption failures classify the row as unreadable. Consumers preserve the
+ * last good cache and never delete unreadable server rows (GitHub #1117).
  *
  * Shared by all paths so they cannot drift in what they carry off the wire.
  */
@@ -589,7 +583,7 @@ async function decodeLegacyIndexSnapshot(
   sessions: SessionIndexEntry[],
   projects: ServerProjectEntry[],
   key: CryptoKey | undefined,
-): Promise<{ rows: DecryptedLegacyIndexRow[]; projects: DecryptedProjectIndexEntry[] }> {
+): Promise<{ rows: DecryptedLegacyIndexRow[]; projects: DecryptedProjectIndexEntry[]; skippedRowCount: number; unreadableRowKeys: string[] }> {
   const unreadable = (err: unknown): null => {
     if (err instanceof IndexEntryDecryptionError) return null;
     throw err;
@@ -599,14 +593,8 @@ async function decodeLegacyIndexSnapshot(
 
   const rows = rowResults.filter((row): row is DecryptedLegacyIndexRow => row !== null);
   const decryptedProjects = projectResults.filter((proj): proj is DecryptedProjectIndexEntry => proj !== null);
-  const unreadableSessions = sessions.length - rows.length;
-  const unreadableProjects = projects.length - decryptedProjects.length;
-  if (unreadableSessions > 0 || unreadableProjects > 0) {
-    throw new IndexEntryDecryptionError(
-      `Legacy index snapshot cannot be decrypted with this device's sync key: ${unreadableSessions} of ${sessions.length} session rows and ${unreadableProjects} of ${projects.length} project rows were written under a different key`,
-    );
-  }
-  return { rows, projects: decryptedProjects };
+  const unreadableRowKeys = rowResults.flatMap((row, i) => row === null ? [`session:${sessions[i].sessionId}`] : []).slice(0, 999_999);
+  return { rows, projects: decryptedProjects, skippedRowCount: unreadableRowKeys.length, unreadableRowKeys };
 }
 
 /**
@@ -829,6 +817,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
    * See `personalSyncWriteGate.ts` and GitHub #1117.
    */
   const personalSyncWriteGate = createPersonalSyncWriteGate();
+  let legacyUnreadableRows = new Set<string>();
   const loggedWithheldWrites = new Set<string>();
   personalSyncWriteGate.onChange(() => loggedWithheldWrites.clear());
   /** True when a personal-sync write must be withheld. Logs once per kind per gate state. */
@@ -1559,37 +1548,17 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         cacheEntries = new Map<string, CachedSessionIndex>();
         const changes: PreparedIndexChange[] = [];
         for (const change of entries) {
-          // Contract first, decryption second: nothing here is skipped, because
-          // the page's cursor would claim coverage over whatever we skipped.
-          assertValidIndexChange(change);
-          const base = {
-            entity: change.entity,
-            id: change.id,
-            revision: change.revision,
-            deleted: change.deleted,
-            removalReason: change.removalReason,
-          };
-          if (change.deleted) {
-            changes.push(base);
-            continue;
-          }
-          if (change.entity === 'session') {
-            // strict: a row we cannot fully read must fail the page rather than
-            // be skipped. The mirror, the cursor and the local cache are all
-            // left alone; the fetch reports failure and the caller skips
-            // reconciliation for this cycle.
-            const row = await decryptSessionIndexEntry(change.session!, config.encryptionKey);
-            cacheEntries.set(`${change.id}:${change.revision}`, row.cacheEntry);
-            changes.push({ ...base, session: row.decrypted });
-          } else if (change.entity === 'project') {
-            const project = await decryptProjectIndexEntry(change.project!, config.encryptionKey);
-            changes.push({ ...base, project });
-          } else {
-            // File payloads stay opaque to this client (document sync owns the
-            // file UI), but they are carried in the same stream under the same
-            // cursor, so their identity is validated like everything else.
-            changes.push({ ...base, file: change.file });
-          }
+          changes.push(await prepareIndexChange(change, async () => {
+            if (change.entity === 'session') {
+              const row = await decryptSessionIndexEntry(change.session!, config.encryptionKey);
+              cacheEntries.set(`${change.id}:${change.revision}`, row.cacheEntry);
+              return { session: row.decrypted };
+            }
+            if (change.entity === 'project') {
+              return { project: await decryptProjectIndexEntry(change.project!, config.encryptionKey) };
+            }
+            return { file: change.file };
+          }));
         }
         assertSameConnection('page decryption');
         return changes;
@@ -1808,9 +1777,6 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       })
       .catch(err => {
         hintDrainScheduled = false;
-        if (err instanceof IndexEntryDecryptionError) {
-          personalSyncWriteGate.markBlocked('decryption-failed', err.message);
-        }
         console.warn('[CollabV3] Index delta poll failed:', err?.message || err);
       });
   }
@@ -1823,6 +1789,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
    */
   async function runIndexReplicationWithPersonalState(options: { notifyListeners: boolean }): Promise<void> {
     await runIndexReplication(options);
+    personalSyncWriteGate.markVerified(indexMirror.skippedRowCount());
+    if (indexMirror.skippedRowCount() > 0) console.info('[CollabV3] Index read completed; skipped unreadable rows:', indexMirror.skippedRowCount());
     // A hint that arrived while the mirror was incomplete (or mid-drain) is
     // still recorded; now that coverage exists it can be acted on.
     scheduleHintedDrain();
@@ -2417,16 +2385,16 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               pendingIndexFetch = null;
               try {
                 const snapshot = await decodeLegacyIndexSnapshot(message.sessions, message.projects, config.encryptionKey);
-                // Commit only once every row decrypted. A partial commit would
-                // hand reconciliation a view the server never held, and
-                // reconciliation republishes whatever it believes is missing.
+                // Only readable rows update the cache; unreadable rows keep its last good value.
                 for (const row of snapshot.rows) {
                   sessionIndexCache.set(row.decrypted.sessionId, sessionQueueReconciler.merge(row.cacheEntry));
                   // The server just told us what it holds; that is the value a
                   // subsequent patch has to differ from to be worth sending.
                   indexPublicationGate.recordPublished(row.decrypted.sessionId, indexPatchSignatureForEntry(row.cacheEntry));
                 }
-                personalSyncWriteGate.markVerified();
+                legacyUnreadableRows = new Set(snapshot.unreadableRowKeys);
+                personalSyncWriteGate.markVerified(snapshot.skippedRowCount);
+                if (snapshot.skippedRowCount > 0) console.info('[CollabV3] Index read completed; skipped unreadable rows:', snapshot.skippedRowCount);
                 reconcileFetchedQueues(snapshot.rows.map(row => row.decrypted));
                 pending.resolve({
                   // The legacy response IS the complete snapshot -- that has
@@ -2440,14 +2408,6 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
                   projects: snapshot.projects,
                 });
               } catch (err) {
-                if (err instanceof IndexEntryDecryptionError) {
-                  // #1117: a row this key cannot read is a key problem on this
-                  // device, not server state to clean up. Nothing is deleted,
-                  // nothing is cached, and publication stays closed until a
-                  // complete read succeeds.
-                  personalSyncWriteGate.markBlocked('decryption-failed', err.message);
-                  console.warn(`[CollabV3] ${err.message}. The server index is left untouched and personal-sync writes are paused on this device.`);
-                }
                 pending.reject(err instanceof Error ? err : new Error(String(err)));
               }
             }
@@ -2457,7 +2417,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           case 'indexBroadcast': {
             // Another device updated a session. The row is decrypted in full
             // before anything local changes: a broadcast this key cannot read
-            // keeps the last good cached row and closes publication (#1117),
+            // keeps the last good cached row without blocking publication,
             // instead of writing 'unknown' / 'Untitled' placeholders into the
             // cache and out to the renderer.
             const entry = message.session;
@@ -2466,9 +2426,14 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               row = await decryptSessionIndexEntry(entry, config.encryptionKey);
             } catch (err) {
               if (!(err instanceof IndexEntryDecryptionError)) throw err;
-              personalSyncWriteGate.markBlocked('decryption-failed', err.message);
-              console.warn(`[CollabV3] Ignoring index broadcast for session ${entry.sessionId}: ${err.message}. The cached row is preserved and personal-sync writes are paused on this device.`);
+              if (indexProtocolCapability === 'legacy') {
+                if (legacyUnreadableRows.size < 999_999) legacyUnreadableRows.add(`session:${entry.sessionId}`);
+                personalSyncWriteGate.setSkippedRowCount(legacyUnreadableRows.size);
+              }
               break;
+            }
+            if (indexProtocolCapability === 'legacy' && legacyUnreadableRows.delete(`session:${entry.sessionId}`)) {
+              personalSyncWriteGate.setSkippedRowCount(legacyUnreadableRows.size);
             }
             const decryptedEntry = row.cacheEntry;
 
@@ -4173,8 +4138,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           // from this result as "the server is missing it, republish", so a
           // partial mirror must fail the fetch instead of being returned.
           const { sessions, projects } = indexMirror.snapshot();
-          // Every row in a complete mirror decrypted under this key.
-          personalSyncWriteGate.markVerified();
+          personalSyncWriteGate.markVerified(indexMirror.skippedRowCount());
           reconcileFetchedQueues(sessions);
           return {
             complete: true,
@@ -4187,9 +4151,6 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             projects,
           };
         } catch (err) {
-          if (err instanceof IndexEntryDecryptionError) {
-            personalSyncWriteGate.markBlocked('decryption-failed', err.message);
-          }
           if (!(err instanceof IndexProtocolUnsupportedError)) {
             // A real failure (transport, timeout, partial bootstrap) is NOT a
             // reason to fall back: the legacy path would answer with a complete

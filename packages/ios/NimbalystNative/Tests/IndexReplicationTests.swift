@@ -347,22 +347,27 @@ final class IndexReplicationTests: XCTestCase {
         )
     }
 
-    /// v2 cannot advance a revision over a row it only half-read: a title,
-    /// client metadata blob or queued prompt we cannot decrypt fails the page.
-    func testUnreadableFieldsFailAVersionedPageButNotALegacyEntry() throws {
+    func testUnreadableFieldsAreCoveredWithoutBecomingVisibleOrDeleted() throws {
         let otherCrypto = CryptoManager(key: SymmetricKey(data: Data(repeating: 4, count: 32)))
         let foreignTitle = try otherCrypto.encrypt(plaintext: "not ours")
         var payload = try sessionPayload("s1")
         payload["encryptedTitle"] = foreignTitle.encrypted
         payload["titleIv"] = foreignTitle.iv
-
-        switch IndexReplicationPageValidator.validate(
-            try response(entries: [change(entity: "session", id: "s1", revision: 3, session: payload)]),
-            expectedRequestId: "r1", expectedMode: .delta, crypto: crypto
-        ) {
-        case .success: XCTFail("A versioned page must not apply a row it could not fully read")
-        case .failure(let error): XCTAssertEqual(error, .decryptionFailed(entity: "session", id: "s1"))
-        }
+        let db = try DatabaseManager()
+        let store = IndexReplicationStore()
+        let page = try validated(try response(mode: "bootstrap", entries: [
+            change(entity: "session", id: "readable", revision: 2, session: try sessionPayload("readable", title: "Readable")),
+            change(entity: "session", id: "s1", revision: 3, session: payload),
+        ], cursor: 3), mode: .bootstrap)
+        try apply(page, store: store, database: db, runId: "mixed-keys")
+        try IndexReplicationApplier.finalizeBootstrap(runId: "mixed-keys", store: store, database: db)
+        XCTAssertEqual(try store.cursorState(db).cursor, 3)
+        XCTAssertTrue(try store.cursorState(db).historyComplete)
+        XCTAssertNotNil(try db.session(byId: "readable"))
+        XCTAssertNil(try db.session(byId: "s1"))
+        XCTAssertEqual(try db.writer.read { try store.skippedRowCount($0) }, 1)
+        XCTAssertEqual(try db.writer.read { try store.revision($0, entity: .session, id: "s1") },
+                       .init(revision: 3, deleted: false))
 
         // The legacy path still shows the row, without its title: dropping it
         // there would hide a session the user can otherwise open.
@@ -373,6 +378,53 @@ final class IndexReplicationTests: XCTestCase {
         let lenient = IndexEntryDecryptor.decrypt(session: entry, crypto: crypto)
         XCTAssertNotNil(lenient)
         XCTAssertNil(lenient?.titleDecrypted)
+    }
+
+    func testUnreadableProjectAndFileKeepOrderingAndLastReadableCache() throws {
+        let db = try DatabaseManager()
+        let store = IndexReplicationStore()
+        // Model an installed database whose revision table predates unreadable rows.
+        try db.writer.write { db in
+            try db.execute(sql: "ALTER TABLE index_row_revision DROP COLUMN unreadable")
+            try store.ensureSchema(db)
+        }
+        let wireId = try projectWireId
+        let project: [String: Any] = ["encryptedProjectId": wireId, "projectIdIv": CryptoManager.projectIdIvBase64,
+                                      "sessionCount": 1, "lastActivityAt": 1]
+        let file = try filePayload("file")
+        try apply(try validated(try response(entries: [
+            change(entity: "session", id: "cached", revision: 1, session: try sessionPayload("cached", title: "Keep me")),
+            change(entity: "project", id: wireId, revision: 2, project: project),
+            change(entity: "file", id: "file", revision: 3, file: file),
+        ], cursor: 3)), store: store, database: db)
+        var badSession = try sessionPayload("cached")
+        badSession["projectIdIv"] = "bad"
+        var badProject = project
+        badProject["projectIdIv"] = "bad"
+        var badFile = file
+        badFile["titleIv"] = "bad"
+        let page = try validated(try response(entries: [
+            change(entity: "session", id: "cached", revision: 4, session: badSession),
+            change(entity: "project", id: wireId, revision: 5, project: badProject),
+            change(entity: "file", id: "file", revision: 6, file: badFile),
+            change(entity: "project", id: "foreign-tombstone", revision: 7, deleted: true),
+        ], cursor: 7))
+        try apply(page, store: store, database: db)
+        try apply(page, store: store, database: db)
+        XCTAssertEqual(try store.cursorState(db).cursor, 7)
+        XCTAssertEqual(try db.writer.read { try store.skippedRowCount($0) }, 1, "Only unreadable sessions count; replays do not inflate it")
+        XCTAssertEqual(try db.session(byId: "cached")?.titleDecrypted, "Keep me")
+        XCTAssertEqual(try db.writer.read { try store.fileMetadata($0, docId: "file") }?.title, "Notes")
+        XCTAssertEqual(try db.writer.read { try store.revision($0, entity: .project, id: "foreign-tombstone") },
+                       .init(revision: 7, deleted: false))
+        try apply(try validated(try response(entries: [
+            change(entity: "file", id: "file", revision: 8, file: file),
+        ], cursor: 8)), store: store, database: db)
+        XCTAssertEqual(try db.writer.read { try store.skippedRowCount($0) }, 1)
+        try apply(try validated(try response(entries: [
+            change(entity: "session", id: "cached", revision: 9, session: try sessionPayload("cached")),
+        ], cursor: 9)), store: store, database: db)
+        XCTAssertEqual(try db.writer.read { try store.skippedRowCount($0) }, 0, "Unreadable projects and tombstones do not keep the session notice visible")
     }
 
     func testResetIsRecognisedBeforeThePageTokenRule() throws {

@@ -5,7 +5,6 @@
  * and reset times.
  */
 
-import { remainingUsagePercent } from '../../../shared/claudeUsage';
 import React, { useEffect, RefObject } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
@@ -31,7 +30,6 @@ interface UsageSectionProps {
   utilization: number;
   resetsAt: string | null;
   color: 'green' | 'yellow' | 'red' | 'muted';
-  showRemaining?: boolean;
   windowDurationMs: number; // Duration of the window in milliseconds
 }
 
@@ -59,7 +57,6 @@ const UsageSection: React.FC<UsageSectionProps> = ({
   resetsAt,
   color,
   windowDurationMs,
-  showRemaining = false,
 }) => {
   const colorClasses: Record<string, { text: string; bar: string }> = {
     green: { text: 'text-green-500', bar: 'bg-green-500' },
@@ -73,15 +70,15 @@ const UsageSection: React.FC<UsageSectionProps> = ({
   const isOverPacing = utilization > timeElapsedPercent;
 
   return (
-    <div className="mb-4 last:mb-0">
+    <div className="claude-usage-section mb-4 last:mb-0">
       <div className="flex justify-between items-baseline mb-1">
         <div>
           <div className="text-[13px] font-semibold text-nim">{title}</div>
           <div className="text-[11px] text-nim-muted">{subtitle}</div>
         </div>
         <div className={`text-[16px] font-semibold ${colors.text}`}>
-          {showRemaining ? remainingUsagePercent(utilization) : Math.round(utilization)}%
-          {showRemaining && <span className="block text-[10px] font-normal text-right">remaining</span>}
+          {Math.round(utilization)}%
+          <span className="block text-[10px] font-normal text-right">used</span>
         </div>
       </div>
       <div className="relative h-1.5 bg-nim-tertiary rounded-full overflow-hidden mb-1.5">
@@ -148,7 +145,7 @@ export const ClaudeUsagePopover: React.FC<ClaudeUsagePopoverProps> = ({
         ref={menu.refs.setFloating}
         style={menu.floatingStyles}
         {...menu.getFloatingProps()}
-        className="w-60 bg-nim-secondary border border-nim rounded-lg shadow-lg z-50 overflow-y-auto"
+        className="claude-usage-popover w-60 bg-nim-secondary border border-nim rounded-lg shadow-lg z-50 overflow-y-auto"
         data-testid="claude-usage-popover"
       >
         {/* Header */}
@@ -202,12 +199,11 @@ export const ClaudeUsagePopover: React.FC<ClaudeUsagePopoverProps> = ({
                 <UsageSection
                   key={`${limit.model}-${index}`}
                   title={`${limit.model} (Weekly)`}
-                  subtitle={`${Math.round(limit.utilization)}% used · 7-day window`}
+                  subtitle="7-day window"
                   utilization={limit.utilization}
                   resetsAt={limit.resetsAt}
                   color={limit.utilization >= 80 ? 'red' : limit.utilization >= 50 ? 'yellow' : 'green'}
                   windowDurationMs={7 * 24 * 60 * 60 * 1000}
-                  showRemaining
                 />
               ))}
               {usage.sevenDayOpus && usage.sevenDayOpus.utilization > 0 &&

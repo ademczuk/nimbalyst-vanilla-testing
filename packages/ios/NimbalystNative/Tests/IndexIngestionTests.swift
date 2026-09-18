@@ -475,6 +475,37 @@ final class IndexIngestionTests: XCTestCase {
         XCTAssertFalse(sync.lastIndexDecodeWasOffMainActor)
     }
 
+    func testCoverageLoadsPersistedSkippedSessionsAndResetClearsThem() async throws {
+        let db = try DatabaseManager()
+        let store = IndexReplicationStore()
+        try await db.writer.write { db in
+            try store.ensureSchema(db)
+            try store.recordRevision(db, entity: .session, id: "unreadable", revision: 1, deleted: false, unreadable: true)
+            try store.recordRevision(db, entity: .project, id: "project", revision: 2, deleted: false, unreadable: true)
+            try store.recordRevision(db, entity: .session, id: "deleted", revision: 3, deleted: true, unreadable: true)
+        }
+        var received: [IndexMaintenanceOutcome] = []
+        let published = expectation(description: "Coverage load, async read, reset, and reload published")
+        published.expectedFulfillmentCount = 4
+        let ingestion = IndexIngestion(
+            generation: 1, crypto: crypto, database: db,
+            onOutcome: { _ in },
+            onMaintenanceOutcome: { outcome in
+                received.append(outcome)
+                published.fulfill()
+            }
+        )
+        ingestion.submit(.maintenance(.loadCoverage, id: 1), byteCount: 0)
+        ingestion.submit(.maintenance(.missingAncestors(of: []), id: 2), byteCount: 0)
+        ingestion.submit(.maintenance(.resetCursor, id: 3), byteCount: 0)
+        ingestion.submit(.maintenance(.loadCoverage, id: 4), byteCount: 0)
+        await fulfillment(of: [published], timeout: 5)
+        ingestion.cancel()
+        XCTAssertEqual(received.map(\.id), [1, 2, 3, 4], "The async read must not let later maintenance overtake it")
+        XCTAssertEqual(received.map(\.skippedRowCount), [1, 0, 0, 0])
+        XCTAssertTrue(received.allSatisfy { $0.failure == nil && $0.ranOffMainActor })
+    }
+
     /// Crash recovery reconciles history, so it runs on the ingestion owner, not
     /// on the main actor where the driver lives. Resuming an interrupted
     /// bootstrap there would block the UI for as long as the reconciliation takes.

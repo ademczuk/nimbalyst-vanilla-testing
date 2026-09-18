@@ -1124,6 +1124,7 @@ export function registerSettingsHandlers() {
             connected,
             syncing: false, // We don't have real-time syncing status yet
             error: null,
+            skippedRowCount: provider?.getPersonalSyncWriteGate?.().skippedRowCount ?? 0,
             stats: {
                 sessionCount,
                 lastSyncedAt,

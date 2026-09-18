@@ -16,10 +16,6 @@ export interface ClaudeUsageData {
   error?: string;
 }
 
-export function remainingUsagePercent(utilization: number): number {
-  return Math.round(Math.max(0, Math.min(100, 100 - utilization)));
-}
-
 /** New model quotas are reported by label in limits, not legacy seven_day_* fields. */
 export function parseWeeklyModelLimits(limits: unknown): ClaudeWeeklyModelLimit[] {
   if (limits == null) return [];

@@ -513,9 +513,8 @@ export interface SyncProvider {
 
   /**
    * Whether this device may publish personal-sync ciphertext. Closed until a
-   * complete index read decrypts under this key, and after any row that does
-   * not, so a device holding the wrong key never rewrites the shared index
-   * (GitHub #1117). See `personalSyncWriteGate.ts`.
+   * complete index read, which may skip unreadable rows. A server update
+   * requirement still blocks writes. See `personalSyncWriteGate.ts`.
    */
   getPersonalSyncWriteGate?(): PersonalSyncWriteGateSnapshot;
 

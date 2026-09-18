@@ -314,6 +314,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Shared Docs sidebar filter — segmented All / Favorites / Updated view over the doc tree (persisted per workspace)
 - Unread indicators on shared docs — a dot on a doc's sidebar entry when it is new or its content/title changed (by someone else) since you last opened it; clears when you open it; the doc index carries the last writer so your own edits (including cross-device) are suppressed. The sidebar overflow menu can hide the dots or mark all docs read, and a doc's context menu can mark just that one read
 - **Extension-provided collab editors** — SDK `useCollaborativeEditor` hook lets any extension (Excalidraw, CSV spreadsheet, DatamodelLM shipped; others can opt in via `collaboration.supported` manifest flag) share its file type to team with real-time multi-client editing, cursors, and selection
+- **Shared naming projects (Namenym extension)** — concurrent brief, theme, word, candidate and note editing; personal favorites with attributed team totals; legacy shortlists remain unattributed. Desktop AI generation shares results live, and domain searches run only on explicit request in shared documents. Favorites are editable document content, not audited approvals.
 - **Offline-first shared documents** -- read and edit cached documents offline, with locally encrypted storage and synchronization when reconnected
 - Linked local files can pull the latest shared-document content from the editor header; shared version history previews a version before restoration
 - Agents can read and edit shared documents without an open tab, including supported custom editors
@@ -332,6 +333,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Shared trackers in list, table, board, timeline, and tag-board views, with search, filters, grouping, column selection, inline edits, comments, and drag-and-drop
 - Phone tracker browsing defaults to stacked rows with search and filter sheets; plan readers offer collapsed properties and explicit live editing, and retain list position and unsent comment drafts within the current project session
 - Supported shared custom editors include spreadsheets, mockups, Excalidraw diagrams, data models, and Canvas; editable source mode provides access when a document's editor cannot render it
+- Namenym shared projects open in the browser with manual editing, individual/team favorites, presence, and read-only access; AI generation remains desktop-only. Browser creation, source mode, export and history actions are not offered for Namenym.
 - Shared-document comments and replies with mentions delivered to the recipient's inbox
 - Organization invitations, pending-invite management, and a Requests inbox for feedback, mentions, replies, and discussions
 - Quick open (Cmd+K), tracker row context menus, Nimbalyst themes, and layouts that adapt to narrow screens
@@ -533,7 +535,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 
 - PostHog integration (opt-in, anonymous)
 - AI usage report with historical graph and activity heatmap
-- Claude model-specific weekly allowances remaining and reset times, including Fable
+- Claude model-specific weekly usage percentages and reset times, including Fable
 - Per-project usage breakdown
 - Per-tool usage tracking (local counters for built-in and MCP/extension tools) surfaced as a Tools section in the AI usage report (top tools, built-in vs MCP split, over-time, per-provider) and as a targeting signal for contextual tips; backfill from past claude-code and codex sessions
 - Developer Dashboard Renders tab for inspecting component re-render counts and causes
