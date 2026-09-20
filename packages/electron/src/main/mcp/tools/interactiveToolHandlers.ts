@@ -55,6 +55,19 @@ import {
   type InteractivePromptSettleReason,
 } from "./interactivePromptAbandonment";
 
+/**
+ * A tool that only asks the user something and returns their answer changes no
+ * state, so it is read-only in the MCP sense. Declaring that is not cosmetic:
+ * Codex CLI gates MCP tool calls on `readOnlyHint` by default, and a tool
+ * without it is treated as a write that needs approval. Nimbalyst runs Codex
+ * with `approval_policy: 'never'` in every mode except Agent-verified bypass
+ * (see codexPermissionProfile.ts), so such a call fails outright with
+ * "MCP tool call requires approval, but approval policy is never" -- the user
+ * sees the question card render but the call never reaches this process, so
+ * nothing can answer it. See #1553.
+ */
+const ASKS_USER_ONLY = { readOnlyHint: true } as const;
+
 export function getInteractiveToolSchemas(sessionId: string | undefined) {
   if (!sessionId) return [];
 
@@ -62,6 +75,7 @@ export function getInteractiveToolSchemas(sessionId: string | undefined) {
     requestUserInputSchema(),
     {
       name: "AskUserQuestion",
+      annotations: ASKS_USER_ONLY,
       description:
         "Prompt the user with one or more multiple-choice questions and wait for their response. Use for explicit confirmation or disambiguation.",
       inputSchema: {
@@ -1100,6 +1114,7 @@ function requestUserInputSchema() {
     // that collides with a Codex CLI built-in tool gated to Plan mode and the
     // agent gets refused with "request_user_input is unavailable in Default mode".
     name: "PromptForUserInput",
+    annotations: ASKS_USER_ONLY,
     description: `Ask the user for structured input via a composable widget with typed fields; the answer payload is keyed by field id. The "fields" argument is an ARRAY OF OBJECTS ({ type, id, label, ... }), never an array of strings — per-type required properties are documented on the field schema.
 
 Field types: multiSelect (pick a subset), singleSelect (branching choice), reorder (drag-to-reorder with optional delete), editText (edit a seeded draft), confirm (yes/no).

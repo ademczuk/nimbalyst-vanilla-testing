@@ -301,6 +301,13 @@ export async function buildSdkOptions(
     // (relative to cwd). This applies whenever the agent enters plan mode, even mid-session.
     settings: {
       ...(ClaudeCodeDeps.planTrackingEnabled && { plansDirectory: 'nimbalyst-local/plans' }),
+      // Nimbalyst renders its own AskUserQuestion widget and waits for a real
+      // human answer, so the CLI's idle auto-continue -- which fills in
+      // whatever options are selected so far and hands them back as if a
+      // person had chosen them -- must never run. The SDK's own default is
+      // already 'never'; pinning it stops an inherited user or enterprise
+      // settings file from turning it on underneath us. See #1549.
+      askUserQuestionTimeout: 'never' as const,
     },
     canUseTool: createCanUseToolHandler(sessionId, workspacePath, permissionsPath),
     hooks: {

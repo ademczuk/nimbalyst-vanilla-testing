@@ -11,7 +11,7 @@ import { getFolderContents } from '../utils/FileTree';
 import { getBackgroundColor, getTitleBarColors } from '../theme/ThemeManager';
 import { ElectronDocumentService, setupDocumentServiceHandlers } from '../services/ElectronDocumentService';
 import { ElectronFileSystemService } from '../services/ElectronFileSystemService';
-import { isWorktreePath, resolveProjectPath } from '../utils/workspaceDetection';
+import { isWorktreePath, resolveProjectPath, resolveProjectPathCandidates } from '../utils/workspaceDetection';
 import { getPreloadPath } from '../utils/appPaths';
 import { createUnresponsiveHandler } from './unresponsiveHandler';
 import {
@@ -800,7 +800,14 @@ export function findWorkspaceWindowMatch(workspacePath: string): WorkspaceWindow
         });
     }
 
-    const match = matchWorkspaceWindow(candidates, workspacePath, { isWorktreePath, resolveProjectPath });
+    // resolveProjectPathCandidates lets the match see through a symlinked or
+    // case-variant spelling, so a window opened as `~/dev/x` is still found when
+    // a worktree resolves the request to `~/Dev/x` (#1551).
+    const match = matchWorkspaceWindow(candidates, workspacePath, {
+        isWorktreePath,
+        resolveProjectPath,
+        resolveProjectPathCandidates,
+    });
     if (!match) return null;
 
     const window = windows.get(match.windowId);

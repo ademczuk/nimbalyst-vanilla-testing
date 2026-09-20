@@ -20,6 +20,7 @@ import {
   resetPendingPromptTracking,
   setSessionPendingPrompt,
 } from '../services/ai/pendingPromptPersistence';
+import { clearOpenPrompts } from '../services/ai/openPromptRegistry';
 import {
   clearStalePendingPromptOnTerminal,
   findSessionsWithPendingPrompt,
@@ -118,6 +119,9 @@ async function clearStalePendingPromptsAtStartup(): Promise<void> {
     );
     for (const sessionId of staleIds) {
       await setSessionPendingPrompt(sessionId, false);
+      // Drop the correlated prompt ids too, or the registry keeps claiming
+      // this session is waiting and no later resolve can ever clear the bit.
+      clearOpenPrompts(sessionId);
     }
     // Every row is now clear, so the in-memory mirror the reconcile reads starts
     // from a known-empty state.
@@ -150,6 +154,9 @@ async function reconcileStalePendingPrompts(
     });
     for (const sessionId of staleIds) {
       await setSessionPendingPrompt(sessionId, false);
+      // Drop the correlated prompt ids too, or the registry keeps claiming
+      // this session is waiting and no later resolve can ever clear the bit.
+      clearOpenPrompts(sessionId);
     }
     if (staleIds.length > 0) {
       console.log(`[SessionStateHandlers] Reconcile cleared ${staleIds.length} stale pending prompt(s)`);
@@ -193,7 +200,10 @@ export async function registerSessionStateHandlers() {
   stateManager.subscribe((event: SessionStateEvent) => {
     void clearStalePendingPromptOnTerminal(event, {
       readHasPendingPrompt: readPersistedHasPendingPrompt,
-      clearPendingPrompt: (sessionId) => setSessionPendingPrompt(sessionId, false),
+      clearPendingPrompt: (sessionId) => {
+        clearOpenPrompts(sessionId);
+        return setSessionPendingPrompt(sessionId, false);
+      },
       onError: (err) =>
         console.error('[SessionStateHandlers] Failed to clear stale pending prompt on terminal event:', err),
     });

@@ -123,8 +123,11 @@ import { historyManager } from '../../HistoryManager';
 import { addGitignoreBypass } from '../../file/WorkspaceEventBus';
 import { getSyncProvider, isDesktopTrulyAway } from '../SyncManager';
 import { requestMobilePush } from './mobilePushRequest';
-import { setSessionPendingPrompt } from './pendingPromptPersistence';
-import type { PromptKind } from '../../tray/fleetSnapshot';
+import { createAskUserQuestionListeners } from './askUserQuestionListeners';
+// The per-session pending-prompt bit is derived from the set of prompts still
+// open, so one prompt settling cannot clear the indicator for another that is
+// still waiting on the user. Refs #1549.
+import { openPrompt, resolvePrompt, hasOpenPrompts } from './openPromptRegistry';
 import { getAgentWorkflowService } from '../AgentWorkflowService';
 import { repairOrphanedSessionMetaCall } from './repairOrphanedSessionMetaCall';
 import { getMetaAgentOpenAITools } from '../../mcp/metaAgentServer';
@@ -942,25 +945,19 @@ export class MessageStreamingHandler {
     };
     this.installListener(provider, 'session:metadata-updated', onSessionMetadataUpdated);
 
-    // Helper to persist pending-prompt state to ai_sessions.metadata AND
-    // push the change to mobile in one call. See pendingPromptPersistence.ts
-    // for why we persist locally: the in-memory atom can desync from reality
-    // if a resolve event is missed (renderer reload, HMR, late delivery),
-    // and the only recovery is rehydrating from the DB on next list refresh.
+    // Pending-prompt state is now opened/resolved per prompt id through
+    // openPromptRegistry, which persists to ai_sessions.metadata and pushes to
+    // mobile via pendingPromptPersistence. We persist locally because the
+    // in-memory atom can desync from reality if a resolve event is missed
+    // (renderer reload, HMR, late delivery), and the only recovery is
+    // rehydrating from the DB on the next session list refresh. The prompt
     // `kind` colours the menu bar strip's dot: a tap versus thinking required.
-    const syncPendingPrompt = (
-      sessionId: string,
-      hasPendingPrompt: boolean,
-      kind: PromptKind = 'approval',
-    ) => {
-      void setSessionPendingPrompt(sessionId, hasPendingPrompt, kind);
-    };
 
     // Listen for ExitPlanMode confirmation requests and forward to renderer
     const onExitPlanModeConfirm = async (data: { requestId: string; sessionId: string; planSummary: string; timestamp: number }) => {
       logger.main.info('[AIService] ExitPlanMode confirmation requested:', data.requestId);
       safeSend(event, 'ai:exitPlanModeConfirm', { ...data, workspacePath: effectiveWorkspacePath });
-      syncPendingPrompt(data.sessionId, true, 'decision');
+      openPrompt(data.sessionId, data.requestId, 'decision');
 
       // Update session status so all windows show the pending indicator
       getSessionStateManager().updateActivity({
@@ -996,7 +993,8 @@ export class MessageStreamingHandler {
       timestamp: number;
     }) => {
       logger.main.info('[AIService] ExitPlanMode resolved:', data.requestId, 'approved=', data.approved);
-      syncPendingPrompt(data.sessionId, false);
+      resolvePrompt(data.sessionId, data.requestId);
+      if (hasOpenPrompts(data.sessionId)) return;
 
       getSessionStateManager().updateActivity({
         sessionId: data.sessionId,
@@ -1008,51 +1006,36 @@ export class MessageStreamingHandler {
     };
     this.installListener(provider, 'exitPlanMode:resolved', onExitPlanModeResolved);
 
-    // Listen for AskUserQuestion requests and forward to renderer
-    const onAskUserQuestion = async (data: { questionId: string; sessionId: string; questions: any[]; timestamp: number }) => {
-      // logger.main.info('[AIService] AskUserQuestion requested:', data.questionId);
-      safeSend(event, 'ai:askUserQuestion', { ...data, workspacePath: effectiveWorkspacePath });
-      syncPendingPrompt(data.sessionId, true, 'decision');
-
-      // Update session status to waiting_for_input so all windows show the pending indicator
-      getSessionStateManager().updateActivity({
-        sessionId: data.sessionId,
-        status: 'waiting_for_input',
-      }).catch((err) => {
-        logger.main.error('[AIService] Failed to update session status to waiting_for_input:', err);
-      });
-
-      // Show OS notification if app is backgrounded
-      const sessionTitle = await getCurrentSessionTitle(data.sessionId);
-      notificationService.showBlockedNotification(
-        data.sessionId,
-        sessionTitle,
-        'question',
-        effectiveWorkspacePath
-      );
-    };
-    this.installListener(provider, 'askUserQuestion:pending', onAskUserQuestion);
-
-    // Listen for AskUserQuestion answers and forward to renderer to update tool call display
-    const onAskUserQuestionAnswered = (data: { questionId: string; sessionId: string; questions: any[]; answers: Record<string, string>; timestamp: number }) => {
-      // logger.main.info('[AIService] AskUserQuestion answered:', data.questionId);
-      safeSend(event, 'ai:askUserQuestionAnswered', { ...data, workspacePath: effectiveWorkspacePath });
-      syncPendingPrompt(data.sessionId, false);
-
-      // Update session status back to running so all windows clear the pending indicator
-      getSessionStateManager().updateActivity({
-        sessionId: data.sessionId,
-        status: 'running',
-        isStreaming: true,
-      }).catch(() => {});
-    };
-    this.installListener(provider, 'askUserQuestion:answered', onAskUserQuestionAnswered);
+    // AskUserQuestion pending/answered/cancelled lifecycle. Extracted so the
+    // state transitions -- in particular the cancelled path, which must NOT
+    // resurrect a stopped session -- are testable on their own. See #1549.
+    const askUserQuestionListeners = createAskUserQuestionListeners({
+      sendToRenderer: (channel, payload) => { safeSend(event, channel, payload); },
+      openPrompt,
+      resolvePrompt,
+      hasOpenPrompts,
+      updateSessionActivity: (update) => getSessionStateManager().updateActivity(update),
+      getSessionTitle: (sessionId) => getCurrentSessionTitle(sessionId),
+      showBlockedNotification: (sessionId, sessionTitle) => {
+        void notificationService.showBlockedNotification(
+          sessionId,
+          sessionTitle,
+          'question',
+          effectiveWorkspacePath,
+        );
+      },
+      workspacePath: effectiveWorkspacePath,
+      logError: (message, err) => { logger.main.error(`[AIService] ${message}:`, err); },
+    });
+    this.installListener(provider, 'askUserQuestion:pending', askUserQuestionListeners.onPending);
+    this.installListener(provider, 'askUserQuestion:answered', askUserQuestionListeners.onAnswered);
+    this.installListener(provider, 'askUserQuestion:cancelled', askUserQuestionListeners.onCancelled);
 
     // Listen for tool permission requests and forward to renderer
     const onToolPermissionPending = async (data: { requestId: string; sessionId: string; workspacePath: string; request: any; timestamp: number }) => {
       logger.main.info('[AIService] Tool permission requested:', data.requestId);
       safeSend(event, 'ai:toolPermission', data);
-      syncPendingPrompt(data.sessionId, true);
+      openPrompt(data.sessionId, data.requestId, 'approval');
 
       // Update session status so all windows show the pending indicator
       getSessionStateManager().updateActivity({
@@ -1081,7 +1064,8 @@ export class MessageStreamingHandler {
     const onToolPermissionResolved = (data: { requestId: string; sessionId: string; response: any; timestamp: number }) => {
       logger.main.info('[AIService] Tool permission resolved:', data.requestId);
       safeSend(event, 'ai:toolPermissionResolved', { ...data, workspacePath: effectiveWorkspacePath });
-      syncPendingPrompt(data.sessionId, false);
+      resolvePrompt(data.sessionId, data.requestId);
+      if (hasOpenPrompts(data.sessionId)) return;
 
       // Update session status back to running so all windows clear the pending indicator
       getSessionStateManager().updateActivity({
