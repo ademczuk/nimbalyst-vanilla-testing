@@ -29,48 +29,30 @@ export interface MobileCreateRequestContext {
   releaseRequest(requestId: string): void;
 }
 
-/**
- * Publish a freshly created session row and report what became of it.
- *
- * A provider that returns nothing predates outcome reporting; it is taken at
- * its word, which is exactly the behavior callers had before.
- */
-async function publishSessionRow(
-  syncProvider: SyncProvider,
-  row: SessionIndexData,
-): Promise<IndexPublishOutcome> {
-  if (!syncProvider.syncSessionsToIndex) {
-    return {
-      published: false,
-      reason: 'this sync provider cannot publish to the session index',
-      retryable: false,
-      publishedSessionIds: [],
-    };
-  }
-  const outcome = await syncProvider.syncSessionsToIndex([row]);
-  return outcome ?? { published: true, publishedSessionIds: [row.id] };
+/** Publication must explicitly cover this row before the phone receives success. */
+async function publishSessionRow(syncProvider: SyncProvider, row: SessionIndexData): Promise<IndexPublishOutcome> {
+  const outcome = await syncProvider.syncSessionsToIndex?.([row]);
+  if (outcome?.published && outcome.publishedSessionIds.includes(row.id)) return outcome;
+  return {
+    published: false,
+    reason: outcome?.reason ?? 'the sync provider did not confirm publication of this session',
+    retryable: outcome?.retryable ?? false,
+    publishedSessionIds: outcome?.publishedSessionIds ?? [],
+  };
 }
 
-/**
- * Whether the phone should be told the creation succeeded.
- *
- * A retryable unpublished outcome (socket down, publish queued for reconnect)
- * is NOT a failure: the session exists locally and the queued publish is
- * re-driven on reconnect. Answering `success: false` there is terminal on the
- * phone -- iOS completes the request on the first response, so the index row
- * arriving seconds later can never finish it. `SessionCreationTracker` already
- * waits for the committed row under its own 30s timeout, which is the honest
- * place for that wait. Only an outcome that will never be republished
- * (retention exclusion, a provider that cannot publish, retry cap exhausted)
- * is reported as a failure.
- */
-function shouldReportSuccess(outcome: IndexPublishOutcome): boolean {
-  return outcome.published || outcome.retryable !== false;
+/** Avoid local side effects when the desktop already knows it cannot publish. */
+function creationUnavailable(provider: SyncProvider): string | null {
+  if (!provider.syncSessionsToIndex) return 'This desktop cannot publish sessions to sync.';
+  const gate = provider.getPersonalSyncWriteGate?.();
+  if (gate?.state === 'blocked') return 'Update Nimbalyst on this computer to resume session sync.';
+  if (gate?.state === 'unverified') return 'The desktop is checking session sync. Try again when it is ready.';
+  if (provider.isIndexReady?.() === false) return 'The desktop is disconnected from session sync. Reconnect before trying again.';
+  return null;
 }
 
-/** The message the phone shows when the row will never reach sync. */
 function unpublishedMessage(outcome: IndexPublishOutcome): string {
-  return `The desktop created the session but could not publish it to sync (${outcome.reason ?? 'reason unknown'}).`;
+  return `The desktop created the session but could not publish it to sync (${outcome.reason ?? 'reason unknown'}). Check the session list before trying again.`;
 }
 
 /** Send a response, logging rather than rejecting when the send itself fails. */
@@ -114,6 +96,11 @@ export function registerMobileCreateSessionHandler(
     if (!ctx.claimRequest(request.requestId)) return;
 
     try {
+      const unavailable = creationUnavailable(syncProvider);
+      if (unavailable) {
+        await respond({ requestId: request.requestId, success: false, error: unavailable });
+        return;
+      }
       // Find a window for this project/workspace
       const { BrowserWindow } = await import('electron');
       const windows = BrowserWindow.getAllWindows().filter(w => !w.isDestroyed());
@@ -263,7 +250,7 @@ export function registerMobileCreateSessionHandler(
           retryable: publishOutcome.retryable,
         });
       }
-      await respond(shouldReportSuccess(publishOutcome)
+      await respond(publishOutcome.published
         ? { requestId: request.requestId, success: true, sessionId: session.id }
         : {
             requestId: request.requestId,
@@ -271,6 +258,8 @@ export function registerMobileCreateSessionHandler(
             sessionId: session.id,
             error: unpublishedMessage(publishOutcome),
           });
+
+      if (!publishOutcome.published) return;
 
       // If there's an initial prompt, queue it for execution
       if (request.initialPrompt && session) {
@@ -338,6 +327,11 @@ export function registerMobileCreateWorktreeHandler(
     if (!ctx.claimRequest(request.requestId)) return;
 
     try {
+      const unavailable = creationUnavailable(syncProvider);
+      if (unavailable) {
+        await respond({ requestId: request.requestId, success: false, error: unavailable });
+        return;
+      }
       // Step 1: Create git worktree with name deduplication (same as worktree:create handler)
       const { GitWorktreeService } = await import('../GitWorktreeService');
       const { createWorktreeStore } = await import('../WorktreeStore');
@@ -431,7 +425,7 @@ export function registerMobileCreateWorktreeHandler(
           retryable: publishOutcome.retryable,
         });
       }
-      await respond(shouldReportSuccess(publishOutcome)
+      await respond(publishOutcome.published
         ? { requestId: request.requestId, success: true }
         : {
             requestId: request.requestId,

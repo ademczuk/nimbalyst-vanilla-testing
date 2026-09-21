@@ -466,6 +466,15 @@ describe('truncateContentForSync', () => {
     expect(
       shouldSyncMessageForSessionRoom('opencode', opencodeMeta('todo.updated'), '{}', true),
     ).toBe(true);
+    expect(
+      shouldSyncMessageForSessionRoom('opencode', opencodeMeta('permission.asked'), '{}', true),
+    ).toBe(true);
+    expect(
+      shouldSyncMessageForSessionRoom('opencode', opencodeMeta('permission.updated'), '{}', true),
+    ).toBe(true);
+    expect(
+      shouldSyncMessageForSessionRoom('opencode', opencodeMeta('permission.replied'), '{}', true),
+    ).toBe(true);
 
     // Tool parts render from part.updated; text snapshots there are
     // cumulative dupes of the delta stream.

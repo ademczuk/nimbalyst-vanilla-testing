@@ -8,16 +8,13 @@
  * the part a user reacts to: is it on, is it working, when did it last run.
  */
 
-import { describeSkippedSyncRows } from '@nimbalyst/runtime/sync/personalSyncWriteGate';
+import type { SessionSyncStatus } from '../../../shared/sessionSyncStatus';
+import { describePersonalSyncWriteGate, describeSkippedSyncRows } from '@nimbalyst/runtime/sync/personalSyncWriteGate';
 
-export interface SyncStatusSnapshot {
+export interface SyncStatusSnapshot extends SessionSyncStatus {
   /** Sync is configured at the app level (i.e. the user is signed in). */
   appConfigured: boolean;
   projectEnabled: boolean;
-  connected: boolean;
-  syncing: boolean;
-  error: string | null;
-  skippedRowCount?: number;
   lastSyncedAt: number | null;
 }
 
@@ -65,6 +62,14 @@ export function summarizeSyncStatus(
 
   if (status.error) {
     return { ...advisory, tone: 'error', detail: status.error, needsAttention: true };
+  }
+
+  const gate = status.personalSyncWriteGate;
+  if (gate?.state === 'blocked') {
+    return { ...advisory, tone: 'error', detail: describePersonalSyncWriteGate(gate) ?? 'Session sync is paused.', needsAttention: true };
+  }
+  if (status.connected && gate?.state === 'unverified') {
+    return { ...advisory, tone: 'idle', detail: 'Checking session sync…', needsAttention: false };
   }
 
   if (status.syncing) {

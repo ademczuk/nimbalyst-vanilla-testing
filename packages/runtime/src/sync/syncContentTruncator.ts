@@ -116,6 +116,9 @@ const OPENCODE_SYNCED_EVENT_TYPES = new Set([
   'file.edited',
   'session.error',
   'todo.updated',
+  'permission.asked',
+  'permission.updated',
+  'permission.replied',
 ]);
 
 /** OpenCode `message.part.updated` renders only tool parts; text/reasoning

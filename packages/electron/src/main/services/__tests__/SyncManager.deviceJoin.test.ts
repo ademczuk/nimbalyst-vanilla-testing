@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const h = vi.hoisted(() => ({
+  gate: { state: 'unverified', reason: null, detail: null } as import('@nimbalyst/runtime/sync').PersonalSyncWriteGateSnapshot,
+  gateChanged: undefined as undefined | ((gate: import('@nimbalyst/runtime/sync').PersonalSyncWriteGateSnapshot) => void),
   joined: undefined as undefined | ((devices: unknown[]) => void),
   settings: vi.fn(() => ({})), refresh: vi.fn(async () => {}), warn: vi.fn(),
   sentSettings: vi.fn(async (_settings: { version: number }) => {}),
@@ -17,7 +19,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@nimbalyst/runtime/sync', () => ({
   setSyncImageCompressor: vi.fn(), setSyncClientInfo: vi.fn(),
   deriveEncryptionKey: vi.fn(async () => ({})), personalSyncEncryptionSalt: vi.fn(),
-  createCollabV3Sync: (config: {getDeviceInfo: typeof h.deviceInfo}) => { h.deviceInfo = config.getDeviceInfo; return ({ onDeviceStatusChange: (cb: typeof h.joined) => { h.joined = cb; }, syncSettings: h.sentSettings }); },
+  createCollabV3Sync: (config: {getDeviceInfo: typeof h.deviceInfo}) => { h.deviceInfo = config.getDeviceInfo; return ({ getPersonalSyncWriteGate: () => h.gate, onPersonalSyncWriteGateChange: (cb: typeof h.gateChanged) => { h.gateChanged = cb; return () => {}; }, onDeviceStatusChange: (cb: typeof h.joined) => { h.joined = cb; }, syncSettings: h.sentSettings }); },
   createSyncedSessionStore: (store: unknown) => store, createMessageSyncHandler: vi.fn(),
 }));
 vi.mock('../sync/projectConfigSync', () => ({ createProjectConfigSync: () => ({ refresh: h.refresh, stop: vi.fn() }) }));
@@ -181,4 +183,21 @@ it('does not reject or send an unpersisted version when the settings store fails
   h.userData = directory;
   await restarted.initializeSync({} as never);
   expect(h.deviceInfo!().deviceId).toBe(first);
+});
+
+it('uses the same gate snapshot for initial status and live changes without clearing it at initialization', async () => {
+  const manager = await import('../SyncManager');
+  await manager.initializeSync({} as never);
+  const listener = vi.fn();
+  const off = manager.onSyncStatusChange(listener);
+  try {
+    expect(listener.mock.calls.at(-1)![0]).toMatchObject({ personalSyncWriteGate: h.gate });
+    h.gate = { state: 'blocked', reason: 'update-required', detail: 'Update required' };
+    h.gateChanged!(h.gate);
+    expect(listener.mock.calls.at(-1)![0]).toEqual(manager.getSyncStatusSnapshot());
+    expect(manager.getSyncStatusSnapshot().personalSyncWriteGate?.state).toBe('blocked');
+    h.gate = { state: 'verified', reason: null, detail: null };
+    h.gateChanged!(h.gate);
+    expect(listener.mock.calls.at(-1)![0].personalSyncWriteGate.state).toBe('verified');
+  } finally { off(); }
 });

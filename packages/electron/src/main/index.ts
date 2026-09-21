@@ -2680,6 +2680,7 @@ app.whenReady().then(async () => {
       };
       ClaudeCodeProvider.setSecurityLogger(securityLogger);
       OpenAICodexProvider.setSecurityLogger(securityLogger);
+      OpenCodeProvider.setSecurityLogger(securityLogger);
       OpenAICodexACPProvider.setSecurityLogger(securityLogger);
       GrokBuildProvider.setSecurityLogger(securityLogger);
       CursorAgentProvider.setSecurityLogger(securityLogger);
@@ -2692,6 +2693,10 @@ app.whenReady().then(async () => {
     OpenAICodexProvider.setPermissionPatternSaver(patternSaver);
     OpenAICodexProvider.setPermissionPatternChecker(patternChecker);
     OpenAICodexProvider.setTrustChecker(trustChecker);
+
+    OpenCodeProvider.setPermissionPatternSaver(patternSaver);
+    OpenCodeProvider.setPermissionPatternChecker(patternChecker);
+    OpenCodeProvider.setTrustChecker(trustChecker);
 
     OpenAICodexACPProvider.setPermissionPatternSaver(patternSaver);
     OpenAICodexACPProvider.setPermissionPatternChecker(patternChecker);

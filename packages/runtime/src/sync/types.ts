@@ -479,6 +479,9 @@ export interface SyncProvider {
    */
   isIndexReady?(): boolean;
 
+  /** Persistent transport readiness updates, including disconnects. */
+  onIndexReadyChange?(callback: (ready: boolean) => void): () => void;
+
   /**
    * A counter that increases every time the index socket becomes usable again.
    *

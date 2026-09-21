@@ -73,6 +73,7 @@ function createMockSdkModule(
   }));
 
   const mcpAddFn = vi.fn(async () => ({}));
+  const permissionReplyFn = vi.fn(async (): Promise<{ data?: unknown; error?: unknown }> => ({ data: true }));
 
   const mockClient: OpenCodeClientLike = {
     session: {
@@ -94,7 +95,8 @@ function createMockSdkModule(
     mcp: {
       add: mcpAddFn,
     },
-  };
+    postSessionIdPermissionsPermissionId: permissionReplyFn,
+  } as OpenCodeClientLike;
 
   const loadSdkModule = async () => ({
     createOpencodeClient: () => mockClient,
@@ -108,6 +110,7 @@ function createMockSdkModule(
     subscribeFn,
     summarizeFn,
     commandListFn,
+    permissionReplyFn,
   };
 }
 
@@ -136,6 +139,85 @@ describe('OpenCodeSDKProtocol', () => {
 
     const rawEvents = emitted.filter((e) => e.type === 'raw_event');
     expect(rawEvents).toHaveLength(sseEvents.length);
+  });
+
+  it('pauses for a permission.asked decision and replies before the turn completes', async () => {
+    const sseEvents: OpenCodeSSEEvent[] = [
+      {
+        type: 'permission.asked',
+        properties: {
+          id: 'permission-1', sessionID: 'oc-session-1', permission: 'external_directory',
+          patterns: ['/tmp/*'], always: ['/tmp/*'], metadata: { path: '/tmp/scratch.txt' },
+        },
+      },
+      { type: 'session.idle', properties: { sessionID: 'oc-session-1' } },
+    ];
+    const { loadSdkModule, permissionReplyFn } = createMockSdkModule(sseEvents);
+    const resolvePermission = vi.fn(async () => ({ decision: 'allow' as const, scope: 'once' as const }));
+    const protocol = new OpenCodeSDKProtocol(loadSdkModule, { resolvePermission });
+    const session = await protocol.createSession({
+      workspacePath: '/workspace',
+      raw: { permissionsPath: '/project', abortSignal: new AbortController().signal },
+    });
+    const emitted: any[] = [];
+    for await (const event of protocol.sendMessage(session, { content: 'test', sessionId: 'nim-session-1' })) emitted.push(event);
+
+    expect(resolvePermission).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'permission-1', sessionId: 'oc-session-1', permission: 'external_directory', patterns: ['/tmp/*'], always: ['/tmp/*'] }),
+      expect.objectContaining({ sessionId: 'nim-session-1', workspacePath: '/workspace', permissionsPath: '/project' }),
+    );
+    expect(permissionReplyFn).toHaveBeenCalledWith({
+      path: { id: 'oc-session-1', permissionID: 'permission-1' },
+      query: { directory: '/workspace' },
+      body: { response: 'once' },
+    });
+    expect(emitted.some((event) => event.type === 'complete')).toBe(true);
+  });
+
+  it.each([
+    [{ decision: 'deny', scope: 'once' }, 'reject'],
+    [{ decision: 'allow', scope: 'always' }, 'always'],
+    [{ decision: 'allow', scope: 'session' }, 'once'],
+  ] as const)('maps the host decision %j to native response %s', async (decision, response) => {
+    const sseEvents: OpenCodeSSEEvent[] = [
+      { type: 'permission.updated', properties: { id: 'permission-1', sessionID: 'oc-session-1', type: 'bash', pattern: ['git status'], title: 'Run git status', metadata: {} } },
+      { type: 'session.idle', properties: { sessionID: 'oc-session-1' } },
+    ];
+    const { loadSdkModule, permissionReplyFn } = createMockSdkModule(sseEvents);
+    const protocol = new OpenCodeSDKProtocol(loadSdkModule, { resolvePermission: vi.fn(async () => decision) });
+    const session = await protocol.createSession({ workspacePath: '/workspace' });
+    for await (const _event of protocol.sendMessage(session, { content: 'test' })) { /* drain */ }
+    expect(permissionReplyFn).toHaveBeenCalledWith(expect.objectContaining({ body: { response } }));
+  });
+
+  it('deduplicates repeated permission.updated frames by native permission ID', async () => {
+    const permissionEvent: OpenCodeSSEEvent = {
+      type: 'permission.updated',
+      properties: { id: 'permission-1', sessionID: 'oc-session-1', permission: 'external_directory', patterns: ['/tmp/*'], always: ['/tmp/*'], metadata: {} },
+    };
+    const { loadSdkModule, permissionReplyFn } = createMockSdkModule([
+      permissionEvent, permissionEvent, { type: 'session.idle', properties: { sessionID: 'oc-session-1' } },
+    ]);
+    const resolvePermission = vi.fn(async () => ({ decision: 'allow' as const, scope: 'once' as const }));
+    const protocol = new OpenCodeSDKProtocol(loadSdkModule, { resolvePermission });
+    const session = await protocol.createSession({ workspacePath: '/workspace' });
+    for await (const _event of protocol.sendMessage(session, { content: 'test' })) { /* drain */ }
+    expect(resolvePermission).toHaveBeenCalledTimes(1);
+    expect(permissionReplyFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces reply failures and aborts the native session instead of hanging', async () => {
+    const { loadSdkModule, mockClient, permissionReplyFn } = createMockSdkModule([
+      { type: 'permission.updated', properties: { id: 'permission-1', sessionID: 'oc-session-1', permission: 'external_directory', patterns: ['/tmp/*'], always: ['/tmp/*'], metadata: {} } },
+    ]);
+    permissionReplyFn.mockResolvedValueOnce({ error: 'connection lost' });
+    const protocol = new OpenCodeSDKProtocol(loadSdkModule, { resolvePermission: async () => ({ decision: 'allow', scope: 'once' }) });
+    const session = await protocol.createSession({ workspacePath: '/workspace' });
+    const emitted: any[] = [];
+    for await (const event of protocol.sendMessage(session, { content: 'test' })) emitted.push(event);
+    expect(mockClient.session.abort).toHaveBeenCalledWith({ path: { id: 'oc-session-1' }, query: { directory: '/workspace' } });
+    expect(emitted).toContainEqual(expect.objectContaining({ type: 'error', error: expect.stringContaining('OpenCode permission reply failed: connection lost') }));
+    expect(emitted.some((event) => event.type === 'complete')).toBe(false);
   });
 
   it('parses text part using delta', async () => {
@@ -381,6 +463,7 @@ describe('OpenCodeSDKProtocol', () => {
 
   it('filters events by session ID', async () => {
     const sseEvents: OpenCodeSSEEvent[] = [
+      { type: 'permission.updated', properties: { id: 'other-permission', sessionID: 'other-session', permission: 'external_directory', patterns: ['/tmp/*'], always: ['/tmp/*'], metadata: {} } },
       { type: 'message.part.updated', properties: { part: { type: 'text', text: 'other', sessionID: 'other-session', messageID: 'm1', id: 'p1' }, delta: 'other' } },
       { type: 'message.part.updated', properties: { part: { type: 'text', text: 'mine', sessionID: 'oc-session-1', messageID: 'm2', id: 'p2' }, delta: 'mine' } },
       { type: 'session.idle', properties: { sessionID: 'oc-session-1' } },
@@ -398,6 +481,7 @@ describe('OpenCodeSDKProtocol', () => {
     const textEvents = emitted.filter((e) => e.type === 'text');
     expect(textEvents).toHaveLength(1);
     expect(textEvents[0].content).toBe('mine');
+    expect(emitted.some((event) => event.metadata?.rawEvent?.properties?.id === 'other-permission')).toBe(false);
   });
 
   it('creates session via SDK client', async () => {

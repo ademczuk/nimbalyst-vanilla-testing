@@ -1,3 +1,4 @@
+import type { SessionSyncStatus } from '../../shared/sessionSyncStatus';
 import { directoryDeviceId } from './sync/directoryDeviceIdentity';
 import { remoteSessions } from './ai/remoteSessions';
 import Store from '../utils/privateSettingsStore';
@@ -73,15 +74,11 @@ function loadSyncModule() {
 // host derives bit-identical keys; its parameters are pinned by fixed vectors
 // in that package's tests.
 
-interface SyncManagerState {
+interface SyncManagerState extends SessionSyncStatus {
   provider: import('@nimbalyst/runtime/sync').SyncProvider | null;
   config: SessionSyncConfig | null;
   messageSyncHandler: ReturnType<typeof import('@nimbalyst/runtime/sync').createMessageSyncHandler> | null;
   encryptionKey: CryptoKey | null;
-  connected: boolean;
-  syncing: boolean;
-  error: string | null;
-  skippedRowCount?: number;
   sessionKeepAliveInterval: ReturnType<typeof setInterval> | null;
 }
 
@@ -122,16 +119,21 @@ function createEnabledProjectFilter(): (workspaceId: string) => boolean {
 }
 
 // Event emitter for sync status changes
-type SyncStatusListener = (status: { connected: boolean; syncing: boolean; error: string | null; skippedRowCount?: number }) => void;
+type SyncStatusListener = (status: SessionSyncStatus) => void;
 const statusListeners = new Set<SyncStatusListener>();
 
-/**
- * The provider's update-required block, mirrored into `state.error`.
- * Kept separately because a reconnect clears transport errors but must never
- * clear this one (GitHub #1117).
- */
-let personalSyncGateMessage: string | null = null;
 let personalSyncGateUnsubscribe: (() => void) | null = null;
+let indexReadyUnsubscribe: (() => void) | null = null;
+
+export function getSyncStatusSnapshot(): SessionSyncStatus {
+  return {
+    connected: state.provider?.isIndexReady?.() ?? state.connected,
+    syncing: state.syncing,
+    error: state.error,
+    personalSyncWriteGate: state.provider?.getPersonalSyncWriteGate?.() ?? state.personalSyncWriteGate ?? null,
+    skippedRowCount: state.provider?.getPersonalSyncWriteGate?.().skippedRowCount ?? state.skippedRowCount ?? 0,
+  };
+}
 
 /**
  * Subscribe to sync status changes.
@@ -140,41 +142,20 @@ let personalSyncGateUnsubscribe: (() => void) | null = null;
 export function onSyncStatusChange(listener: SyncStatusListener): () => void {
   statusListeners.add(listener);
   // Immediately emit current status
-  listener({ connected: state.connected, syncing: state.syncing, error: state.error, skippedRowCount: state.skippedRowCount });
+  listener(getSyncStatusSnapshot());
   return () => statusListeners.delete(listener);
 }
 
 /**
  * Update sync status and notify listeners.
  */
-function updateSyncStatus(update: Partial<{ connected: boolean; syncing: boolean; error: string | null; skippedRowCount: number }>) {
-  let changed = false;
-  if (update.skippedRowCount !== undefined && update.skippedRowCount !== state.skippedRowCount) {
-    state.skippedRowCount = update.skippedRowCount;
-    changed = true;
-  }
-  if (update.connected !== undefined && update.connected !== state.connected) {
-    state.connected = update.connected;
-    changed = true;
-  }
-  if (update.syncing !== undefined && update.syncing !== state.syncing) {
-    state.syncing = update.syncing;
-    changed = true;
-  }
-  if (update.error !== undefined && update.error !== state.error) {
-    state.error = update.error;
-    changed = true;
-  }
-
-  if (changed) {
-    const status = { connected: state.connected, syncing: state.syncing, error: state.error, skippedRowCount: state.skippedRowCount };
-    statusListeners.forEach(listener => listener(status));
-
-    // Manage sleep prevention based on connection state and user preference
-    if (update.connected !== undefined) {
-      setSyncConnected(update.connected);
-    }
-  }
+function updateSyncStatus(update: Partial<SessionSyncStatus>) {
+  const changed = (Object.keys(update) as Array<keyof SessionSyncStatus>).some(key => state[key] !== update[key]);
+  if (!changed) return;
+  Object.assign(state, update);
+  const status = getSyncStatusSnapshot();
+  statusListeners.forEach(listener => listener(status));
+  if (update.connected !== undefined) setSyncConnected(status.connected);
 }
 
 // ============================================================================
@@ -593,22 +574,14 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
     state.config = config;
     state.messageSyncHandler = messageSyncHandler;
 
-    // Surface both update requirements and non-blocking unreadable-row counts.
     personalSyncGateUnsubscribe?.();
-    personalSyncGateMessage = null;
+    indexReadyUnsubscribe?.();
+    updateSyncStatus({ personalSyncWriteGate: provider.getPersonalSyncWriteGate?.() ?? null });
     personalSyncGateUnsubscribe = provider.onPersonalSyncWriteGateChange?.((gate) => {
-      updateSyncStatus({ skippedRowCount: gate.skippedRowCount ?? 0 });
-      const message = syncModule.describePersonalSyncWriteGate(gate);
-      if (message) {
-        personalSyncGateMessage = message;
-        logger.main.warn('[SyncManager] Personal-sync writes paused on this device:', gate);
-        updateSyncStatus({ error: message });
-      } else if (personalSyncGateMessage !== null) {
-        const clearing = state.error === personalSyncGateMessage;
-        personalSyncGateMessage = null;
-        logger.main.info('[SyncManager] Personal-sync writes resumed after a complete index read');
-        if (clearing) updateSyncStatus({ error: null });
-      }
+      updateSyncStatus({ personalSyncWriteGate: gate, skippedRowCount: gate.skippedRowCount ?? 0 });
+    }) ?? null;
+    indexReadyUnsubscribe = provider.onIndexReadyChange?.((connected) => {
+      updateSyncStatus({ connected, ...(connected ? { error: null } : {}) });
     }) ?? null;
 
     // Wrap store with sync capabilities
@@ -817,7 +790,7 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
     }
 
     // Mark as connected
-    updateSyncStatus({ connected: true, syncing: false, error: null });
+    updateSyncStatus({ connected: provider.isIndexReady?.() ?? true, syncing: false });
 
     logger.main.info('[SyncManager] Session sync initialized successfully');
     return syncedStore;
@@ -938,12 +911,13 @@ export function shutdownSync(): void {
     logger.main.info('[SyncManager] Shutting down session sync...');
     personalSyncGateUnsubscribe?.();
     personalSyncGateUnsubscribe = null;
-    personalSyncGateMessage = null;
+    indexReadyUnsubscribe?.();
+    indexReadyUnsubscribe = null;
     state.provider.disconnectAll();
     state.provider = null;
     state.config = null;
     state.messageSyncHandler = null;
-    updateSyncStatus({ connected: false, syncing: false, error: null, skippedRowCount: 0 });
+    updateSyncStatus({ connected: false, syncing: false, error: null, skippedRowCount: 0, personalSyncWriteGate: null });
   }
 }
 
@@ -1363,9 +1337,8 @@ export async function attemptReconnect(): Promise<void> {
       return;
     }
 
-    // A live socket clears transport errors, never a key mismatch: the gate
-    // message stays until the index decrypts in full (GitHub #1117).
-    updateSyncStatus({ connected: true, error: personalSyncGateMessage });
+    // Readiness clears transport errors; the separate write gate remains authoritative.
+    updateSyncStatus({ connected: true, error: null });
     logger.main.info('[SyncManager] Successfully reconnected after network change');
     await projectConfigSync.refresh();
 

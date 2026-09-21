@@ -122,6 +122,7 @@ import {
   autoMatchTeamForWorkspace,
   bindWorkspaceToSharedProject,
   findTeamForWorkspace,
+  getTeamByOrgId,
   invalidateListTeamsCache,
   listTeams,
   registerTeamHandlers,
@@ -527,6 +528,28 @@ describe('listTeams TTL cache + invalidation (RC4)', () => {
     expect(apiTeamsFetchCallCount()).toBe(2);
   });
 
+  it('rejects array-only consumers on server discovery failure and recovers without caching emptiness', async () => {
+    await listTeams();
+    invalidateListTeamsCache();
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({ code: 'TEAM_DIRECTORY_UNAVAILABLE', error: 'Organizations unavailable' }) });
+    await expect(listTeams()).rejects.toThrow('Organization directory is unavailable');
+    await expect(listTeams()).resolves.toEqual([expect.objectContaining({ orgId: 'org-1' })]);
+    expect(apiTeamsFetchCallCount()).toBe(3);
+  });
+
+  it('does not flatten an unavailable directory into "org not found" for a single-org lookup', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({ code: 'TEAM_DIRECTORY_UNAVAILABLE', error: 'Organizations unavailable' }) });
+    await expect(getTeamByOrgId('org-1')).rejects.toThrow('Organization directory is unavailable');
+    await expect(getTeamByOrgId('org-1')).resolves.toEqual(expect.objectContaining({ orgId: 'org-1' }));
+    await expect(getTeamByOrgId('org-absent')).resolves.toBeNull();
+  });
+
+  it('rejects a malformed successful response instead of caching an empty directory', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) });
+    await expect(listTeams()).rejects.toThrow('Organization directory is unavailable');
+    await expect(listTeams()).resolves.toEqual([expect.objectContaining({ orgId: 'org-1' })]);
+  });
+
   it('refreshes the account personal JWT rather than retrying discovery with an active team JWT', async () => {
     vi.mocked(refreshPersonalSessionForAccount).mockResolvedValueOnce('fresh-personal-jwt' as never);
     fetchMock
@@ -588,10 +611,10 @@ describe('autoMatchTeamForWorkspace across the JWT arrival gap', () => {
     vi.useRealTimers();
   });
 
-  it('retries a lookup that could not complete, and starts tracker sync once it does', async () => {
-    fetchMock
-      .mockRejectedValueOnce(new Error('Not authenticated. Sign in first.'))
-      .mockImplementation(okTeams([{
+  it.each(['auth', 'server'])('recovers tracker startup after an incomplete %s lookup', async (failure) => {
+    if (failure === 'auth') fetchMock.mockRejectedValueOnce(new Error('Not authenticated. Sign in first.'));
+    else fetchMock.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({ error: 'Organizations unavailable' }) });
+    fetchMock.mockImplementation(okTeams([{
         orgId: 'org-1', name: 'Widgets Team', gitRemoteHash: REMOTE_HASH,
         teamProjectId: 'tp-1', createdAt: new Date().toISOString(), role: 'admin',
       }]));

@@ -1197,7 +1197,10 @@ export interface ListTeamsOptions {
 }
 
 export async function listTeams(options?: ListTeamsOptions): Promise<TeamDetails[]> {
-  return (await listTeamDirectory(options)).teams;
+  const directory = await listTeamDirectory(options);
+  // Array-only consumers cannot represent an unknown membership set.
+  if (!directory.complete) throw new Error('Organization directory is unavailable. Try again later.');
+  return directory.teams;
 }
 
 export async function listTeamDirectory(options?: ListTeamsOptions): Promise<TeamDirectory> {
@@ -1228,7 +1231,8 @@ export async function listTeamDirectory(options?: ListTeamsOptions): Promise<Tea
     const results = await Promise.allSettled(
       allAccounts.map(async (account) => {
         const data = await fetchTeamApi('/api/teams', 'GET', undefined, undefined, account.personalOrgId) as { teams: RawTeamDetails[] };
-        return (data.teams || []).map((rawTeam) => ({
+        if (!data || !Array.isArray(data.teams)) throw new Error('Invalid organization directory response');
+        return data.teams.map((rawTeam) => ({
           ...brandTeamDetails(rawTeam),
           sourcePersonalOrgId: account.personalOrgId,
           sourceEmail: account.email,
@@ -1348,16 +1352,14 @@ export async function listTeamDirectory(options?: ListTeamsOptions): Promise<Tea
 /**
  * Get a specific team's details by orgId.
  */
-async function getTeamByOrgId(orgId: string): Promise<TeamDetails | null> {
+export async function getTeamByOrgId(orgId: string): Promise<TeamDetails | null> {
   if (!isAuthenticated()) return null;
 
-  try {
-    const teams = await listTeams();
-    return teams.find(t => t.orgId === orgId) || null;
-  } catch (err) {
-    logger.main.error('[TeamService] getTeamByOrgId error:', err);
-    return null;
-  }
+  // Null means "the directory is complete and this org is not in it". An
+  // unavailable directory is not that answer, so it propagates to the IPC
+  // caller as an error instead of being flattened into "not a member".
+  const teams = await listTeams();
+  return teams.find(t => t.orgId === orgId) || null;
 }
 
 /**

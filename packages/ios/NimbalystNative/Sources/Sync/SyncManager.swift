@@ -90,7 +90,7 @@ public final class SyncManager: ObservableObject {
 
     /// The only way `syncError` is set. Every failure path goes through here so
     /// the coalescing rule cannot be bypassed by a new call site.
-    private func report(_ error: SyncError) {
+    func report(_ error: SyncError) {
         guard let published = errorCoalescer.accept(error) else { return }
         syncError = published
     }

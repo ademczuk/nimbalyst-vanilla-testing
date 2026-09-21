@@ -5,7 +5,7 @@ import { shouldSyncTrackerItem, getEffectiveTrackerSharingPolicy } from '../../s
 import { ElectronDocumentService } from '../../services/ElectronDocumentService';
 import { findLinkedDocumentForLocalPath } from '../../services/CollabLocalOriginService';
 import {
-  findTeamForWorkspace,
+  resolveTeamForWorkspace,
   getOrgScopedJwt,
   listMembersWithTeamJwt,
   type TeamDetails,
@@ -67,14 +67,20 @@ type SharingDependencies = {
   ): Promise<{ orgId: string; documentId: string } | null>;
 };
 
+async function findAvailableTeam(workspacePath: string): Promise<TeamDetails | null> {
+  const resolution = await resolveTeamForWorkspace(workspacePath);
+  if (!resolution.complete) throw new Error('Organization directory is unavailable. Try again later.');
+  return resolution.team;
+}
+
 const directoryDependencies: DirectoryDependencies = {
-  findTeam: findTeamForWorkspace,
+  findTeam: findAvailableTeam,
   getTeamJwt: getOrgScopedJwt,
   listMembers: listMembersWithTeamJwt,
 };
 
 const sharingDependencies: SharingDependencies = {
-  findTeam: findTeamForWorkspace,
+  findTeam: findAvailableTeam,
   readDocument: readSharedDocumentFromRenderer,
   readTracker: readTrackerSharing,
   findLinkedDocument: findLinkedDocumentForLocalPath,

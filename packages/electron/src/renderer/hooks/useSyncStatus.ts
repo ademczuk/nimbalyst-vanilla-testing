@@ -12,16 +12,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAtomValue } from 'jotai';
 
 import { syncStatusUpdateAtom } from '../store/atoms/syncStatus';
+import type { SessionSyncStatus } from '../../shared/sessionSyncStatus';
 import type { SyncStatusSnapshot } from '../components/Accounts/syncStatusSummary';
 
 /** Shape returned by the `sync:get-status` IPC handler. */
-interface SyncStatusResult {
+interface SyncStatusResult extends SessionSyncStatus {
   appConfigured: boolean;
   projectEnabled: boolean;
-  connected: boolean;
-  syncing: boolean;
-  error: string | null;
-  skippedRowCount?: number;
   stats?: { sessionCount: number; lastSyncedAt: number | null };
 }
 
@@ -53,6 +50,7 @@ export function useSyncStatus(workspacePath?: string): SyncStatusSnapshot {
         syncing: result.syncing,
         error: result.error,
         skippedRowCount: result.skippedRowCount,
+        personalSyncWriteGate: result.personalSyncWriteGate,
         lastSyncedAt: result.stats?.lastSyncedAt ?? null,
       });
     } catch (error) {
@@ -74,6 +72,7 @@ export function useSyncStatus(workspacePath?: string): SyncStatusSnapshot {
       syncing: update.syncing,
       error: update.error,
       skippedRowCount: update.skippedRowCount,
+      personalSyncWriteGate: update.personalSyncWriteGate,
     }));
   }, [update]);
 

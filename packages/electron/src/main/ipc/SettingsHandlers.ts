@@ -1074,15 +1074,13 @@ export function registerSettingsHandlers() {
         const isProjectEnabled = workspacePath ? enabledProjects.includes(workspacePath) : false;
 
         // Get sync provider status from SyncManager
-        const { isSyncEnabled, getSyncProvider } = await import('../services/SyncManager');
-        const provider = getSyncProvider();
-        const syncActive = isSyncEnabled();
+        const { getSyncStatusSnapshot, isSyncEnabled } = await import('../services/SyncManager');
 
         // Get session count for this workspace using a simple, fast query
         let sessionCount = 0;
         let lastSyncedAt: number | null = null;
 
-        if (workspacePath && syncActive) {
+        if (workspacePath && isSyncEnabled()) {
             try {
                 // Get session count for status display (only called on mount, not polled)
                 const { database } = await import('../database/PGLiteDatabaseWorker');
@@ -1105,10 +1103,6 @@ export function registerSettingsHandlers() {
             }
         }
 
-        // Check connection status
-        // The provider doesn't expose a direct "isConnected" status, but we can infer from syncActive
-        const connected = syncActive && provider !== null;
-
         // Get doc sync stats from ProjectFileSyncService
         let docSyncStats = { projectCount: 0, fileCount: 0, connected: false };
         try {
@@ -1121,10 +1115,7 @@ export function registerSettingsHandlers() {
         return {
             appConfigured: true,
             projectEnabled: isProjectEnabled,
-            connected,
-            syncing: false, // We don't have real-time syncing status yet
-            error: null,
-            skippedRowCount: provider?.getPersonalSyncWriteGate?.().skippedRowCount ?? 0,
+            ...getSyncStatusSnapshot(),
             stats: {
                 sessionCount,
                 lastSyncedAt,

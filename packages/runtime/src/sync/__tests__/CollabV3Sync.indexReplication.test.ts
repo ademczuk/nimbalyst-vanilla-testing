@@ -142,6 +142,47 @@ describe('CollabV3 v2 index replication client', () => {
     vi.unstubAllGlobals();
   });
 
+  it('retains queued rows across socket open until index verification completes', async () => {
+    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    const provider = createCollabV3Sync({ serverUrl: 'wss://sync.example.test', orgId: 'org-1', personalMemberId: asPersonalMemberId('user-1'), getJwt: async () => asPersonalJwt(jwtFor('user-1')), encryptionKey: key });
+    try {
+      await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+      const row = { id: 'queued-before-open', provider: 'claude-code', title: 'Queued', workspaceId: '/workspace', messageCount: 0, updatedAt: 10000, createdAt: 10000 };
+      expect(await provider.syncSessionsToIndex!([row])).toMatchObject({ published: false, retryable: true });
+      const socket = FakeWebSocket.instances[0];
+      socket.open();
+      expect(sentOfType(socket, 'indexUpdate')).toHaveLength(0);
+      const fetch = provider.fetchIndex!();
+      const req = await pageRequest(socket, 0);
+      socket.receive(pageResponse(req.requestId, { complete: true, cursor: 0 }));
+      await fetch;
+      await vi.waitFor(() => expect(sentOfType(socket, 'indexUpdate')).toHaveLength(1));
+      expect(sentOfType(socket, 'indexUpdate')[0].session.sessionId).toBe(row.id);
+    } finally { provider.disconnectAll(); }
+  });
+
+  it('withholds a bulk row when the write gate closes during encryption', async () => {
+    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    const { provider, indexSocket } = await createConnectedProvider(key);
+    let encrypt: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      const fetch = provider.fetchIndex!();
+      const req = await pageRequest(indexSocket, 0);
+      indexSocket.receive(pageResponse(req.requestId, { complete: true, cursor: 0 }));
+      await fetch;
+      const original = crypto.subtle.encrypt.bind(crypto.subtle);
+      let release!: () => void;
+      const paused = new Promise<void>(resolve => { release = resolve; });
+      encrypt = vi.spyOn(crypto.subtle, 'encrypt').mockImplementation(async (...args) => { await paused; return original(...args); });
+      const publishing = provider.syncSessionsToIndex!([{ id: 'gate-race', title: 'Race', provider: 'claude-code', messageCount: 0, updatedAt: 10000, createdAt: 10000 }]);
+      await vi.waitFor(() => expect(encrypt).toHaveBeenCalled());
+      indexSocket.receive({ type: 'error', code: 'update_required', message: 'Update required' });
+      release();
+      expect(await publishing).toMatchObject({ published: false, publishedSessionIds: [] });
+      expect(sentOfType(indexSocket, 'indexUpdate')).toHaveLength(0);
+    } finally { encrypt?.mockRestore(); provider.disconnectAll(); }
+  });
+
   it('bootstraps across pages, then syncs deltas from the committed cursor', async () => {
     const { provider, indexSocket } = await createConnectedProvider();
 

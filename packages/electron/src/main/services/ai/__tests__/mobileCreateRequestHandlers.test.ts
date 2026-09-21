@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     create: vi.fn(async () => {}),
   },
   createSession: vi.fn(),
+  queuePrompt: vi.fn(),
   sessionRepoCreate: vi.fn(async () => {}),
 }));
 
@@ -47,6 +48,7 @@ vi.mock('../../GitWorktreeService', () => ({
   },
 }));
 vi.mock('../../WorktreeStore', () => ({ createWorktreeStore: () => mocks.worktreeStore }));
+vi.mock('../../RepositoryManager', () => ({ getQueuedPromptsStore: () => ({ create: mocks.queuePrompt }) }));
 vi.mock('../../../database/initialize', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../../file/GitRefWatcher', () => ({ gitRefWatcher: { start: async () => {} } }));
 
@@ -74,6 +76,8 @@ function fakeProvider(syncSessionsToIndex: unknown) {
     sendCreateSessionResponse: vi.fn(async (_response: { success: boolean; error?: string; sessionId?: string }) => {}),
     sendCreateWorktreeResponse: vi.fn(async (_response: { success: boolean; error?: string }) => {}),
     syncSessionsToIndex,
+    getPersonalSyncWriteGate: vi.fn(() => ({ state: 'verified', reason: null, detail: null })),
+    isIndexReady: () => true,
   };
   return { provider, captured };
 }
@@ -122,24 +126,33 @@ describe('mobile create-session request handling', () => {
     });
   });
 
-  /**
-   * A queued publish is re-driven on reconnect, so the session really is coming.
-   * iOS finishes the request on the FIRST response: answering false here is
-   * terminal and the index row arriving later can never complete it.
-   */
-  it('acks a retryable unpublished row as success so the phone keeps waiting', async () => {
-    const { provider, captured } = fakeProvider(async () => ({
-      published: false,
-      reason: 'index transport not connected; publish queued until reconnect',
-      retryable: true,
-      publishedSessionIds: [],
-    }));
+  it.each(['personal-sync writes withheld', 'index transport not connected; publish queued until reconnect'])('reports unpublished creation without running its prompt: %s', async reason => {
+    const { provider, captured } = fakeProvider(async () => ({ published: false, reason, retryable: true, publishedSessionIds: [] }));
     registerMobileCreateSessionHandler(provider as never, requestContext());
+    await captured.session!({ requestId: 'req-2', projectId: '/workspace', initialPrompt: 'Do work' });
+    expect(provider.sendCreateSessionResponse).toHaveBeenCalledWith(expect.objectContaining({ success: false, sessionId: 'session-1', error: expect.stringContaining(reason) }));
+    expect(mocks.queuePrompt).not.toHaveBeenCalled();
+  });
 
-    await captured.session!({ requestId: 'req-2', projectId: '/workspace' });
+  it.each([undefined, { published: true, publishedSessionIds: ['another-session'] }])('does not infer publication from a missing outcome or another row', async outcome => {
+    const { provider, captured } = fakeProvider(async () => outcome);
+    registerMobileCreateSessionHandler(provider as never, requestContext());
+    await captured.session!({ requestId: 'req-invalid', projectId: '/workspace' });
+    expect(provider.sendCreateSessionResponse).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
+  });
 
-    const [response] = provider.sendCreateSessionResponse.mock.calls[0];
-    expect(response).toEqual({ requestId: 'req-2', success: true, sessionId: 'session-1' });
+  it.each(['unverified', 'blocked'])('rejects a known %s gate before creating local artifacts', async state => {
+    const { provider, captured } = fakeProvider(vi.fn());
+    provider.getPersonalSyncWriteGate.mockReturnValue({ state, reason: null, detail: null });
+    registerMobileCreateSessionHandler(provider as never, requestContext());
+    registerMobileCreateWorktreeHandler(provider as never, requestContext());
+    await captured.session!({ requestId: 'preflight-session', projectId: '/workspace' });
+    await captured.worktree!({ requestId: 'preflight-worktree', projectId: '/workspace' });
+    expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(mocks.worktreeStore.create).not.toHaveBeenCalled();
+    expect(provider.syncSessionsToIndex).not.toHaveBeenCalled();
+    expect(provider.sendCreateSessionResponse).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
+    expect(provider.sendCreateWorktreeResponse).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
   });
 
   it('reports a non-retryable unpublished row as a failure carrying the reason', async () => {
@@ -181,9 +194,9 @@ describe('mobile create-worktree request handling', () => {
   it('sends no response until the index publish for the worktree session resolves', async () => {
     let releasePublish: (() => void) | undefined;
     const publishing = new Promise<void>((resolve) => { releasePublish = resolve; });
-    const syncSessionsToIndex = vi.fn(async () => {
+    const syncSessionsToIndex = vi.fn(async (rows: Array<{ id: string }>) => {
       await publishing;
-      return { published: true, publishedSessionIds: ['wt-session'] };
+      return { published: true, publishedSessionIds: [rows[0].id] };
     });
     const { provider, captured } = fakeProvider(syncSessionsToIndex);
     registerMobileCreateWorktreeHandler(provider as never, requestContext());
@@ -200,7 +213,7 @@ describe('mobile create-worktree request handling', () => {
     });
   });
 
-  it('acks a retryable unpublished worktree row as success', async () => {
+  it('reports a retryable unpublished worktree row as failure', async () => {
     const { provider, captured } = fakeProvider(async () => ({
       published: false,
       reason: 'personal-sync writes withheld',
@@ -212,7 +225,7 @@ describe('mobile create-worktree request handling', () => {
     await captured.worktree!({ requestId: 'req-5', projectId: '/workspace' });
 
     const [response] = provider.sendCreateWorktreeResponse.mock.calls[0];
-    expect(response).toEqual({ requestId: 'req-5', success: true });
+    expect(response).toMatchObject({ requestId: 'req-5', success: false, error: expect.stringContaining('withheld') });
   });
 
   it('reports a non-retryable unpublished worktree row as a failure carrying the reason', async () => {

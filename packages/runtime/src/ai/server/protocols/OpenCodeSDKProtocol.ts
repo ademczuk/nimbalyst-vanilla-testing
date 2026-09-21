@@ -29,12 +29,22 @@ import {
   ProtocolEvent,
   ToolResult,
 } from './ProtocolInterface';
+import {
+  mapPermissionDecisionToOpenCode,
+  normalizeOpenCodePermissionRequest,
+  type OpenCodePermissionHost,
+} from './openCodePermissions';
 
 /**
  * Minimal interface for the OpenCode SDK client.
  * Matches the actual @opencode-ai/sdk API surface.
  */
 export interface OpenCodeClientLike {
+  postSessionIdPermissionsPermissionId: (options: {
+    path: { id: string; permissionID: string };
+    query?: { directory?: string };
+    body: { response: 'once' | 'always' | 'reject' };
+  }) => Promise<{ data?: unknown; error?: unknown }>;
   session: {
     create: (options?: Record<string, unknown>) => Promise<{ data: { id: string; [key: string]: unknown } }>;
     list: (options?: Record<string, unknown>) => Promise<{ data: Array<{ id: string; [key: string]: unknown }> }>;
@@ -584,19 +594,26 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
    * (#574). Previously this ran on every turn.
    */
   private slashCommandCache: { key: string; commands: Promise<string[]> } | null = null;
+  private permissionHost: OpenCodePermissionHost | null;
 
   /**
    * @param loadSdkModule - Optional SDK loader for testing
    */
   constructor(
-    loadSdkModule?: () => Promise<{ createOpencodeClient: OpenCodeClientFactory }>
+    loadSdkModule?: () => Promise<{ createOpencodeClient: OpenCodeClientFactory }>,
+    permissionHost?: OpenCodePermissionHost,
   ) {
+    this.permissionHost = permissionHost ?? null;
     this.loadSdkModule = loadSdkModule || (async () => {
       const sdk = await loadOpenCodeSdkClientModule();
       return {
         createOpencodeClient: sdk.createOpencodeClient as unknown as OpenCodeClientFactory,
       };
     });
+  }
+
+  setPermissionHost(permissionHost: OpenCodePermissionHost): void {
+    this.permissionHost = permissionHost;
   }
 
   /**
@@ -846,6 +863,7 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
     let fullText = '';
     const usageByMessageId = new Map<string, OpenCodeUsageSnapshot>();
     let latestUsage: OpenCodeUsageSnapshot | undefined;
+    const handledPermissionIds = new Set<string>();
 
     try {
       const sessionOptions = session.raw?.options as SessionOptions | undefined;
@@ -901,6 +919,46 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
           type: 'raw_event',
           metadata: { rawEvent: event },
         };
+
+        if (event.type === 'permission.asked' || event.type === 'permission.updated') {
+          const permission = normalizeOpenCodePermissionRequest(event.properties ?? {});
+          if (!permission) {
+            await this.abortForPermissionFailure(client, session, 'OpenCode sent an invalid permission request.');
+            continue;
+          }
+          if (!handledPermissionIds.has(permission.id)) {
+            handledPermissionIds.add(permission.id);
+            try {
+              if (!this.permissionHost) {
+                throw new Error('OpenCode permission handling is not configured.');
+              }
+              const workspacePath = sessionOptions?.workspacePath ?? '';
+              const rawOptions = sessionOptions?.raw ?? {};
+              const signal = rawOptions.abortSignal instanceof AbortSignal
+                ? rawOptions.abortSignal
+                : new AbortController().signal;
+              const decision = await this.permissionHost.resolvePermission(permission, {
+                sessionId: message.sessionId ?? sessionId,
+                workspacePath,
+                permissionsPath: typeof rawOptions.permissionsPath === 'string'
+                  ? rawOptions.permissionsPath
+                  : workspacePath,
+                signal,
+              });
+              const result = await client.postSessionIdPermissionsPermissionId({
+                path: { id: sessionId, permissionID: permission.id },
+                query: { directory: workspacePath },
+                body: { response: mapPermissionDecisionToOpenCode(decision) },
+              });
+              if (result?.error) {
+                throw new Error(typeof result.error === 'string' ? result.error : JSON.stringify(result.error));
+              }
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : String(error);
+              await this.abortForPermissionFailure(client, session, `OpenCode permission reply failed: ${detail}`);
+            }
+          }
+        }
 
         // Parse and yield protocol events
         const protocolEvents = this.parseSSEEvent(event, sessionId);
@@ -987,6 +1045,22 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
         };
       }
     }
+  }
+
+  private async abortForPermissionFailure(
+    client: OpenCodeClientLike,
+    session: ProtocolSession,
+    message: string,
+  ): Promise<never> {
+    try {
+      await client.session.abort({
+        path: { id: session.id },
+        query: { directory: (session.raw?.options as SessionOptions | undefined)?.workspacePath },
+      });
+    } catch {
+      // The original permission failure is the actionable error.
+    }
+    throw new Error(message);
   }
 
   /**
@@ -1215,6 +1289,7 @@ export class OpenCodeSDKProtocol implements AgentProtocol {
       }
 
       // Permission request
+      case 'permission.asked':
       case 'permission.updated': {
         // Permission requests are handled by the provider layer
         // Pass through as raw event

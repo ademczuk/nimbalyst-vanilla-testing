@@ -18,6 +18,12 @@ import type {
   ParseContext,
   CanonicalEventDescriptor,
 } from './IRawMessageParser';
+import {
+  normalizeOpenCodePermissionReply,
+  normalizeOpenCodePermissionRequest,
+  openCodePermissionDisplayName,
+  openCodePermissionPattern,
+} from '../../protocols/openCodePermissions';
 
 interface OpenCodeSseEvent {
   type?: string;
@@ -143,10 +149,10 @@ export class OpenCodeRawParser implements IRawMessageParser {
   // Output message parsing (OpenCode SSE events)
   // ---------------------------------------------------------------------------
 
-  private parseOutputMessage(
+  private async parseOutputMessage(
     msg: RawMessage,
     context: ParseContext,
-  ): CanonicalEventDescriptor[] {
+  ): Promise<CanonicalEventDescriptor[]> {
     let sseEvent: OpenCodeSseEvent;
     try {
       sseEvent = JSON.parse(msg.content) as OpenCodeSseEvent;
@@ -182,9 +188,68 @@ export class OpenCodeRawParser implements IRawMessageParser {
         return this.parseSessionError(msg, props);
       case 'todo.updated':
         return this.parseTodoUpdated(msg, props);
+      case 'permission.asked':
+      case 'permission.updated':
+        return this.parsePermissionUpdated(msg, props, context);
+      case 'permission.replied':
+        return this.parsePermissionReplied(props);
       default:
         return [];
     }
+  }
+
+  private async parsePermissionUpdated(
+    msg: RawMessage,
+    props: Record<string, unknown>,
+    context: ParseContext,
+  ): Promise<CanonicalEventDescriptor[]> {
+    const request = normalizeOpenCodePermissionRequest(props);
+    if (!request) return [];
+    if (context.hasToolCall(request.id)) return [];
+    if (await context.findByProviderToolCallId(request.id)) return [];
+
+    const displayName = openCodePermissionDisplayName(request);
+    return [{
+      type: 'tool_call_started',
+      toolName: 'ToolPermission',
+      toolDisplayName: 'ToolPermission',
+      providerToolCallId: request.id,
+      arguments: {
+        requestId: request.id,
+        toolName: request.permission,
+        rawCommand: displayName,
+        pattern: openCodePermissionPattern(request),
+        patternDisplayName: displayName,
+        isDestructive: false,
+        warnings: [],
+        suppressAlwaysAllowRule: request.always.length === 0,
+        toolInput: {
+          permission: request.permission,
+          patterns: request.patterns,
+          always: request.always,
+          metadata: request.metadata,
+          ...(request.tool ? { tool: request.tool } : {}),
+        },
+      },
+      createdAt: msg.createdAt,
+    }];
+  }
+
+  private parsePermissionReplied(
+    props: Record<string, unknown>,
+  ): CanonicalEventDescriptor[] {
+    const reply = normalizeOpenCodePermissionReply(props);
+    if (!reply) return [];
+    const response = reply.response === 'reject'
+      ? { decision: 'deny', scope: 'once' }
+      : { decision: 'allow', scope: reply.response };
+    return [{
+      type: 'tool_call_completed',
+      providerToolCallId: reply.id,
+      status: reply.response === 'reject' ? 'error' : 'completed',
+      isError: reply.response === 'reject',
+      result: JSON.stringify(response),
+    }];
   }
 
   // ---- message.updated ------------------------------------------------------

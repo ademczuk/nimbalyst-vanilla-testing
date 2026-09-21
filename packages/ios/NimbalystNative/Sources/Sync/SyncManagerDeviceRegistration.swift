@@ -12,20 +12,42 @@ extension SyncManager {
     // MARK: - Device Presence
 
     func handleDevicesList(_ data: Data) {
-        guard let msg = try? decoder.decode(DevicesListMessage.self, from: data) else { return }
+        guard let msg = decodePresence(DevicesListMessage.self, from: data, kind: "devicesList") else { return }
         connectedDevices = msg.devices
+        if syncError?.kind == .presence { clearSyncError() }
+        let hosts = msg.devices.filter { $0.type == "desktop" || $0.type == "headless" }.count
+        logger.debug("Presence roster received: devices=\(msg.devices.count), hosts=\(hosts)")
     }
 
     func handleDeviceJoined(_ data: Data) {
-        guard let msg = try? decoder.decode(DeviceJoinedMessage.self, from: data) else { return }
+        guard let msg = decodePresence(DeviceJoinedMessage.self, from: data, kind: "deviceJoined") else { return }
         if !connectedDevices.contains(where: { $0.deviceId == msg.device.deviceId }) {
             connectedDevices.append(msg.device)
         }
     }
 
     func handleDeviceLeft(_ data: Data) {
-        guard let msg = try? decoder.decode(DeviceLeftMessage.self, from: data) else { return }
+        guard let msg = decodePresence(DeviceLeftMessage.self, from: data, kind: "deviceLeft") else { return }
         connectedDevices.removeAll { $0.deviceId == msg.deviceId }
+    }
+
+    /// Never log payloads or decoding descriptions: they may contain device names.
+    private func decodePresence<T: Decodable>(_ type: T.Type, from data: Data, kind: String) -> T? {
+        do { return try decoder.decode(type, from: data) }
+        catch {
+            let path: String
+            switch error {
+            case DecodingError.keyNotFound(let key, let context):
+                path = (context.codingPath + [key]).map(\.stringValue).joined(separator: ".")
+            case DecodingError.typeMismatch(_, let context), DecodingError.valueNotFound(_, let context), DecodingError.dataCorrupted(let context):
+                path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            default: path = "unknown"
+            }
+            let boundedPath = String(path.prefix(160))
+            logger.warning("Presence decode failed: kind=\(kind, privacy: .public), path=\(boundedPath, privacy: .public)")
+            report(SyncError(kind: .presence, message: "The computer list could not be read. Waiting for a new list from sync."))
+            return nil
+        }
     }
 
     // MARK: - Push Token Registration

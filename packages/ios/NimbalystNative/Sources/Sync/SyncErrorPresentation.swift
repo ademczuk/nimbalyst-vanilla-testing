@@ -27,6 +27,8 @@ enum SyncErrorPresentation {
             return "A message could not be read"
         case .storage:
             return "Not saved on this device"
+        case .presence:
+            return "Computer list unavailable"
         case .requestTimeout:
             return "No answer from your desktop"
         }
@@ -40,6 +42,8 @@ enum SyncErrorPresentation {
             return "lock.trianglebadge.exclamationmark"
         case .storage:
             return "externaldrive.badge.exclamationmark"
+        case .presence:
+            return "desktopcomputer.trianglebadge.exclamationmark"
         case .requestTimeout:
             return "clock.badge.exclamationmark"
         }
@@ -51,7 +55,7 @@ enum SyncErrorPresentation {
             // The frame may have landed before the socket died, and the owning
             // slice re-drives on reconnect. Uncertain, not lost.
             return .caution
-        case .decrypt, .storage:
+        case .decrypt, .storage, .presence:
             // This device tried and could not. Nothing is pending.
             return .failure
         }

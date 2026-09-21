@@ -28,7 +28,20 @@ import {
   ChatAttachment,
 } from '../types';
 import { OpenCodeSDKProtocol } from '../protocols/OpenCodeSDKProtocol';
+import {
+  openCodePermissionDisplayName,
+  openCodePermissionPattern,
+  type OpenCodePermissionContext,
+  type OpenCodePermissionRequest,
+} from '../protocols/openCodePermissions';
 import type { ProtocolSession } from '../protocols/ProtocolInterface';
+import { ToolPermissionService } from '../permissions/ToolPermissionService';
+import type {
+  PermissionPatternChecker,
+  PermissionPatternSaver,
+  SecurityLogger,
+  TrustChecker,
+} from './ProviderPermissionMixin';
 import { McpConfigService } from '../services/McpConfigService';
 import { getMcpConfigService, isInternalMcpServerEnabled, areTrackerToolsEnabled, resolveTrackersWorkspacePath } from '../services/mcpServerConfig';
 import { MCPServerConfig } from '../../../types/MCPServerConfig';
@@ -42,6 +55,7 @@ import {
 
 interface OpenCodeProviderDeps {
   protocol?: OpenCodeSDKProtocol;
+  permissionService?: ToolPermissionService;
 }
 
 export class OpenCodeProvider extends BaseAgentProvider {
@@ -49,6 +63,7 @@ export class OpenCodeProvider extends BaseAgentProvider {
   private static cachedSdkSlashCommands = new Map<string, string[]>();
 
   private readonly protocol: OpenCodeSDKProtocol;
+  private readonly permissionService: ToolPermissionService | null;
   private readonly mcpConfigService: McpConfigService;
   private readonly liveProtocolSessions = new Map<string, ProtocolSession>();
   private readonly slashCommandsByWorkspace = new Map<string, string[]>();
@@ -76,8 +91,13 @@ export class OpenCodeProvider extends BaseAgentProvider {
   constructor(deps?: OpenCodeProviderDeps) {
     super();
 
+    this.permissionService = deps?.permissionService ?? this.createPermissionService();
+
     // Initialize protocol (or use injected for testing)
     this.protocol = deps?.protocol || new OpenCodeSDKProtocol();
+    this.protocol.setPermissionHost?.({
+      resolvePermission: (request, context) => this.resolveOpenCodePermission(request, context),
+    });
 
     // Initialize MCP config service from the shared registry + provider loaders.
     this.mcpConfigService = getMcpConfigService({
@@ -108,6 +128,22 @@ export class OpenCodeProvider extends BaseAgentProvider {
 
   public static setEnhancedPathLoader(loader: (() => string) | null): void {
     OpenCodeProvider.enhancedPathLoader = loader;
+  }
+
+  public static setTrustChecker(checker: TrustChecker | null): void {
+    BaseAgentProvider.setTrustChecker(checker);
+  }
+
+  public static setPermissionPatternSaver(saver: PermissionPatternSaver | null): void {
+    BaseAgentProvider.setPermissionPatternSaver(saver);
+  }
+
+  public static setPermissionPatternChecker(checker: PermissionPatternChecker | null): void {
+    BaseAgentProvider.setPermissionPatternChecker(checker);
+  }
+
+  public static setSecurityLogger(logger: SecurityLogger | null): void {
+    BaseAgentProvider.setSecurityLogger(logger);
   }
 
   getDisplayName(): string {
@@ -313,6 +349,7 @@ export class OpenCodeProvider extends BaseAgentProvider {
         raw: {
           systemPrompt,
           abortSignal: abortController.signal,
+          permissionsPath: documentContext?.permissionsPath || workspacePath,
           // Session role (an `app.agents` primary agent). Applied per prompt,
           // so changing it takes effect on the next turn of an existing
           // conversation rather than only at session creation.
@@ -511,6 +548,8 @@ export class OpenCodeProvider extends BaseAgentProvider {
    * it) was retained for the life of the process (#574).
    */
   destroy(): void {
+    this.permissionService?.rejectAllPending();
+    this.permissionService?.clearSessionCache();
     for (const session of this.liveProtocolSessions.values()) {
       try {
         this.protocol.cleanupSession(session);
@@ -520,6 +559,79 @@ export class OpenCodeProvider extends BaseAgentProvider {
     }
     this.liveProtocolSessions.clear();
     super.destroy();
+  }
+
+  abort(): void {
+    this.permissionService?.rejectAllPending();
+    for (const session of this.liveProtocolSessions.values()) {
+      this.protocol.abortSession(session);
+    }
+    super.abort();
+  }
+
+  resolveToolPermission(
+    requestId: string,
+    response: { decision: 'allow' | 'deny'; scope: 'once' | 'session' | 'always' | 'always-all' },
+    sessionId?: string,
+    respondedBy: 'desktop' | 'mobile' = 'desktop',
+  ): void {
+    this.permissionService?.resolvePermission(requestId, response);
+    if (sessionId) {
+      void this.logAgentMessageBestEffort(
+        sessionId,
+        'output',
+        this.createPermissionResultMessage(requestId, response, respondedBy),
+      );
+    }
+  }
+
+  private createPermissionService(): ToolPermissionService | null {
+    if (
+      !BaseAgentProvider.trustChecker
+      || !BaseAgentProvider.permissionPatternSaver
+      || !BaseAgentProvider.permissionPatternChecker
+    ) {
+      return null;
+    }
+    return new ToolPermissionService({
+      trustChecker: BaseAgentProvider.trustChecker,
+      patternSaver: BaseAgentProvider.permissionPatternSaver,
+      patternChecker: BaseAgentProvider.permissionPatternChecker,
+      securityLogger: BaseAgentProvider.securityLogger ?? undefined,
+      emit: this.emit.bind(this),
+    });
+  }
+
+  private async resolveOpenCodePermission(
+    request: OpenCodePermissionRequest,
+    context: OpenCodePermissionContext,
+  ) {
+    if (!this.permissionService) {
+      throw new Error('OpenCode permission handling dependencies are not configured.');
+    }
+    const pattern = openCodePermissionPattern(request);
+    const displayName = openCodePermissionDisplayName(request);
+    return this.permissionService.requestToolPermission({
+      requestId: request.id,
+      sessionId: context.sessionId,
+      workspacePath: context.workspacePath,
+      permissionsPath: context.permissionsPath,
+      toolName: request.permission,
+      toolInput: {
+        permission: request.permission,
+        patterns: request.patterns,
+        always: request.always,
+        metadata: request.metadata,
+        ...(request.tool ? { tool: request.tool } : {}),
+      },
+      pattern,
+      patternDisplayName: displayName,
+      toolDescription: displayName,
+      isDestructive: false,
+      warnings: [],
+      signal: context.signal,
+      suppressAlwaysAllowRule: request.always.length === 0,
+    });
   }
 
   // Drive the transcript transformer incrementally so that canonical events

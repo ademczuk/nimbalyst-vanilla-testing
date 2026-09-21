@@ -186,9 +186,13 @@ describe('SyncConfig.createWebSocket', () => {
       },
     });
 
+    const readiness = vi.fn();
+    const off = provider.onIndexReadyChange!(readiness);
     try {
       await vi.waitFor(() => expect(sockets).toHaveLength(1));
       sockets[0].open();
+      await provider.waitForIndexReady!();
+      expect(readiness).toHaveBeenLastCalledWith(true);
 
       const claimed = provider.getConnectionGeneration!();
       // Stable while nothing happens: a counter that drifts on its own would
@@ -198,7 +202,12 @@ describe('SyncConfig.createWebSocket', () => {
       // What the twelve-minute credential rotation does.
       await provider.reconnectIndex!();
       expect(provider.getConnectionGeneration!()).toBeGreaterThan(claimed);
+      expect(readiness.mock.calls.map(([ready]) => ready)).toEqual([true, false]);
+      sockets.at(-1)!.open();
+      await provider.waitForIndexReady!();
+      expect(readiness.mock.calls.map(([ready]) => ready)).toEqual([true, false, true]);
     } finally {
+      off();
       provider.disconnectAll();
     }
   });

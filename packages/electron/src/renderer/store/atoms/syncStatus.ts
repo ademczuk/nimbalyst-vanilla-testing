@@ -10,11 +10,7 @@
 
 import { atom } from 'jotai';
 
-export interface SyncStatusUpdate {
-  connected: boolean;
-  syncing: boolean;
-  error: string | null;
-  skippedRowCount?: number;
-}
+import type { SessionSyncStatus } from '../../../shared/sessionSyncStatus';
+export type SyncStatusUpdate = SessionSyncStatus;
 
 export const syncStatusUpdateAtom = atom<SyncStatusUpdate | null>(null);

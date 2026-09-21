@@ -18,6 +18,11 @@ function snapshot(overrides: Partial<SyncStatusSnapshot> = {}): SyncStatusSnapsh
 }
 
 describe('summarizeSyncStatus', () => {
+  it('does not report healthy sync while the connected transport has a closed write gate', () => {
+    expect(summarizeSyncStatus(snapshot({ personalSyncWriteGate: { state: 'unverified', reason: null, detail: null } }), NOW)).toMatchObject({ tone: 'idle', detail: 'Checking session sync…' });
+    expect(summarizeSyncStatus(snapshot({ personalSyncWriteGate: { state: 'blocked', reason: 'update-required', detail: 'Old client' } }), NOW)).toMatchObject({ tone: 'error', needsAttention: true });
+  });
+
   it('has nothing to say when the user is not signed in', () => {
     expect(summarizeSyncStatus(snapshot({ appConfigured: false }), NOW)).toBeNull();
   });

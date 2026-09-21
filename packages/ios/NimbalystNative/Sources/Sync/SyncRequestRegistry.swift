@@ -17,6 +17,8 @@ public struct SyncError: Identifiable {
         case storage
         /// We sent a request and the desktop never answered.
         case requestTimeout
+        /// The received computer roster could not be decoded.
+        case presence
     }
 
     public let id: UUID
@@ -46,6 +48,8 @@ extension SyncError.Kind {
             return "Some messages could not be read with this device's key."
         case .storage:
             return "Some changes could not be saved on this device."
+        case .presence:
+            return "The computer list could not be read. Waiting for a new list from sync."
         case .requestTimeout:
             return "Your desktop has not answered. The requests may still have been applied."
         }

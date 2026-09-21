@@ -1,3 +1,4 @@
+import { createPendingIndexPublications } from './pendingIndexPublications';
 import { createSessionQueueReconciler, mergeSessionIndexMetadata, type CachedSessionIndex } from './sessionIndexMetadata';
 import { isRetainedSession, sessionActivityAt, SESSION_TRANSCRIPT_TTL_MS } from '@nimbalyst/collab-protocol';
 /**
@@ -866,6 +867,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     capturedSeq: number,
     what: string,
   ): boolean {
+    if (withholdPersonalSyncWrite(what)) return false;
     if (generation !== indexConnectionGeneration || indexWs !== socket || !indexConnected) {
       // The socket we read at build time is gone. Publishing here would record
       // a gate signature for a server connection that never saw the payload.
@@ -896,6 +898,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
    * within a few ms.
    */
   let indexReady = false;
+  const indexReadinessListeners = new Set<(ready: boolean) => void>();
   let indexReadyListeners = new Set<() => void>();
   /**
    * Persistent subscribers to "the index socket is usable again".
@@ -939,7 +942,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   const JWT_MISMATCH_LOG_INTERVAL_MS = 60_000;
 
   function clearIndexReady(): void {
+    const wasReady = indexReady;
     indexReady = false;
+    if (wasReady) indexReadinessListeners.forEach(cb => cb(false));
     if (indexStabilityTimer) {
       clearTimeout(indexStabilityTimer);
       indexStabilityTimer = null;
@@ -949,6 +954,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   function markIndexReady(): void {
     if (indexReady) return;
     indexReady = true;
+    indexReadinessListeners.forEach(cb => cb(true));
     // Snapshot listeners before calling -- resubscribe logic may add new ones.
     const listeners = Array.from(indexReadyListeners);
     indexReadyListeners.clear();
@@ -1140,9 +1146,13 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     }
   }
 
-  // Queue for operations that need to wait for index connection
-  type PendingOperation = { type: 'sessions'; data: SessionIndexData[]; options?: { syncMessages?: boolean; messageSyncRequests?: Array<{ sessionId: string; sinceTimestamp: number }>; getMessagesForSync?: (requests: Array<{ sessionId: string; sinceTimestamp: number }>) => Promise<Map<string, any[]>> } } | { type: 'projects'; data: ProjectIndexEntry[] };
-  const pendingOperations: PendingOperation[] = [];
+  const pendingPublications = createPendingIndexPublications({
+    ready: () => !!indexWs && indexConnected && personalSyncWriteGate.canWrite(),
+    sequence: id => publishSequencer.read(id),
+    publish: doSyncSessionsToIndex,
+    warn: error => console.warn('[CollabV3] Index publication retained for retry:', error),
+  });
+  personalSyncWriteGate.onChange(() => { void pendingPublications.drain(); });
 
   // Queue for partial metadata updates waiting for the session to be cached
   // Key: sessionId, Value: partial metadata to merge when session is cached
@@ -2205,26 +2215,6 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     );
   }
 
-  // Process pending operations that were queued before connection was established
-  function processPendingOperations(): void {
-    if (!indexWs || !indexConnected) return;
-
-    // console.log('[CollabV3] Processing', pendingOperations.length, 'pending operations');
-
-    // Process in order they were queued
-    while (pendingOperations.length > 0) {
-      const op = pendingOperations.shift()!;
-      if (op.type === 'sessions') {
-        // Call the sync function directly (now that we're connected)
-        // Note: async but we don't await to avoid blocking
-        doSyncSessionsToIndex(op.data, op.options).catch(err => {
-          console.error('[CollabV3] Error in doSyncSessionsToIndex:', err);
-        });
-      }
-      // Projects are auto-calculated from sessions in CollabV3, so nothing to do
-    }
-  }
-
   // Connect to index for session list updates
   async function connectToIndex(): Promise<void> {
     if (indexWs && indexConnected) {
@@ -2297,7 +2287,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       announceDevice();
 
       // Process any operations that were queued while connecting
-      processPendingOperations();
+      void pendingPublications.drain();
 
       // Set up periodic re-announcement to handle server hibernation
       // The server may hibernate and lose device state, so we re-announce every 30 seconds
@@ -3906,6 +3896,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     },
 
     disconnectAll(): void {
+      pendingPublications.clear();
       wantedSessions.clear();
       sessionConnectionsInFlight.clear();
       for (const sessionId of sessions.keys()) {
@@ -4042,11 +4033,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       if (!indexWs || !indexConnected) {
         // Queue the operation to run when connection is established
         console.log('[CollabV3] Index not connected yet, queueing sync of', syncableSessions.length, 'sessions');
-        pendingOperations.push({
-          type: 'sessions',
-          data: syncableSessions,
-          options: syncableOptions,
-        });
+        pendingPublications.enqueue(syncableSessions, syncableOptions);
         return {
           published: false,
           reason: 'index transport not connected; publish queued until reconnect',
@@ -4819,6 +4806,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
      * Returns true if the index is currently past its post-open stability window
      * and considered usable for fan-out to other sync providers.
      */
+    onIndexReadyChange(callback: (ready: boolean) => void): () => void {
+      indexReadinessListeners.add(callback);
+      return () => { indexReadinessListeners.delete(callback); };
+    },
+
     isIndexReady(): boolean {
       return indexReady;
     },

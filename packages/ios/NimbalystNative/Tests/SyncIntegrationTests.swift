@@ -20,6 +20,27 @@ final class SyncIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testPresenceFramesReachPickerAndMalformedRosterPreservesLastValidHosts() throws {
+        let sync = SyncManager(crypto: crypto, database: database, serverUrl: "https://invalid.example", userId: Self.userId, registerDeviceCallbacks: false)
+        let navigation = WorkspaceNavigationState()
+        navigation.observeHosts(source: sync, publisher: sync.$connectedDevices.eraseToAnyPublisher())
+        defer { navigation.stopObservingHosts() }
+        let desktop: [String: Any] = ["deviceId": "desktop-1", "name": "Computer", "type": "desktop", "platform": "darwin", "connectedAt": 1, "lastActiveAt": 2]
+        func receive(_ devices: [[String: Any]]) throws {
+            sync.handleIndexMessage(try JSONSerialization.data(withJSONObject: ["type": "devicesList", "devices": devices]))
+        }
+        try receive([desktop])
+        XCTAssertEqual(navigation.hosts.map(\.deviceId), ["desktop-1"])
+        var malformed = desktop
+        malformed.removeValue(forKey: "connectedAt")
+        try receive([malformed])
+        XCTAssertEqual(navigation.hosts.map(\.deviceId), ["desktop-1"])
+        XCTAssertNotNil(sync.syncError, "A received but unreadable roster must not silently look like an empty picker")
+        try receive([desktop])
+        XCTAssertNil(sync.syncError, "A valid roster clears the presence decoding failure")
+    }
+
+    @MainActor
     func testSessionCreationDoesNotSilentlySucceedWithoutAConnectedDesktop() throws {
         let sync = SyncManager(crypto: crypto, database: database, serverUrl: "https://invalid.example", userId: Self.userId, registerDeviceCallbacks: false)
         XCTAssertThrowsError(try sync.createSession(projectId: "/test/project"))

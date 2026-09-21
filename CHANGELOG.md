@@ -10,18 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Fenced code blocks in the chat panel show a copy button with confirmation.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Mobile session creation reports sync failures accurately, and sync status shows when session writes are unavailable.
 - Review with AI starts a pull request review without requiring a custom slash command (#1556).
 - Codex can ask interactive questions when tool approval is set to never (#1553).
 - Spawned sessions run correctly in projects opened through symlinks or different path casing (#1551).
 - Foreground commands no longer trigger background-task wake-ups, and genuine completions are delivered once (#1493).
 - Cancelling a question clears its waiting state without hiding other pending prompts (#1549).
 - Tracker field edits preserve untouched frontmatter comments, formatting, dates, and line endings (#1552).
+- A failed organization directory lookup is reported as unavailable and retried instead of showing an empty organization list.
 
 ### Removed
 <!-- Removed features go here -->

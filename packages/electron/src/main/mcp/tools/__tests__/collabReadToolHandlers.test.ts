@@ -8,6 +8,13 @@ import {
 } from '../collabReadToolHandlers';
 import type { TeamDetails, TeamMember } from '../../../services/TeamService';
 
+vi.mock('../../../services/TeamService', () => ({
+  findTeamForWorkspace: vi.fn(async () => null),
+  resolveTeamForWorkspace: vi.fn(async () => ({ team: null, complete: false })),
+  getOrgScopedJwt: vi.fn(),
+  listMembersWithTeamJwt: vi.fn(),
+}));
+
 const TEAM = {
   orgId: 'org-design',
   name: 'Design Team',
@@ -19,6 +26,10 @@ function member(memberId: string, name: string, email: string): TeamMember {
 }
 
 describe('collaboration read tools', () => {
+  it('reports unavailable discovery instead of telling the assistant the workspace has no organization', async () => {
+    await expect(loadOrgDirectory('/workspace/design', undefined)).rejects.toThrow('Organization directory is unavailable');
+  });
+
   it('keeps ambiguous name matches distinguishable from a missing person', () => {
     const roster = [
       member('member-karl-one', 'Karl Jones', 'karl.jones@example.test'),
