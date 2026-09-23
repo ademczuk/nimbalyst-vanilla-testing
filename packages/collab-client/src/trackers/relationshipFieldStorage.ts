@@ -14,7 +14,7 @@
  * reads see the real value and writes land where the sync re-serialization keeps
  * them. Pure over `data`; no I/O.
  */
-import type { FieldDefinition } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 import { isRelationshipField } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerRelationships';
 function nestedCustomFields(data: Record<string, unknown> | null | undefined): Record<string, unknown> | undefined {
   const cf = data?.customFields;

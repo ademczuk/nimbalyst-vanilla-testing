@@ -16,7 +16,7 @@
  * the renderer draws the surfaces, and both agree on the rules stated here.
  */
 
-import type { TrackerDataModel } from './TrackerDataModel';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 
 export {
   TRACKER_DEPENDENCY_CYCLE_MESSAGE,

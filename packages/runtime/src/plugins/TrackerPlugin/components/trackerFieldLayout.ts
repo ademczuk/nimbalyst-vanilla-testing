@@ -11,7 +11,7 @@ import { globalRegistry } from '../models';
 import type {
   FieldDefinition,
   TrackerSchemaRole,
-} from '../models/TrackerDataModel';
+} from '@nimbalyst/tracker-schema';
 import type { TrackerRecord } from '../../../core/TrackerRecord';
 
 /** Semantic roles, in the order a reader scans them. */

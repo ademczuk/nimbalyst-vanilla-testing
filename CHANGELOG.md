@@ -10,10 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
-- Fenced code blocks in the chat panel show a copy button with confirmation.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.78.4] - 2026-09-22
+
+
+### Added
+<!-- New features go here -->
+- Use Opus 5.5 in Claude Agent and Claude Code CLI while keeping older Opus versions selectable.
+- Fenced code blocks in the chat panel show a copy button with confirmation.
+- Agents can install knowledge packs that add claim, entity, question, finding, and investigation trackers, with citations pinned to the exact version of the item they cite.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+- The menu bar island loads only what it displays instead of the full app, reducing its memory use.
 
 ### Fixed
 <!-- Bug fixes go here -->
@@ -25,9 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cancelling a question clears its waiting state without hiding other pending prompts (#1549).
 - Tracker field edits preserve untouched frontmatter comments, formatting, dates, and line endings (#1552).
 - A failed organization directory lookup is reported as unavailable and retried instead of showing an empty organization list.
-
-### Removed
-<!-- Removed features go here -->
+- An agent edit to a long, list-heavy markdown file no longer freezes the editor while its inline diff is computed.
+- Memory extension re-indexing skips unchanged files and records instead of rebuilding its whole search index for each batch.
+- OpenCode sessions resume after a permission prompt instead of stalling (#1563).
 
 ## [0.78.2] - 2026-09-18
 

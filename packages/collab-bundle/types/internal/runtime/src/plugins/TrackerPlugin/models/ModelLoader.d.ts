@@ -1,7 +1,7 @@
 /**
  * Model loader for built-in and custom tracker definitions
  */
-import { type TrackerDataModel } from './TrackerDataModel';
+import { type TrackerDataModel } from '@nimbalyst/tracker-schema';
 /**
  * Raw YAML strings for every bundled builtin tracker type, in load order.
  * Keep this list in sync with the files under ./builtins.

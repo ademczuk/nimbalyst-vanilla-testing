@@ -10,7 +10,7 @@ import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { TrackerFieldPills } from '../TrackerFieldPills';
 import { dbRowToRecord, trackerItemToRecord } from '../../../../core/TrackerRecord';
-import type { FieldDefinition } from '../../models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 import type { RelationshipCandidate } from '../RelationshipFieldEditor';
 
 const collectionField: FieldDefinition = {

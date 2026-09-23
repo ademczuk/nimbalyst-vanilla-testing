@@ -34,7 +34,7 @@ import React, { useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import type { TrackerIdentity } from '@nimbalyst/runtime/core/DocumentService';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
-import type { FieldDefinition } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 import type { TrackerMutationRejection } from '@nimbalyst/collab-client/trackers';
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 import { getTypeColor } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerColumns';

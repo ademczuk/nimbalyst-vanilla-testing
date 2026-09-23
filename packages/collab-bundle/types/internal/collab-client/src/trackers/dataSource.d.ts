@@ -2,9 +2,9 @@ import type { CollabCommandResult, Unsubscribe } from '../core/index';
 import type { TrackerMutationRejectCode } from '@nimbalyst/collab-protocol';
 import type { TrackerItem } from '../../../runtime/src/core/DocumentService';
 import type { TeamMemberId } from '../../../runtime/src/auth/jwtScopes';
-import type { TrackerAccessTermination } from '../../../runtime/src/sync/trackerAccessTermination';
+import type { TrackerAccessTermination } from '@nimbalyst/tracker-engine';
 export type { TrackerItem } from '../../../runtime/src/core/DocumentService';
-export type { TrackerAccessTermination, TrackerAccessTerminationReason, } from '../../../runtime/src/sync/trackerAccessTermination';
+export type { TrackerAccessTermination, TrackerAccessTerminationReason, } from '@nimbalyst/tracker-engine';
 export type TrackerSyncStatus = 'disconnected' | 'connecting' | 'syncing' | 'connected' | 'error';
 export interface TrackerSyncState {
     workspacePath: string;
@@ -170,6 +170,68 @@ export type TrackerDataCommand = {
 } | {
     type: 'reconnect';
 };
+/**
+ * How a caller names the revision it wants (knowledge-scopes contract 4.2).
+ *
+ * `revisionId` is the UUID assigned wherever the write happened and is the only
+ * identity that exists everywhere. `serverRevision` is the room-assigned
+ * sequential number, which is what a published citation or a public bundle
+ * carries; it is absent for personal and unsynced revisions, so a lookup by it
+ * legitimately finds nothing on a host that has never synced the item.
+ */
+export type TrackerRevisionRef = {
+    revisionId: string;
+} | {
+    serverRevision: number;
+};
+/**
+ * One exact revision of one item's field bag.
+ *
+ * Mirrors the desktop store's row rather than reshaping it, so the renderer and
+ * a future web-console implementation agree on the wire shape.
+ */
+export interface TrackerItemRevisionRecord {
+    revisionId: string;
+    itemId: string;
+    /** The revision this one superseded; null for an item's first revision. */
+    parentRevisionId: string | null;
+    /** Null means "never been to the server", not "revision 0". */
+    serverRevision: number | null;
+    workspace: string;
+    /** Full field bag as of this revision, not a delta. */
+    data: Record<string, unknown>;
+    actor: {
+        id?: string;
+        name?: string;
+    } | null;
+    /**
+     * Null means the stored row alone could not decide, NOT draft: resolving it
+     * needs the tracker schema's `draftByDefault`.
+     */
+    published: boolean | null;
+    /** Non-null when this revision is the item's deletion tombstone. */
+    deletedAt: number | null;
+    recordedAt: number;
+}
+/**
+ * Thrown when a pinned revision does not exist on this host.
+ *
+ * A distinct type because the one rule this read exists to keep is that **a
+ * missing revision is an error, never the latest**. A citation that pins
+ * revision 3 and quietly renders revision 7 is worse than one that fails,
+ * because nothing in the result says the evidence moved. Callers that catch
+ * broadly must not collapse this into "no data".
+ */
+export declare class TrackerRevisionUnavailableError extends Error {
+    readonly itemId: string;
+    readonly ref: TrackerRevisionRef;
+    constructor(itemId: string, ref: TrackerRevisionRef, message?: string);
+}
+/** Thrown by a host that has no revision log at all, as distinct from one that looked and did not find it. */
+export declare class TrackerRevisionsUnsupportedError extends Error {
+    readonly host: string;
+    constructor(host: string);
+}
 export interface TrackerDataCommandResult extends CollabCommandResult {
     /** The existing host mutation result, preserved without renderer-side reshaping. */
     result?: unknown;
@@ -188,5 +250,20 @@ export interface TrackerDataSource {
     subscribe(cb: (change: TrackerDataChange) => void): Unsubscribe;
     command(command: TrackerDataCommand): Promise<TrackerDataCommandResult>;
     status(): TrackerSyncState;
+    /**
+     * Read one exact revision (knowledge-scopes contract 4.2).
+     *
+     * Deliberately a reader rather than a `TrackerDataCommand`: a command returns
+     * `{ ok: false }`, which a caller can ignore into rendering nothing, and
+     * "rendered nothing" is indistinguishable from "rendered the item as it is
+     * today". This read must either produce the pinned revision or throw
+     * `TrackerRevisionUnavailableError`.
+     *
+     * Hosts with no revision log throw `TrackerRevisionsUnsupportedError`, which
+     * is a different answer from "that revision does not exist" and must stay
+     * one: the first means the citation is unverifiable here, the second means
+     * the evidence is gone.
+     */
+    getItemRevision(itemId: string, ref: TrackerRevisionRef): Promise<TrackerItemRevisionRecord>;
     dispose(): void;
 }

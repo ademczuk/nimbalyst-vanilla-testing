@@ -4,7 +4,7 @@ import {
   buildTrackerCreatePayload,
   formatTrackerValidationErrors,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerCreatePayload';
-import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 import {
   createEmptyTrackerQuickCreateDraft,
   type TrackerQuickCreateDraft,

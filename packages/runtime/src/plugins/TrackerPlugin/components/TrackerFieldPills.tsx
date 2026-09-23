@@ -27,13 +27,14 @@ import {
 } from '@floating-ui/react';
 import { windowControlsClearance } from '../../../ui/floating/windowControlsClearance';
 import { MaterialSymbol } from '../../../ui';
-import type { FieldDefinition } from '../models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 import {
   TrackerFieldEditor,
   formatDateTimeDisplay,
   type TeamMemberOption,
 } from './TrackerFieldEditor';
 import type { RelationshipCandidate } from './RelationshipFieldEditor';
+import type { CitationInspectorHost } from './CitationInspector';
 import { CollectionPickerPopover } from './CollectionPickerPopover';
 import { isCollectionRelationshipField } from '../models/trackerCollections';
 import { UserAvatar } from './UserAvatar';
@@ -61,6 +62,7 @@ const SELF_ANONYMOUS_FIELD_TYPES = new Set([
   'user',
   'relationship',
   'reference',
+  'citation',
 ]);
 
 export interface TrackerFieldPillsProps {
@@ -74,6 +76,8 @@ export interface TrackerFieldPillsProps {
   teamMembers?: TeamMemberOption[];
   /** Relationship targets, keyed by field name. */
   relationshipCandidates?: Map<string, RelationshipCandidate[]>;
+  /** Item lookup and exact-revision read for `citation` chips. */
+  citationHost?: CitationInspectorHost;
   /** Persist one field. Called with the field name and its next value. */
   onSave: (fieldName: string, value: unknown) => void | Promise<void>;
   /** Open a related tracker item (relationship chip click-through). */
@@ -107,6 +111,7 @@ export interface TrackerFieldPillProps {
   editable: boolean;
   teamMembers?: TeamMemberOption[];
   relationshipCandidates?: RelationshipCandidate[];
+  citationHost?: CitationInspectorHost;
   onOpenItem?: (itemId: string) => void;
   onCreateCollection?: (title: string, type: string) => Promise<RelationshipCandidate | null>;
   onSave: (fieldName: string, value: unknown) => void | Promise<void>;
@@ -169,6 +174,12 @@ function fieldDisplayValue(
   if (field.type === 'relationship' || field.type === 'reference') {
     return relationshipLabel(value, relationshipCandidates);
   }
+  if (field.type === 'citation') {
+    // Citations are plural by definition; the chip says how many and the
+    // inspector behind it says what they are.
+    const entries = Array.isArray(value) ? value : [value];
+    return entries.length === 1 ? '1 citation' : `${entries.length} citations`;
+  }
   if (field.type === 'date' || field.type === 'datetime') {
     return formatDateTimeDisplay(value).display;
   }
@@ -188,6 +199,7 @@ function fieldIcon(field: FieldDefinition, value: unknown): string {
   if (field.type === 'user') return 'person';
   if (field.type === 'array') return 'label';
   if (field.type === 'relationship' || field.type === 'reference') return 'link';
+  if (field.type === 'citation') return 'format_quote';
   if (field.type === 'date' || field.type === 'datetime') return 'calendar_today';
   if (field.type === 'boolean') return value ? 'check_box' : 'check_box_outline_blank';
   if (field.type === 'number') return 'numbers';
@@ -211,6 +223,7 @@ export const TrackerFieldPill: React.FC<TrackerFieldPillProps> = ({
   editable,
   teamMembers,
   relationshipCandidates,
+  citationHost,
   onOpenItem,
   onCreateCollection,
   onSave,
@@ -467,6 +480,7 @@ export const TrackerFieldPill: React.FC<TrackerFieldPillProps> = ({
                 onChange={handleChange}
                 teamMembers={members}
                 relationshipCandidates={relationshipCandidates}
+                citationHost={citationHost}
                 onOpenRelationship={onOpenItem}
                 showLabel={false}
               />
@@ -484,6 +498,7 @@ export const TrackerFieldPills: React.FC<TrackerFieldPillsProps> = ({
   editable = true,
   teamMembers,
   relationshipCandidates,
+  citationHost,
   onSave,
   onOpenItem,
   onCreateCollection,
@@ -506,6 +521,7 @@ export const TrackerFieldPills: React.FC<TrackerFieldPillsProps> = ({
           editable={editable}
           teamMembers={teamMembers}
           relationshipCandidates={relationshipCandidates?.get(field.name)}
+          citationHost={citationHost}
           onOpenItem={onOpenItem}
           onCreateCollection={onCreateCollection}
           onSave={onSave}

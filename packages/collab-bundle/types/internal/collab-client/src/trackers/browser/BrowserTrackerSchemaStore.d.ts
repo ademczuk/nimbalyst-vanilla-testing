@@ -33,9 +33,9 @@
  * resolves to `sharing: 'personal'` is refused, so the exclusion holds however
  * the type arrives.
  */
-import type { TrackerNavigationSyncHooks, TrackerSchemaSyncHooks } from '../../../../runtime/src/sync/TrackerSyncEngine';
+import type { TrackerNavigationSyncHooks, TrackerSchemaSyncHooks } from '@nimbalyst/tracker-engine';
 import { type TrackerNavigationEntry } from '../../../../runtime/src/sync/trackerNavigation';
-import { type TrackerDataModel } from '../../../../runtime/src/plugins/TrackerPlugin/models/TrackerDataModel';
+import { type TrackerDataModel } from '@nimbalyst/tracker-schema';
 export interface BrowserTrackerSchemaStoreOptions {
     /**
      * The builtin tracker types this build ships, the seed a delta resolves

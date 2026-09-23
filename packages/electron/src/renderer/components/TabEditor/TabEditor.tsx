@@ -70,6 +70,8 @@ import { resolveCustomEditorReview } from './resolveCustomEditorReview';
 import {
   decideLexicalDiffByBytes,
   decideLexicalDiffByRootNodes,
+  lexicalDiffTooLargeReason,
+  type LexicalDiffApplyResult,
 } from './lexicalDiffPresentation';
 import {
   resolveDiffAutosaveGate,
@@ -1823,7 +1825,14 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                 t: performance.now(),
               });
 
-              editorRef.current.dispatchCommand(APPLY_MARKDOWN_REPLACE_COMMAND, [{ newText: newContent }]);
+              // Lexical swallows listener throws; the synchronous outcome arrives via `onResult`.
+              let applyResult: LexicalDiffApplyResult | null = null;
+              editorRef.current.dispatchCommand(APPLY_MARKDOWN_REPLACE_COMMAND, {
+                replacements: [{ newText: newContent }],
+                onResult: (result: LexicalDiffApplyResult) => { applyResult = result; },
+              });
+              const tooLarge = lexicalDiffTooLargeReason(applyResult);
+              if (tooLarge) { presentWithoutInline(tooLarge); return; }
               fetchDiffSessionInfo(sessionId, createdAt);
 
               await new Promise((resolve) => setTimeout(resolve, 100));

@@ -8,9 +8,23 @@ import { createCommand, type LexicalCommand } from 'lexical';
 
 import type { TextReplacementInput } from './core/exports';
 
-type ApplyMarkdownReplacePayload =
+/**
+ * Synchronous outcome of one APPLY_MARKDOWN_REPLACE_COMMAND. Lexical swallows a
+ * throw from a command listener, so a caller that needs to tell "too large to
+ * diff" apart from a real failure reads it here. `errorType` is the DiffError
+ * type, e.g. `DIFF_TOO_LARGE`.
+ */
+export type ApplyMarkdownReplaceResult =
+  | { ok: true }
+  | { ok: false; errorType?: string; message: string };
+
+export type ApplyMarkdownReplacePayload =
   | TextReplacementInput[]
-  | { replacements: TextReplacementInput[]; requestId?: string };
+  | {
+      replacements: TextReplacementInput[];
+      requestId?: string;
+      onResult?: (result: ApplyMarkdownReplaceResult) => void;
+    };
 
 export const APPLY_MARKDOWN_REPLACE_COMMAND: LexicalCommand<ApplyMarkdownReplacePayload> =
   createCommand<ApplyMarkdownReplacePayload>('APPLY_MARKDOWN_REPLACE_COMMAND');

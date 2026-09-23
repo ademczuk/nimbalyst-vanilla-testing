@@ -24,11 +24,14 @@ import { fromDbBoolean } from './tracker/trackerDbValue';
 import {
   getBacklinks as getRelationshipBacklinks,
   reindexItemRelationships,
+  reindexItemRelationshipsAfterWrite,
   reindexItemsRelationships,
+  trackerRowUpdatedToIso,
   rebuildWorkspaceRelationshipIndex,
 } from './tracker/trackerRelationshipIndexStore';
 import { propagateInverseRelationships } from './tracker/inverseRelationshipWrites';
 import { applyRelationshipFieldWrites } from './tracker/relationshipFieldWrite';
+import { pinCitedRevisions } from './tracker/citationPins';
 import {
   validateRelationshipReindexPayload,
   validateTrackerItemBatchPayload,
@@ -58,7 +61,7 @@ import {
   buildFullDocumentTrackerId,
   parseFullDocumentTrackerId,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/documentHeader/frontmatterUtils';
-import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 import { database } from '../database/PGLiteDatabaseWorker';
 import { shouldExcludeDir, shouldExcludePath } from '../utils/fileFilters';
 import { isRendererUnsupportedImage, resolveImageExtension, sniffImageExtension } from '../utils/imageFormat';
@@ -2061,6 +2064,18 @@ export class ElectronDocumentService implements DocumentService {
     }
     const updated = this.rowToTrackerItem(result.rows[0]);
 
+    // Keep the edge projection with the write. Without this the index is only
+    // maintained by the renderer's reindex IPC, so an item written by MCP, the
+    // CLI or the commit linker has relationship values and no edges.
+    await reindexItemRelationshipsAfterWrite(
+      row.workspace,
+      row.id,
+      data,
+      globalRegistry.get(row.type)?.fields ?? [],
+      trackerRowUpdatedToIso(result.rows[0]?.updated),
+      database as any,
+    );
+
     const changeEvent: TrackerItemChangeEvent = {
       added: [],
       updated: [updated],
@@ -3806,10 +3821,12 @@ export function setupDocumentServiceHandlers(resolver: DocumentServiceResolver) 
       // can't be read here we simply skip inverse propagation for this update.
       let oldData: Record<string, unknown> = {};
       let oldType: string | null = null;
+      let oldWorkspace: string | null = null;
       try {
-        const oldRow = await database.query<any>(`SELECT type, data FROM tracker_items WHERE id = $1`, [payload.itemId]);
+        const oldRow = await database.query<any>(`SELECT type, data, workspace FROM tracker_items WHERE id = $1`, [payload.itemId]);
         if (oldRow.rows[0]) {
           oldType = oldRow.rows[0].type ?? null;
+          oldWorkspace = oldRow.rows[0].workspace ?? null;
           oldData = parseJsonColumn<Record<string, unknown>>(oldRow.rows[0].data) ?? {};
         }
       } catch { /* skip inverse propagation if old data is unavailable */ }
@@ -3824,6 +3841,7 @@ export function setupDocumentServiceHandlers(resolver: DocumentServiceResolver) 
         if (!relWrite.ok) {
           throw new Error(`Invalid relationship field "${relWrite.field}": ${relWrite.errors.join('; ')}`);
         }
+        if (oldWorkspace) await pinCitedRevisions(database, oldWorkspace, payload.itemId, updates, globalRegistry.get(oldType)?.fields ?? []);
       }
 
       const item = await svc.updateTrackerItem(payload.itemId, updates);

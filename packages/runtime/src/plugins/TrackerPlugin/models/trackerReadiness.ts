@@ -7,7 +7,7 @@ import {
   type Readiness,
   type ReadinessAccessors,
 } from "@nimbalyst/tracker-core";
-import { runtimeTrackerContext } from "./trackerCoreContext";
+import { runtimeTrackerContext } from "@nimbalyst/tracker-schema";
 
 export {
   DEPENDENCY_BLOCKER_KEY,

@@ -13,7 +13,7 @@ import { getFileIconName } from '@nimbalyst/runtime/ui/icons/fileIcons';
 import {
   defaultTrackerTypeColor,
   defaultTrackerTypeIcon,
-} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerTypeIdentity';
+} from '@nimbalyst/tracker-schema';
 import type {
   TeamInboxMaterializedDelivery,
   TeamInboxSnapshot,

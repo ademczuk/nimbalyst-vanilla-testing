@@ -8,20 +8,20 @@ import { trackerRecordToItem, type TrackerRecord } from '@nimbalyst/runtime/core
 import {
   IndexedDbTrackerPersistence,
   type StoredTrackerItem,
-} from '@nimbalyst/runtime/sync/trackerPersistence';
-import { projectLabelsToValues } from '@nimbalyst/runtime/sync/trackerLabels';
+} from '@nimbalyst/tracker-engine';
+import { projectLabelsToValues } from '@nimbalyst/tracker-engine';
 import {
   buildTrackerRoomId,
   type TrackerItemPayload,
-} from '@nimbalyst/runtime/sync/trackerProtocol';
+} from '@nimbalyst/tracker-engine';
 import {
   TrackerSyncEngine,
   type TrackerNavigationSyncHooks,
   type TrackerPresenceIdentity,
   type TrackerSchemaSyncHooks,
   type TrackerSyncEngineConfig,
-} from '@nimbalyst/runtime/sync/TrackerSyncEngine';
-import type { TrackerAccessTermination } from '@nimbalyst/runtime/sync/trackerAccessTermination';
+} from '@nimbalyst/tracker-engine';
+import type { TrackerAccessTermination } from '@nimbalyst/tracker-engine';
 import type {
   TrackerBatchUpdateInput,
   TrackerCreateItemInput,
@@ -33,7 +33,10 @@ import type {
   TrackerSavedViewRecord,
   TrackerSyncState,
   TrackerUpdateItemInput,
+  TrackerItemRevisionRecord,
+  TrackerRevisionRef,
 } from '../dataSource';
+import { TrackerRevisionsUnsupportedError } from '../dataSource';
 
 export interface BrowserTrackerDataSourceOptions {
   workspacePath: string;
@@ -366,6 +369,20 @@ export class BrowserTrackerDataSource implements TrackerDataSource {
 
   status(): TrackerSyncState {
     return this.syncState;
+  }
+
+  /**
+   * Not available in the browser yet, and it throws rather than approximating.
+   *
+   * The IndexedDB persistence keeps only current rows: N6 left browser-side
+   * revisions out on purpose, because the room owns `serverRevision` and the
+   * browser's half of that lands with the collab server's revision read (C2).
+   * Answering with the live item instead would silently show newer evidence
+   * under a pinned citation, which is the one failure contract 4.2 exists to
+   * prevent.
+   */
+  async getItemRevision(_itemId: string, _ref: TrackerRevisionRef): Promise<TrackerItemRevisionRecord> {
+    throw new TrackerRevisionsUnsupportedError('The web console');
   }
 
   async command(command: TrackerDataCommand): Promise<TrackerDataCommandResult> {

@@ -14,7 +14,7 @@ import {
 } from '../trackerColumns';
 import { resolveTrackerOrderingValue } from '../../models/trackerOrdering';
 import { globalRegistry } from '../../models';
-import type { TrackerDataModel } from '../../models/TrackerDataModel';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 import type { TrackerRecord } from '../../../../core/TrackerRecord';
 
 describe('trackerColumns', () => {

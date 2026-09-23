@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // -- the field just snapped back. StatusBar and the model loader are stubbed so
 // this stays a test of the change handler, not of the status chips.
 
-import type { TrackerDataModel } from '../../models/TrackerDataModel';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 
 const model: TrackerDataModel = {
   type: 'plan',

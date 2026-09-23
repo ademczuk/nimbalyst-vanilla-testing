@@ -32,8 +32,8 @@ import type {
   TrackerPersistence,
   TrackerRowSnapshot,
   LabelsMap,
-} from '@nimbalyst/runtime/sync';
-import { mergeLabelMaps, normalizeLegacyLabelValues, projectLabelsToValues } from '@nimbalyst/runtime/sync';
+} from '@nimbalyst/tracker-engine';
+import { mergeLabelMaps, normalizeLegacyLabelValues, projectLabelsToValues } from '@nimbalyst/tracker-engine';
 import type { TrackerItem } from '@nimbalyst/runtime';
 import { trackerRecordToItem, type TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { logger } from '../../utils/logger';

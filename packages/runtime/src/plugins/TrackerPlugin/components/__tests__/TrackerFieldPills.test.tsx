@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { TrackerFieldPills } from '../TrackerFieldPills';
-import type { FieldDefinition } from '../../models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 
 const statusField: FieldDefinition = {
   name: 'state',

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   team: vi.fn(), policy: vi.fn(), model: vi.fn(), find: vi.fn(), create: vi.fn(), ensure: vi.fn(), active: vi.fn(), sync: vi.fn(), ack: vi.fn(),
 }));
-vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel', () => ({ globalRegistry: { getForWorkspace: mocks.model } }));
+vi.mock('../../../../../tracker-schema/src/TrackerDataModel', () => ({ globalRegistry: { getForWorkspace: mocks.model } }));
 vi.mock('../../database/PGLiteDatabaseWorker', () => ({ database: {} }));
 vi.mock('../../window/WindowManager', () => ({ documentServices: new Map([['/work', { getTrackerItemById: mocks.find, createTrackerItem: mocks.create }]]) }));
 vi.mock('../TeamService', () => ({ resolveTeamForWorkspace: mocks.team }));

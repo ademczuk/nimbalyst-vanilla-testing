@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { resolveColumnsForType } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerColumns';
-import { globalRegistry, type TrackerDataModel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import { globalRegistry, type TrackerDataModel } from '@nimbalyst/tracker-schema';
 import { buildGridSource, ROW_ITEM_ID, ROW_ITEM_TYPE } from '../trackerGridColumns';
 
 const gridType = 'headlessGridColumnSpec';

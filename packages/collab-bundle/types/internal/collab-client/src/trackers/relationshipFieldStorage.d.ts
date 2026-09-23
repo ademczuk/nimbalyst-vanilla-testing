@@ -14,7 +14,7 @@
  * reads see the real value and writes land where the sync re-serialization keeps
  * them. Pure over `data`; no I/O.
  */
-import type { FieldDefinition } from '../../../runtime/src/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 /**
  * Read a field value tolerant of BOTH storage shapes. The nested `customFields`
  * value wins when present (it is the durable synced form and what the read model /

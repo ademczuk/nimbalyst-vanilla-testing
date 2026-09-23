@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { TrackerDataModelRegistry, type TrackerDataModel } from '../TrackerDataModel';
+import { TrackerDataModelRegistry, type TrackerDataModel } from '@nimbalyst/tracker-schema';
 import { buildTrackerCreatePayload } from '../trackerCreatePayload';
 
 /** A schema that renames every role field, which is what the old call sites broke on. */

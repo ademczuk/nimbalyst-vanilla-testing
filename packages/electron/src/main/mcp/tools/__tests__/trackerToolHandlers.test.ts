@@ -149,7 +149,7 @@ vi.mock('../../../window/WindowManager', () => ({
   documentServices: mockDocumentServices,
 }));
 
-vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel', () => ({
+vi.mock('../../../../../../tracker-schema/src/TrackerDataModel', () => ({
   globalRegistry: mockGlobalRegistry,
   getRoleField: (model: any, role: string) => model?.roles?.[role],
 }));
@@ -205,7 +205,7 @@ import {
   resolveTrackerPromotionEligibility,
   TRACKER_LOCAL_ISSUE_KEY_MESSAGE,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerLifecycle';
-import { READINESS_FILTER_FIELD } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+import { READINESS_FILTER_FIELD } from '@nimbalyst/tracker-schema';
 
 describe('work radar activity', () => {
   beforeEach(() => {
@@ -1455,6 +1455,17 @@ describe('tracker schema tools', () => {
         idFormat: 'ulid',
         fields: [{ name: 'severity', type: 'select' }],
       },
+      // Waiting on `claim`, which this workspace never installed: not offered.
+      {
+        type: 'citation',
+        displayName: 'Citation',
+        displayNamePlural: 'Citations',
+        modes: { inline: true, fullDocument: false },
+        idPrefix: 'cit',
+        idFormat: 'ulid',
+        fields: [],
+        hiddenUntilType: 'claim',
+      },
     ]);
 
     const result = await handleTrackerListTypes({});
@@ -2447,6 +2458,9 @@ describe('handleTrackerUpdate description / collab body', () => {
       .mockResolvedValueOnce({ rows: [trackerRow] }) // notifyTrackerItemUpdated read
       .mockResolvedValueOnce({ rows: [trackerRow] }) // refreshedRow read for sync block
       .mockResolvedValueOnce({ rows: [trackerRow] }) // postSyncRow read
+      // The edge projection this handler now writes itself: a DELETE, then no
+      // upsert, because unsetting the field leaves no targets.
+      .mockResolvedValueOnce({ rows: [] }) // DELETE tracker_relationship_index
       .mockResolvedValueOnce({ rows: [{ type_tags: ['product-feature'] }] }); // re-read type_tags
 
     const result = await handleTrackerUpdate(
@@ -2561,6 +2575,10 @@ describe('handleTrackerUpdate description / collab body', () => {
       .mockResolvedValueOnce({ rows: [trackerRow] })
       .mockResolvedValueOnce({ rows: [trackerRow] })
       .mockResolvedValueOnce({ rows: [trackerRow] })
+      // The edge projection this handler now writes itself: a DELETE, then one
+      // upsert for the single target.
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ type_tags: ['product-feature'] }] });
 
     // A bare id string is the uncanonicalized shape an agent may send.

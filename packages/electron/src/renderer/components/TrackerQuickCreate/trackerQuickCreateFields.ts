@@ -15,7 +15,7 @@ import { isCollectionRelationshipField } from '@nimbalyst/runtime/plugins/Tracke
 import type {
   FieldDefinition,
   TrackerDataModel,
-} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+} from '@nimbalyst/tracker-schema';
 
 export interface QuickCreateFieldSplit {
   /** Always visible: required fields, the role-mapped four, and `displayInline`. */

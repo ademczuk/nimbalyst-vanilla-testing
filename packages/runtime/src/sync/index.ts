@@ -268,41 +268,41 @@ export type {
   TrackerTransactionRow,
   TrackerItemRow,
   TrackerBodyCacheRow,
-} from './trackerProtocol';
+} from '@nimbalyst/tracker-engine';
 
 export {
   buildTrackerRoomId,
   stripLocalOnlyFields,
   LOCAL_ONLY_PAYLOAD_FIELDS,
   SYNC_ID_INITIAL,
-} from './trackerProtocol';
+} from '@nimbalyst/tracker-engine';
 
 export {
   decodeTrackerSavedViewEnvelopePlaintext,
-} from './trackerEnvelopeCodec';
+} from '@nimbalyst/tracker-engine';
 
 export {
   IndexedDbTrackerPersistence,
   InMemoryTrackerPersistence,
-} from './trackerPersistence';
+} from '@nimbalyst/tracker-engine';
 
 export type {
   IndexedDbTrackerSavedViewRow,
   StoredTrackerItem,
   TrackerPersistence,
   TrackerRowSnapshot,
-} from './trackerPersistence';
+} from '@nimbalyst/tracker-engine';
 
 export {
   applyLabelDiff,
   mergeLabelMaps,
   normalizeLegacyLabelValues,
   projectLabelsToValues,
-} from './trackerLabels';
+} from '@nimbalyst/tracker-engine';
 
 export type {
   LabelsMap,
-} from './trackerLabels';
+} from '@nimbalyst/tracker-engine';
 
 // `CollabLexicalProvider`, `HeadlessLexicalYDoc`, and
 // `MarkdownCollabContentAdapter` are deliberately NOT re-exported here -- they
@@ -316,7 +316,7 @@ export {
 
 export {
   TrackerSyncEngine,
-} from './TrackerSyncEngine';
+} from '@nimbalyst/tracker-engine';
 
 export type {
   TrackerSyncEngineConfig,
@@ -327,7 +327,7 @@ export type {
   RejectedTrackerMutation,
   TrackerNavigationSyncHooks,
   TrackerSchemaSyncHooks,
-} from './TrackerSyncEngine';
+} from '@nimbalyst/tracker-engine';
 
 export {
   isTrackerNavigationEntry,

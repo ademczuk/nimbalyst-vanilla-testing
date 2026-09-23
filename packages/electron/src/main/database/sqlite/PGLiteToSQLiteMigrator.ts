@@ -154,6 +154,12 @@ const COPY_TABLES: readonly string[] = [
   'tool_usage_backfill_sessions',
   'session_commits',
   'session_commit_backfill_meta',
+  // Before `tracker_items` on purpose: the revision triggers installed by
+  // schemas/0047 fire on the item copy, and copying the history first means
+  // they see it and stay quiet (their WHEN guard skips an insert that matches
+  // the item's latest recorded revision). Reversed, every item would gain a
+  // spurious cutover revision in its permanent history.
+  'tracker_item_revisions',
   'tracker_items',
   'tracker_body_cache',
   'tracker_creation_receipts',

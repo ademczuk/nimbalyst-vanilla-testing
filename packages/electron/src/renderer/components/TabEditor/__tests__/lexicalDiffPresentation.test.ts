@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   decideLexicalDiffByBytes,
   decideLexicalDiffByRootNodes,
+  lexicalDiffTooLargeReason,
   LEXICAL_DIFF_MAX_BYTES,
   LEXICAL_DIFF_MAX_ROOT_NODES,
 } from '../lexicalDiffPresentation';
@@ -54,5 +55,15 @@ describe('lexical diff presentation decision', () => {
     expect(dense.length).toBeLessThan(LEXICAL_DIFF_MAX_BYTES);
     expect(decideLexicalDiffByBytes(dense, dense).presentation).toBe('inline');
     expect(decideLexicalDiffByRootNodes(3000).presentation).toBe('no-inline-fallback');
+  });
+
+  it("treats only the matcher's DIFF_TOO_LARGE refusal as a no-inline presentation", () => {
+    // Anything else is a real failure the model must recover from; the size
+    // refusal must not be, or the same multi-second diff is replayed.
+    const message = 'Document too large to diff structurally: pair budget';
+    expect(lexicalDiffTooLargeReason({ ok: false, errorType: 'DIFF_TOO_LARGE', message })).toBe(message);
+    expect(lexicalDiffTooLargeReason({ ok: false, errorType: 'TEXT_REPLACEMENT_ERROR', message })).toBeNull();
+    expect(lexicalDiffTooLargeReason({ ok: true })).toBeNull();
+    expect(lexicalDiffTooLargeReason(null)).toBeNull();
   });
 });

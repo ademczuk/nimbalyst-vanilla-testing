@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import type { FieldDefinition } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 import {
   readStoredFieldValue,
   nestRelationshipFieldsIntoCustomFields,

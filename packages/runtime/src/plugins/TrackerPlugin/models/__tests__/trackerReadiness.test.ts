@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { TrackerRecord } from '../../../../core/TrackerRecord';
 import { getRecordStatus } from '../../trackerRecordAccessors';
 import { loadBuiltinTrackers } from '../ModelLoader';
-import { globalRegistry, type TrackerDataModel } from '../TrackerDataModel';
+import { globalRegistry, type TrackerDataModel } from '@nimbalyst/tracker-schema';
 import { computeReadiness } from '../trackerReadiness';
 
 const BLOCKS_ONLY_TYPE = 'readiness-blocks-only-test';

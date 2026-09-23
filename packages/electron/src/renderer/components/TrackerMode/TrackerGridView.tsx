@@ -28,7 +28,7 @@ import { useTrackerRows } from '@nimbalyst/runtime/plugins/TrackerPlugin/compone
 import { resolveColumnsForType, getDefaultColumnConfig, getFieldForColumn, getCellValue, getTypeColor, type TrackerColumnDef, type TypeColumnConfig } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerColumns';
 import { coerceCellValue } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerCellEditors';
 import { withEffectiveUpdated, filterTrackerRecords, getTrackerGroupLabel, sortTrackerRecords } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerRowData';
-import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 import { TrackerRowContextMenu, type TrackerLinkedSessionOption } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/TrackerRowContextMenu';
 import { isCollectionType } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerCollections';
 import {

@@ -41,7 +41,7 @@ import {
   type TrackerRoomConfig,
   type TrackerPresenceParticipant,
   type LabelsMap,
-} from '@nimbalyst/runtime/sync';
+} from '@nimbalyst/tracker-engine';
 import { asTeamJwt, asTeamMemberId, type TrackerItem } from '@nimbalyst/runtime';
 import { trackerItemToRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import WebSocket from 'ws';

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { RelationshipFieldEditor } from '../RelationshipFieldEditor';
-import type { FieldDefinition } from '../../models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 
 const field: FieldDefinition = {
   name: 'dependsOn',

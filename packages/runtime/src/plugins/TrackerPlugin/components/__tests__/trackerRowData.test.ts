@@ -12,7 +12,7 @@ import {
 } from '../../models/trackerOrdering';
 import { resolveColumnsForType } from '../trackerColumns';
 import { globalRegistry } from '../../models';
-import type { TrackerDataModel } from '../../models/TrackerDataModel';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 import {
   withEffectiveUpdated,
   searchMatchesRecord,

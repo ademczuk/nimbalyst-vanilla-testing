@@ -3,7 +3,7 @@ import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import type {
   TrackerSchemaChangeGateVerdict,
   TrackerSchemaDestructiveConfirmCopy,
-} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerSchemaChangeClassifier';
+} from '@nimbalyst/tracker-schema';
 
 /** Shape of the `tracker-schema:preview-change` result. */
 export interface TrackerSchemaChangePreview {

@@ -141,16 +141,18 @@ export class MemoryEngine {
   async indexAll(onProgress?: (p: IndexProgress) => void): Promise<{ indexed: number; files: number }> {
     this.indexing = true;
     try {
-      // Refresh the retrieval snapshot periodically during the pass so partial
-      // results are searchable within seconds on a large corpus (the full pass
-      // can take minutes), not only once indexAll() returns.
+      // Publish changed chunks during a long pass, but do not deserialize the
+      // entire catalog (including virtual records) for unchanged file batches.
+      let snapshotIndexed = 0;
       const result = await this.indexer.indexAll((p) => {
-        if (p.phase === 'index' && p.done > 0 && p.done % SNAPSHOT_REFRESH_EVERY_FILES === 0) {
+        if (p.phase === 'index' && p.done > 0 && p.done % SNAPSHOT_REFRESH_EVERY_FILES === 0 && (p.indexed ?? 0) > snapshotIndexed) {
           this.refreshSnapshot();
+          snapshotIndexed = p.indexed!;
         }
         onProgress?.(p);
       });
       this.embedderChanged = false;
+      // Always publish pruning and metadata-only changes, even with no embeds.
       this.refreshSnapshot();
       return result;
     } finally {
@@ -176,9 +178,9 @@ export class MemoryEngine {
    * the synthetic source path and the `removeRecords` key.
    */
   async ingestRecords(records: VirtualRecord[]): Promise<{ ingested: number }> {
-    const ingested = await this.indexer.indexRecords(records);
-    this.refreshSnapshot();
-    return { ingested };
+    const { embedded, changed } = await this.indexer.indexRecords(records);
+    if (changed > 0) this.refreshSnapshot();
+    return { ingested: embedded };
   }
 
   /**

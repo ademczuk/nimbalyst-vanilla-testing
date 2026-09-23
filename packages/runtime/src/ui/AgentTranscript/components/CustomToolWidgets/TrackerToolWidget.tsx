@@ -11,7 +11,7 @@
  */
 
 import React from 'react';
-import { DEFAULT_TRACKER_TYPE_COLORS } from '../../../../plugins/TrackerPlugin/models/trackerTypeIdentity';
+import { DEFAULT_TRACKER_TYPE_COLORS } from '@nimbalyst/tracker-schema';
 import type { CustomToolWidgetProps } from './index';
 
 // ---------- Types ----------

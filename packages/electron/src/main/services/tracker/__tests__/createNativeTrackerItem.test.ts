@@ -18,7 +18,7 @@ vi.mock('../../TrackerIdentityService', () => ({
   getCurrentIdentity: () => ({}),
 }));
 vi.mock(
-  '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel',
+  '@nimbalyst/tracker-schema',
   () => ({ globalRegistry: { get: () => ({ creatable: true }) } }),
 );
 vi.mock('../../TrackerPolicyService', () => ({

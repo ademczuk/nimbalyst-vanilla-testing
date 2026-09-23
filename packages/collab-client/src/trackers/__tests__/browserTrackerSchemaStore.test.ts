@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { encodeTrackerSchemaPatchPayload } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/schemaSyncPayload';
-import type { TrackerDataModel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 import { BrowserTrackerSchemaStore, resolveBrowserTrackerSchema } from '../browser/BrowserTrackerSchemaStore';
 
 const seed = {

@@ -32,6 +32,7 @@ import {
 import {
   listTrackerNavigationEntries,
   listUnsyncedTrackerNavigationEntries,
+  upsertTrackerNavigationEntry,
 } from '../tracker/trackerNavigationStore';
 import { materializeTrackerTypeDef } from '../tracker/trackerTypeDefStore';
 import type { TrackerDataModel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
@@ -41,6 +42,16 @@ const WS = '/ws/navigation-service';
 
 const typeModel = (type: string, sharing: 'personal' | 'team'): TrackerDataModel =>
   ({ type, displayName: type, fields: [], roles: {}, sharing } as unknown as TrackerDataModel);
+
+/**
+ * A folder row with NO `ownership` key, as written by an app version that
+ * predates the field. Goes through the store directly because the service
+ * resolves an absent owner to personal on write, so it cannot produce one.
+ */
+const seedLegacyFolder = (folderId: string, name: string) =>
+  upsertTrackerNavigationEntry(WS, {
+    entryId: `folder:${folderId}`, kind: 'folder', folderId, name, sortKey: 'a0',
+  } as never);
 
 describe('applyTrackerSharingChangeToNavigation', () => {
   let tmp: string;
@@ -80,6 +91,44 @@ describe('applyTrackerSharingChangeToNavigation', () => {
     // The folder itself is untouched -- no mirror folder is minted for the team.
     expect(entries.find((entry) => entry.entryId === 'folder:mine')).toMatchObject({ ownership: 'personal' });
     expect((await listUnsyncedTrackerNavigationEntries(WS)).map((entry) => entry.entryId)).toEqual(['type:bug']);
+  });
+
+  // Every other test here builds a folder with an explicit `ownership`, so the
+  // legacy shape -- no key at all, as written before the field existed -- had
+  // no coverage. `parsePayload` coerces it on read: a folder that never synced
+  // is personal, one that has a sync_id is the team's. Both halves matter, and
+  // getting either wrong silently moves a user's types out of their folder.
+  it('keeps a personal tracker inside an unsynced legacy folder, which reads as personal', async () => {
+    await materializeTrackerTypeDef(WS, typeModel('bug', 'personal'), 'yaml', dbRef.current);
+    // Seeded through the STORE, not the service: the service resolves an absent
+    // owner to personal on write, so a legacy row can only be produced the way
+    // real ones were -- by an app version that predates the field, or a remote
+    // apply.
+    await seedLegacyFolder('legacy', 'PM and Engineering');
+    await saveWorkspaceTrackerNavigationEntry(WS, {
+      entryId: 'type:bug', kind: 'type-placement', trackerType: 'bug', folderId: 'legacy', sortKey: 'a0',
+    });
+
+    await applyTrackerSharingChangeToNavigation(WS, 'bug', 'personal');
+
+    const entries = await listTrackerNavigationEntries(WS);
+    expect(entries.find((entry) => entry.entryId === 'type:bug')).toMatchObject({ folderId: 'legacy' });
+  });
+
+  it('still evicts from an unsynced legacy folder when the tracker becomes shared', async () => {
+    // The absent owner resolves to personal, so a personal -> team move is a
+    // real mismatch and must still move the type out.
+    await materializeTrackerTypeDef(WS, typeModel('bug', 'personal'), 'yaml', dbRef.current);
+    await seedLegacyFolder('legacy', 'PM and Engineering');
+    await saveWorkspaceTrackerNavigationEntry(WS, {
+      entryId: 'type:bug', kind: 'type-placement', trackerType: 'bug', folderId: 'legacy', sortKey: 'a0',
+    });
+
+    await materializeTrackerTypeDef(WS, typeModel('bug', 'team'), 'yaml', dbRef.current);
+    await applyTrackerSharingChangeToNavigation(WS, 'bug', 'team');
+
+    const entries = await listTrackerNavigationEntries(WS);
+    expect(entries.find((entry) => entry.entryId === 'type:bug')).toMatchObject({ folderId: null });
   });
 
   it('leaves a tracker in place when its folder already matches, and still queues the push', async () => {

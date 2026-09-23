@@ -7,6 +7,16 @@ export interface TrackerRelationshipValue {
     relationshipTypeKey?: string;
     direction?: "out";
     metadata?: Record<string, unknown>;
+    /**
+     * Pins the reference to one exact revision of the target (knowledge-scopes
+     * contract 4.2). A UUID; absent means the live item. Mirrored from the richer
+     * declaration in `@nimbalyst/tracker-schema`, which cannot be imported here.
+     */
+    revisionId?: string;
+    /** Room-assigned display number for `revisionId`. Advisory; never resolves. */
+    serverRevision?: number;
+    /** Qualifier values, when the owning field declares a `predicate` (4.1). */
+    qualifiers?: Record<string, unknown>;
 }
 export declare function isRelationshipField(def: Pick<TrackerFieldDefinition, "type">): boolean;
 export declare function normalizeRelationshipValue(raw: unknown): TrackerRelationshipValue[];

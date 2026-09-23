@@ -77,23 +77,25 @@ export function isMenuBarIslandSupported(): boolean {
 }
 
 function loadIslandRenderer(window: BrowserWindow): void {
+  // The island has its own lightweight entry (island.html); `mode` stays so
+  // anything reading the query still recognizes the window.
   const query: Record<string, string> = { mode: 'menu-bar-island', theme: getTheme() };
 
   if (process.env.NODE_ENV === 'development') {
     const devPort = process.env.VITE_PORT || '5273';
     const search = new URLSearchParams(query).toString();
-    void window.loadURL(`http://localhost:${devPort}/?${search}`);
+    void window.loadURL(`http://localhost:${devPort}/island.html?${search}`);
     return;
   }
 
   const appPath = app.getAppPath();
   let htmlPath: string;
   if (app.isPackaged) {
-    htmlPath = join(appPath, 'out/renderer/index.html');
+    htmlPath = join(appPath, 'out/renderer/island.html');
   } else if (appPath.includes('/out/main') || appPath.includes('\\out\\main')) {
-    htmlPath = join(appPath, '../renderer/index.html');
+    htmlPath = join(appPath, '../renderer/island.html');
   } else {
-    htmlPath = join(appPath, 'out/renderer/index.html');
+    htmlPath = join(appPath, 'out/renderer/island.html');
   }
   void window.loadFile(htmlPath, { query });
 }

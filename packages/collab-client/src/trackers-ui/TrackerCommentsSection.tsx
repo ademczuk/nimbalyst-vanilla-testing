@@ -20,7 +20,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import type { TrackerIdentity } from '@nimbalyst/runtime/core/DocumentService';
-import type { TrackerCommentEntry } from '@nimbalyst/runtime/sync/trackerProtocol';
+import type { TrackerCommentEntry } from '@nimbalyst/tracker-engine';
 import { isSameIdentity } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import type { TrackerMutationRejection } from '@nimbalyst/collab-client/trackers';
 import { formatTrackerMutationRejection } from './TrackerMutationRejectionNotice';

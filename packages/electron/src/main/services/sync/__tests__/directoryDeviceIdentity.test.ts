@@ -16,7 +16,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { directoryDeviceId } from "../directoryDeviceIdentity";
@@ -71,11 +72,9 @@ it("shares identity through symlinks and directory moves, but separates copied p
 
 it("publishes one complete identity across concurrent fresh processes", async () => {
   const dir = root();
-  const moduleUrl = new URL(
-    `file://${resolve(
-      "packages/electron/src/main/services/sync/directoryDeviceIdentity.ts"
-    )}`
-  ).href;
+  // Resolve from this file, not from cwd; see the note on the other call site.
+  const moduleUrl = new URL("../directoryDeviceIdentity.ts", import.meta.url)
+    .href;
   const code = `import {directoryDeviceId} from ${JSON.stringify(
     moduleUrl
   )}; process.stdout.write(directoryDeviceId(process.argv[1], 'account'));`;
@@ -99,7 +98,11 @@ it("preserves an existing profile across release locations, channels, hostnames,
   const profile = join(base, "profile");
   const expected = directoryDeviceId(profile, account);
   const seed = readFileSync(join(profile, "computer-identity"), "utf8");
-  const source = resolve("packages/electron/src/main/services/sync/directoryDeviceIdentity.ts");
+  // Resolve from this file, not from cwd. A cwd-relative path is only correct
+  // when the suite is launched from the repo root; under `npm test` inside
+  // packages/electron it produced packages/electron/packages/electron/... and
+  // the copy failed with ENOENT.
+  const source = fileURLToPath(new URL("../directoryDeviceIdentity.ts", import.meta.url));
   for (const [version, channel, hostname] of [
     ["0.78.1", "stable", "original-host"],
     ["0.79.0", "alpha", "renamed-host"],

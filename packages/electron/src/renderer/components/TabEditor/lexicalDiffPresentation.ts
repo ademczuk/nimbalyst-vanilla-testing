@@ -53,6 +53,24 @@ export function decideLexicalDiffByBytes(
   return INLINE;
 }
 
+/** What `APPLY_MARKDOWN_REPLACE_COMMAND` reports through its `onResult` callback. */
+export type LexicalDiffApplyResult =
+  | { ok: true }
+  | { ok: false; errorType?: string; message: string };
+
+/**
+ * The matcher's own size refusal. A long nested list or table can exhaust the
+ * pair budget even under the root-node guard; that is still a presentation
+ * outcome, not a failure. Reporting it as `failed` made the model reload from
+ * disk and replay the same multi-second diff, three times per presenter
+ * registration. Returns the log reason, or null when the apply was not refused
+ * for size.
+ */
+export function lexicalDiffTooLargeReason(result: LexicalDiffApplyResult | null): string | null {
+  if (!result || result.ok || result.errorType !== 'DIFF_TOO_LARGE') return null;
+  return result.message;
+}
+
 /** The real guard, applied after the baseline has been parsed into root nodes. */
 export function decideLexicalDiffByRootNodes(
   oldRootNodeCount: number,

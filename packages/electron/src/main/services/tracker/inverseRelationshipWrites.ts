@@ -21,7 +21,7 @@
  * link remains visible from the source side and renders as a backlink/dangler on
  * the other side. No storage model fixes shared-room A ↔ shared-room B for free.
  */
-import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 import {
   isRelationshipField,
   normalizeRelationshipValue,

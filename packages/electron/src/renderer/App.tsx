@@ -173,7 +173,6 @@ import {
 import { useProjectOrg } from './hooks/useProjectOrg';
 import { shouldLeaveOrgMode } from '../shared/orgProjectWalk';
 import { TrayPanelApp } from './components/TrayPanel/TrayPanelApp';
-import { MenuBarIslandApp } from './components/MenuBarIsland/MenuBarIslandApp';
 import { TerminalBottomPanel } from './components/TerminalBottomPanel';
 import { SessionLaunchPopup } from './components/UnifiedAI/SessionLaunchPopup';
 import { TrackerQuickCreatePopup } from './components/TrackerQuickCreate/TrackerQuickCreatePopup';
@@ -587,12 +586,6 @@ export default function App() {
   // Menu-bar sessions panel. A frameless tray-anchored window with no title.
   if (windowMode === 'tray-panel') {
     return <TrayPanelApp />;
-  }
-
-  // The menu bar island: the fleet strip drawn in the menu bar row itself,
-  // expanding into the same session rows the panel above shows.
-  if (windowMode === 'menu-bar-island') {
-    return <MenuBarIslandApp />;
   }
 
   // IMPORTANT: These are refs, not state, to prevent re-renders when the active file changes.

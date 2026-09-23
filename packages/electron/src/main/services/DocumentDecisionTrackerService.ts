@@ -1,4 +1,4 @@
-import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 import { CONSOLE_ORIGIN } from '../../shared/consoleOrigin';
 import { isLocalIssueKey } from '../../shared/localIssueKey';
 import type { DocumentDecisionTrackerInput, DocumentDecisionTrackerResult } from '../../shared/documentDecisionTracker';

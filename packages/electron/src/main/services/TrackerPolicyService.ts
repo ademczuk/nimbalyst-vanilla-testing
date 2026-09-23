@@ -3,7 +3,7 @@ import {
   type TrackerDataModel,
   type TrackerSharing,
   type TrackerSharingPolicy,
-} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+} from '@nimbalyst/tracker-schema';
 
 export type LegacyTrackerSharing = 'local' | 'shared' | 'hybrid';
 export type LegacyTrackerSyncPolicy =

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { loadBuiltinTrackers } from '../ModelLoader';
-import { globalRegistry, type TrackerDataModel } from '../TrackerDataModel';
+import { globalRegistry, type TrackerDataModel } from '@nimbalyst/tracker-schema';
 import {
   resolveStatusCategory,
   isTerminalStatus,
@@ -9,7 +9,7 @@ import {
   isCancelledStatus,
   statusValuesInCategories,
   getDoneStatusValue,
-} from '../trackerStatusCategory';
+} from '@nimbalyst/tracker-schema';
 
 beforeAll(() => {
   loadBuiltinTrackers();

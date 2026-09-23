@@ -1,0 +1,119 @@
+# Knowledge-scopes `knowledge-core` kind (master plan section 3).
+# A source is the IDENTITY of an original document, not a copy of it and not one
+# retrieval of it. Retrievals are `capture` items pointing here, so a document
+# fetched ten times over a year is one source with ten captures, and a citation
+# can say which retrieval it rests on.
+type: source
+displayName: Source
+displayNamePlural: Sources
+icon: menu_book
+color: "#0891b2"
+
+modes:
+  inline: true
+  # A source carries no argument, so it has no body worth a document view.
+  fullDocument: false
+
+sharing: personal
+draftByDefault: false
+# Not offered in type lists until the knowledge-core pack installs `claim`.
+hiddenUntilType: claim
+
+idPrefix: src
+idFormat: ulid
+
+fields:
+  - name: title
+    type: string
+    required: true
+
+  - name: status
+    type: select
+    default: active
+    options:
+      - value: active
+        label: Active
+        icon: check_circle
+        category: started
+      - value: superseded
+        label: Superseded
+        icon: history
+        category: done
+      - value: unavailable
+        label: Unavailable
+        icon: link_off
+        category: cancelled
+
+  # The canonical address of the source. A capture records the URL that actually
+  # answered, which is often not this one.
+  - name: url
+    type: url
+    displayInline: true
+
+  - name: publisher
+    type: string
+    displayInline: true
+
+  - name: sourceKind
+    type: select
+    default: web-page
+    options:
+      - value: web-page
+        label: Web page
+        icon: language
+      - value: document
+        label: Document
+        icon: description
+      - value: repository
+        label: Repository
+        icon: code
+      - value: dataset
+        label: Dataset
+        icon: dataset
+      - value: media
+        label: Audio or video
+        icon: play_circle
+      - value: conversation
+        label: Conversation
+        icon: forum
+      - value: test-result
+        label: Test result
+        icon: fact_check
+
+  # Other names the same source is known by. Alias resolution is what keeps two
+  # people citing one document from creating two sources.
+  - name: aliases
+    type: array
+    itemType: string
+    displayInline: false
+
+  - name: tags
+    type: array
+    itemType: string
+    displayInline: false
+
+  - name: created
+    type: datetime
+    displayInline: false
+    readOnly: true
+
+  - name: updated
+    type: datetime
+    displayInline: false
+    readOnly: true
+
+statusBarLayout:
+  - row:
+    - field: status
+      width: 160
+    - field: sourceKind
+      width: 160
+    - field: publisher
+      width: 220
+
+inlineTemplate: "{icon} {title}"
+
+roles:
+  title: title
+  workflowStatus: status
+  tags: tags

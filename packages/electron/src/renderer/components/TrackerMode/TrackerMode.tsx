@@ -71,7 +71,7 @@ export const TrackerMode: React.FC<TrackerModeProps> = ({
   }, []);
 
   const trackerTypes = useMemo(() => {
-    return globalRegistry.getAll();
+    return globalRegistry.getListed();
   }, [registryVersion]);
 
   const navigationEntries = useAtomValue(trackerNavigationEntriesAtom);

@@ -1,4 +1,4 @@
-import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 import type { TrackerItem } from '@nimbalyst/runtime';
 import type { ElectronDocumentService } from '../../services/ElectronDocumentService';
 import { isTrackerSyncActive, isTrackerSyncConfigured } from '../../services/TrackerSyncManager';

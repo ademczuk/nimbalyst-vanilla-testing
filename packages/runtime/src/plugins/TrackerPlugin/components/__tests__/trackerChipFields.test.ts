@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import { globalRegistry } from '../../models';
-import type { TrackerDataModel } from '../../models/TrackerDataModel';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 import {
   getTrackerChipFieldSections,
   getTrackerTagsField,

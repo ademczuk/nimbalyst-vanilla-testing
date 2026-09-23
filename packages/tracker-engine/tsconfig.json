@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "types": [],
+    "lib": ["ES2020", "DOM"],
+    "customConditions": ["node"],
+    "paths": {}
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/__tests__/**", "src/**/*.test.ts", "dist"]
+}

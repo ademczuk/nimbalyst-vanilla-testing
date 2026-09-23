@@ -9,7 +9,7 @@
 
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { getRecordStatus } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
-import { isTerminalStatus } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+import { isTerminalStatus } from '@nimbalyst/tracker-schema';
 import type { GithubIssueRow } from '../../../services/RendererGithubIssueService';
 import {
   detectGithubIssueDivergence,

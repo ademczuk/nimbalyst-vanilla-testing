@@ -27,7 +27,7 @@ import { windowControlsClearance } from '../../ui/floating/windowControlsClearan
 import {
   resolveKnownStatusCategory,
   type StatusCategory,
-} from '../TrackerPlugin/models/trackerStatusCategory';
+} from '@nimbalyst/tracker-schema';
 
 import {
   useResolvedTrackerReference,

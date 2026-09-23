@@ -63,7 +63,19 @@ export const COLLAB_BUNDLE_EAGER_GZIP_BUDGET_BYTES = {
   // (with `OutboxDrainer`, which brings js-yaml) are all eager here. The grid
   // alone is several times `docs-ui`'s remaining headroom, which is why this is
   // a separate entry rather than a line item added there.
-  'trackers-ui': 128_000,
+  //
+  // Measured at 129,651 gzip bytes on 2026-09-22, over the previous 128,000
+  // ceiling. The check did its job first: the citation field editor's
+  // `@floating-ui/react` import landed eager here (160,086 bytes) and was made
+  // lazy rather than budgeted for. What remains had to be eager. 1,978 of those
+  // bytes are the three knowledge-scopes evidence
+  // builtins (`source`, `capture`, `citation`), measured by building with and
+  // without them: builtin schemas are resolved synchronously, so a lazily
+  // loaded builtin would be a builtin that is absent on first paint. The rest
+  // is the citation locator validator, which `TrackerDataModel.validate` calls
+  // directly and which exists precisely so the browser rejects a locator the
+  // same way the desktop does. Reset with ~5% headroom.
+  'trackers-ui': 136_000,
   // Deliberately tight. This entry is a WebSocket client over the protocol
   // package and nothing else; anything that makes it jump has dragged a UI
   // graph in behind it.
@@ -442,6 +454,12 @@ function checkSingletonPeerContract() {
 }
 
 function checkPublicJwtTypeBoundary() {
+  // This checks the public editor facade's re-export path and rejects brands
+  // declared directly in that facade. The internal runtime jwtScopes declaration
+  // now re-exports from @nimbalyst/collab-protocol; types/ no longer owns the
+  // unique-symbol declarations. This check does not follow that re-export or
+  // verify that consumers resolve one canonical protocol brand identity. Passing
+  // it is not proof that the transitive JWT declarations are self-contained.
   const publicTypesPath = path.join(packageRoot, 'types/editor.d.ts');
   const publicTypes = fs.readFileSync(publicTypesPath, 'utf8');
   const bundledRuntimeBrandPath = './internal/runtime/src/auth/jwtScopes';

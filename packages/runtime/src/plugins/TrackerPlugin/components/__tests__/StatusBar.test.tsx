@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { globalRegistry } from '../../models';
-import type { TrackerDataModel } from '../../models/TrackerDataModel';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 import { StatusBar } from '../StatusBar';
 
 const model: TrackerDataModel = {

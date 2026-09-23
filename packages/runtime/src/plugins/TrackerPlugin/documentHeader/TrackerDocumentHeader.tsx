@@ -15,7 +15,7 @@ import { useTrackerChipFieldSections } from '../components/trackerChipFields';
 import { useTrackerRelationshipCandidates } from '../components/useTrackerRelationshipCandidates';
 import type { TeamMemberOption } from '../components/TrackerFieldEditor';
 import { ModelLoader } from '../models/ModelLoader';
-import type { TrackerDataModel } from '../models/TrackerDataModel';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 import type { TrackerRecord } from '../../../core/TrackerRecord';
 import { trackerItemsMapAtom } from '../trackerDataAtoms';
 import { getRecordTitle } from '../trackerRecordAccessors';

@@ -20,6 +20,7 @@ import { ClaudeCodeDeps } from './dependencyInjection';
 import { CLAUDE_TASK_TOOLS, createClaudeSystemPrompt } from './sdkCompatibility';
 import { resolveClaudeAgentCliPath } from './cliPathResolver';
 import { hasEnterpriseManagedMcpConfig } from './enterpriseMcpConfig';
+import { canDisableClaudeThinking } from '../../../modelConstants';
 import { type ThinkingMode } from '../../effortLevels';
 
 type SessionMode = 'planning' | 'agent' | 'auto' | undefined;
@@ -101,14 +102,6 @@ export interface BuildSdkOptionsResult {
   promptInput: AsyncIterable<SDKUserMessage>;
   promptController: PromptStreamController;
   helperMethod: 'native' | 'custom';
-}
-
-function canDisableThinkingForModel(model: string | undefined): boolean {
-  const normalized = model?.toLowerCase() ?? '';
-  if (!normalized || normalized.includes('fable') || normalized.includes('haiku')) {
-    return false;
-  }
-  return normalized.includes('opus') || normalized.includes('sonnet');
 }
 
 export function createPersistentPromptStream(
@@ -332,7 +325,7 @@ export async function buildSdkOptions(
   }
 
   if (config.thinkingMode === 'disabled') {
-    if (canDisableThinkingForModel(resolvedModel)) {
+    if (canDisableClaudeThinking(resolvedModel)) {
       options.thinking = { type: 'disabled' as const };
     } else {
       console.warn(`[CLAUDE-CODE] Extended thinking cannot be disabled for model "${resolvedModel}"; omitting SDK thinking option.`);

@@ -5,7 +5,7 @@ import {
   type TrackerColumnDef,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerColumns';
 import type { TrackerDataModel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
-import { READINESS_FILTER_FIELD } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+import { READINESS_FILTER_FIELD } from '@nimbalyst/tracker-schema';
 import { resolveRoleFieldName } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import {
   getTrackerFilterValue,

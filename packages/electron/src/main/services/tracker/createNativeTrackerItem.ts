@@ -2,7 +2,7 @@ import type {
   TrackerItem,
   TrackerItemChangeEvent,
 } from '@nimbalyst/runtime/core/DocumentService';
-import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 import { generateKeyBetween } from '@nimbalyst/runtime/utils/fractionalIndex';
 import { database } from '../../database/PGLiteDatabaseWorker';
 import { getCurrentIdentity } from '../TrackerIdentityService';
@@ -16,6 +16,10 @@ import {
   withCreationLock,
 } from './trackerCreationReceipt';
 import { initialTrackerBodyCache } from './trackerBodySnapshot';
+import {
+  reindexItemRelationshipsAfterWrite,
+  trackerRowUpdatedToIso,
+} from './trackerRelationshipIndexStore';
 
 export interface NativeTrackerCreatePayload {
   id: string;
@@ -211,6 +215,19 @@ async function createRow(
     await dependencies.assignLocalKeysFrom(result.rows);
 
     const created = dependencies.rowToTrackerItem(result.rows[0]);
+
+    // An item can be created with relationship values already set (MCP and the
+    // CLI both do it in one call), and nothing downstream would index them:
+    // the renderer's reindex IPC only fires when a field is edited in the UI.
+    await reindexItemRelationshipsAfterWrite(
+      payload.workspace,
+      payload.id,
+      typeof result.rows[0].data === 'string'
+        ? JSON.parse(result.rows[0].data)
+        : result.rows[0].data,
+      globalRegistry.get(payload.type)?.fields ?? [],
+      trackerRowUpdatedToIso(result.rows[0].updated),
+    );
 
     // Notify watchers
     const changeEvent: TrackerItemChangeEvent = {

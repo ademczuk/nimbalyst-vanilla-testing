@@ -18,8 +18,8 @@ import {
   COLLECTION_MEMBER_KEY,
   COLLECTION_INVERSE_KEY,
 } from '../trackerCollections';
-import { isTerminalStatus } from '../trackerStatusCategory';
-import type { FieldDefinition } from '../TrackerDataModel';
+import { isTerminalStatus } from '@nimbalyst/tracker-schema';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 
 beforeAll(() => {
   loadBuiltinTrackers();

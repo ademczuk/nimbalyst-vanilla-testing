@@ -4,7 +4,7 @@ import {
   releaseNoteLines as coreReleaseNoteLines,
   type ReleaseNoteLine,
 } from "@nimbalyst/tracker-core";
-import { runtimeTrackerContext } from "./trackerCoreContext";
+import { runtimeTrackerContext } from "@nimbalyst/tracker-schema";
 
 export {
   RELEASE_TYPE,

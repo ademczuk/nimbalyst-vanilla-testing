@@ -11,7 +11,12 @@ import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import type { TrackerFilterField } from './trackerFilterFields';
 
 /** Field types whose options are derived from the rows rather than the schema. */
-const VALUE_DERIVED_TYPES = ['user', 'select', 'multiselect', 'array', 'relationship', 'reference'];
+const VALUE_DERIVED_TYPES = [
+  'user', 'select', 'multiselect', 'array', 'relationship', 'reference',
+  // Citation entries are item references like relationship values, so their
+  // filter options come from the rows too.
+  'citation',
+];
 
 /** Options are capped so one high-cardinality field cannot stall the dropdown. */
 const MAX_OPTIONS = 100;

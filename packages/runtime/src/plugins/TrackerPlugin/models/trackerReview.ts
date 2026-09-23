@@ -12,7 +12,7 @@
  * the agent tool boundary rather than merely discouraged in a prompt.
  */
 
-import { getRoleField, globalRegistry } from './TrackerDataModel';
+import { getRoleField, globalRegistry } from '@nimbalyst/tracker-schema';
 import { REVIEW_IN_REVIEW, REVIEW_LANE_STATUSES } from '@nimbalyst/tracker-core';
 
 export {

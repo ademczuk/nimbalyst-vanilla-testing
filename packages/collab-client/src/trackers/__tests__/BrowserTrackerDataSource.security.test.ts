@@ -3,9 +3,9 @@
 import { indexedDB as fakeIndexedDB } from "fake-indexeddb";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { asTeamJwt, asTeamMemberId } from "@nimbalyst/runtime/auth/jwtScopes";
-import { IndexedDbTrackerPersistence } from "@nimbalyst/runtime/sync/trackerPersistence";
-import { encodeTrackerPayloadPlaintext } from "@nimbalyst/runtime/sync/trackerEnvelopeCodec";
-import type { TrackerItemPayload } from "@nimbalyst/runtime/sync/trackerProtocol";
+import { IndexedDbTrackerPersistence } from "@nimbalyst/tracker-engine";
+import { encodeTrackerPayloadPlaintext } from "@nimbalyst/tracker-engine";
+import type { TrackerItemPayload } from "@nimbalyst/tracker-engine";
 import { BrowserTrackerDataSource } from "../browser/BrowserTrackerDataSource";
 
 const databases: string[] = [];

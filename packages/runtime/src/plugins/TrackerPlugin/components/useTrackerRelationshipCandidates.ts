@@ -11,7 +11,7 @@
 import { useMemo } from 'react';
 import { useAtomValue } from 'jotai';
 import { isRelationshipField } from '../models';
-import type { FieldDefinition } from '../models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 import type { TrackerRecord } from '../../../core/TrackerRecord';
 import { trackerItemsMapAtom } from '../trackerDataAtoms';
 import { getRecordTitle } from '../trackerRecordAccessors';
@@ -26,8 +26,11 @@ export function useTrackerRelationshipCandidates(
   return useMemo(() => {
     const candidates = new Map<string, RelationshipCandidate[]>();
     for (const field of fields) {
-      if (!isRelationshipField(field)) continue;
-      const allowed = field.targetTrackerTypes;
+      // A `citation` field offers citation items, and the shape it needs is the
+      // same `{ itemId, title, issueKey }` a relationship candidate already is.
+      const citationField = field.type === 'citation';
+      if (!citationField && !isRelationshipField(field)) continue;
+      const allowed = citationField ? ['citation'] : field.targetTrackerTypes;
       const values: RelationshipCandidate[] = [];
       for (const record of itemsMap.values()) {
         if (item && record.id === item.id) continue;

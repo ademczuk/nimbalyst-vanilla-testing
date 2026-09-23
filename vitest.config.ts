@@ -26,6 +26,14 @@ const electronLogStub = path.resolve(__dirname, './test-utils/electronLogStub.ts
 
 const alias = [
   {
+    find: '@nimbalyst/tracker-engine',
+    replacement: path.resolve(__dirname, './packages/tracker-engine/src'),
+  },
+  {
+    find: '@nimbalyst/tracker-schema',
+    replacement: path.resolve(__dirname, './packages/tracker-schema/src'),
+  },
+  {
     find: '@nimbalyst/tracker-core',
     replacement: path.resolve(__dirname, './packages/tracker-core/src'),
   },
@@ -125,7 +133,7 @@ const nodeOnly = [
   'packages/runtime/src/host/**',
   'packages/runtime/src/ui/git/__tests__/unifiedDiffModel.test.ts',
   // The recovery planner is a pure function over three numbers.
-  'packages/runtime/src/sync/__tests__/trackerIdentityRecovery.test.ts',
+  'packages/tracker-engine/src/__tests__/trackerIdentityRecovery.test.ts',
   // Key-derivation vectors are WebCrypto over fixed bytes; no DOM involved.
   'packages/runtime/src/sync/__tests__/encryptionKey.test.ts',
   // `feedback-ui` is otherwise React components; only the pure scroll-carry
@@ -146,6 +154,7 @@ const nodeOnly = [
   // include, paying an environment they cannot use.
   'packages/cli/src/**',
   'packages/tracker-core/src/**',
+  'packages/tracker-schema/src/**',
   // The headless node host is a terminal process with no Electron and no DOM;
   // that is the entire point of the package.
   'packages/node/src/**',

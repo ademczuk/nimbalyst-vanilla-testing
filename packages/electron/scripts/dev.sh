@@ -27,5 +27,6 @@ if [ -n "$NIMBALYST_USER_DATA_DIR" ]; then
   echo "[dev.sh] Using isolated build output: out2/"
   npm run build:worker && npx electron-vite dev --outDir=out2
 else
-  npm run build:worker && npx electron-vite dev
+  # dev-loop.sh serves the renderer itself; skip the missing-renderer warning.
+  npm run build:worker && npx electron-vite dev ${NIMBALYST_EXTERNAL_RENDERER:+--ignoreConfigWarning}
 fi

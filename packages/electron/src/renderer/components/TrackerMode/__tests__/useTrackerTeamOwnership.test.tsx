@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * The ownership sections hinge entirely on this hook's answer, and a wrong
  * answer is silent: `findTeamForWorkspace` returns null when the app is not yet

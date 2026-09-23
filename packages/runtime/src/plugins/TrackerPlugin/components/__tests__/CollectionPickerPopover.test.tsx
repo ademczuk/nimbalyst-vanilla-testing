@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { CollectionPickerPopover } from '../CollectionPickerPopover';
-import type { FieldDefinition } from '../../models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 import type { RelationshipCandidate } from '../RelationshipFieldEditor';
 
 const collectionField: FieldDefinition = {

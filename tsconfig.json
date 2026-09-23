@@ -12,6 +12,10 @@
     "noEmit": true,
     "types": [],
     "paths": {
+      "@nimbalyst/tracker-engine": ["./packages/tracker-engine/src/index.ts"],
+      "@nimbalyst/tracker-engine/*": ["./packages/tracker-engine/src/*"],
+      "@nimbalyst/tracker-schema": ["./packages/tracker-schema/src/index.ts"],
+      "@nimbalyst/tracker-schema/*": ["./packages/tracker-schema/src/*"],
       "@nimbalyst/runtime": ["./packages/runtime/src/index.ts"],
       "@nimbalyst/runtime/*": ["./packages/runtime/src/*"],
       "@nimbalyst/extension-sdk": ["./packages/extension-sdk/src/index.ts"],

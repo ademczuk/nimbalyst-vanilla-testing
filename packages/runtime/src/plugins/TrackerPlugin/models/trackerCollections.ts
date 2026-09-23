@@ -13,13 +13,13 @@
  */
 
 import type { TrackerRecord } from '../../../core/TrackerRecord';
-import type { FieldDefinition, TrackerRelationshipValue } from './TrackerDataModel';
-import { globalRegistry } from './TrackerDataModel';
+import type { FieldDefinition, TrackerRelationshipValue } from '@nimbalyst/tracker-schema';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 import {
   normalizeRelationshipValue,
   isRelationshipField,
 } from './trackerRelationships';
-import { resolveStatusCategory, type StatusCategory } from './trackerStatusCategory';
+import { resolveStatusCategory, type StatusCategory } from '@nimbalyst/tracker-schema';
 
 /** Relationship key a collection uses to point at its members. */
 export const COLLECTION_MEMBER_KEY = 'has-item';

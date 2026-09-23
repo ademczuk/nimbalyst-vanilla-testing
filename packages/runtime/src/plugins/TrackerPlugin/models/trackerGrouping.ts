@@ -2,7 +2,7 @@ import type { TrackerIdentity } from '../../../core/DocumentService';
 import type { TrackerRecord } from '../../../core/TrackerRecord';
 import { getFieldByRole, getRecordPriority, getRecordStatus } from '../trackerRecordAccessors';
 import { getCollectionField } from './trackerCollections';
-import { globalRegistry, type FieldDefinition, type TrackerRelationshipValue } from './TrackerDataModel';
+import { globalRegistry, type FieldDefinition, type TrackerRelationshipValue } from '@nimbalyst/tracker-schema';
 import { isRelationshipField, normalizeRelationshipValue } from './trackerRelationships';
 
 export const TRACKER_GROUPING_AXES = [

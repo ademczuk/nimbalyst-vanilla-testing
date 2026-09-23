@@ -8,8 +8,8 @@
  */
 
 import type { TrackerRecord } from '../../../core/TrackerRecord';
-import { globalRegistry, type FieldDefinition, type TrackerSchemaRole } from '../models/TrackerDataModel';
-import { defaultTrackerTypeColor, defaultTrackerTypeIcon } from '../models/trackerTypeIdentity';
+import { globalRegistry, type FieldDefinition, type TrackerSchemaRole } from '@nimbalyst/tracker-schema';
+import { defaultTrackerTypeColor, defaultTrackerTypeIcon } from '@nimbalyst/tracker-schema';
 import { isDateOnlyValue, parseDate } from '../models/dateUtils';
 import { resolveDisplayIssueKey } from '../models/localIssueKey';
 import { resolveRoleFieldName, getFieldByRole, getItemPublicationState } from '../trackerRecordAccessors';
@@ -147,7 +147,12 @@ const ROLE_FALLBACK_COLUMNS: TrackerColumnDef[] = [
  * Infer the column render type from a FieldDefinition.
  */
 function inferRenderType(field: FieldDefinition): ColumnRenderType {
-  if (field.type === 'relationship' || field.type === 'reference') return 'relationship';
+  // A citation entry carries the same `{ itemId, issueKey, title }` display
+  // keys as a relationship value, so it renders as the same chip list rather
+  // than needing a render type (and a formatter) of its own.
+  if (field.type === 'relationship' || field.type === 'reference' || field.type === 'citation') {
+    return 'relationship';
+  }
   if (field.type === 'date' || field.type === 'datetime') return 'date';
   if (field.type === 'array') return 'tags';
   if (field.type === 'user') return 'avatar';

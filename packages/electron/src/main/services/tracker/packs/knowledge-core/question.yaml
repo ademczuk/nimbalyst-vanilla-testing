@@ -1,0 +1,103 @@
+# knowledge-core: a goal with constraints and success criteria.
+#
+# One type, not one type per question. The `kg-q-*` experiment in this workspace
+# made a tracker type per question, which meant every relationship field had to
+# enumerate every question type by name and adding a question was a schema
+# change. Here a question is an item.
+type: question
+displayName: Question
+displayNamePlural: Questions
+icon: help
+color: "#6366f1"
+
+modes:
+  inline: true
+  fullDocument: true
+
+sharing: personal
+draftByDefault: false
+
+idPrefix: qst
+idFormat: ulid
+
+fields:
+  - name: title
+    type: string
+    required: true
+
+  - name: status
+    type: select
+    default: open
+    options:
+      - value: open
+        label: Open
+        icon: radio_button_unchecked
+        category: unstarted
+      - value: investigating
+        label: Investigating
+        icon: search
+        category: started
+      - value: answered
+        label: Answered
+        icon: check_circle
+        category: done
+      - value: blocked
+        label: Blocked
+        icon: block
+        category: started
+      - value: deferred
+        label: Deferred
+        icon: schedule
+        category: backlog
+      - value: abandoned
+        label: Abandoned
+        icon: cancel
+        category: cancelled
+
+  # What would count as an answer, and what the answer has to hold for. Without
+  # this a finding cannot state its own scope honestly, because nobody wrote
+  # down what was being asked.
+  - name: constraints
+    type: text
+    displayInline: false
+
+  - name: subjects
+    type: relationship
+    relationshipTypeKey: concerns
+    targetTrackerTypes:
+      - entity
+    multiValue: true
+
+  - name: answers
+    type: relationship
+    relationshipTypeKey: answered-by
+    targetTrackerTypes:
+      - finding
+    multiValue: true
+
+  - name: tags
+    type: array
+    itemType: string
+    displayInline: false
+
+  - name: created
+    type: datetime
+    displayInline: false
+    readOnly: true
+
+  - name: updated
+    type: datetime
+    displayInline: false
+    readOnly: true
+
+statusBarLayout:
+  - row:
+    - field: status
+      width: 180
+
+inlineTemplate: "{icon} {title}"
+
+roles:
+  title: title
+  workflowStatus: status
+  tags: tags

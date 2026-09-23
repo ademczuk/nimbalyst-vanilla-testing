@@ -33,7 +33,7 @@ import {
   type TrackerSchemaChangeClassification,
   type TrackerSchemaChangeGateVerdict,
   type TrackerSchemaDestructiveConfirmCopy,
-} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerSchemaChangeClassifier';
+} from '@nimbalyst/tracker-schema';
 import type {
   TrackerDataModel,
   TrackerSharing,

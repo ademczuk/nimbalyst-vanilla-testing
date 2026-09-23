@@ -1,0 +1,123 @@
+# Knowledge-scopes `knowledge-core` kind (master plan section 3).
+# One retrieval of one source, at one time, with one outcome. A capture is what
+# makes a citation checkable later: `digest` and `capturedAt` are what a recheck
+# compares against, and a recheck appends to the capture rather than rewriting
+# the citation (contract 4.4).
+type: capture
+displayName: Capture
+displayNamePlural: Captures
+icon: photo_camera
+color: "#0d9488"
+
+modes:
+  inline: true
+  # A capture is a record of an event, not a place to write.
+  fullDocument: false
+
+sharing: personal
+draftByDefault: false
+# Not offered in type lists until the knowledge-core pack installs `claim`.
+hiddenUntilType: claim
+
+idPrefix: cap
+idFormat: ulid
+
+fields:
+  - name: title
+    type: string
+    required: true
+
+  - name: status
+    type: select
+    default: recorded
+    options:
+      - value: recorded
+        label: Recorded
+        icon: check_circle
+        category: done
+      - value: stale
+        label: Stale
+        icon: schedule
+        category: started
+      - value: unresolvable
+        label: Unresolvable
+        icon: link_off
+        category: cancelled
+
+  - name: source
+    type: relationship
+    relationshipTypeKey: captured-from
+    targetTrackerTypes:
+      - source
+    multiValue: false
+
+  - name: capturedAt
+    type: datetime
+    displayInline: true
+
+  # What actually answered, which is frequently not the source's canonical URL:
+  # redirects, mirrors, and archive copies all land here.
+  - name: resolvedUrl
+    type: url
+    displayInline: false
+
+  - name: contentType
+    type: string
+    displayInline: false
+
+  # Content hash of what was retrieved. The only thing that can tell a recheck
+  # "the page changed" from "the page is the same and my locator broke".
+  - name: digest
+    type: string
+    displayInline: false
+
+  - name: outcome
+    type: select
+    default: retrieved
+    options:
+      - value: retrieved
+        label: Retrieved
+        icon: download_done
+      - value: partial
+        label: Partial
+        icon: hourglass_bottom
+      - value: not-found
+        label: Not found
+        icon: search_off
+      - value: forbidden
+        label: Forbidden
+        icon: block
+      - value: error
+        label: Error
+        icon: error
+
+  - name: tags
+    type: array
+    itemType: string
+    displayInline: false
+
+  - name: created
+    type: datetime
+    displayInline: false
+    readOnly: true
+
+  - name: updated
+    type: datetime
+    displayInline: false
+    readOnly: true
+
+statusBarLayout:
+  - row:
+    - field: status
+      width: 160
+    - field: outcome
+      width: 160
+    - field: capturedAt
+      width: 200
+
+inlineTemplate: "{icon} {title}"
+
+roles:
+  title: title
+  workflowStatus: status
+  tags: tags

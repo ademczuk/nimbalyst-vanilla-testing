@@ -12,7 +12,7 @@ import {
   type TrackerFieldFilter,
   type TrackerFilterOp,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerFilters';
-import type { FieldType } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { FieldType } from '@nimbalyst/tracker-schema';
 
 /**
  * The shape the omnibox needs, kept structural so headless callers do not pull

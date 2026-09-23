@@ -30,7 +30,7 @@ import {
   getDoneStatusValue,
   getWorkflowStatusFieldName,
   isTerminalStatus,
-} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+} from '@nimbalyst/tracker-schema';
 
 // ---------------------------------------------------------------------------
 // Issue key parsing

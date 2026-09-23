@@ -5,11 +5,14 @@ import type {
   TrackerDataSnapshot,
   TrackerDataSource,
   TrackerItem,
+  TrackerItemRevisionRecord,
   TrackerPresenceMember,
+  TrackerRevisionRef,
   TrackerSavedViewRecord,
   TrackerSyncState,
   TrackerSyncStatus,
 } from '@nimbalyst/collab-client/trackers';
+import { TrackerRevisionUnavailableError } from '@nimbalyst/collab-client/trackers';
 import { asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 
 interface TrackerItemChangeEvent {
@@ -118,6 +121,36 @@ export class ElectronTrackerDataSource implements TrackerDataSource {
 
   status(): TrackerSyncState {
     return this.syncState;
+  }
+
+  /**
+   * One exact revision from the local revision log (knowledge-scopes 4.2).
+   *
+   * The main process answers with a coded failure rather than throwing across
+   * IPC (an Error loses its type on the crossing), so the code is re-raised
+   * here as `TrackerRevisionUnavailableError`. Every other failure throws a
+   * plain Error: only "that revision does not exist" gets the specific type,
+   * because only that one means the pinned evidence is gone rather than that
+   * the read itself broke.
+   *
+   * There is deliberately no fallback to the live item.
+   */
+  async getItemRevision(itemId: string, ref: TrackerRevisionRef): Promise<TrackerItemRevisionRecord> {
+    this.assertActive();
+    const response = await this.ipc.invoke('tracker-revision:get', {
+      workspacePath: this.workspacePath,
+      itemId,
+      ...ref,
+    }) as
+      | { success: true; revision: TrackerItemRevisionRecord }
+      | { success: false; code?: string; error?: string }
+      | undefined;
+
+    if (response?.success) return response.revision;
+    if (response?.code === 'revision-not-found') {
+      throw new TrackerRevisionUnavailableError(itemId, ref, response.error);
+    }
+    throw new Error(response?.error ?? `Failed to read revision for tracker item '${itemId}'`);
   }
 
   async command(command: TrackerDataCommand): Promise<TrackerDataCommandResult> {

@@ -3,7 +3,7 @@
  */
 
 import jsyaml from 'js-yaml';
-import { globalRegistry } from '../models/TrackerDataModel';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 import { parseDate, formatLocalDateOnly } from '../models/dateUtils';
 import { applyFrontmatterOps, type FrontmatterOp } from './frontmatterSource';
 

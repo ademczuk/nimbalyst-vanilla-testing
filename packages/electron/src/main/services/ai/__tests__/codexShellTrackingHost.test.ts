@@ -4,10 +4,17 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 
 const fixture = vi.hoisted(() => ({ observed: undefined as undefined | ((event: string, file: string, at: number) => void) }));
+// Hoisted so the mock factory below can read it without a TDZ hazard.
+const packageRoot = vi.hoisted(() => ({
+  value: new URL('../../../../../', import.meta.url).pathname.replace(/\/$/, ''),
+}));
 vi.mock('electron', () => ({ app: { isPackaged: false } }));
 vi.mock('@nimbalyst/runtime/storage/repositories/SessionFilesRepository', () => ({ SessionFilesRepository: { addFileLink: vi.fn() } }));
 vi.mock('@nimbalyst/runtime/ai/server', () => ({ OpenAICodexProvider: { setShellTrackingHost: vi.fn() } }));
-vi.mock('../../../utils/appPaths', () => ({ getPackageRoot: () => path.resolve('packages/electron') }));
+// Resolve the package root from this file, not from cwd. `path.resolve('packages/electron')`
+// is only correct when the suite is launched from the repo root; under `npm test` inside
+// packages/electron it yielded packages/electron/packages/electron.
+vi.mock('../../../utils/appPaths', () => ({ getPackageRoot: () => packageRoot.value }));
 vi.mock('../../../file/WorkspaceEventBus', () => ({
   subscribe: async (_workspace: string, _id: string, callbacks: any) => {
     fixture.observed = callbacks.onObserved;
@@ -42,7 +49,7 @@ it('fences foreign identity through the executable hook and loopback host withou
   const pre = vi.spyOn(shellFileAttribution, 'pre');
   const post = vi.spyOn(shellFileAttribution, 'post');
   const hook = (event: string) => new Promise<void>((resolve, reject) => {
-    const child = spawn(process.execPath, [path.resolve('packages/electron/resources/codex-shell-hook.cjs')], {
+    const child = spawn(process.execPath, [path.join(packageRoot.value, 'resources/codex-shell-hook.cjs')], {
       env: { ...process.env, ...registration!.env }, stdio: ['pipe', 'pipe', 'pipe'],
     });
     child.on('error', reject);
@@ -94,7 +101,7 @@ it('forwards only bounded Bash commands through the executable hook', async () =
     ['mcp__test', 'not a shell command', undefined],
   ] as const) {
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(process.execPath, [path.resolve('packages/electron/resources/codex-shell-hook.cjs')], {
+      const child = spawn(process.execPath, [path.join(packageRoot.value, 'resources/codex-shell-hook.cjs')], {
         env: { ...process.env, ...registration!.env }, stdio: ['pipe', 'pipe', 'pipe'],
       });
       child.on('error', reject);

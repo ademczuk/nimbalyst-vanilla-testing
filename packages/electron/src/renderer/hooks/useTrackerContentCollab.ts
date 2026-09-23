@@ -57,7 +57,7 @@ import { getTeamSyncProviderForScopeKey } from '../store/atoms/collabDocuments';
 import { buildCollabUri } from '@nimbalyst/collab-protocol';
 import { notifyDocumentCommentRecipients } from '../services/documentCommentNotifier';
 import { trackerContentCollabKey } from './trackerContentCollabKey';
-import type { TrackerSharing } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { TrackerSharing } from '@nimbalyst/tracker-schema';
 import { teamMemberDisplayName } from '../utils/teamMemberDisplayName';
 
 const TRACKER_CONTENT_TTL_MS = String(90 * 24 * 60 * 60 * 1000);

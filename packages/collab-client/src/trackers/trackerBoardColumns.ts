@@ -5,7 +5,7 @@
  */
 
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
-import type { TrackerRelationshipValue } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { TrackerRelationshipValue } from '@nimbalyst/tracker-schema';
 import {
   addRelationshipValue,
   MANUAL_TRACKER_ORDERING,
@@ -29,7 +29,7 @@ import {
   resolveRoleFieldName,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { compareCellValues } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerRowData';
-import { isTerminalStatus } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+import { isTerminalStatus } from '@nimbalyst/tracker-schema';
 import { generateKeyBetween } from '@nimbalyst/runtime/utils/fractionalIndex';
 import type { TrackerStatusScope } from './model';
 

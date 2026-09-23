@@ -2,7 +2,7 @@
 
 export type { TrackerIdentity } from '@nimbalyst/runtime/core/DocumentService';
 export type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
-export * from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+export * from '@nimbalyst/tracker-schema';
 export * from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerGrouping';
 export * from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerOrdering';
 export * from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerRelationships';

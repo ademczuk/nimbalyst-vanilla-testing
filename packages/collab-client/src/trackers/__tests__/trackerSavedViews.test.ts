@@ -5,7 +5,7 @@ import { loadBuiltinTrackers } from '@nimbalyst/runtime/plugins/TrackerPlugin/mo
 import {
   READINESS_FILTER_FIELD,
   STATUS_CATEGORY_FILTER_FIELD,
-} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+} from '@nimbalyst/tracker-schema';
 import { computeReadiness } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerReadiness';
 import { getRecordStatus } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import type { TrackerIdentity } from '@nimbalyst/runtime/core/DocumentService';

@@ -158,6 +158,18 @@ export default defineConfig({
     ],
     alias: [
       {
+        find: '@nimbalyst/tracker-core',
+        replacement: fileURLToPath(new URL('../tracker-core/src', import.meta.url)),
+      },
+      {
+        find: '@nimbalyst/tracker-engine',
+        replacement: fileURLToPath(new URL('../tracker-engine/src', import.meta.url)),
+      },
+      {
+        find: '@nimbalyst/tracker-schema',
+        replacement: fileURLToPath(new URL('../tracker-schema/src', import.meta.url)),
+      },
+      {
         find: /^@nimbalyst\/runtime\/(.+)$/,
         replacement: `${runtimeSource}/$1`,
       },

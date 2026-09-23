@@ -34,20 +34,23 @@
  * the type arrives.
  */
 
-import type { SyncId } from '@nimbalyst/runtime/sync/trackerProtocol';
+import type { SyncId } from '@nimbalyst/tracker-engine';
 import type {
   TrackerNavigationSyncHooks,
   TrackerSchemaSyncHooks,
-} from '@nimbalyst/runtime/sync/TrackerSyncEngine';
+} from '@nimbalyst/tracker-engine';
 import {
   compareTrackerNavigationEntries,
   isTrackerNavigationEntry,
   type TrackerNavigationEntry,
 } from '@nimbalyst/runtime/sync/trackerNavigation';
-import { globalRegistry, type TrackerDataModel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
-import { decodeTrackerSchemaPayload } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/schemaSyncPayload';
-import { resolveTrackerSchemaPatch } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/schemaPatch';
-import { normalizeTrackerSharingModel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/YAMLParser';
+import { globalRegistry, type TrackerDataModel } from '@nimbalyst/tracker-schema';
+import {
+  decodeTrackerSchemaPayload,
+  TRACKER_PREDICATE_REGISTRY_SCHEMA_TYPE,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/schemaSyncPayload';
+import { resolveTrackerSchemaPatch } from '@nimbalyst/tracker-schema';
+import { normalizeTrackerSharingModel } from '@nimbalyst/tracker-schema';
 
 export interface BrowserTrackerSchemaStoreOptions {
   /**
@@ -96,6 +99,9 @@ export function resolveBrowserTrackerSchema(
   const decoded = decodeTrackerSchemaPayload(type, json);
   if (!decoded) return null;
   if (decoded.kind === 'model') return normalizeTrackerSharingModel(decoded.model, 'team');
+  // A predicate registry is not a tracker type. It arrives under its own
+  // reserved schema type and is handled by `applyRemote` before this is called.
+  if (decoded.kind === 'predicates') return null;
   const seed = builtinSeed(type);
   if (!seed) return null;
   try {
@@ -137,6 +143,24 @@ export class BrowserTrackerSchemaStore {
     listUnsynced: async () => [],
     applyRemote: async ({ type, model }) => {
       if (this.disposed) return;
+      // The predicate registry (knowledge-scopes 4.1) rides this lane under a
+      // reserved schema type. Registering it here is what makes section 7's
+      // "the same violation reports the same code in the web console" true:
+      // `TrackerDataModelRegistry.validate` is the same validator on both
+      // hosts, and it needs the same registry in front of it.
+      if (type === TRACKER_PREDICATE_REGISTRY_SCHEMA_TYPE) {
+        if (model === null) {
+          globalRegistry.setPredicates([]);
+          return;
+        }
+        const decoded = decodeTrackerSchemaPayload(type, model);
+        if (decoded?.kind !== 'predicates') {
+          this.reportError?.(new Error('Unreadable predicate registry'), 'tracker schema');
+          return;
+        }
+        globalRegistry.setPredicates(decoded.predicates);
+        return;
+      }
       if (model === null) {
         this.models.delete(type);
         const builtin = this.builtins.get(type);

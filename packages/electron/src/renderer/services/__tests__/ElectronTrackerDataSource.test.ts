@@ -315,4 +315,76 @@ describe('ElectronTrackerDataSource', () => {
       vi.useRealTimers();
     }
   });
+
+  /**
+   * Knowledge-scopes contract 4.2. The rule under test is not "the read works",
+   * it is that a missing revision never degrades into the current item: a
+   * citation that pins revision 3 and quietly renders revision 7 says nothing
+   * about the evidence having moved.
+   */
+  describe('getItemRevision', () => {
+    const revision = {
+      revisionId: '9f2c1d4a-7b31-4e59-a0c8-5d6e2f1b3a77',
+      itemId: 'itm_1',
+      parentRevisionId: null,
+      serverRevision: 3,
+      workspace: '/workspace/one',
+      data: { title: 'As it was' },
+      actor: null,
+      published: true,
+      recordedAt: 1_700_000_000_000,
+    };
+
+    it('passes exactly one addressing mode through and returns the stored revision', async () => {
+      const invoke = vi.fn(async () => ({ success: true, revision }));
+      const { ipc } = createIpc(invoke as never);
+      const source = new ElectronTrackerDataSource({ workspacePath: '/workspace/one', ipc });
+
+      await expect(source.getItemRevision('itm_1', { revisionId: revision.revisionId }))
+        .resolves.toEqual(revision);
+      expect(invoke).toHaveBeenCalledWith('tracker-revision:get', {
+        workspacePath: '/workspace/one',
+        itemId: 'itm_1',
+        revisionId: revision.revisionId,
+      });
+
+      await source.getItemRevision('itm_1', { serverRevision: 3 });
+      expect(invoke).toHaveBeenLastCalledWith('tracker-revision:get', {
+        workspacePath: '/workspace/one',
+        itemId: 'itm_1',
+        serverRevision: 3,
+      });
+      source.dispose();
+    });
+
+    it('raises a typed error on a missing revision rather than answering with the item', async () => {
+      const invoke = vi.fn(async () => ({
+        success: false,
+        code: 'revision-not-found',
+        error: "Tracker item 'itm_1' has no revision 9",
+      }));
+      const { ipc } = createIpc(invoke as never);
+      const source = new ElectronTrackerDataSource({ workspacePath: '/workspace/one', ipc });
+
+      await expect(source.getItemRevision('itm_1', { serverRevision: 9 })).rejects.toMatchObject({
+        name: 'TrackerRevisionUnavailableError',
+        itemId: 'itm_1',
+      });
+      source.dispose();
+    });
+
+    it('does not claim the evidence is gone when the read itself failed', async () => {
+      // A read failure and a missing revision must stay distinguishable: only
+      // one of them means the pinned revision no longer exists.
+      const invoke = vi.fn(async () => ({ success: false, code: 'read-failed', error: 'db down' }));
+      const { ipc } = createIpc(invoke as never);
+      const source = new ElectronTrackerDataSource({ workspacePath: '/workspace/one', ipc });
+
+      await expect(source.getItemRevision('itm_1', { serverRevision: 3 })).rejects.toMatchObject({
+        name: 'Error',
+        message: 'db down',
+      });
+      source.dispose();
+    });
+  });
 });

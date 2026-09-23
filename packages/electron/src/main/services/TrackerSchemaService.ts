@@ -22,7 +22,11 @@ import {
   diffTrackerSchema,
   decodeTrackerSchemaPayload,
   encodeTrackerSchemaPatchPayload,
+  encodeTrackerSchemaModelPayload,
+  TRACKER_PREDICATE_REGISTRY_SCHEMA_TYPE,
+  resolveTrackerTypeInheritance,
   type TrackerDataModel,
+  type DerivedTrackerTypeDeclaration,
   type TrackerSchemaPatch,
   type TrackerSchemaRole,
   getRoleField,
@@ -47,7 +51,7 @@ import {
   TrackerSchemaChangeBlockedError,
   type TrackerSchemaChangeDecision,
 } from './tracker/trackerSchemaChangeGuard';
-import type { TrackerSchemaActorRole } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerSchemaChangeClassifier';
+import type { PredicateDefinition, TrackerSchemaActorRole } from '@nimbalyst/tracker-schema';
 import {
   installTrackerSchemaScopeProvider,
   runWithTrackerSchemaWorkspace,
@@ -75,6 +79,10 @@ import {
   serializeSchemaForFile,
   writeBackSharedSchema,
 } from './tracker/trackerSchemaProjection';
+import {
+  readWorkspacePredicateRegistry,
+  writeWorkspacePredicateRegistry,
+} from './tracker/trackerPredicateRegistryFile';
 import {
   reloadWorkspaceSchemaFile,
   stopSchemaWatcher,
@@ -251,6 +259,13 @@ function migrateWorkspaceTrackerSharing(
 function loadWorkspaceSchemas(workspacePath: string): void {
   // Clear any schemas from a previous workspace before loading new ones
   globalRegistry.clearWorkspaceSchemas();
+
+  // The predicate registry (knowledge-scopes 4.1) is a sibling schema artifact,
+  // so it loads on the same trigger. A null read at startup means there is no
+  // valid registry to load. Later hand edits are handled by the watcher below,
+  // which keeps the last valid in-memory registry while a file is malformed.
+  const localPredicates = readWorkspacePredicateRegistry(workspacePath);
+  if (localPredicates) globalRegistry.setPredicates(localPredicates);
 
   const trackersDir = path.join(workspacePath, '.nimbalyst', 'trackers');
 
@@ -461,7 +476,24 @@ export async function handleSchemaFileDeleted(workspacePath: string, filePath: s
 // ---------------------------------------------------------------------------
 
 function watchSchemaDirectory(workspacePath: string): void {
-  startSchemaWatcher(workspacePath, reloadWorkspaceSchema, handleSchemaFileDeleted);
+  startSchemaWatcher(
+    workspacePath,
+    reloadWorkspaceSchema,
+    handleSchemaFileDeleted,
+    reloadWorkspacePredicateRegistry,
+  );
+}
+
+/** Reload a hand-edited predicates.yaml without replacing a valid registry by a parse failure. */
+export async function reloadWorkspacePredicateRegistry(workspacePath: string): Promise<void> {
+  const predicates = readWorkspacePredicateRegistry(workspacePath);
+  if (predicates === null) return;
+  if (currentWorkspacePath === null || currentWorkspacePath === workspacePath) {
+    globalRegistry.setPredicates(predicates);
+    notifySchemaChanged();
+  } else {
+    globalRegistry.setWorkspacePredicateLayer(workspacePath, predicates);
+  }
 }
 
 function stopWatcher(): void {
@@ -754,7 +786,7 @@ function normalizeSchemaFileName(type: string, fileName?: string): string {
   return candidate;
 }
 
-function refreshWorkspaceSchemasIfCurrent(workspacePath: string): void {
+export function refreshWorkspaceSchemasIfCurrent(workspacePath: string): void {
   // Also load when currentWorkspacePath is null -- no workspace has been set yet
   // (happens when upsertWorkspaceTrackerSchema is called before any workspace window opens).
   if (currentWorkspacePath !== null && workspacePath !== currentWorkspacePath) return;
@@ -1121,14 +1153,48 @@ export async function resyncWorkspaceSchemaMirror(
 function resolveInboundSchemaPayload(
   type: string,
   modelJson: string,
-): { model: TrackerDataModel; isPatch: boolean } | null {
+): { model: TrackerDataModel; isPatch: boolean; declared?: DerivedTrackerTypeDeclaration } | null {
   const decoded = decodeTrackerSchemaPayload(type, modelJson);
   if (!decoded) return null;
   if (decoded.kind === 'model') {
+    // A derived type arrives as both forms. Prefer re-resolving the DECLARED
+    // form against this machine's base, so a base field this app version ships
+    // reaches the derived type instead of being frozen at the sender's version.
+    // The sender's resolved model is the fallback when the base is unknown here.
+    if (decoded.declared) {
+      const { model, errors } = resolveTrackerTypeInheritance(
+        decoded.declared,
+        t => globalRegistry.getDeclaredModel(t) ?? globalRegistry.get(t),
+      );
+      if (model) {
+        return {
+          model: normalizeTrackerSharingModel(model, 'team'),
+          isPatch: false,
+          // Only surfaced when the base resolved HERE. Registering a
+          // declaration whose base this app does not know would drop the type
+          // from the registry entirely, even though the mirror has a usable
+          // resolved model.
+          declared: decoded.declared,
+        };
+      }
+      console.warn(
+        `[TrackerSchemaService] could not resolve '${type}' against the local base; using the sender's resolved model:`,
+        errors.map(e => e.message).join('; '),
+      );
+    }
     return {
       model: normalizeTrackerSharingModel(decoded.model, 'team'),
       isPatch: false,
     };
+  }
+
+  if (decoded.kind === 'predicates') {
+    // Routed before this function is reached (see
+    // `applyRemoteWorkspacePredicateRegistry`). Arriving here means a registry
+    // was published under a tracker type's schema row, which is a sender bug;
+    // dropping it leaves that type's definition alone.
+    console.warn(`[TrackerSchemaService] predicate registry published as tracker type '${type}'; dropped`);
+    return null;
   }
 
   const seed = globalRegistry.getBuiltinModel(type);
@@ -1155,6 +1221,15 @@ export function encodeTrackerSchemaDefForPush<T extends { type: string; model: s
   def: T,
 ): T {
   if (def.model === null) return def;
+
+  // A derived type travels as its resolved model PLUS its declaration, so a
+  // peer can re-resolve against its own base (see the payload module).
+  const declared = globalRegistry.getDeclaredModel(def.type);
+  if (declared) {
+    const model = parseSyncedTrackerSchemaModel(def.type, def.model) ?? globalRegistry.get(def.type);
+    if (model) return { ...def, model: encodeTrackerSchemaModelPayload(model, declared) };
+  }
+
   if (!globalRegistry.isBuiltin(def.type)) return def;
 
   const seed = globalRegistry.getBuiltinModel(def.type);
@@ -1182,6 +1257,10 @@ export async function applyRemoteWorkspaceTrackerSchemaDef(
   def: RemoteTrackerSchemaDef,
 ): Promise<ApplyRemoteSchemaResult> {
   if (!workspacePath || !def?.type) return { applied: false, reason: 'invalid' };
+
+  if (def.type === TRACKER_PREDICATE_REGISTRY_SCHEMA_TYPE) {
+    return applyRemoteWorkspacePredicateRegistry(workspacePath, def);
+  }
 
   // A personal schema on disk is the single-axis authority for this workspace.
   // This especially matters after migrating a legacy local item policy that
@@ -1230,12 +1309,71 @@ export async function applyRemoteWorkspaceTrackerSchemaDef(
     if (result.deleted) {
       globalRegistry.clearWorkspaceSchema(def.type);
     } else if (model) {
-      globalRegistry.register(model);
+      // The declaration, when this machine could resolve it, so a later change
+      // to the base type reaches this type without another sync round.
+      globalRegistry.register(resolved?.declared ?? model);
     }
     notifySchemaChanged();
   }
 
   return result;
+}
+
+/**
+ * Apply a published PREDICATE REGISTRY (knowledge-scopes 4.1), which arrives on
+ * the schema lane under the reserved schema type.
+ *
+ * Replace, never merge: the room publishes the registry as one artifact, so a
+ * merge would keep a predicate the team deleted and each client's view of what
+ * verbs exist would depend on what it happened to have seen before.
+ *
+ * Two differences from the type-definition path above, both deliberate:
+ *
+ *  - **No `tracker_type_defs` mirror row.** That table is keyed by tracker type
+ *    and read as the set of this project's types; a `__predicates__` row would
+ *    show up as one. The schema lane bootstraps from zero on every connect
+ *    (`runSchemaBootstrap`), so the registry is re-delivered each time and the
+ *    local YAML copy below covers the offline case. Push bookkeeping is C4's,
+ *    where a real room can verify it.
+ *  - **A tombstone empties the registry rather than retiring a file.** There is
+ *    exactly one registry per project, so "deleted" means "no predicates", not
+ *    "this artifact no longer exists".
+ */
+async function applyRemoteWorkspacePredicateRegistry(
+  workspacePath: string,
+  def: RemoteTrackerSchemaDef,
+): Promise<ApplyRemoteSchemaResult> {
+  let predicates: PredicateDefinition[];
+  if (def.model === null) {
+    predicates = [];
+  } else {
+    const decoded = decodeTrackerSchemaPayload(def.type, def.model);
+    if (decoded?.kind !== 'predicates') {
+      logger.main.warn('[TrackerSchemaService] dropped an unreadable predicate registry payload', {
+        workspacePath,
+        syncId: def.syncId,
+      });
+      return { applied: false, reason: 'invalid' };
+    }
+    predicates = decoded.predicates;
+  }
+
+  try {
+    await writeWorkspacePredicateRegistry(workspacePath, predicates);
+  } catch (err) {
+    // The in-memory registry is still worth applying: the project can validate
+    // statements this session even if the checkout copy could not be written.
+    logger.main.warn('[TrackerSchemaService] could not write the predicate registry copy', err);
+  }
+
+  if (currentWorkspacePath === workspacePath) {
+    globalRegistry.setPredicates(predicates);
+    notifySchemaChanged();
+  } else {
+    globalRegistry.setWorkspacePredicateLayer(workspacePath, predicates);
+  }
+
+  return { applied: true, deleted: def.model === null };
 }
 
 export async function deleteWorkspaceTrackerSchema(

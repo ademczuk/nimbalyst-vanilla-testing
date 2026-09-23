@@ -2,9 +2,9 @@
  * Model loader for built-in and custom tracker definitions
  */
 
-import { parseTrackerYAML } from './YAMLParser';
-import { globalRegistry, type TrackerDataModel } from './TrackerDataModel';
-import { parseTrackerSchemaPatchYAML, resolveTrackerSchemaPatch } from './schemaPatch';
+import { parseTrackerYAML, parseTrackerTypeYAML } from '@nimbalyst/tracker-schema';
+import { globalRegistry, type TrackerDataModel } from '@nimbalyst/tracker-schema';
+import { parseTrackerSchemaPatchYAML, resolveTrackerSchemaPatch } from '@nimbalyst/tracker-schema';
 
 // Built-in tracker definitions are authored as YAML under ./builtins and bundled
 // as raw strings via Vite's `?raw` loader (see runtime/src/env.d.ts). This is the
@@ -19,6 +19,10 @@ import taskYaml from './builtins/task.yaml?raw';
 import ideaYaml from './builtins/idea.yaml?raw';
 import milestoneYaml from './builtins/milestone.yaml?raw';
 import releaseYaml from './builtins/release.yaml?raw';
+// Knowledge-scopes `knowledge-core` evidence kinds (master plan section 3, N7).
+import sourceYaml from './builtins/source.yaml?raw';
+import captureYaml from './builtins/capture.yaml?raw';
+import citationYaml from './builtins/citation.yaml?raw';
 // import featureYaml from './builtins/feature.yaml?raw';
 // import automationYaml from './builtins/automation.yaml?raw';
 
@@ -34,6 +38,11 @@ export const BUILTIN_TRACKER_YAML: ReadonlyArray<{ type: string; yaml: string }>
   { type: 'idea', yaml: ideaYaml },
   { type: 'milestone', yaml: milestoneYaml },
   { type: 'release', yaml: releaseYaml },
+  // Load order matters for readability only, but it follows the evidence chain:
+  // a capture points at a source, a citation points at a capture.
+  { type: 'source', yaml: sourceYaml },
+  { type: 'capture', yaml: captureYaml },
+  { type: 'citation', yaml: citationYaml },
   // { type: 'feature', yaml: featureYaml },
   // { type: 'automation', yaml: automationYaml },
 ];
@@ -114,7 +123,9 @@ export function loadBuiltinTrackers(): void {
  * Load a custom tracker definition from YAML string
  */
 export function loadCustomTracker(yamlString: string): void {
-  const model = parseTrackerYAML(yamlString);
+  // Derived types (`extends`) register as their declared form; the registry
+  // resolves them against the base and re-resolves when the base changes.
+  const model = parseTrackerTypeYAML(yamlString);
   globalRegistry.register(model);
   console.log(`[TrackerPlugin] Loaded custom tracker: ${model.type}`);
 }

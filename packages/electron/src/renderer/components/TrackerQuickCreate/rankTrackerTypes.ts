@@ -9,7 +9,7 @@
  */
 
 import { fuzzyMatch } from '@nimbalyst/runtime/utils/fuzzyMatch';
-import type { TrackerDataModel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 
 export interface TrackerTypeChoice {
   model: TrackerDataModel;

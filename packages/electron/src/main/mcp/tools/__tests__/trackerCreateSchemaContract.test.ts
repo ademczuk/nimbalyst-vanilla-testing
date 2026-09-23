@@ -72,7 +72,7 @@ vi.mock('electron', async () => ({
 
 import { handleTrackerCreate } from '../trackerToolHandlers';
 import { loadBuiltinTrackers } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/ModelLoader';
-import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 
 function makeRow(overrides: Record<string, unknown> = {}) {
   return {

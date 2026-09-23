@@ -19,7 +19,7 @@
  */
 
 import type { TrackerRecord } from '../../../core/TrackerRecord';
-import { getRoleField, globalRegistry } from './TrackerDataModel';
+import { getRoleField, globalRegistry } from '@nimbalyst/tracker-schema';
 import { getCollectionField, isCollectionType } from './trackerCollections';
 import { normalizeRelationshipValue } from './trackerRelationships';
 

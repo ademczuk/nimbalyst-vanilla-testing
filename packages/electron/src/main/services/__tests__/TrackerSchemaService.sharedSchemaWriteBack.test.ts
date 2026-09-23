@@ -49,6 +49,8 @@ import {
   applyRemoteWorkspaceTrackerSchemaDef,
   handleSchemaFileDeleted,
   reloadWorkspaceSchema,
+  reloadWorkspacePredicateRegistry,
+  encodeTrackerSchemaDefForPush,
 } from '../TrackerSchemaService';
 import {
   applyRemoteTrackerSchemaDef,
@@ -115,6 +117,26 @@ describe('shared tracker schema write-back (#1178)', () => {
   });
 
   const schemaFile = (): string => path.join(ws, '.nimbalyst', 'trackers', `${TYPE}.yaml`);
+
+  it('keeps the last valid predicate registry while a hand edit is malformed', async () => {
+    const predicateFile = path.join(ws, '.nimbalyst', 'predicates.yaml');
+    fs.writeFileSync(predicateFile, [
+      'predicates:',
+      '  - id: depends-on',
+      '    label: depends on',
+      '    subjectKinds: ["*"]',
+      '    valueShape: entity',
+      '    direction: directed',
+      '',
+    ].join('\n'));
+    await reloadWorkspacePredicateRegistry(ws);
+    expect(globalRegistry.getPredicate('depends-on')?.label).toBe('depends on');
+
+    fs.writeFileSync(predicateFile, 'predicates:\n  - id: [broken');
+    await reloadWorkspacePredicateRegistry(ws);
+
+    expect(globalRegistry.getPredicate('depends-on')?.label).toBe('depends on');
+  });
 
   it('projects the shared definition onto the workspace YAML file', async () => {
     fs.writeFileSync(
@@ -598,5 +620,49 @@ describe('unprojected shared schemas are written to disk on load (#1178)', () =>
     await materializeYamlTrackerTypeDef(ws, sharedModel as never, db);
 
     expect(await listUnprojectedTeamOwnedTrackerTypes(ws, db)).toEqual([]);
+  });
+});
+
+/**
+ * The derived-type counterpart of the delta above: a type declaring `extends`
+ * pushes its resolved model AND its declaration, so a peer resolves against its
+ * own base instead of inheriting the sender's frozen copy.
+ */
+describe('derived types push both forms', () => {
+  const BASE = 'entity-ext';
+  const DERIVED = 'product-ext';
+
+  afterEach(() => {
+    globalRegistry.clearWorkspaceSchema(DERIVED);
+    globalRegistry.clearWorkspaceSchema(BASE);
+  });
+
+  it('carries the declaration alongside the resolved model', () => {
+    globalRegistry.register({ ...sharedModel, type: BASE } as never);
+    globalRegistry.register({
+      type: DERIVED,
+      extends: BASE,
+      fields: [{ name: 'license', type: 'string' }],
+    } as never);
+
+    const resolved = globalRegistry.get(DERIVED)!;
+    const pushed = encodeTrackerSchemaDefForPush({
+      type: DERIVED,
+      model: JSON.stringify(resolved),
+    });
+
+    const decoded = decodeTrackerSchemaPayload(DERIVED, pushed.model!);
+    expect(decoded?.kind).toBe('model');
+    // Resolved form for any client, declaration for one that can use it.
+    expect((decoded as { model: { fields: Array<{ name: string }> } }).model.fields.map(f => f.name))
+      .toEqual(expect.arrayContaining(['title', 'collection', 'license']));
+    expect((decoded as { declared?: { fields?: Array<{ name: string }> } }).declared?.fields?.map(f => f.name))
+      .toEqual(['license']);
+  });
+
+  it('leaves the payload of a plain type untouched', () => {
+    globalRegistry.register({ ...sharedModel, type: BASE } as never);
+    const model = JSON.stringify(globalRegistry.get(BASE));
+    expect(encodeTrackerSchemaDefForPush({ type: BASE, model }).model).toBe(model);
   });
 });

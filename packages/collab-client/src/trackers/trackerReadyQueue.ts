@@ -2,7 +2,7 @@
 
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { getRecordPriority, getRecordTitle } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
-import { READINESS_FILTER_FIELD } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+import { READINESS_FILTER_FIELD } from '@nimbalyst/tracker-schema';
 import type { Readiness } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerReadiness';
 import { createDefaultViewDefinition, type SavedView } from './trackerSavedViews';
 

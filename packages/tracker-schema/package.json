@@ -1,0 +1,36 @@
+{
+  "name": "@nimbalyst/tracker-schema",
+  "version": "0.1.0",
+  "description": "Tracker schema models, YAML parsing, and schema change classification",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@nimbalyst/tracker-core": "0.1.0",
+    "js-yaml": "^4.1.0"
+  }
+}

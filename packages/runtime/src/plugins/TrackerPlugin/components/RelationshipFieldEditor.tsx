@@ -9,7 +9,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { FieldDefinition, TrackerRelationshipValue } from '../models/TrackerDataModel';
+import type { FieldDefinition, TrackerRelationshipValue } from '@nimbalyst/tracker-schema';
 import {
   normalizeRelationshipValue,
   addRelationshipValue,

@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import type { TrackerDataModel } from '../models/TrackerDataModel';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 import type { TeamMemberOption } from './TrackerFieldEditor';
 import type { RelationshipCandidate } from './RelationshipFieldEditor';
 import { MaterialSymbol } from '../../../ui/icons/MaterialSymbol';

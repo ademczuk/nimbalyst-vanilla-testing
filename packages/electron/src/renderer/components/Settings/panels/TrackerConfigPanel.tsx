@@ -799,7 +799,7 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
         }
       }
 
-      const models = globalRegistry.getAll();
+      const models = globalRegistry.getListed();
       const configs: TrackerTypeConfig[] = models.map((model) => ({
         model,
         sharing: model.sharing ?? 'personal',
@@ -813,7 +813,7 @@ export function TrackerConfigPanel({ workspacePath }: TrackerConfigPanelProps) {
 
     // Subscribe to registry changes (e.g., custom trackers loaded later)
     const unsubscribe = globalRegistry.onChange(() => {
-      const updatedModels = globalRegistry.getAll();
+      const updatedModels = globalRegistry.getListed();
       setTrackers((prev) => {
         const updatedTrackers = updatedModels.map((model) => ({
           model,

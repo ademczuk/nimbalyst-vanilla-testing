@@ -16,6 +16,9 @@ import path from 'path';
  */
 const alias = [
   { find: '@nimbalyst/runtime', replacement: path.resolve(__dirname, './src') },
+  { find: '@nimbalyst/tracker-core', replacement: path.resolve(__dirname, '../tracker-core/src') },
+  { find: '@nimbalyst/tracker-schema', replacement: path.resolve(__dirname, '../tracker-schema/src') },
+  { find: '@nimbalyst/tracker-engine', replacement: path.resolve(__dirname, '../tracker-engine/src') },
   { find: '@nimbalyst/extension-sdk/file-tree', replacement: path.resolve(__dirname, '../extension-sdk/src/fileDirectoryTree.ts') },
   { find: '@nimbalyst/extension-sdk', replacement: path.resolve(__dirname, '../extension-sdk/src') },
   { find: /^@\//, replacement: `${path.resolve(__dirname, './src/editor')}/` },

@@ -13,7 +13,7 @@ import { trackerItemByIdAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/tr
 import {
   defaultTrackerTypeColor,
   defaultTrackerTypeIcon,
-} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerTypeIdentity';
+} from '@nimbalyst/tracker-schema';
 import { TrackerSwatchBadge } from '@nimbalyst/collab-client/trackers-ui';
 import { sessionRegistryAtom, workstreamSessionsAtom } from '../../store/atoms/sessions';
 import { trackerPanelCollapsedAtom, toggleTrackerPanelCollapsedAtom } from '../../store/atoms/agentMode';

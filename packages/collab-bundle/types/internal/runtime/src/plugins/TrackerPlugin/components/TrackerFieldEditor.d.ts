@@ -4,8 +4,9 @@
  * Used by both StatusBar (document headers) and TrackerItemDetail (edit panel).
  */
 import React from 'react';
-import type { FieldDefinition } from '../models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 import { type RelationshipCandidate } from './RelationshipFieldEditor';
+import type { CitationInspectorHost } from './CitationInspector';
 /** Team member info for user picker dropdown */
 export interface TeamMemberOption {
     /** Stable organization member id, when the roster provider exposes it. */
@@ -25,6 +26,14 @@ export interface TrackerFieldEditorProps {
     relationshipCandidates?: RelationshipCandidate[];
     /** Open a related tracker item (relationship pill click). */
     onOpenRelationship?: (itemId: string) => void;
+    /**
+     * Item lookup and exact-revision read for `citation` fields. Injected rather
+     * than imported because the data source lives in a package that depends on
+     * this one. Absent on a host with no citation support: the field then renders
+     * read-only chips with no inspector rather than pretending to have resolved
+     * the evidence.
+     */
+    citationHost?: CitationInspectorHost;
     /**
      * Render the field-name label above the control. Surfaces that already name
      * the field (the chip popover header) turn this off to avoid saying it twice.

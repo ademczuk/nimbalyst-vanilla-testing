@@ -23,6 +23,9 @@ export default defineConfig({
     },
     resolve: {
         alias: {
+            '@nimbalyst/tracker-core': path.resolve(__dirname, '../tracker-core/src'),
+            '@nimbalyst/tracker-schema': path.resolve(__dirname, '../tracker-schema/src'),
+            '@nimbalyst/tracker-engine': path.resolve(__dirname, '../tracker-engine/src'),
             '@': path.resolve(__dirname, './src')
         }
     },

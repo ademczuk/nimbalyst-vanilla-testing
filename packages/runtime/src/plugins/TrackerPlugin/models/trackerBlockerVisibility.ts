@@ -15,7 +15,7 @@
  */
 
 import type { BlockerRef } from './trackerReadiness';
-import type { StatusCategory } from './trackerStatusCategory';
+import type { StatusCategory } from '@nimbalyst/tracker-schema';
 
 /**
  * The part of a caller's query that partitions the corpus rather than selects

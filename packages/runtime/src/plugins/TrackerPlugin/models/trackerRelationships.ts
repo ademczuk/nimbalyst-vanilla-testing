@@ -9,7 +9,7 @@
  * DB. No I/O here.
  */
 
-import type { FieldDefinition, TrackerRelationshipValue } from './TrackerDataModel';
+import type { FieldDefinition, TrackerRelationshipValue } from '@nimbalyst/tracker-schema';
 import { normalizeRelationshipValue as normalizeCoreRelationshipValue } from '@nimbalyst/tracker-core';
 
 /** A relationship vocabulary entry (label + behavior hints for a field). */

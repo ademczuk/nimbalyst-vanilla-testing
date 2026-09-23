@@ -12,7 +12,7 @@
 
 import { useMemo } from 'react';
 import { globalRegistry } from '../models';
-import type { FieldDefinition } from '../models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 import { getTrackerFieldLayout } from './trackerFieldLayout';
 
 /** Structural fields the surrounding chrome renders; neither chip nor overflow. */

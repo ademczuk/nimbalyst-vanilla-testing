@@ -78,7 +78,7 @@ export const TrackerQuickCreatePopup: React.FC<TrackerQuickCreatePopupProps> = (
 
   const types = useMemo(
     // registryVersion is the subscription signal; the registry itself is mutable.
-    () => globalRegistry.getAll().filter((model) => model.creatable !== false && !model.archived),
+    () => globalRegistry.getListed().filter((model) => model.creatable !== false && !model.archived),
     [registryVersion],
   );
 

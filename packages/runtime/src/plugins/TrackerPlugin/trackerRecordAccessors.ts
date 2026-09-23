@@ -7,15 +7,15 @@
 
 import type { TrackerRecord } from '../../core/TrackerRecord';
 import type { TrackerIdentity } from '../../core/DocumentService';
-import type { TrackerSchemaRole, FieldDefinition } from './models/TrackerDataModel';
-import { globalRegistry, getRoleField } from './models/TrackerDataModel';
+import type { TrackerSchemaRole, FieldDefinition } from '@nimbalyst/tracker-schema';
+import { globalRegistry, getRoleField } from '@nimbalyst/tracker-schema';
 import {
   STATUS_CATEGORIES,
   STATUS_CATEGORY_LABELS,
   getStatusValueForCategory,
   getWorkflowStatusOptions,
   isStatusCategory,
-} from './models/trackerStatusCategory';
+} from '@nimbalyst/tracker-schema';
 
 /**
  * Conventional field names for each role.

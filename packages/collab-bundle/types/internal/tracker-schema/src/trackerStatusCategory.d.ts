@@ -1,0 +1,15 @@
+import { type StatusCategory } from "@nimbalyst/tracker-core";
+import type { FieldOption } from "./TrackerDataModel.js";
+export { OPEN_CATEGORIES, READINESS_FILTER_FIELD, STATUS_CATEGORIES, STATUS_CATEGORY_FILTER_FIELD, STATUS_CATEGORY_LABELS, TERMINAL_CATEGORIES, isStatusCategory, statusScopeClause, } from "@nimbalyst/tracker-core";
+export type { StatusCategory } from "@nimbalyst/tracker-core";
+export declare function getWorkflowStatusFieldName(type: string): string;
+export declare function getWorkflowStatusOptions(type: string): FieldOption[];
+export declare function resolveStatusCategory(type: string, statusValue: string | null | undefined): StatusCategory;
+export declare function resolveKnownStatusCategory(type: string, statusValue: string | null | undefined): StatusCategory | undefined;
+export declare function isTerminalStatus(type: string, statusValue: string | null | undefined): boolean;
+export declare function isDoneStatus(type: string, statusValue: string | null | undefined): boolean;
+export declare function isCancelledStatus(type: string, statusValue: string | null | undefined): boolean;
+export declare function statusValuesInCategories(types: readonly string[], categories: readonly StatusCategory[]): Set<string>;
+export declare function statusCategoryOfItem(type: string, readField: (fieldName: string) => unknown): StatusCategory;
+export declare function getStatusValueForCategory(type: string, category: StatusCategory): string | undefined;
+export declare function getDoneStatusValue(type: string): string | undefined;

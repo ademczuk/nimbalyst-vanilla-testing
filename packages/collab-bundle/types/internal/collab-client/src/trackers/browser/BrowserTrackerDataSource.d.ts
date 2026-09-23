@@ -1,9 +1,9 @@
 import type { TeamJwt, TeamMemberId } from '../../../../runtime/src/auth/jwtScopes';
 import type { TrackerIdentity } from '../../../../runtime/src/core/DocumentService';
-import { IndexedDbTrackerPersistence } from '../../../../runtime/src/sync/trackerPersistence';
-import { type TrackerNavigationSyncHooks, type TrackerPresenceIdentity, type TrackerSchemaSyncHooks } from '../../../../runtime/src/sync/TrackerSyncEngine';
-import type { TrackerAccessTermination } from '../../../../runtime/src/sync/trackerAccessTermination';
-import type { TrackerDataChange, TrackerDataCommand, TrackerDataCommandResult, TrackerDataSnapshot, TrackerDataSource, TrackerSyncState } from '../dataSource';
+import { IndexedDbTrackerPersistence } from '@nimbalyst/tracker-engine';
+import { type TrackerNavigationSyncHooks, type TrackerPresenceIdentity, type TrackerSchemaSyncHooks } from '@nimbalyst/tracker-engine';
+import type { TrackerAccessTermination } from '@nimbalyst/tracker-engine';
+import type { TrackerDataChange, TrackerDataCommand, TrackerDataCommandResult, TrackerDataSnapshot, TrackerDataSource, TrackerSyncState, TrackerItemRevisionRecord, TrackerRevisionRef } from '../dataSource';
 export interface BrowserTrackerDataSourceOptions {
     workspacePath: string;
     serverUrl: string;
@@ -58,6 +58,17 @@ export declare class BrowserTrackerDataSource implements TrackerDataSource {
     snapshot(): Promise<TrackerDataSnapshot>;
     subscribe(cb: (change: TrackerDataChange) => void): () => void;
     status(): TrackerSyncState;
+    /**
+     * Not available in the browser yet, and it throws rather than approximating.
+     *
+     * The IndexedDB persistence keeps only current rows: N6 left browser-side
+     * revisions out on purpose, because the room owns `serverRevision` and the
+     * browser's half of that lands with the collab server's revision read (C2).
+     * Answering with the live item instead would silently show newer evidence
+     * under a pinned citation, which is the one failure contract 4.2 exists to
+     * prevent.
+     */
+    getItemRevision(_itemId: string, _ref: TrackerRevisionRef): Promise<TrackerItemRevisionRecord>;
     command(command: TrackerDataCommand): Promise<TrackerDataCommandResult>;
     dispose(): void;
     private updateOne;

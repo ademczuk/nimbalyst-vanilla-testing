@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nimbalyst</title>
+    <script>
+        // Base theme class before first paint, as index.html does. The island
+        // is transparent, so it must be marked before the opaque root paints.
+        (function() {
+            var theme;
+            try {
+                theme = window.electronAPI && window.electronAPI.getResolvedThemeSync && window.electronAPI.getResolvedThemeSync();
+            } catch (err) {
+                console.error('[THEME-INIT] Error calling getResolvedThemeSync:', err);
+            }
+            if (theme !== 'dark' && theme !== 'crystal-dark') theme = 'light';
+            var root = document.documentElement;
+            root.classList.add(theme + '-theme', 'menu-bar-island-window');
+            root.setAttribute('data-theme', theme);
+        })();
+    </script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module" src="./islandEntry.tsx"></script>
+</body>
+</html>

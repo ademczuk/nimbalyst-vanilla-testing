@@ -10,7 +10,7 @@
  * shape the MCP tools hand back.
  */
 
-import type { FieldType } from './TrackerDataModel';
+import type { FieldType } from '@nimbalyst/tracker-schema';
 
 /**
  * Comparison operators.
@@ -128,6 +128,7 @@ export function opsForFieldType(type: FieldType | undefined): TrackerFilterOp[] 
     case 'array':
     case 'relationship':
     case 'reference':
+    case 'citation':
       return COLLECTION_OPS;
     case 'date':
     case 'datetime':

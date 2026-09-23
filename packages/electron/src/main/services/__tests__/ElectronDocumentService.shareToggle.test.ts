@@ -47,7 +47,7 @@ vi.mock('../../utils/store', () => ({
   isAnalyticsEnabled: () => true,
 }));
 
-vi.mock('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel', () => ({
+vi.mock('../../../../../tracker-schema/src/TrackerDataModel', () => ({
   globalRegistry: {
     get: mockGlobalRegistryGet,
     // The policy resolver reads by explicit workspace (NIM-3702). These tests

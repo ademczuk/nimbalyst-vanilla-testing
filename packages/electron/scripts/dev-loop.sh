@@ -26,6 +26,24 @@ echo "Starting Nimbalyst dev loop..."
 echo "Use /restart in the AI chat to restart the app."
 echo ""
 
+# The renderer dev server outlives each app run. `electron-vite dev` exits with
+# Electron and takes the renderer's transform cache with it, so every restart
+# recompiled ~2,600 modules (~30s) before a window could paint. With the server
+# kept here, a restart only rebuilds main/preload and relaunches Electron.
+RENDERER_PORT="${VITE_PORT:-5273}"
+node ./scripts/renderer-dev-server.mjs &
+RENDERER_PID=$!
+trap 'kill $RENDERER_PID 2>/dev/null' EXIT
+until curl -s -o /dev/null "http://localhost:$RENDERER_PORT/"; do
+  if ! kill -0 $RENDERER_PID 2>/dev/null; then
+    echo "Renderer dev server failed to start"
+    exit 1
+  fi
+  sleep 0.5
+done
+export NIMBALYST_EXTERNAL_RENDERER=1
+export ELECTRON_RENDERER_URL="http://localhost:$RENDERER_PORT"
+
 while true; do
   # Run the dev server (use dev.sh directly so env vars like NIMBALYST_USER_DATA_DIR propagate)
   ./scripts/dev.sh

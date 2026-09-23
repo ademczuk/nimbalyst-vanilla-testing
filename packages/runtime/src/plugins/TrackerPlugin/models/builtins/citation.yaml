@@ -1,0 +1,129 @@
+# Knowledge-scopes `knowledge-core` kind (master plan section 3).
+# A passage supporting or challenging an exact revision of a claim. The three
+# fields that make it more than a link: `locator` addresses the passage,
+# `capture` says which retrieval the passage was read from, and `claim` pins the
+# revision it was read against.
+type: citation
+displayName: Citation
+displayNamePlural: Citations
+icon: format_quote
+color: "#7c3aed"
+
+modes:
+  inline: true
+  # A citation is evidence about something else; its content is the excerpt.
+  fullDocument: false
+
+sharing: personal
+draftByDefault: false
+# Not offered in type lists until the knowledge-core pack installs `claim`.
+hiddenUntilType: claim
+
+idPrefix: cit
+idFormat: ulid
+
+fields:
+  - name: title
+    type: string
+    required: true
+
+  - name: status
+    type: select
+    default: asserted
+    options:
+      - value: asserted
+        label: Asserted
+        icon: check_circle
+        category: started
+      - value: verified
+        label: Verified
+        icon: verified
+        category: done
+      - value: stale
+        label: Stale
+        icon: schedule
+        category: started
+      - value: broken
+        label: Broken
+        icon: link_off
+        category: cancelled
+
+  # What this citation is evidence about, pinned to an exact revision via the
+  # relationship value's `revisionId` (contract 4.2).
+  #
+  # `*` rather than `[claim]` deliberately: the `claim` kind arrives with the
+  # knowledge-core pack (N11), and until then the useful thing to cite is a
+  # decision, a plan, or a bug. N11 narrows this once `claim` exists.
+  - name: claim
+    type: relationship
+    relationshipTypeKey: cites
+    targetTrackerTypes: "*"
+    multiValue: false
+
+  - name: capture
+    type: relationship
+    relationshipTypeKey: read-from
+    targetTrackerTypes:
+      - capture
+    multiValue: false
+
+  - name: relation
+    type: select
+    default: supports
+    options:
+      - value: supports
+        label: Supports
+        icon: thumb_up
+      - value: challenges
+        label: Challenges
+        icon: thumb_down
+      - value: context
+        label: Context
+        icon: info
+
+  # The address of the passage. Validated by `validateCitationLocator` against
+  # contract 4.4 -- the `objectShape` marker is what routes it there instead of
+  # letting it through as opaque JSON.
+  - name: locator
+    type: object
+    objectShape: citation-locator
+    displayInline: false
+
+  - name: excerpt
+    type: text
+    displayInline: false
+
+  # Why the excerpt supports or challenges the claim. The excerpt rarely says so
+  # on its own, and without this a reader has to re-derive the argument.
+  - name: explanation
+    type: text
+    displayInline: false
+
+  - name: tags
+    type: array
+    itemType: string
+    displayInline: false
+
+  - name: created
+    type: datetime
+    displayInline: false
+    readOnly: true
+
+  - name: updated
+    type: datetime
+    displayInline: false
+    readOnly: true
+
+statusBarLayout:
+  - row:
+    - field: status
+      width: 160
+    - field: relation
+      width: 160
+
+inlineTemplate: "{icon} {title} {relation}"
+
+roles:
+  title: title
+  workflowStatus: status
+  tags: tags

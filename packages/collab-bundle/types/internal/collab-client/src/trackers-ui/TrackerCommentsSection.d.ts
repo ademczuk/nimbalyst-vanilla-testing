@@ -18,7 +18,7 @@
  */
 import React from 'react';
 import type { TrackerIdentity } from '../../../runtime/src/core/DocumentService';
-import type { TrackerCommentEntry } from '../../../runtime/src/sync/trackerProtocol';
+import type { TrackerCommentEntry } from '@nimbalyst/tracker-engine';
 import type { TrackerMutationRejection } from '../trackers/index';
 export type TrackerCommentMutation = {
     kind: 'add';

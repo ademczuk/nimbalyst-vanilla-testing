@@ -18,7 +18,7 @@ import {
   type TrackerDataModel,
   type TrackerDataModelRegistry,
   type TrackerSharing,
-} from './TrackerDataModel';
+} from '@nimbalyst/tracker-schema';
 
 export interface TrackerValidationIssue {
   field: string;

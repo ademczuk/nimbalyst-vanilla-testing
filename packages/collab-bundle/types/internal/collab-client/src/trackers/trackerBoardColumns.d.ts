@@ -4,7 +4,7 @@
  * an empty bucket that can remove relationship membership.
  */
 import type { TrackerRecord } from '../../../runtime/src/core/TrackerRecord';
-import type { TrackerRelationshipValue } from '../../../runtime/src/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { TrackerRelationshipValue } from '@nimbalyst/tracker-schema';
 import { type TrackerGroupBy, type TrackerGroupingAxis, type TrackerOrdering, type TrackerRelationshipLabelResolver } from './model';
 import type { TrackerStatusScope } from './model';
 export interface TrackerBoardColumn {

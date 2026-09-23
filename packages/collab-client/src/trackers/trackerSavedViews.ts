@@ -31,7 +31,7 @@ import {
   STATUS_CATEGORY_FILTER_FIELD,
   isTerminalStatus,
   statusCategoryOfItem,
-} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerStatusCategory';
+} from '@nimbalyst/tracker-schema';
 import type { Readiness } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerReadiness';
 import {
   MANUAL_TRACKER_ORDERING,

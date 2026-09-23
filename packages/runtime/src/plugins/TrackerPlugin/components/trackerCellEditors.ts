@@ -15,7 +15,7 @@ import type {
   FieldDefinition,
   FieldOption,
   UrlFieldValue,
-} from '../models/TrackerDataModel';
+} from '@nimbalyst/tracker-schema';
 import { normalizeRelationshipValue } from '../models/trackerRelationships';
 
 /** Which editor a cell renders when it enters edit mode. */
@@ -99,6 +99,12 @@ export function resolveCellEditor(field: FieldDefinition | undefined): CellEdito
       };
     case 'object':
       // No sensible inline editor for a nested object -- edit it in the detail panel.
+      return { kind: 'readonly' };
+    case 'citation':
+      // A citation entry is a reference plus its own record; attaching one is a
+      // detail-panel action (the inspector), not a cell you type into. Without
+      // this it would fall through to `text` and the first keystroke in the
+      // grid would replace the whole structured value with a string.
       return { kind: 'readonly' };
     case 'string':
     default:

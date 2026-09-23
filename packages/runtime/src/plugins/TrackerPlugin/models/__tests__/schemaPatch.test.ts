@@ -5,13 +5,18 @@ import {
   diffTrackerSchema,
   parseTrackerSchemaPatchYAML,
   serializeTrackerSchemaPatchYAML,
+  resolveTrackerTypeInheritance,
   type TrackerSchemaPatch,
-} from '../schemaPatch';
+} from '@nimbalyst/tracker-schema';
 import {
   decodeTrackerSchemaPayload,
   encodeTrackerSchemaPatchPayload,
+  encodeTrackerSchemaModelPayload,
+  encodeTrackerPredicateRegistryPayload,
+  TRACKER_PREDICATE_REGISTRY_SCHEMA_TYPE,
 } from '../schemaSyncPayload';
-import type { TrackerDataModel } from '../TrackerDataModel';
+import type { PredicateDefinition } from '@nimbalyst/tracker-schema';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 
 function featureSeed(): TrackerDataModel {
   return {
@@ -251,5 +256,100 @@ describe('diffTrackerSchema round-trips through resolve', () => {
     const patch = diffTrackerSchema(seed, featureSeed());
     const resolved = resolveTrackerSchemaPatch(seed, patch);
     expect(resolved).toEqual(seed);
+  });
+});
+
+// A derived type must not freeze at the sender's app version either: the
+// payload carries the declaration so the receiver resolves against its own
+// base. This is the model-payload counterpart of the builtin delta above.
+describe('derived type wire payload', () => {
+  const declared = {
+    type: 'product',
+    extends: 'feature',
+    fields: [{ name: 'license', type: 'string' as const }],
+  };
+
+  it('stays a readable full model for a client that knows nothing about extends', () => {
+    const sender = featureSeed();
+    const resolvedBySender = resolveTrackerTypeInheritance(declared, () => sender).model!;
+    const payload = encodeTrackerSchemaModelPayload(resolvedBySender, declared);
+
+    const asPlainModel = JSON.parse(payload) as TrackerDataModel;
+    expect(asPlainModel.type).toBe('product');
+    expect(asPlainModel.fields.map(f => f.name)).toContain('title');
+    expect(asPlainModel.fields.map(f => f.name)).toContain('license');
+  });
+
+  it('lets the receiver re-resolve against its own base, picking up a field the sender never had', () => {
+    const senderBase = featureSeed();
+    const payload = encodeTrackerSchemaModelPayload(
+      resolveTrackerTypeInheritance(declared, () => senderBase).model!,
+      declared,
+    );
+
+    const decoded = decodeTrackerSchemaPayload('product', payload);
+    expect(decoded?.kind).toBe('model');
+    expect((decoded as { declared?: unknown }).declared).toEqual(declared);
+    // The sidecar never leaks into the resolved model the mirror stores.
+    expect(decoded && 'declaredForm' in (decoded as { model: object }).model).toBe(false);
+
+    const receiverBase: TrackerDataModel = {
+      ...featureSeed(),
+      fields: [...featureSeed().fields, { name: 'reviewState', type: 'select' }],
+    };
+    const reResolved = resolveTrackerTypeInheritance(
+      (decoded as { declared: Parameters<typeof resolveTrackerTypeInheritance>[0] }).declared,
+      () => receiverBase,
+    ).model;
+
+    expect(reResolved?.fields.map(f => f.name)).toContain('reviewState');
+  });
+
+  it('emits byte-identical JSON for a plain model with no declaration', () => {
+    const model = featureSeed();
+    expect(encodeTrackerSchemaModelPayload(model)).toBe(JSON.stringify(model));
+  });
+});
+
+describe('predicate registry payload (knowledge-scopes 4.1)', () => {
+  const predicates: PredicateDefinition[] = [{
+    id: 'integrates-with',
+    label: 'integrates with',
+    subjectKinds: ['product'],
+    valueShape: 'entity',
+    direction: 'directed',
+    qualifiers: { via: { type: 'relationship', required: true } },
+  }];
+
+  it('round-trips under the reserved schema type', () => {
+    const decoded = decodeTrackerSchemaPayload(
+      TRACKER_PREDICATE_REGISTRY_SCHEMA_TYPE,
+      encodeTrackerPredicateRegistryPayload(predicates),
+    );
+    expect(decoded).toEqual({ kind: 'predicates', predicates });
+  });
+
+  it('refuses a registry arriving as some tracker type, which would lose that type', () => {
+    expect(decodeTrackerSchemaPayload('product', encodeTrackerPredicateRegistryPayload(predicates)))
+      .toBeNull();
+  });
+
+  it('drops an invalid registry rather than handing out a partial one', () => {
+    const malformed = JSON.stringify({
+      payloadKind: 'trackerPredicateRegistry',
+      version: 1,
+      predicates: [{ ...predicates[0], valueShape: 'nonsense' }],
+    });
+    expect(decodeTrackerSchemaPayload(TRACKER_PREDICATE_REGISTRY_SCHEMA_TYPE, malformed)).toBeNull();
+  });
+
+  it('is dropped by the model/patch rules a client predating it applies', () => {
+    const parsed = JSON.parse(encodeTrackerPredicateRegistryPayload(predicates));
+    // The two shapes an older client recognizes: a patch discriminator, or a
+    // top-level `type` plus `fields[]`. This payload is neither, so that client
+    // never acquires a broken tracker type named after the reserved key.
+    expect(parsed.payloadKind).not.toBe('trackerSchemaPatch');
+    expect(parsed.type).toBeUndefined();
+    expect(parsed.fields).toBeUndefined();
   });
 });

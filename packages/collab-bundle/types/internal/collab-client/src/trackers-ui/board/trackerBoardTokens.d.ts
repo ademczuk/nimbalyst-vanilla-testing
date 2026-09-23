@@ -25,6 +25,6 @@ export declare const PRIORITY_COLORS: Record<string, string>;
  * type with no color rather than as a missing entry. `trackerTypeIdentity.ts`
  * is dependency-free precisely so surfaces can consume it directly.
  */
-export { DEFAULT_TRACKER_TYPE_COLORS as TYPE_COLORS } from '../../../../runtime/src/plugins/TrackerPlugin/models/trackerTypeIdentity';
+export { DEFAULT_TRACKER_TYPE_COLORS as TYPE_COLORS } from '@nimbalyst/tracker-schema';
 /** Fallback swatch for a value with no assigned color. */
 export declare const NEUTRAL_SWATCH = "#6b7280";

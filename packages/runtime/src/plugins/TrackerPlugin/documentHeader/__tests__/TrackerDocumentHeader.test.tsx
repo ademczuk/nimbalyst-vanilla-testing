@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TrackerRecord } from '../../../../core/TrackerRecord';
 import { StatusBar } from '../../components/StatusBar';
-import type { TrackerDataModel } from '../../models/TrackerDataModel';
+import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 import { findAssociatedTrackerItem } from '../TrackerDocumentHeader';
 
 function record(overrides: Partial<TrackerRecord> = {}): TrackerRecord {

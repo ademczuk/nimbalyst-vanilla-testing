@@ -212,7 +212,7 @@ describe('TrackerSchemaService cross-workspace isolation (#1035)', () => {
 
     service = await import('../TrackerSchemaService');
     scope = await import('../tracker/trackerSchemaScope');
-    ({ globalRegistry } = await import('@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel'));
+    ({ globalRegistry } = await import('@nimbalyst/tracker-schema'));
   });
 
   it('keeps the active workspace schema intact after a call targeting another workspace', () => {

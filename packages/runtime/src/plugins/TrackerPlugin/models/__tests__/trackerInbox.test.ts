@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { TrackerRecord } from '../../../../core/TrackerRecord';
 import { loadBuiltinTrackers } from '../ModelLoader';
-import { globalRegistry, type TrackerDataModel } from '../TrackerDataModel';
+import { globalRegistry, type TrackerDataModel } from '@nimbalyst/tracker-schema';
 import { getRecordPriority, getRecordStatus, getFieldByRole } from '../../trackerRecordAccessors';
 import { COLLECTION_INVERSE_KEY } from '../trackerCollections';
 import {

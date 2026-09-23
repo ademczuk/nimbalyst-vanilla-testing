@@ -38,6 +38,8 @@ export interface IndexProgress {
   file?: string;
   done: number;
   total: number;
+  /** Chunks requiring embedding so far; unchanged files do not advance this. */
+  indexed?: number;
 }
 
 interface FileRef {
@@ -53,6 +55,15 @@ interface PreparedSource {
   stored: StoredChunk[];
   /** Chunks needing a (re)embed, as indices into `stored` plus the embed input. */
   pending: { idx: number; input: string }[];
+  /** Every row already stored with identical content and metadata; nothing to write. */
+  unchanged: boolean;
+}
+
+/** True when every field chunking produced matches the stored row. */
+function sameChunk(next: Chunk, prev: StoredChunk): boolean {
+  const a = next as unknown as Record<string, unknown>;
+  const b = prev as unknown as Record<string, unknown>;
+  return Object.keys(a).every((k) => JSON.stringify(a[k] ?? null) === JSON.stringify(b[k] ?? null));
 }
 
 /** Embed input includes the heading breadcrumb for extra context. */
@@ -184,7 +195,7 @@ export class Indexer {
     let indexed = 0;
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      onProgress?.({ phase: 'index', file: f.sourcePath, done: i, total: files.length });
+      onProgress?.({ phase: 'index', file: f.sourcePath, done: i, total: files.length, indexed });
       indexed += await this.indexFile(f.sourcePath, f.sourceClass);
     }
 
@@ -240,8 +251,8 @@ export class Indexer {
    * embedder round-trip, not one per record. Returns the number of chunks
    * (re)embedded.
    */
-  async indexRecords(records: VirtualRecord[]): Promise<number> {
-    if (records.length === 0) return 0;
+  async indexRecords(records: VirtualRecord[]): Promise<{ embedded: number; changed: number }> {
+    if (records.length === 0) return { embedded: 0, changed: 0 };
 
     const prepared: PreparedSource[] = [];
     const inputs: string[] = [];
@@ -266,13 +277,19 @@ export class Indexer {
       });
     }
 
+    // Hosts re-send every record on each backfill pass. An unchanged record is
+    // not written, and a pass with no changes lets the engine skip reloading
+    // the whole catalog (every dense vector) into a new retrieval snapshot.
     let embedded = 0;
+    let changed = 0;
     for (const p of prepared) {
+      embedded += p.pending.length;
+      if (p.unchanged) continue;
+      changed++;
       this.store.upsertChunks(p.stored);
       this.store.pruneSource(p.sourcePath, p.stored.map((c) => c.id));
-      embedded += p.pending.length;
     }
-    return embedded;
+    return { embedded, changed };
   }
 
   /**
@@ -341,7 +358,11 @@ export class Indexer {
         updatedAt: Date.now(),
       };
     });
-    return { sourcePath, stored, pending };
+    const unchanged =
+      pending.length === 0 &&
+      existing.size === rows.length &&
+      rows.every((c) => sameChunk(c, existing.get(c.id)!));
+    return { sourcePath, stored, pending, unchanged };
   }
 
   /** Drop a source file from the index. */

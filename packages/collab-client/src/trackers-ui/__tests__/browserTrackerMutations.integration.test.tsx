@@ -6,7 +6,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { asTeamJwt, asTeamMemberId } from '@nimbalyst/runtime/auth/jwtScopes';
 import type { TrackerIdentity } from '@nimbalyst/runtime/core/DocumentService';
-import { createFakeServer } from '../../../../runtime/src/sync/__tests__/fakeTrackerServer';
+import { createFakeServer } from '../../../../tracker-engine/src/__tests__/fakeTrackerServer';
 import { BrowserTrackerDataSource } from '../../trackers/browser/BrowserTrackerDataSource';
 import {
   BROWSER_TRACKER_UI_CAPABILITIES,

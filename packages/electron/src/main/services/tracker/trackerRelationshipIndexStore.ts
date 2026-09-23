@@ -183,6 +183,49 @@ export async function reindexItemRelationships(
 }
 
 /**
+ * Normalize a tracker row's `updated` column to ISO. SQLite hands back a
+ * string, PGLite a Date.
+ */
+export function trackerRowUpdatedToIso(updated: unknown): string | null {
+  if (typeof updated === 'string') return updated;
+  if (updated instanceof Date) return updated.toISOString();
+  return updated ? new Date(updated as never).toISOString() : null;
+}
+
+/**
+ * Reindex one item straight after a main-process write.
+ *
+ * Until this existed the index was maintained ONLY by
+ * `document-service:tracker-item-reindex-relationships`, which the renderer
+ * calls after editing a relationship field. Anything written without a renderer
+ * in the loop -- every MCP `tracker_create`/`tracker_update`, the CLI, the
+ * commit linker -- produced an item whose relationship values were stored
+ * correctly and whose edges did not exist, so backlinks and reverse lookup
+ * silently returned nothing. An agent-authored graph had no edges at all.
+ *
+ * Best-effort by design: the index is a rebuildable projection, so a failure
+ * here is logged and the write still stands. It must never be able to fail a
+ * tracker write.
+ */
+export async function reindexItemRelationshipsAfterWrite(
+  workspace: string,
+  sourceItemId: string,
+  fields: Record<string, unknown> | undefined,
+  fieldDefs: FieldDefinition[],
+  sourceUpdatedAt: string | null,
+  dbOverride?: RelationshipIndexDb,
+): Promise<void> {
+  // A type with no relationship fields is the common case; skip the write
+  // entirely rather than paying a delete per item save.
+  if (!fieldDefs.some(def => def.type === 'relationship' || def.type === 'reference')) return;
+  try {
+    await reindexItemRelationships(workspace, sourceItemId, fields, fieldDefs, sourceUpdatedAt, dbOverride);
+  } catch (error) {
+    logger.main.warn(`[relationshipIndex] reindex after write failed for ${sourceItemId}:`, error);
+  }
+}
+
+/**
  * Reindex multiple source items after one bounded IPC request. Items are grouped
  * by workspace so each group pays one delete instead of one delete per item;
  * edge upserts remain per edge because both supported backends share that safe

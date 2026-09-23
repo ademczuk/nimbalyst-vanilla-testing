@@ -24,6 +24,7 @@ import {
   getBacklinks,
   getOutgoingRelationships,
   reindexItemRelationships,
+  reindexItemRelationshipsAfterWrite,
   rebuildWorkspaceRelationshipIndex,
 } from '../trackerRelationshipIndexStore';
 import type { RelationshipEdge, FieldDefinition } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
@@ -123,6 +124,44 @@ describe('trackerRelationshipIndexStore (SQLite, migration 0014)', () => {
     const out = await getOutgoingRelationships(WS, 'plan-1', db);
     expect(out.map((r) => r.targetItemId).sort()).toEqual(['bug-1', 'bug-2']);
     expect(out.find((r) => r.targetItemId === 'bug-1')?.targetTrackerType).toBe('bug');
+  });
+
+  // The write-path hook. Before it existed the index was maintained only by the
+  // renderer's reindex IPC, so anything written by MCP, the CLI or the commit
+  // linker stored relationship values and produced no edges at all.
+  it('reindexItemRelationshipsAfterWrite indexes a relationship set at write time', async () => {
+    await reindexItemRelationshipsAfterWrite(
+      WS, 'plan-1',
+      { title: 'P', dependsOn: [{ itemId: 'bug-1', trackerType: 'bug' }] },
+      planDefs, '2026-06-16T00:00:00Z', db,
+    );
+    const out = await getOutgoingRelationships(WS, 'plan-1', db);
+    expect(out.map((r) => r.targetItemId)).toEqual(['bug-1']);
+  });
+
+  it('reindexItemRelationshipsAfterWrite leaves a type with no relationship fields alone', async () => {
+    // Every tracker save would otherwise pay a delete for nothing.
+    const querySpy = vi.spyOn(db, 'query');
+    await reindexItemRelationshipsAfterWrite(
+      WS, 'note-1', { title: 'N' },
+      [{ name: 'title', type: 'string' } as FieldDefinition],
+      '2026-06-16T00:00:00Z', db,
+    );
+    expect(querySpy).not.toHaveBeenCalled();
+    querySpy.mockRestore();
+  });
+
+  it('reindexItemRelationshipsAfterWrite never lets an index failure fail the write', async () => {
+    // The index is a rebuildable projection. A tracker item that saved must not
+    // be rolled back because its projection could not be written.
+    const failing = { query: () => Promise.reject(new Error('index is gone')) };
+    await expect(
+      reindexItemRelationshipsAfterWrite(
+        WS, 'plan-1',
+        { dependsOn: [{ itemId: 'bug-1' }] },
+        planDefs, null, failing as never,
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it('rebuildWorkspaceRelationshipIndex indexes all items from tracker_items JSON', async () => {

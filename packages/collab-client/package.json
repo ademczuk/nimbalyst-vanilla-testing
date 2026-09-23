@@ -58,6 +58,8 @@
   "dependencies": {
     "@floating-ui/react": "^0.27.19",
     "@nimbalyst/collab-protocol": "*",
+    "@nimbalyst/tracker-schema": "0.1.0",
+    "@nimbalyst/tracker-engine": "0.1.0",
     "@nimbalyst/runtime": "*",
     "@nimbalyst/tracker-core": "*",
     "jotai": "^2.16.1",

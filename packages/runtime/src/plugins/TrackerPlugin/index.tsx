@@ -1012,9 +1012,9 @@ export { TrackerDocumentHeader, shouldRenderTrackerHeader } from './documentHead
 
 // Export data models
 export { ModelLoader, loadBuiltinTrackers } from './models/ModelLoader';
-export type { TrackerDataModel, FieldDefinition, TrackerSharing, TrackerSharingPolicy, TrackerSchemaRole } from './models/TrackerDataModel';
-export { parseTrackerYAML } from './models/YAMLParser';
-export { globalRegistry, getRoleField, getFieldByRole } from './models/TrackerDataModel';
+export type { TrackerDataModel, FieldDefinition, TrackerSharing, TrackerSharingPolicy, TrackerSchemaRole } from '@nimbalyst/tracker-schema';
+export { parseTrackerYAML } from '@nimbalyst/tracker-schema';
+export { globalRegistry, getRoleField, getFieldByRole } from '@nimbalyst/tracker-schema';
 
 // Export components
 export { StatusBar } from './components/StatusBar';

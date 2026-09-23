@@ -8,7 +8,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import type { TrackerIdentity } from '@nimbalyst/runtime';
-import type { TrackerCommentEntry } from '@nimbalyst/runtime/sync/trackerProtocol';
+import type { TrackerCommentEntry } from '@nimbalyst/tracker-engine';
 import {
   TrackerCommentsSection as SharedTrackerCommentsSection,
   type TrackerCommentMutation,

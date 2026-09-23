@@ -30,3 +30,5 @@ export * from "./documentFeedbackIndex.js";
 
 export * from "./indexReplication.js";
 export * from "./sessionRetention.js";
+export * from './jwtScopes.js';
+export * from './syncClientInfo.js';

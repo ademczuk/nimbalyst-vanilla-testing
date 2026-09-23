@@ -5,12 +5,25 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import type { FieldDefinition, UrlFieldValue } from '../models/TrackerDataModel';
+import type { FieldDefinition, UrlFieldValue } from '@nimbalyst/tracker-schema';
 import { CustomSelect } from './CustomSelect';
 import { UserAvatar } from './UserAvatar';
 import { getInitials, stringToColor } from './trackerColumns';
 import { formatLocalDateOnly, parseDate } from '../models/dateUtils';
 import { RelationshipFieldEditor, type RelationshipCandidate } from './RelationshipFieldEditor';
+import type { CitationInspectorHost } from './CitationInspector';
+
+/**
+ * Lazy on purpose. The citation editor and its inspector pull `@floating-ui/react`
+ * (about 24 KB gzip), and this module is eager in the web console's `trackers-ui`
+ * entry. A `citation` field only exists on schemas that opted into the knowledge
+ * kinds, so making every tracker surface pay for the popover at load is the
+ * wrong trade -- the collab bundle's eager-graph check caught it as a static
+ * import that should not have been one.
+ */
+const CitationFieldEditor = React.lazy(() =>
+  import('./CitationFieldEditor').then((module) => ({ default: module.CitationFieldEditor })),
+);
 
 /** Team member info for user picker dropdown */
 export interface TeamMemberOption {
@@ -32,6 +45,14 @@ export interface TrackerFieldEditorProps {
   relationshipCandidates?: RelationshipCandidate[];
   /** Open a related tracker item (relationship pill click). */
   onOpenRelationship?: (itemId: string) => void;
+  /**
+   * Item lookup and exact-revision read for `citation` fields. Injected rather
+   * than imported because the data source lives in a package that depends on
+   * this one. Absent on a host with no citation support: the field then renders
+   * read-only chips with no inspector rather than pretending to have resolved
+   * the evidence.
+   */
+  citationHost?: CitationInspectorHost;
   /**
    * Render the field-name label above the control. Surfaces that already name
    * the field (the chip popover header) turn this off to avoid saying it twice.
@@ -96,6 +117,7 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
   teamMembers,
   relationshipCandidates,
   onOpenRelationship,
+  citationHost,
   showLabel = true,
 }) => {
   const fieldId = `field-${field.name}`;
@@ -329,6 +351,26 @@ export const TrackerFieldEditor: React.FC<TrackerFieldEditorProps> = ({
             onOpenItem={onOpenRelationship}
             readOnly={field.readOnly}
           />
+        </div>
+      );
+
+    case 'citation':
+      return (
+        <div className={wrapperClasses}>
+          {renderLabel()}
+          <React.Suspense fallback={<span className="citation-field-loading text-[12px] text-[var(--nim-text-muted)]">Loading citations...</span>}>
+            <CitationFieldEditor
+              field={field}
+              value={value}
+              onChange={onChange}
+              // A host with no citation support still renders the chips, so the
+              // evidence is visible; it just cannot resolve or pin anything.
+              host={citationHost ?? { lookupItem: () => null }}
+              candidates={relationshipCandidates}
+              onOpenItem={onOpenRelationship}
+              readOnly={field.readOnly || !citationHost}
+            />
+          </React.Suspense>
         </div>
       );
 

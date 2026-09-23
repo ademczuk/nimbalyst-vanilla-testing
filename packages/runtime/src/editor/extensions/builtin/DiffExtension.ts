@@ -34,17 +34,15 @@ import {
   REJECT_DIFF_COMMAND,
   applyMarkdownReplace,
   type TextReplacement,
-  type TextReplacementInput,
 } from '../../plugins/DiffPlugin/core/exports';
-import { APPLY_MARKDOWN_REPLACE_COMMAND } from '../../plugins/DiffPlugin/DiffCommands';
+import {
+  APPLY_MARKDOWN_REPLACE_COMMAND,
+  type ApplyMarkdownReplacePayload,
+} from '../../plugins/DiffPlugin/DiffCommands';
 import { diffTrace } from '../../../utils/debugFlags';
 import { $convertToEnhancedMarkdownString } from '../../markdown';
 import { getAllExtensionTransformers } from '../extensionContributionsStore';
 import { CORE_TRANSFORMERS } from '../../markdown/core-transformers';
-
-type ApplyMarkdownReplacePayload =
-  | TextReplacementInput[]
-  | { replacements: TextReplacementInput[]; requestId?: string };
 
 const NAME = '@nimbalyst/editor/diff';
 
@@ -116,6 +114,7 @@ export const DiffExtension = defineExtension({
       (payload) => {
         const replacements = Array.isArray(payload) ? payload : payload?.replacements;
         const requestId = Array.isArray(payload) ? undefined : payload?.requestId;
+        const onResult = Array.isArray(payload) ? undefined : payload?.onResult;
         if (!replacements || replacements.length === 0) return false;
 
         try {
@@ -150,6 +149,7 @@ export const DiffExtension = defineExtension({
 
           try {
             applyMarkdownReplace(editor, originalMarkdown, normalizedReplacements, transformers);
+            onResult?.({ ok: true });
             if (typeof window !== 'undefined') {
               setTimeout(() => {
                 window.dispatchEvent(
@@ -173,6 +173,11 @@ export const DiffExtension = defineExtension({
             } else if (err?.message) {
               errorMessage = err.message;
             }
+            onResult?.({
+              ok: false,
+              errorType: (error as { errorType?: string })?.errorType,
+              message: errorMessage,
+            });
             if (typeof window !== 'undefined') {
               setTimeout(() => {
                 window.dispatchEvent(
@@ -187,6 +192,7 @@ export const DiffExtension = defineExtension({
         } catch (error: unknown) {
           const message = (error as { message?: string })?.message ?? 'Unknown error';
           console.error('[DiffExtension] Setup error before applyMarkdownReplace:', error);
+          onResult?.({ ok: false, message });
           if (typeof window !== 'undefined') {
             setTimeout(() => {
               window.dispatchEvent(

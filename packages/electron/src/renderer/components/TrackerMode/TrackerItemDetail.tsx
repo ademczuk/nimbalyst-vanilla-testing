@@ -27,7 +27,7 @@ import {
 } from '@nimbalyst/collab-client/trackers-ui';
 import { isFileBackedRecord, isNativeItem, resolveTrackerContentMode } from './trackerContentMode';
 import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
-import type { FieldDefinition } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 import { getRecordTitle, getRecordStatus, getRecordPriority, getRecordField, isItemPublished as recordIsPublished, getItemPublicationState, type TrackerItemPublicationState } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { TrackerPublicationChip } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/TrackerPublicationChip';
 import { resolveTrackerWriteAccess, TRACKER_LOCAL_ISSUE_KEY_MESSAGE, TRACKER_UNASSIGNED_ISSUE_KEY_MESSAGE } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerLifecycle';
@@ -37,6 +37,7 @@ import { TrackerFieldPills } from '@nimbalyst/runtime/plugins/TrackerPlugin/comp
 import { getTrackerTagsField, useTrackerChipFieldSections } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerChipFields';
 import { isTrackerFieldEmpty } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerFieldLayout';
 import { useTrackerRelationshipCandidates } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/useTrackerRelationshipCandidates';
+import { useTrackerCitationHost } from './useTrackerCitationHost';
 import { UserAvatar } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/UserAvatar';
 import { trackerItemByIdAtom, trackerItemsMapAtom, trackerDataLoadedAtom } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerDataAtoms';
 import { resolveRelationshipType } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
@@ -162,7 +163,7 @@ const TypeTagsEditor: React.FC<{
   onUpdate: (tags: string[]) => void;
 }> = ({ typeTags, primaryType, onUpdate }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const allModels = globalRegistry.getAll().filter(m => m.primaryCapable !== false && m.creatable !== false);
+  const allModels = globalRegistry.getListed().filter(m => m.primaryCapable !== false && m.creatable !== false);
   const secondaryTags = typeTags.filter(t => t !== primaryType);
   const availableTypes = allModels.filter(m => m.type !== primaryType && !typeTags.includes(m.type));
 
@@ -1093,6 +1094,7 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
   );
 
   const relationshipCandidates = useTrackerRelationshipCandidates(item, chipFields);
+  const citationHost = useTrackerCitationHost();
 
   /** Field values with any in-progress local edit applied. */
   const chipValues = useMemo(
@@ -1685,6 +1687,7 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
               editable={editable}
               teamMembers={teamMembers}
               relationshipCandidates={relationshipCandidates}
+              citationHost={citationHost}
               onSave={handleChipSave}
               onOpenItem={onOpenItem}
               onCreateCollection={workspacePath ? handleCreateCollection : undefined}

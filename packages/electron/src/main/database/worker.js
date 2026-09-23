@@ -2686,6 +2686,191 @@ class PGLiteWorker {
       throw error;
     }
 
+    // Migration: append-only tracker item revision log (knowledge-scopes
+    // contract 4.2). Revision identity is a UUID; the only sequential number
+    // (`server_revision`) is assigned by the room on sync, never locally.
+    // Mirror of SQLite migration
+    // schemas/0045_tracker_item_revisions.sql and 0047_tracker_item_revision_scope.sql -- keep them in sync,
+    // including the publication CASE and the actor COALESCE order.
+    //
+    // A trigger rather than a hook in TrackerPGLiteStore because the store is
+    // one of a dozen writers of tracker_items; the native publish path is one
+    // of the others. See the SQLite migration's header for the full rationale.
+    //
+    // This runs after the sync_status/sync_id ALTERs above, which the trigger
+    // reads. A failure here logs and continues: SQLite is the primary backend
+    // now and no existing feature depends on this table, so bricking startup
+    // for a legacy install would be the worse outcome.
+    try {
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS tracker_item_revisions (
+          revision_id        TEXT PRIMARY KEY,
+          item_id            TEXT NOT NULL,
+          parent_revision_id TEXT,
+          server_revision    INTEGER,
+          workspace          TEXT NOT NULL,
+          data               JSONB NOT NULL,
+          actor              JSONB,
+          published          BOOLEAN,
+          sync_status        TEXT,
+          sync_id            INTEGER,
+          deleted_at         TIMESTAMPTZ,
+          recorded_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        ALTER TABLE tracker_item_revisions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+        CREATE INDEX IF NOT EXISTS idx_tracker_item_revisions_item
+          ON tracker_item_revisions (workspace, item_id, recorded_at);
+        CREATE INDEX IF NOT EXISTS idx_tracker_item_revisions_item_parent
+          ON tracker_item_revisions (item_id, parent_revision_id);
+        CREATE INDEX IF NOT EXISTS idx_tracker_item_revisions_parent
+          ON tracker_item_revisions (parent_revision_id) WHERE parent_revision_id IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tracker_item_revisions_server
+          ON tracker_item_revisions (item_id, server_revision) WHERE server_revision IS NOT NULL;
+
+        -- History is recorded only for these (knowledge) types. Everything else
+        -- gets a revision only when something cites it (pinItemRevision).
+        CREATE TABLE IF NOT EXISTS tracker_revision_types (type TEXT PRIMARY KEY);
+        INSERT INTO tracker_revision_types (type) VALUES
+          ('source'), ('capture'), ('citation'),
+          ('entity'), ('claim'), ('question'), ('finding'), ('investigation')
+        ON CONFLICT (type) DO NOTHING;
+
+        CREATE OR REPLACE FUNCTION tracker_items_record_revision() RETURNS trigger AS $fn$
+        DECLARE
+          prev_id   TEXT;
+          prev_data JSONB;
+          prev_deleted_at TIMESTAMPTZ;
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM tracker_revision_types t WHERE t.type = NEW.type) THEN
+            RETURN NULL;
+          END IF;
+          -- The tip is the revision nothing else claims as parent. Not
+          -- ORDER BY recorded_at: two writes inside one millisecond share a
+          -- timestamp and the tie-break would invert real history. Mirrors the
+          -- SQLite trigger.
+          SELECT revision_id, data, deleted_at INTO prev_id, prev_data, prev_deleted_at
+            FROM tracker_item_revisions r
+            WHERE r.item_id = NEW.id
+              AND NOT EXISTS (
+                SELECT 1 FROM tracker_item_revisions p
+                WHERE p.item_id = NEW.id AND p.parent_revision_id = r.revision_id
+              )
+            LIMIT 1;
+          -- An insert that reproduces the latest recorded revision (same data,
+          -- same deleted/live state) records nothing. Over a tombstone tip a
+          -- live insert is a resurrection and is recorded. Mirrors the WHEN
+          -- guard on the SQLite insert trigger.
+          IF TG_OP = 'INSERT'
+             AND prev_id IS NOT NULL
+             AND prev_data IS NOT DISTINCT FROM NEW.data
+             AND (prev_deleted_at IS NULL) = (NEW.deleted_at IS NULL) THEN
+            RETURN NULL;
+          END IF;
+          INSERT INTO tracker_item_revisions (
+            revision_id, item_id, parent_revision_id, workspace, data, actor, published, sync_status, sync_id, deleted_at
+          ) VALUES (
+            gen_random_uuid()::text,
+            NEW.id,
+            prev_id,
+            NEW.workspace,
+            NEW.data,
+            COALESCE(
+              NEW.data->'lastModifiedBy',
+              NEW.data->'customFields'->'lastModifiedBy',
+              NEW.data->'authorIdentity',
+              NEW.data->'customFields'->'authorIdentity'
+            ),
+            CASE
+              WHEN NEW.data->>'shared' = 'true'
+                OR NEW.data->'share'->>'status' = 'team'
+                OR NEW.data->'share'->>'body' = 'team'
+                OR NEW.data->'customFields'->'share'->>'status' = 'team'
+                OR NEW.data->'customFields'->'share'->>'body' = 'team' THEN TRUE
+              WHEN NEW.data->>'shared' = 'false'
+                OR NEW.data->'share'->>'status' = 'private'
+                OR NEW.data->'share'->>'body' = 'private'
+                OR NEW.data->'customFields'->'share'->>'status' = 'private'
+                OR NEW.data->'customFields'->'share'->>'body' = 'private' THEN FALSE
+              WHEN NEW.sync_status IN ('synced', 'pending') THEN TRUE
+              ELSE NULL
+            END,
+            NEW.sync_status,
+            NEW.sync_id,
+            NEW.deleted_at
+          );
+          RETURN NULL;
+        END;
+        $fn$ LANGUAGE plpgsql;
+
+        CREATE OR REPLACE FUNCTION tracker_items_record_delete_revision() RETURNS trigger AS $fn$
+        DECLARE
+          prev_id TEXT;
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM tracker_revision_types t WHERE t.type = OLD.type) THEN
+            RETURN NULL;
+          END IF;
+          SELECT revision_id INTO prev_id
+            FROM tracker_item_revisions r
+            WHERE r.item_id = OLD.id
+              AND NOT EXISTS (
+                SELECT 1 FROM tracker_item_revisions p
+                WHERE p.item_id = OLD.id AND p.parent_revision_id = r.revision_id
+              )
+            LIMIT 1;
+          INSERT INTO tracker_item_revisions (
+            revision_id, item_id, parent_revision_id, workspace, data, actor,
+            published, sync_status, sync_id, deleted_at
+          ) VALUES (
+            gen_random_uuid()::text,
+            OLD.id,
+            prev_id,
+            OLD.workspace,
+            OLD.data,
+            -- The row names its last editor, not whoever deleted it.
+            NULL,
+            CASE
+              WHEN OLD.data->>'shared' = 'true'
+                OR OLD.data->'share'->>'status' = 'team'
+                OR OLD.data->'share'->>'body' = 'team'
+                OR OLD.data->'customFields'->'share'->>'status' = 'team'
+                OR OLD.data->'customFields'->'share'->>'body' = 'team' THEN TRUE
+              WHEN OLD.data->>'shared' = 'false'
+                OR OLD.data->'share'->>'status' = 'private'
+                OR OLD.data->'share'->>'body' = 'private'
+                OR OLD.data->'customFields'->'share'->>'status' = 'private'
+                OR OLD.data->'customFields'->'share'->>'body' = 'private' THEN FALSE
+              WHEN OLD.sync_status IN ('synced', 'pending') THEN TRUE
+              ELSE NULL
+            END,
+            OLD.sync_status,
+            OLD.sync_id,
+            NOW()
+          );
+          RETURN NULL;
+        END;
+        $fn$ LANGUAGE plpgsql;
+
+        DROP TRIGGER IF EXISTS tracker_items_ai_revision ON tracker_items;
+        DROP TRIGGER IF EXISTS tracker_items_au_revision ON tracker_items;
+        DROP TRIGGER IF EXISTS tracker_items_ad_revision ON tracker_items;
+
+        CREATE TRIGGER tracker_items_ai_revision AFTER INSERT ON tracker_items
+          FOR EACH ROW EXECUTE FUNCTION tracker_items_record_revision();
+
+        CREATE TRIGGER tracker_items_au_revision AFTER UPDATE OF data, deleted_at ON tracker_items
+          FOR EACH ROW WHEN (
+            NEW.data IS DISTINCT FROM OLD.data OR NEW.deleted_at IS DISTINCT FROM OLD.deleted_at
+          )
+          EXECUTE FUNCTION tracker_items_record_revision();
+
+        CREATE TRIGGER tracker_items_ad_revision AFTER DELETE ON tracker_items
+          FOR EACH ROW EXECUTE FUNCTION tracker_items_record_delete_revision();
+      `);
+      console.log('[PGLite Worker] tracker_item_revisions table created successfully');
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to create tracker_item_revisions table; revision history is unavailable on this install:', error);
+    }
+
     // Migration: Ensure ai_tool_call_file_edits FK points to ai_agent_messages (not ai_transcript_events).
     // A previous buggy migration may have re-pointed it to ai_transcript_events.
     //

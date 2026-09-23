@@ -9,7 +9,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
-import { globalRegistry } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 import { TrackerOwnershipChip } from '../common/TrackerOwnershipChip';
 import {
   describeTrackerSharingOutcome,

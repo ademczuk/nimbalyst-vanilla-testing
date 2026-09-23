@@ -7,7 +7,7 @@
  */
 
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
-import type { TrackerSharing } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/TrackerDataModel';
+import type { TrackerSharing } from '@nimbalyst/tracker-schema';
 
 export type TrackerContentMode = 'file-backed' | 'local-pglite' | 'collaborative';
 

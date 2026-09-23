@@ -855,6 +855,31 @@ export const setTrackerDataSourceAtom = atom(
   },
 );
 
+/**
+ * Exact-revision read bound to the active host data source, or null when no
+ * source is bound (knowledge-scopes contract 4.2).
+ *
+ * Exposed as a bound function rather than the data source itself so the only
+ * thing a UI surface can reach through this atom is the revision read. The
+ * function rejects on a missing revision and never falls back to the live item;
+ * a caller that swallows the rejection is showing newer evidence under a pinned
+ * citation, which is the failure the contract exists to prevent.
+ *
+ * Derived, so its identity is stable while the bound source is -- the citation
+ * inspector has it in an effect dependency list.
+ */
+export const trackerRevisionReaderAtom = atom((get) => {
+  const dataSource = get(trackerDataSourceAtom);
+  if (!dataSource) return null;
+  return (itemId: string, ref: { revisionId?: string; serverRevision?: number }) =>
+    dataSource.getItemRevision(
+      itemId,
+      ref.revisionId !== undefined
+        ? { revisionId: ref.revisionId }
+        : { serverRevision: ref.serverRevision as number },
+    );
+});
+
 /** Local + shared views, as the sidebar renders them. */
 export const allTrackerSavedViewsAtom = atom<SavedView[]>((get) =>
   mergeSavedViews(get(trackerSavedViewsAtom), get(sharedTrackerSavedViewsAtom)),
