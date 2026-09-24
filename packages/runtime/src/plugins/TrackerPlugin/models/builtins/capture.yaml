@@ -1,4 +1,4 @@
-# Knowledge-scopes `knowledge-core` kind (master plan section 3).
+# Builtin knowledge evidence kind.
 # One retrieval of one source, at one time, with one outcome. A capture is what
 # makes a citation checkable later: `digest` and `capturedAt` are what a recheck
 # compares against, and a recheck appends to the capture rather than rewriting
@@ -16,7 +16,7 @@ modes:
 
 sharing: personal
 draftByDefault: false
-# Not offered in type lists until the knowledge-core pack installs `claim`.
+# Not offered in type lists until the workspace defines `claim`.
 hiddenUntilType: claim
 
 idPrefix: cap

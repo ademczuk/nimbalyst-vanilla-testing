@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Unit test for startModule concurrency coalescing.
  *
@@ -16,6 +17,8 @@
  *   npx vitest --run packages/electron/src/main/extensions/__tests__/PrivilegedExtensionHost.startModule.coalesce.test.ts
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { utilityProcess } from 'electron';
 
 vi.mock('electron', async () => {
   const noop = () => {};
@@ -25,7 +28,7 @@ vi.mock('electron', async () => {
       getPath: (await import('../../../../test-stubs/privateUserData')).testApp.getPath, getName: vi.fn(() => 'test-app'),
       getVersion: vi.fn(() => '1.0.0'), setName: vi.fn(), setPath: vi.fn(), quit: vi.fn(),
       requestSingleInstanceLock: vi.fn(() => true), commandLine: { appendSwitch: vi.fn() },
-      isPackaged: false,
+      isPackaged: false, isReady: () => true,
     },
     BrowserWindow: class FakeBrowserWindow {
       static fromWebContents = vi.fn(() => null);
@@ -101,4 +104,89 @@ describe('PrivilegedExtensionHost.startModule coalescing', () => {
     gate2.resolve();
     await p3;
   });
+});
+
+it('ignores a stopped process reporting messages or exit after its replacement starts', async () => {
+  const host = new PrivilegedExtensionHost();
+  const children = [1, 2].map(pid => Object.assign(new EventEmitter(), {
+    pid, postMessage: vi.fn(), kill: vi.fn(() => true),
+  }));
+  const fork = vi.mocked(utilityProcess.fork);
+  for (const child of children) fork.mockReturnValueOnce(child as any);
+  const internals = host as any;
+  let spawned = 0;
+  internals.runStartAttempt = async (managed: any) => {
+    managed.state = { status: 'starting' };
+    managed.runtime = internals.spawnUtilityProcess(managed, '/unused', {}, 'test');
+    children[spawned++].emit('message', { kind: 'init-ack', methods: ['status'] });
+    return internals.snapshot(managed);
+  };
+  await host.startModule(ARGS);
+  await host.stopModule(ARGS.extensionId, ARGS.module.id, ARGS.workspacePath);
+  await host.startModule(ARGS);
+  children[0].emit('exit', 0);
+  children[0].emit('message', { kind: 'init-ack', methods: ['stale'] });
+  expect(host.getState(ARGS.extensionId, ARGS.module.id, ARGS.workspacePath)).toMatchObject({ status: 'running', methods: ['status'] });
+  const managed = [...internals.modules.values()][0] as any;
+  expect(managed.runtime?.isAlive()).toBe(true);
+  children[1].emit('exit', 1);
+  expect(host.getState(ARGS.extensionId, ARGS.module.id, ARGS.workspacePath)).toMatchObject({ status: 'crashed', exitCode: 1 });
+});
+
+it('bounds simultaneous runtime initialization and releases slots after failure', async () => {
+  const host = new PrivilegedExtensionHost() as any;
+  const pending: Array<() => void> = [];
+  let active = 0;
+  let peak = 0;
+  host.resolveBootstrapPath = () => '/unused';
+  host.buildRuntimeContext = () => ({});
+  host.spawnUtilityProcess = vi.fn((managed: any) => {
+    active++;
+    peak = Math.max(peak, active);
+    const number = host.spawnUtilityProcess.mock.calls.length;
+    if (number === 5) {
+      active--;
+      throw new Error('Synthetic spawn failure');
+    }
+    pending.push(() => { active--; host.setState(managed, { status: 'running', startedAt: 0, methods: [] }); });
+    return { send: vi.fn(), kill: vi.fn(), isAlive: () => true };
+  });
+  const starts = Array.from({ length: 12 }, (_, i) => host.spawnRuntime({
+    args: { ...ARGS, workspacePath: `/ws/${i}` },
+    state: { status: 'starting' }, pending: new Map(), grantedPermissions: [],
+  }).catch((error: Error) => error.message));
+  try {
+    await vi.waitFor(() => expect(host.spawnUtilityProcess).toHaveBeenCalledTimes(4));
+    expect(peak).toBe(4);
+  } finally {
+    // Drain even the failing (unbounded) implementation so the red run exits.
+    while (host.spawnUtilityProcess.mock.calls.length < 12 || pending.length) {
+      pending.splice(0).forEach(finish => finish());
+      await new Promise(resolve => setTimeout(resolve, 30));
+    }
+    await Promise.all(starts);
+  }
+  const results = await Promise.all(starts);
+  expect(results.filter(Boolean)).toEqual(['Synthetic spawn failure']);
+  expect(peak).toBe(4);
+});
+
+it('does not spawn a queued runtime after it is stopped', async () => {
+  const host = new PrivilegedExtensionHost() as any;
+  const pending: Array<() => void> = [];
+  host.runStartAttempt = async (managed: any) => {
+    managed.state = { status: 'starting' };
+    await host.spawnRuntime(managed);
+    return host.snapshot(managed);
+  };
+  host.initializeRuntime = vi.fn((managed: any) => new Promise<void>(resolve => {
+    pending.push(() => { host.setState(managed, { status: 'running', startedAt: 0, methods: [] }); resolve(); });
+  }));
+  const starts = Array.from({ length: 5 }, (_, i) => host.startModule({ ...ARGS, workspacePath: `/queued/${i}` }));
+  await vi.waitFor(() => expect(host.initializeRuntime).toHaveBeenCalledTimes(4));
+  await host.stopModule(ARGS.extensionId, ARGS.module.id, '/queued/4');
+  pending.splice(0).forEach(finish => finish());
+  await Promise.all(starts);
+  expect(host.initializeRuntime).toHaveBeenCalledTimes(4);
+  expect(host.getState(ARGS.extensionId, ARGS.module.id, '/queued/4').status).toBe('stopped');
 });

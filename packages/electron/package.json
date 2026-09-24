@@ -1,6 +1,6 @@
 {
   "name": "@nimbalyst/electron",
-  "version": "0.78.4",
+  "version": "0.78.5",
   "private": true,
   "license": "MIT",
   "author": "Nimbalyst Team",
@@ -72,7 +72,7 @@
     "@nimbalyst/extension-datamodellm": "*",
     "@nimbalyst/mockuplm": "*",
     "@nimbalyst/runtime": "*",
-    "@openai/codex-sdk": "^0.153.1",
+    "@openai/codex-sdk": "^0.156.1",
     "@revolist/react-datagrid": "4.21.4",
     "@revolist/revogrid": "4.21.4",
     "@types/glob": "^8.1.0",

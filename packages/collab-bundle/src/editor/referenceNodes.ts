@@ -25,14 +25,17 @@
  * no matter what the `sideEffects` field says.
  *
  * Read-only by design: the node classes and markdown transformers come from the
- * shared runtime registration, and the tracker chip uses the store-free
- * renderer. Creating or editing references needs the pickers and services this
- * host does not have.
+ * shared runtime registration. Creating or editing references needs the
+ * pickers and services this host does not have.
+ *
+ * The tracker renderer is the live one, which reads a resolver from the context
+ * `mountCollabEditor` provides (`trackerReferences`) and renders the store-free
+ * key-only chip when the host supplied none.
  */
 
 import { registerReferenceNodeContributions } from '@nimbalyst/runtime/plugins/referenceNodeContributions';
 import { setTrackerReferenceNodeRenderer } from '@nimbalyst/runtime/plugins/TrackerLinkPlugin/TrackerReferenceNodeRenderer';
-import { TrackerReferenceReadOnlyChip } from '@nimbalyst/runtime/plugins/TrackerLinkPlugin/TrackerReferenceReadOnlyChip';
+import { LiveTrackerReferenceRenderer } from '@nimbalyst/collab-client/trackers-ui/references';
 // The document reference is a styled TextNode; its styles ship with the
 // interactive plugin, which this host does not load. A `.css` import IS covered
 // by this package's `sideEffects` field, so this one is safe as a bare import.
@@ -48,5 +51,5 @@ export function registerBrowserReferenceNodes(): void {
   if (registered) return;
   registered = true;
   registerReferenceNodeContributions();
-  setTrackerReferenceNodeRenderer(TrackerReferenceReadOnlyChip);
+  setTrackerReferenceNodeRenderer(LiveTrackerReferenceRenderer);
 }

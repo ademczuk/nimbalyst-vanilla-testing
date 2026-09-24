@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Opt into unlimited open projects with a scrollable project rail and cleanup of unused project resources.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -19,6 +20,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 <!-- Removed features go here -->
+
+## [0.78.5] - 2026-09-24
+
+
+### Added
+<!-- New features go here -->
+- Claude Opus 5.5 is available in the Claude API model picker and is the new Claude API default.
+- GPT-6 Sol and GPT-6 Luna are available for Codex and OpenAI API sessions, and GPT-6 Sol is the new default for both.
+- Knowledge extension (off by default) gives agents a shared ontology for team knowledge graphs: entities, claims, questions, findings, the verbs that connect them, and a hierarchy of areas.
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+- The macOS menu bar island follows the dark theme again instead of showing light colors
+- Tracker lists grouped by type, and row type badges, show type names instead of raw type ids
+- Codex sessions can read the reference files that come with extension skills
+- Find in markdown files highlights and moves between matches again after switching between raw and rich view, and Cmd+G / Cmd+Shift+G now step through matches
+- Extensions that are off by default no longer give agents their skills until they are enabled
+
+### Removed
+<!-- Removed features go here -->
+- The `tracker_install_pack` agent tool; the Knowledge extension replaces knowledge packs.
 
 ## [0.78.4] - 2026-09-22
 

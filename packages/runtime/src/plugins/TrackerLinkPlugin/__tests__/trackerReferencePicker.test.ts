@@ -22,7 +22,10 @@ import {
   parseTypeScopedQuery,
   matchTrackerReferenceTrigger,
   $insertTrackerReference,
+  $replaceTrackerReferenceTrigger,
 } from '../trackerReferencePicker';
+import { $convertToMarkdownString } from '@lexical/markdown';
+import { TrackerReferenceTransformer } from '../TrackerReferenceTransformer';
 import {
   TrackerReferenceNode,
   $isTrackerReferenceNode,
@@ -262,6 +265,37 @@ describe('$insertTrackerReference', () => {
 
     expect(found).not.toBeNull();
     expect(found!.getReferenceKey()).toBe('NIM-13');
+  });
+
+  it('replaces the typed #trigger and serializes chip and card exactly as desktop does', () => {
+    editor.update(
+      () => {
+        // The trigger spans two text nodes, as it does after HashtagPlugin
+        // turns `#kb` into its own node (a format keeps them from merging).
+        const paragraph = $createParagraphNode();
+        const text = $createTextNode('-1');
+        paragraph.append($createTextNode('See '), $createTextNode('#kb').toggleFormat('bold'), text);
+        $getRoot().append(paragraph);
+        text.selectEnd();
+      },
+      { discrete: true },
+    );
+    editor.update(() => { $replaceTrackerReferenceTrigger('kb-1', 'KB-1'); }, { discrete: true });
+    editor.update(
+      () => {
+        const paragraph = $createParagraphNode();
+        const text = $createTextNode('#');
+        paragraph.append(text);
+        $getRoot().append(paragraph);
+        text.selectEnd();
+      },
+      { discrete: true },
+    );
+    editor.update(() => { $replaceTrackerReferenceTrigger('', 'KB-2', 'card'); }, { discrete: true });
+
+    const markdown = editor.getEditorState().read(() =>
+      $convertToMarkdownString([TrackerReferenceTransformer]));
+    expect(markdown).toBe('See [KB-1](nimbalyst://KB-1) \n\n[KB-2](nimbalyst://KB-2 "view=card") ');
   });
 });
 

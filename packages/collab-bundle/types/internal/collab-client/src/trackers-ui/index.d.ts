@@ -89,4 +89,8 @@ export type { TrackerItemAction, TrackerActionListProps, } from './detail/Tracke
 export { TrackerContextMenu } from './detail/TrackerContextMenu';
 export type { TrackerContextMenuPoint, TrackerContextMenuProps, } from './detail/TrackerContextMenu';
 export { getSupportedTrackerOrderingColumns } from '../../../runtime/src/plugins/TrackerPlugin/models/trackerOrdering';
-export { TRACKER_GROUPING_OPTIONS } from '../../../runtime/src/plugins/TrackerPlugin/models/trackerGrouping';
+export { getTrackerTypeLabel, TRACKER_GROUPING_OPTIONS } from '../../../runtime/src/plugins/TrackerPlugin/models/trackerGrouping';
+export { createTrackerReferenceResolver, TrackerReferenceResolverContext, TrackerReferenceResolverProvider, useTrackerBacklinks, useTrackerReference, useTrackerReferenceResolver, useTrackerStatements, TrackerStateMenu, stateTone, } from './references';
+export type { CreateTrackerReferenceResolverOptions, StateTone, TrackerBacklink, TrackerReferenceActor, TrackerReferenceStatusOption, TrackerStateChange, TrackerStateMenuProps, TrackerReferenceResolution, TrackerReferenceResolver, TrackerReferenceSchema, TrackerReferenceStatusInfo, TrackerReferenceTypeInfo, TrackerStatement, TrackerStatementGroup, } from './references';
+export { StatusBar } from '../../../runtime/src/plugins/TrackerPlugin/components/StatusBar';
+export type { StatusBarProps } from '../../../runtime/src/plugins/TrackerPlugin/components/StatusBar';

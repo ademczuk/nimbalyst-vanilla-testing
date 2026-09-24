@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, waitFor } from '@testing-library/react';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { loadBuiltinTrackers } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 
 const { gridProps, gridElement, gridListeners, dispatchGridEvent } = vi.hoisted(() => ({
   gridProps: { current: null as Record<string, any> | null },
@@ -112,11 +113,32 @@ describe('TrackerGridView grouping', () => {
 
     await waitFor(() => expect(gridProps.current).not.toBeNull());
     expect(gridProps.current?.grouping).toEqual({
-      props: ['__trackerGroupLabel'],
+      props: ['__trackerGroupKey'],
       expandedAll: true,
+      groupLabelTemplate: expect.any(Function),
     });
     expect(gridProps.current?.source.map((row: Record<string, unknown>) => row.__trackerGroupLabel))
       .toEqual(['In Progress', 'Done']);
+  });
+
+  it('keeps types with the same display name in distinct grid groups', async () => {
+    const model = { ...globalRegistry.get('bug')!, type: 'same-label-a', displayNamePlural: 'Issues' };
+    globalRegistry.register(model);
+    globalRegistry.register({ ...model, type: 'same-label-b' });
+    try {
+      render(<TrackerGridView groupBy="type" overrideItems={[
+        { ...record('a', 'open'), primaryType: model.type },
+        { ...record('b', 'open'), primaryType: 'same-label-b' },
+      ]} columnConfig={{ visibleColumns: ['title'], columnWidths: {} }} />);
+      await waitFor(() => expect(gridProps.current).not.toBeNull());
+      const { source, grouping } = gridProps.current!;
+      const keys = source.map((row: Record<string, unknown>) => row[grouping.props[0]]);
+      expect(new Set(keys).size).toBe(2);
+      expect(keys.map((name: string) => grouping.groupLabelTemplate(vi.fn(), { name, expanded: true })[1])).toEqual(['Issues', 'Issues']);
+    } finally {
+      globalRegistry.unregister(model.type);
+      globalRegistry.unregister('same-label-b');
+    }
   });
 });
 

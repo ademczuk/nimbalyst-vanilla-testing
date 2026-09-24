@@ -64,6 +64,7 @@ import {
   clearFileSystemServiceFor,
 } from '@nimbalyst/runtime';
 import { logger } from '../utils/logger';
+import { notifyWorkspaceUsageChanged, pruneUnusedGitWatchers, releaseWhenWorkspaceUnused } from '../file/GitWatcherLifecycle';
 
 // Re-uses the same Maps that WindowManager populates. WindowManager exports
 // `documentServices` only; the file-system service map lives module-internal
@@ -175,6 +176,7 @@ export function registerMultiProjectRailHandlers(): void {
 
         ensureServicesForPath(window, workspacePath);
         addToRecentItems('workspaces', workspacePath, basename(workspacePath));
+        notifyWorkspaceUsageChanged();
 
         return { success: true };
     });
@@ -197,9 +199,11 @@ export function registerMultiProjectRailHandlers(): void {
             state.additionalWorkspacePaths = state.additionalWorkspacePaths.filter((p) => p !== workspacePath);
         }
 
-        // If this window still references the path as primary, leave services alone.
+        // The startup project can close while other rail projects remain.
+        // Move the primary reference so it no longer pins the closed project.
         if (state.workspacePath === workspacePath) {
-            return { success: true, stillPrimary: true };
+            state.workspacePath = state.additionalWorkspacePaths?.[0] ?? null;
+            state.additionalWorkspacePaths = state.additionalWorkspacePaths?.filter(path => path !== state.workspacePath);
         }
 
         // If the path being closed was this window's active path, tear down
@@ -214,8 +218,10 @@ export function registerMultiProjectRailHandlers(): void {
             clearFileSystemService();
         }
 
+        await pruneUnusedGitWatchers();
+
         // Free services only if no other window references the path.
-        if (!anyWindowReferencesWorkspace(workspacePath)) {
+        releaseWhenWorkspaceUnused(workspacePath, () => {
             const docService = documentServices.get(workspacePath);
             if (docService) {
                 docService.destroy();
@@ -237,7 +243,7 @@ export function registerMultiProjectRailHandlers(): void {
             } catch (error) {
                 logger.main.error('[MultiProject] Error stopping MCP config watcher:', error);
             }
-        }
+        });
 
         return { success: true };
     });
@@ -261,7 +267,9 @@ export function registerMultiProjectRailHandlers(): void {
             return { success: false, error: 'workspacePath not registered in this window' };
         }
 
-        const previousActive = state.activeWorkspacePath ?? state.workspacePath;
+        // null means the active project just closed; the promoted primary
+        // still needs its file watcher started. Only legacy state omits this field.
+        const previousActive = state.activeWorkspacePath === undefined ? state.workspacePath : state.activeWorkspacePath;
         if (previousActive === workspacePath) {
             // Idempotent: already active. Make sure the global FS service is
             // pointing at the right place (covers the case of an early call

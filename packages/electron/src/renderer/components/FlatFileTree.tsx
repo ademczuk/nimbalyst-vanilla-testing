@@ -310,8 +310,12 @@ export function FlatFileTree({
     }
   }, [currentFilePath, selectedPaths, setSelectedPaths, setLastSelectedPath]);
 
+  // Keep UI handlers in the current render. Caching these mutually referencing
+  // closures with different dependencies links old render scopes and retains
+  // their file trees. Row event props already use inline wrappers below.
+
   // == Toggle directory expand/collapse ==
-  const toggleDirectory = useCallback((path: string) => {
+  const toggleDirectory = (path: string) => {
     setExpandedDirs(prev => {
       const newSet = new Set(prev);
       const wasExpanded = newSet.has(path);
@@ -334,16 +338,16 @@ export function FlatFileTree({
       }
       return newSet;
     });
-  }, [setExpandedDirs, onFolderContentsLoaded, onRefreshFileTree]);
+  };
 
   // == Flatten visible items for range selection ==
-  const flattenVisibleItems = useCallback((): RendererFileTreeItem[] => {
+  const flattenVisibleItems = (): RendererFileTreeItem[] => {
     // visibleNodes already represents the flat visible list
     return visibleNodes.map(n => ({ name: n.name, path: n.path, type: n.type }));
-  }, [visibleNodes]);
+  };
 
   // == Selection handler ==
-  const handleItemSelect = useCallback((e: React.MouseEvent, node: FlatTreeNode) => {
+  const handleItemSelect = (e: React.MouseEvent, node: FlatTreeNode) => {
     const isMetaKey = e.metaKey || e.ctrlKey;
     const isShiftKey = e.shiftKey;
 
@@ -379,10 +383,10 @@ export function FlatFileTree({
         onFileSelect(node.path);
       }
     }
-  }, [visibleNodes, lastSelectedPath, selectedPaths, setSelectedPaths, setLastSelectedPath, onFolderSelect, onFileSelect]);
+  };
 
   // == Row click handler ==
-  const handleRowClick = useCallback((e: React.MouseEvent, node: FlatTreeNode) => {
+  const handleRowClick = (e: React.MouseEvent, node: FlatTreeNode) => {
     lastUserInteractionRef.current = Date.now();
 
     if (node.type === 'directory') {
@@ -396,10 +400,10 @@ export function FlatFileTree({
     } else {
       handleItemSelect(e, node);
     }
-  }, [toggleDirectory, handleItemSelect, onFolderSelect]);
+  };
 
   // == Context menu ==
-  const handleContextMenu = useCallback((e: React.MouseEvent, node: FlatTreeNode) => {
+  const handleContextMenu = (e: React.MouseEvent, node: FlatTreeNode) => {
     e.preventDefault();
     e.stopPropagation();
 
@@ -416,23 +420,23 @@ export function FlatFileTree({
       fileType: node.type,
       isWorkspaceRoot: node.isWorkspaceRoot,
     });
-  }, [selectedPaths, setSelectedPaths, setLastSelectedPath]);
+  };
 
   // == Context menu actions ==
-  const handleDetachFolder = useCallback((folderPath: string) => {
+  const handleDetachFolder = (folderPath: string) => {
     const primaryRoot = workspaceRootPaths[0];
     if (!primaryRoot) return;
     void detachWorkspaceFolder(primaryRoot, folderPath);
-  }, [workspaceRootPaths]);
+  };
 
-  const handleRename = useCallback(async (filePath: string, newName: string) => {
+  const handleRename = async (filePath: string, newName: string) => {
     const result = await window.electronAPI.renameFile(filePath, newName);
     if (!result.success) {
       console.error('Failed to rename file:', result.error);
     }
-  }, []);
+  };
 
-  const handleDelete = useCallback(async (filePath: string) => {
+  const handleDelete = async (filePath: string) => {
     const result = await window.electronAPI.deleteFile(filePath);
     if (!result.success) {
       // The user just confirmed a delete; silent failure is the worst possible
@@ -445,9 +449,9 @@ export function FlatFileTree({
         details: result.error || 'The OS did not provide a reason. Check that the file still exists and that the trash folder is writable.',
       });
     }
-  }, []);
+  };
 
-  const handleDeleteMultiple = useCallback(async (filePaths: string[]) => {
+  const handleDeleteMultiple = async (filePaths: string[]) => {
     const failures: Array<{ path: string; error?: string }> = [];
     for (const path of filePaths) {
       const result = await window.electronAPI.deleteFile(path);
@@ -469,10 +473,10 @@ export function FlatFileTree({
         details: failureSummary,
       });
     }
-  }, [setSelectedPaths]);
+  };
 
   // == Drag and drop ==
-  const handleDragStart = useCallback((e: React.DragEvent, node: FlatTreeNode) => {
+  const handleDragStart = (e: React.DragEvent, node: FlatTreeNode) => {
     const target = e.target as HTMLElement;
     if (target.closest('.file-tree-icon') || target.closest('.file-tree-chevron')) {
       e.preventDefault();
@@ -525,18 +529,18 @@ export function FlatFileTree({
         document.body.removeChild(dragImage);
       }
     }, 0);
-  }, [setDragState]);
+  };
 
-  const handleDragEnd = useCallback(() => {
+  const handleDragEnd = () => {
     setDragState(null);
     if (expandHoverTimerRef.current) {
       clearTimeout(expandHoverTimerRef.current.timer);
       expandHoverTimerRef.current = null;
     }
     autoScrollSpeedRef.current = 0;
-  }, [setDragState]);
+  };
 
-  const handleDragOver = useCallback((e: React.DragEvent, node: FlatTreeNode) => {
+  const handleDragOver = (e: React.DragEvent, node: FlatTreeNode) => {
     e.preventDefault();
     e.stopPropagation();
 
@@ -584,16 +588,16 @@ export function FlatFileTree({
         expandHoverTimerRef.current = null;
       }
     }
-  }, [dragState, setDragState, toggleDirectory]);
+  };
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
+  const handleDragLeave = (e: React.DragEvent) => {
     const relatedTarget = e.relatedTarget as HTMLElement;
     if (!e.currentTarget.contains(relatedTarget)) {
       setDragState(prev => prev ? { ...prev, dropTargetPath: null } : null);
     }
-  }, [setDragState]);
+  };
 
-  const handleDrop = useCallback(async (e: React.DragEvent, node: FlatTreeNode) => {
+  const handleDrop = async (e: React.DragEvent, node: FlatTreeNode) => {
     e.preventDefault();
     e.stopPropagation();
 
@@ -702,7 +706,7 @@ export function FlatFileTree({
     } finally {
       setDragState(null);
     }
-  }, [dragState, setDragState, onRefreshFileTree]);
+  };
 
   // Update drag copy state based on keyboard modifiers
   useEffect(() => {
@@ -776,7 +780,7 @@ export function FlatFileTree({
   }, [visibleNodes, focusedIndex, setFocusedIndex]);
 
   // == Type-ahead find ==
-  const handleTypeAhead = useCallback((char: string) => {
+  const handleTypeAhead = (char: string) => {
     if (typeAheadTimerRef.current) {
       clearTimeout(typeAheadTimerRef.current);
     }
@@ -797,32 +801,32 @@ export function FlatFileTree({
         return;
       }
     }
-  }, [focusedIndex, visibleNodes, setFocusedIndex]);
+  };
 
   // == Inline rename ==
-  const handleStartRename = useCallback((path: string) => {
+  const handleStartRename = (path: string) => {
     setRenamingPath(path);
-  }, []);
+  };
 
-  const handleRenameConfirm = useCallback(async (path: string, newName: string) => {
+  const handleRenameConfirm = async (path: string, newName: string) => {
     setRenamingPath(null);
     const result = await window.electronAPI.renameFile(path, newName);
     if (!result.success) {
       console.error('Failed to rename file:', result.error);
     }
-  }, []);
+  };
 
-  const handleRenameCancel = useCallback(() => {
+  const handleRenameCancel = () => {
     setRenamingPath(null);
-  }, []);
+  };
 
   // == Keyboard handler ==
-  const getViewportRowCount = useCallback(() => {
+  const getViewportRowCount = () => {
     if (!containerRef.current) return 20;
     return Math.floor(containerRef.current.clientHeight / ROW_HEIGHT);
-  }, []);
+  };
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     // Don't handle keyboard when renaming
     if (renamingPath) return;
 
@@ -900,13 +904,7 @@ export function FlatFileTree({
     };
 
     handleTreeKeyDown(e, visibleNodes, focusedIndex, selectedPaths, actions);
-  }, [
-    renamingPath, visibleNodes, focusedIndex, selectedPaths,
-    setFocusedIndex, setExpandedDirs, toggleDirectory, onFileSelect,
-    onFolderSelect, onFolderContentsLoaded, onRefreshFileTree,
-    handleStartRename, handleTypeAhead, getViewportRowCount,
-    setSelectedPaths,
-  ]);
+  };
 
   // == Auto-scroll during drag (rAF loop) ==
   useEffect(() => {
@@ -933,7 +931,7 @@ export function FlatFileTree({
   }, [dragState]);
 
   // Container-level drag over handler for auto-scroll zones
-  const handleContainerDragOver = useCallback((e: React.DragEvent) => {
+  const handleContainerDragOver = (e: React.DragEvent) => {
     if (!containerRef.current || !dragState) return;
 
     const rect = containerRef.current.getBoundingClientRect();
@@ -947,22 +945,22 @@ export function FlatFileTree({
     } else {
       autoScrollSpeedRef.current = 0;
     }
-  }, [dragState]);
+  };
 
-  const handleContainerDragLeave = useCallback(() => {
+  const handleContainerDragLeave = () => {
     autoScrollSpeedRef.current = 0;
-  }, []);
+  };
 
   // == Track user interactions for auto-scroll suppression ==
-  const handleContainerInteraction = useCallback(() => {
+  const handleContainerInteraction = () => {
     lastUserInteractionRef.current = Date.now();
     // Cancel any pending auto-scroll so interacting with the tree
     // (clicking, scrolling) never jumps the viewport away.
     pendingScrollPathRef.current = null;
-  }, []);
+  };
 
   // == Row renderer ==
-  const itemContent = useCallback((index: number) => {
+  const itemContent = (index: number) => {
     const node = visibleNodes[index];
     if (!node) return null;
 
@@ -988,7 +986,7 @@ export function FlatFileTree({
         onRenameCancel={handleRenameCancel}
       />
     );
-  }, [visibleNodes, showIcons, focusedIndex, renamingPath, dragState, handleRowClick, handleContextMenu, handleDragStart, handleDragEnd, handleDragOver, handleDragLeave, handleDrop, handleRenameConfirm, handleRenameCancel, setFocusedIndex]);
+  };
 
   return (
     <>

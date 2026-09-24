@@ -37,4 +37,4 @@ export function SearchReplacePlugin() {
 export { SearchReplaceBar } from './SearchReplaceBar';
 export { SearchReplaceStateManager } from './SearchReplaceStateManager';
 export { isLexicalSearchEditor } from './isLexicalSearchEditor';
-export type { SearchReplaceState } from './SearchReplaceStateManager';
+export type { SearchReplaceState, SearchNavigateDirection } from './SearchReplaceStateManager';

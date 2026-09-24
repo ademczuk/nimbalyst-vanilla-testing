@@ -32,7 +32,7 @@ vi.mock('../../../../store/atoms/trackerAutomationAtoms', async () => {
 });
 vi.mock('../../../../store/atoms/openProjects', async () => {
   const { atom } = await import('jotai');
-  return { multiProjectModeAtom: atom(false), openProjectsAtom: atom([]), activeWorkspacePathAtom: atom(''), restorePreviousProjectsAtom: atom(false) };
+  return { multiProjectModeAtom: atom(false), allowUnlimitedProjectsAtom: atom(false), openProjectsAtom: atom([]), activeWorkspacePathAtom: atom(''), restorePreviousProjectsAtom: atom(false) };
 });
 
 vi.mock('../../../../store/atoms/autoCommitAtoms', async () => {

@@ -9,6 +9,8 @@ import {
   upsertTrackerItemAtom,
 } from '../../TrackerPlugin/trackerDataAtoms';
 import { TrackerReferenceChip } from '../TrackerReferenceChip';
+import { createEditor } from 'lexical';
+import { $createTrackerReferenceNode, TrackerReferenceNode } from '../TrackerReferenceNode';
 
 const trackerRecord: TrackerRecord = {
   id: 'bug_1',
@@ -32,6 +34,25 @@ const trackerRecord: TrackerRecord = {
 };
 
 describe('TrackerReferenceChip', () => {
+  it.each(['chip', 'card', 'statements'] as const)('preserves %s view through DOM copy/paste', (view) => {
+    const editor = createEditor({ nodes: [TrackerReferenceNode], onError: error => { throw error; } });
+    editor.update(() => {
+      const node = $createTrackerReferenceNode('NIM-1', view);
+      const dom = node.createDOM({ namespace: 'test', theme: { trackerReference: 'host-theme' } });
+      expect(dom.classList.contains('host-theme')).toBe(true);
+      if (view !== 'chip') expect(dom.classList.contains(`tracker-reference--${view}`)).toBe(true);
+      const exported = node.exportDOM().element as HTMLElement;
+      const conversion = TrackerReferenceNode.importDOM()!.span(exported)!;
+      const restored = conversion.conversion(exported)!.node as TrackerReferenceNode;
+      expect(restored.getView()).toBe(view);
+      expect(restored.getReferenceKey()).toBe('NIM-1');
+      expect(node.isInline()).toBe(true);
+      expect(node.updateDOM(restored)).toBe(false);
+      const other = $createTrackerReferenceNode('NIM-1', view === 'chip' ? 'card' : 'chip');
+      expect(node.updateDOM(other)).toBe(true);
+    }, { discrete: true });
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });

@@ -8,44 +8,47 @@
  * separate from the React plugin so they can be unit-tested directly.
  */
 
-import { $createTextNode, $getSelection, $isRangeSelection } from 'lexical';
+import {
+  $createTextNode,
+  $getSelection,
+  $isRangeSelection,
+  $isTextNode,
+  type LexicalEditor,
+  type LexicalNode,
+  type TextNode,
+} from 'lexical';
 import type { TrackerRecord } from '../../core/TrackerRecord';
-import { $createTrackerReferenceNode } from './TrackerReferenceNode';
+import { $createTrackerReferenceNode, type TrackerReferenceView } from './TrackerReferenceNode';
+import {
+  rankTrackerReferenceCandidates,
+  referenceKeyForCandidate,
+  type TrackerReferenceCandidate,
+  type TrackerReferenceOption,
+} from './trackerReferenceSearch';
 
-/** A single resolved candidate for the `#` reference menu. */
-export interface TrackerReferenceOption {
-  /** The reference key inserted into the document (issueKey, else record id). */
-  referenceKey: string;
-  /** Internal record id (stable React key / de-dup). */
-  id: string;
-  /** Human-readable issue key (NIM-123) when the item is synced. */
-  issueKey?: string;
-  title: string;
-  /** Raw status string (e.g. 'in-progress'). */
-  status?: string;
-  /** Primary tracker type (bug/task/plan/...). */
-  type: string;
-}
+export {
+  parseTypeScopedQuery,
+  type TrackerReferenceOption,
+} from './trackerReferenceSearch';
 
-/**
- * The reference key to embed for a record: prefer the human issue key (NIM-123),
- * else fall back to the raw record id. The raw id is used (not a `tk_…` short id)
- * because {@link trackerItemByReferenceKeyAtom} resolves a key by `map.get(id)`,
- * so the raw id is guaranteed to resolve while an arbitrary short id would not.
- */
+/** See {@link referenceKeyForCandidate}. */
 export function referenceKeyForRecord(record: TrackerRecord): string {
-  return record.issueKey ?? record.id;
+  return referenceKeyForCandidate(record);
 }
 
-function toOption(record: TrackerRecord): TrackerReferenceOption {
+/** Map a runtime-store record to the shape the shared ranking reads. */
+export function trackerRecordToCandidate(record: TrackerRecord): TrackerReferenceCandidate {
   const fields = (record.fields ?? {}) as Record<string, unknown>;
   return {
-    referenceKey: referenceKeyForRecord(record),
     id: record.id,
     issueKey: record.issueKey,
+    issueNumber: record.issueNumber,
     title: (fields.title as string) ?? '',
+    description: fields.description as string | undefined,
     status: fields.status as string | undefined,
     type: record.primaryType,
+    typeTags: record.typeTags,
+    archived: record.archived,
   };
 }
 
@@ -66,87 +69,103 @@ export function matchTrackerReferenceTrigger(
   return { matchingString: m[1], replaceableString: m[0], index: m.index ?? 0 };
 }
 
-/** True if a record is of (or tagged with) the given type, case-insensitively. */
-function recordMatchesType(record: TrackerRecord, type: string): boolean {
-  const t = type.toLowerCase();
-  if (record.primaryType?.toLowerCase() === t) return true;
-  return (record.typeTags ?? []).some((tag) => tag.toLowerCase() === t);
-}
-
 /**
- * Split a typed query into an optional type scope and the residual search text.
- * A leading `type:` prefix scopes the picker to that type when `type` is a known
- * tracker type (e.g. `bug:login` → filter to bugs matching "login"). Anything
- * else is treated as a plain search (issue keys contain `-`, never `:`).
- */
-export function parseTypeScopedQuery(
-  query: string | null,
-  knownTypes: Set<string>,
-): { typeFilter: string | null; searchQuery: string } {
-  const raw = query ?? '';
-  const colon = raw.indexOf(':');
-  if (colon > 0) {
-    const candidate = raw.slice(0, colon).toLowerCase();
-    if (knownTypes.has(candidate)) {
-      return { typeFilter: candidate, searchQuery: raw.slice(colon + 1) };
-    }
-  }
-  return { typeFilter: null, searchQuery: raw };
-}
-
-/**
- * Build the ordered list of reference options for the current query.
- *
- * Searches issue key, title, and description; excludes archived items, and
- * (when `typeFilter` is set) restricts to that tracker type. With no query,
- * returns the most-recent items (highest issue number first). With a query,
- * key-prefix matches sort ahead of substring matches.
+ * Build the ordered list of reference options for the current query from
+ * runtime-store records. Ranking is shared with the browser host; see
+ * {@link rankTrackerReferenceCandidates}.
  */
 export function buildTrackerReferenceOptions(
   records: TrackerRecord[],
   query: string | null,
   options: { typeFilter?: string | null; limit?: number } = {},
 ): TrackerReferenceOption[] {
-  const { typeFilter = null, limit = 25 } = options;
-  let active = records.filter((r) => !r.archived);
-  if (typeFilter) {
-    active = active.filter((r) => recordMatchesType(r, typeFilter));
+  return rankTrackerReferenceCandidates(records.map(trackerRecordToCandidate), query, options);
+}
+
+/**
+ * Read the `#…` trigger ending at the caret, for `TypeaheadMenuPlugin`.
+ *
+ * The desktop document editor runs Lexical's HashtagPlugin, so typing `#bug`
+ * becomes a HashtagNode and any following `-` (issue keys) or `:` (the `type:`
+ * scope) spills into a SEPARATE sibling text node. The shared
+ * `getTextUpToAnchor` only reads the anchor node, so it would miss the `#` and
+ * close the menu the instant you type `-`/`:`. This accumulates text backwards
+ * across same-level siblings up to the caret so the `#…` trigger is seen whole.
+ */
+export function readTrackerReferenceTrigger(
+  editor: LexicalEditor,
+): { leadOffset: number; matchingString: string; replaceableString: string } | null {
+  let result: { leadOffset: number; matchingString: string; replaceableString: string } | null = null;
+
+  editor.getEditorState().read(() => {
+    const selection = $getSelection();
+    if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+
+    const anchor = selection.anchor;
+    if (anchor.type !== 'text') return;
+
+    const anchorNode = anchor.getNode();
+    const anchorOffset = anchor.offset;
+
+    const anchorUpToCaret = anchorNode.getTextContent().slice(0, anchorOffset);
+    let acc = anchorUpToCaret;
+    let prev: LexicalNode | null = anchorNode.getPreviousSibling();
+    while (prev) {
+      acc = prev.getTextContent() + acc;
+      prev = prev.getPreviousSibling();
+    }
+
+    const match = matchTrackerReferenceTrigger(acc);
+    if (!match) return;
+
+    // leadOffset is a DOM offset within the anchor node; clamp the matched
+    // span to the part that actually lives in the anchor node (the rest is in
+    // the preceding hashtag/sibling node).
+    const inAnchor = Math.min(match.replaceableString.length, anchorUpToCaret.length);
+    result = {
+      leadOffset: anchorOffset - inAnchor,
+      matchingString: match.matchingString,
+      replaceableString: match.replaceableString,
+    };
+  });
+
+  return result;
+}
+
+/**
+ * Replace the `#query` trigger before the caret with a reference. Removes `#`
+ * plus the query itself (TypeaheadMenuPlugin's single-node split can't, because
+ * the trigger may span a HashtagNode plus a sibling text node), then inserts
+ * the reference. The span is selected in the model, walking back across
+ * sibling text nodes, rather than deleted a character at a time, which needs a
+ * live DOM selection.
+ */
+export function $replaceTrackerReferenceTrigger(
+  matchingString: string | null | undefined,
+  referenceKey: string,
+  view: TrackerReferenceView = 'chip',
+): boolean {
+  const selection = $getSelection();
+  if ($isRangeSelection(selection) && selection.isCollapsed() && selection.anchor.type === 'text') {
+    const caretNode = selection.anchor.getNode();
+    const caretOffset = selection.anchor.offset;
+    let node: TextNode = caretNode;
+    let offset = caretOffset;
+    let remaining = (matchingString?.length ?? 0) + 1; // +1 for '#'
+    while (remaining > offset) {
+      const prev = node.getPreviousSibling();
+      if (!$isTextNode(prev)) {
+        remaining = offset;
+        break;
+      }
+      remaining -= offset;
+      node = prev;
+      offset = prev.getTextContentSize();
+    }
+    selection.setTextNodeRange(node, offset - remaining, caretNode, caretOffset);
+    selection.removeText();
   }
-  const q = query?.trim().toLowerCase() ?? '';
-
-  if (!q) {
-    return active
-      .slice()
-      .sort((a, b) => (b.issueNumber ?? 0) - (a.issueNumber ?? 0))
-      .slice(0, limit)
-      .map(toOption);
-  }
-
-  const scored: Array<{ record: TrackerRecord; score: number }> = [];
-  for (const record of active) {
-    const key = referenceKeyForRecord(record).toLowerCase();
-    const issueKey = record.issueKey?.toLowerCase() ?? '';
-    const fields = (record.fields ?? {}) as Record<string, unknown>;
-    const title = ((fields.title as string) ?? '').toLowerCase();
-    const description = ((fields.description as string) ?? '').toLowerCase();
-
-    let score = -1;
-    if (key.startsWith(q) || issueKey.startsWith(q)) score = 0;
-    else if (key.includes(q) || issueKey.includes(q)) score = 1;
-    else if (title.startsWith(q)) score = 2;
-    else if (title.includes(q)) score = 3;
-    else if (description.includes(q)) score = 4;
-
-    if (score >= 0) scored.push({ record, score });
-  }
-
-  return scored
-    .sort((a, b) => {
-      if (a.score !== b.score) return a.score - b.score;
-      return (b.record.issueNumber ?? 0) - (a.record.issueNumber ?? 0);
-    })
-    .slice(0, limit)
-    .map(({ record }) => toOption(record));
+  return $insertTrackerReference(referenceKey, view);
 }
 
 /**
@@ -155,11 +174,14 @@ export function buildTrackerReferenceOptions(
  * has already removed the `#query` trigger text. Returns false if there is no
  * range selection.
  */
-export function $insertTrackerReference(referenceKey: string): boolean {
+export function $insertTrackerReference(
+  referenceKey: string,
+  view: TrackerReferenceView = 'chip',
+): boolean {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return false;
 
-  const node = $createTrackerReferenceNode(referenceKey);
+  const node = $createTrackerReferenceNode(referenceKey, view);
   selection.insertNodes([node]);
 
   const space = $createTextNode(' ');

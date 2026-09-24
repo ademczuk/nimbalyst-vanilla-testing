@@ -13,6 +13,11 @@ interface NativeFileWatcher {
   listener: NativeFileWatchListener;
 }
 
+interface PendingWatcherStart {
+  cancelled: boolean;
+  promise: Promise<void>;
+}
+
 interface WatcherEntry {
   refWatcher: NativeFileWatcher;
   indexWatcher: NativeFileWatcher;
@@ -161,6 +166,8 @@ async function resolveGitDirs(workspacePath: string): Promise<GitDirInfo | null>
 export class GitRefWatcher {
   // Map<workspacePath, WatcherEntry>
   private watchers = new Map<string, WatcherEntry>();
+  private pendingStarts = new Map<string, PendingWatcherStart>();
+  private workspaceOwners = new Map<string, Set<string>>();
 
   // Debounce index changes to avoid rapid fire during staging operations
   private indexDebounceTimers = new Map<string, NodeJS.Timeout>();
@@ -192,17 +199,43 @@ export class GitRefWatcher {
    * differs from `workspacePath` whenever the repo lives in an attached folder
    * or below a container root, and it is what pending-review updates must be
    * attributed to. Defaults to the repo itself for single-root callers.
+   * `projectPath` tracks lifetime separately: worktree review events still use
+   * the worktree path, while closing its parent project releases its watcher.
    */
-  async start(workspacePath: string, owningWorkspace?: string): Promise<void> {
+  async start(workspacePath: string, owningWorkspace?: string, projectPath = owningWorkspace ?? workspacePath): Promise<void> {
+    const owners = this.workspaceOwners.get(workspacePath) ?? new Set<string>();
+    owners.add(projectPath);
+    this.workspaceOwners.set(workspacePath, owners);
     // Already watching this workspace
     if (this.watchers.has(workspacePath)) {
       logger.main.debug('[GitRefWatcher] Already watching workspace:', path.basename(workspacePath));
       return;
     }
 
+    const pending = this.pendingStarts.get(workspacePath);
+    if (pending) return pending.promise;
+
+    // Publish before the first filesystem/Git await so concurrent callers
+    // share one startup and stop() can retire it before handles exist.
+    const startup: PendingWatcherStart = { cancelled: false, promise: Promise.resolve() };
+    this.pendingStarts.set(workspacePath, startup);
+    startup.promise = this.startWatching(workspacePath, owningWorkspace, startup).finally(() => {
+      if (this.pendingStarts.get(workspacePath) === startup) {
+        this.pendingStarts.delete(workspacePath);
+      }
+    });
+    return startup.promise;
+  }
+
+  private async startWatching(
+    workspacePath: string,
+    owningWorkspace: string | undefined,
+    startup: PendingWatcherStart,
+  ): Promise<void> {
     try {
       // Resolve the git directories (handles worktrees where .git is a file)
       const gitDirs = await resolveGitDirs(workspacePath);
+      if (startup.cancelled) return;
 
       if (!gitDirs) {
         // Not a git repository
@@ -223,6 +256,7 @@ export class GitRefWatcher {
       let lastCommitHash: string;
       try {
         const status = await git.status();
+        if (startup.cancelled) return;
         if (!status.current) {
           // Not on a branch (detached HEAD) - skip watching
           logger.main.info('[GitRefWatcher] Skipping detached HEAD workspace:', workspacePath);
@@ -231,6 +265,7 @@ export class GitRefWatcher {
         currentBranch = status.current;
 
         const log = await git.log({ maxCount: 1 });
+        if (startup.cancelled) return;
         lastCommitHash = log.latest?.hash || '';
       } catch (preflightError) {
         const msg = preflightError instanceof Error
@@ -319,6 +354,12 @@ export class GitRefWatcher {
    * Stop watching a workspace
    */
   async stop(workspacePath: string): Promise<void> {
+    this.workspaceOwners.delete(workspacePath);
+    const pending = this.pendingStarts.get(workspacePath);
+    if (pending) {
+      pending.cancelled = true;
+      this.pendingStarts.delete(workspacePath);
+    }
     const entry = this.watchers.get(workspacePath);
     if (entry) {
       unwatchGitFile(entry.refWatcher);
@@ -337,6 +378,15 @@ export class GitRefWatcher {
     }
   }
 
+  /** Release active and pending watchers with no remaining consumer. */
+  async pruneUnused(isNeeded: (repoPath: string, owners: ReadonlySet<string>) => boolean): Promise<void> {
+    const stops: Promise<void>[] = [];
+    for (const [repoPath, owners] of this.workspaceOwners) {
+      if (!isNeeded(repoPath, owners)) stops.push(this.stop(repoPath));
+    }
+    await Promise.all(stops);
+  }
+
   /**
    * Stop watching all workspaces
    */
@@ -344,7 +394,7 @@ export class GitRefWatcher {
     logger.main.info(`[GitRefWatcher] Stopping all watchers (${this.watchers.size} active)`);
 
     const promises: Promise<void>[] = [];
-    for (const workspacePath of this.watchers.keys()) {
+    for (const workspacePath of new Set([...this.watchers.keys(), ...this.pendingStarts.keys(), ...this.workspaceOwners.keys()])) {
       promises.push(this.stop(workspacePath));
     }
     await Promise.all(promises);
@@ -461,6 +511,9 @@ export class GitRefWatcher {
       if (!entry) return;
 
       const status = await entry.git.status();
+      // A stop/restart may have retired this entry while Git was running.
+      // Do not recreate a branch poller that no live entry can release.
+      if (this.watchers.get(workspacePath) !== entry) return;
       // Detached HEAD (mid-rebase, bisect, checkout of a tag): nothing to
       // re-point at. Leave the existing watcher alone until HEAD names a branch
       // again.
@@ -485,6 +538,7 @@ export class GitRefWatcher {
       // on it is detected as a delta from here rather than diffed against the
       // old branch.
       const log = await entry.git.log({ maxCount: 1 });
+      if (this.watchers.get(workspacePath) !== entry) return;
       entry.lastCommitHash = log.latest?.hash || '';
 
       logger.main.info('[GitRefWatcher] Branch switch detected, re-pointed ref watcher:', {

@@ -17,6 +17,8 @@
  * keyboard shortcuts keep working.
  */
 
+export {};
+
 function isTextInput(el: Element | null): boolean {
   if (!el) return false;
   const tag = el.tagName;
@@ -61,7 +63,10 @@ function shouldGuard(e: KeyboardEvent): boolean {
 const originalAdd = window.addEventListener.bind(window);
 const originalRemove = window.removeEventListener.bind(window);
 
-// Map original handlers to their wrapped versions so removeEventListener works
+// Reuse the same wrapper across event types and capture modes. Native listener
+// identity includes all three; replacing or deleting this mapping would strand
+// registrations that still use the old wrapper. Weak keys allow collection once
+// neither the caller nor an active registration retains the original handler.
 const wrapperMap = new WeakMap<EventListenerOrEventListenerObject, EventListenerOrEventListenerObject>();
 
 window.addEventListener = function (
@@ -70,6 +75,8 @@ window.addEventListener = function (
   options?: boolean | AddEventListenerOptions,
 ): void {
   if (listener && (type === 'keydown' || type === 'keyup' || type === 'keypress')) {
+    const existing = wrapperMap.get(listener);
+    if (existing) return originalAdd(type, existing, options);
     const wrapped: EventListener = (e: Event) => {
       if (shouldGuard(e as KeyboardEvent)) return;
       if (typeof listener === 'function') {
@@ -92,7 +99,6 @@ window.removeEventListener = function (
   if (listener && (type === 'keydown' || type === 'keyup' || type === 'keypress')) {
     const wrapped = wrapperMap.get(listener);
     if (wrapped) {
-      wrapperMap.delete(listener);
       return originalRemove(type, wrapped, options);
     }
   }

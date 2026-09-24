@@ -23,9 +23,13 @@ export interface SearchReplaceState {
 
 type StateChangeListener = (tabId: string, state: SearchReplaceState) => void;
 
+export type SearchNavigateDirection = 'next' | 'previous';
+type NavigateListener = (tabId: string, direction: SearchNavigateDirection) => void;
+
 class SearchReplaceStateManagerClass {
   private states: Map<string, SearchReplaceState> = new Map();
   private listeners: Set<StateChangeListener> = new Set();
+  private navigateListeners: Set<NavigateListener> = new Set();
 
   /**
    * Get the default state for a new tab
@@ -109,6 +113,30 @@ class SearchReplaceStateManagerClass {
 
     const currentState = this.getState(tabId);
     this.updateState(tabId, { isOpen: true, focusNonce: currentState.focusNonce + 1 });
+  }
+
+  /**
+   * Handle Find Next / Find Previous (Cmd+G / Cmd+Shift+G) for a tab.
+   *
+   * These arrive as app-menu commands, so the bar never sees the keystroke.
+   * Returns false when no bar is open for the tab, so the caller can route the
+   * command to another editor's find UI instead.
+   */
+  navigate(tabId: string, direction: SearchNavigateDirection): boolean {
+    if (!tabId || !this.isOpen(tabId)) {
+      return false;
+    }
+
+    this.navigateListeners.forEach((listener) => listener(tabId, direction));
+    return true;
+  }
+
+  addNavigateListener(listener: NavigateListener): void {
+    this.navigateListeners.add(listener);
+  }
+
+  removeNavigateListener(listener: NavigateListener): void {
+    this.navigateListeners.delete(listener);
   }
 
   /**

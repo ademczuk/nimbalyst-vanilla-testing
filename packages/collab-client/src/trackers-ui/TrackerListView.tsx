@@ -7,10 +7,12 @@
  * items in the same order.
  */
 
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo, useSyncExternalStore } from 'react';
+import { globalRegistry } from '@nimbalyst/tracker-schema';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import type { TrackerGroupBy } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
+import { getTrackerTypeLabel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerGrouping';
 import { getStatusColor, getTypeColor } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerColumns';
 import {
   getFieldByRole,
@@ -25,6 +27,8 @@ import { TrackerSwatchBadge } from './primitives/TrackerSwatchBadge';
 import { NEUTRAL_SWATCH, PRIORITY_COLORS } from './board/trackerBoardTokens';
 import './trackerList.css';
 import { TrackerStackedRow } from './TrackerStackedRow';
+
+const subscribeSchema = (listener: () => void) => globalRegistry.onChange(listener);
 
 export interface TrackerListViewProps {
   rows: TrackerRecord[];
@@ -89,7 +93,7 @@ function TrackerListRow({
       ) : null}
       <span className="min-w-0 flex-1 truncate text-sm text-nim">{getRecordTitle(item)}</span>
       <TrackerSwatchBadge
-        label={item.primaryType}
+        label={getTrackerTypeLabel(item.primaryType)}
         color={getTypeColor(item.primaryType)}
         className="tracker-swatch-badge-column"
       />
@@ -118,7 +122,16 @@ export function TrackerListView({
   stacked = false,
   showType = true,
 }: TrackerListViewProps) {
-  const groups = useMemo(() => groupTrackerItems(rows, groupBy), [rows, groupBy]);
+  // Cached rows may arrive before their schema. Track the registry's existing
+  // change signal without requiring a provider for this presentational leaf.
+  const getSchemaNames = useCallback(() => JSON.stringify(
+    [...new Set(rows.map(row => row.primaryType))].map(type => {
+      const model = globalRegistry.get(type);
+      return [type, model?.displayName, model?.displayNamePlural];
+    }),
+  ), [rows]);
+  const schemaNames = useSyncExternalStore(subscribeSchema, getSchemaNames, getSchemaNames);
+  const groups = useMemo(() => groupTrackerItems(rows, groupBy), [rows, groupBy, schemaNames]);
 
   if (!loaded) {
     return (

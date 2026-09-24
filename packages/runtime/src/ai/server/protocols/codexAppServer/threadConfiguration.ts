@@ -11,7 +11,7 @@ export function buildCodexThreadStartParams(options: SessionOptions): ThreadStar
 
   const effortLevel = options.raw?.effortLevel as string | undefined;
   // Clamp to what this model's catalog entry accepts: gpt-5.4/5.5 stop at
-  // xhigh, gpt-5.6-luna at max, and only Astra/Sol/Terra reach ultra.
+  // xhigh, the Luna tiers at max, and only Astra/Sol/Terra reach ultra.
   const reasoningEffortRaw = clampEffortLevel(
     parseEffortLevel(effortLevel ?? 'high'),
     options.model ?? undefined,

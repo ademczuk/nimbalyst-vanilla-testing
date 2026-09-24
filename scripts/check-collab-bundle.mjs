@@ -75,7 +75,8 @@ export const COLLAB_BUNDLE_EAGER_GZIP_BUDGET_BYTES = {
   // is the citation locator validator, which `TrackerDataModel.validate` calls
   // directly and which exists precisely so the browser rejects a locator the
   // same way the desktop does. Reset with ~5% headroom.
-  'trackers-ui': 136_000,
+  // StatusBar field-pill header exported for the web console knowledge wiki: 171,945 gzip bytes + ~3% headroom.
+  'trackers-ui': 177_000,
   // Deliberately tight. This entry is a WebSocket client over the protocol
   // package and nothing else; anything that makes it jump has dragged a UI
   // graph in behind it.

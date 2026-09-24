@@ -30,7 +30,7 @@ const RESERVED_LINK_HOSTS = new Set([
  * excluding a bare reserved host. Kept in sync with RESERVED_LINK_HOSTS so the
  * markdown transformer and the runtime check cannot disagree.
  */
-export const TRACKER_REFERENCE_KEY_PATTERN = `(?!(?:${[...RESERVED_LINK_HOSTS].join('|')})\\))[^)\\s/]+`;
+export const TRACKER_REFERENCE_KEY_PATTERN = `(?!(?:${[...RESERVED_LINK_HOSTS].join('|')})(?=[)\\s]|$))[^)\\s/]+`;
 
 const TRACKER_REFERENCE_KEY_RE = new RegExp(
   `^${TRACKER_REFERENCE_KEY_PATTERN}$`,

@@ -82,7 +82,6 @@ import {
 export {
   handleTrackerDefineType,
   handleTrackerDeleteType,
-  handleTrackerInstallPack,
   handleTrackerListTypes,
 } from './trackerSchemaToolHandlers';
 
@@ -905,28 +904,6 @@ export const trackerToolSchemas = [
         promoteExistingItems: {
           type: "boolean",
           description: "Required when changing a personal tracker to team sharing. Publishes every existing item so the server assigns keys from the team's shared sequence.",
-        },
-        confirmDestructive: {
-          type: "boolean",
-          description: DESTRUCTIVE_CONFIRM_PARAM_DESCRIPTION,
-        },
-      },
-    },
-  },
-  {
-    name: "tracker_install_pack",
-    description:
-      "Install a knowledge pack: a set of tracker types plus relationship verbs (predicates) that only make sense together. Call with no arguments to list the available packs. 'knowledge-core' ships entity, claim, question, finding and investigation — the kinds a knowledge graph is built from, where a statement is an item rather than a schema change. 'knowledge-software' adds predicates for describing software (integrates-with, implements-protocol, provided-by, component-of, requires, imports-format, exports-format, supports-capability). Types already present are left alone unless replaceExisting is set; a predicate the project already defines differently is kept as-is and reported, never silently replaced.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        packId: {
-          type: "string",
-          description: "Pack to install. Omit to list what is available.",
-        },
-        replaceExisting: {
-          type: "boolean",
-          description: "Replace a tracker type of the same name that already exists (the current YAML is backed up first). Defaults to false, which skips it and says so.",
         },
         confirmDestructive: {
           type: "boolean",

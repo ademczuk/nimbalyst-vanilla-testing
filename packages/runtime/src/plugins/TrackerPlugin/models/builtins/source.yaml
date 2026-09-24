@@ -1,4 +1,4 @@
-# Knowledge-scopes `knowledge-core` kind (master plan section 3).
+# Builtin knowledge evidence kind.
 # A source is the IDENTITY of an original document, not a copy of it and not one
 # retrieval of it. Retrievals are `capture` items pointing here, so a document
 # fetched ten times over a year is one source with ten captures, and a citation
@@ -16,7 +16,7 @@ modes:
 
 sharing: personal
 draftByDefault: false
-# Not offered in type lists until the knowledge-core pack installs `claim`.
+# Not offered in type lists until the workspace defines `claim`.
 hiddenUntilType: claim
 
 idPrefix: src

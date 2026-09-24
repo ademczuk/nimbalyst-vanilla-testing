@@ -190,6 +190,7 @@ import { organizationDirectoryAtom, personalAccountsAtom } from './store/atoms/s
 import {
   activeWorkspacePathAtom,
   multiProjectModeAtom,
+  openProjectsAtom,
   addOpenProjectAtom as addOpenProjectAction,
 } from './store/atoms/openProjects';
 import { registerDocumentLinkPlugin } from './plugins/registerDocumentLinkPlugin';
@@ -2393,16 +2394,17 @@ export default function App() {
             if (initialState.workspacePath) {
               await initWindowMode(initialState.workspacePath);
               // Initialize unified navigation history
-              await initNavigationHistory(initialState.workspacePath);
+              await initNavigationHistory(initialState.workspacePath, { setActive: false });
 
-              // Seed the multi-project rail: this window's primary
-              // workspace is always represented in the rail (visible only
-              // when multiProjectMode is on, hidden otherwise).
-              addOpenProject({
-                path: initialState.workspacePath,
-                name: initialState.workspaceName ?? initialState.workspacePath,
-                openedAt: Date.now(),
-              });
+              // Preserve the restored selection if the primary is already
+              // present. Adding it again would activate it after these awaits.
+              if (!store.get(openProjectsAtom).some(project => project.path === initialState.workspacePath)) {
+                addOpenProject({
+                  path: initialState.workspacePath,
+                  name: initialState.workspaceName ?? initialState.workspacePath,
+                  openedAt: Date.now(),
+                });
+              }
             }
           }
         }

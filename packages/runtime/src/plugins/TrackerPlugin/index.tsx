@@ -38,10 +38,12 @@ import { useAtomValue } from 'jotai';
 import { $createTrackerItemNode, $getTrackerItemNode, $isTrackerItemNode, TrackerItemData, TrackerItemType, TrackerItemNode, TrackerItemStatus, TrackerItemPriority } from './TrackerItemNode';
 import { TRACKER_ITEM_TRANSFORMERS } from './TrackerItemTransformer';
 import { defineExtension } from 'lexical';
-import { TypeaheadMenuPlugin, type TypeaheadMenuOption, type UserCommand, $convertToEnhancedMarkdownString, getEditorTransformers } from '../../editor';
+import { type UserCommand, $convertToEnhancedMarkdownString, getEditorTransformers } from '../../editor';
 import { globalRegistry } from './models';
 import { trackerItemsArrayAtom } from './trackerDataAtoms';
-import { buildTrackerReferenceOptions, parseTypeScopedQuery, matchTrackerReferenceTrigger, $insertTrackerReference } from '../TrackerLinkPlugin/trackerReferencePicker';
+import { buildTrackerReferenceOptions, parseTypeScopedQuery, trackerRecordToCandidate } from '../TrackerLinkPlugin/trackerReferencePicker';
+import { collectCandidateTypes } from '../TrackerLinkPlugin/trackerReferenceSearch';
+import { TrackerReferenceTypeahead } from '../TrackerLinkPlugin/TrackerReferenceTypeahead';
 import { $createTrackerReferenceNode } from '../TrackerLinkPlugin/TrackerReferenceNode';
 import { DocumentHeaderRegistry } from './documentHeader/DocumentHeaderRegistry';
 import { TrackerDocumentHeader, shouldRenderTrackerHeader } from './documentHeader/TrackerDocumentHeader';
@@ -58,12 +60,6 @@ interface TrackerEditorState {
   data: TrackerItemData;
   position: { x: number; y: number };
 }
-
-type TriggerFunction = (text: string, editor: LexicalEditor) => {
-  leadOffset: number;
-  matchingString: string;
-  replaceableString: string;
-} | null;
 
 // Register document header provider at module load time (not in component mount)
 // This ensures the provider is available before DocumentHeaderContainer tries to query it
@@ -277,7 +273,6 @@ export interface TrackerPluginProps {}
 
 function TrackerPlugin(): JSX.Element | null {
   const [editor] = useLexicalComposerContext();
-  const [query, setQuery] = useState<string | null>(null);
   const [editorState, setEditorState] = useState<TrackerEditorState | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -642,136 +637,27 @@ function TrackerPlugin(): JSX.Element | null {
     }
   }, [editor]);
 
-  // Typeahead trigger function.
-  //
-  // The document editor runs Lexical's HashtagPlugin, so typing `#bug` becomes a
-  // HashtagNode and any following `-` (issue keys) or `:` (the `type:` scope)
-  // spills into a SEPARATE sibling text node. The shared `getTextUpToAnchor`
-  // only reads the anchor node, so it would miss the `#` and close the menu the
-  // instant you type `-`/`:`. We instead accumulate text backwards across
-  // same-level siblings up to the caret so the `#…` trigger is seen whole.
-  const trackerTriggerFn: TriggerFunction = useCallback((_text: string, editor: LexicalEditor) => {
-    let result: { leadOffset: number; matchingString: string; replaceableString: string } | null = null;
-
-    editor.getEditorState().read(() => {
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
-
-      const anchor = selection.anchor;
-      if (anchor.type !== 'text') return;
-
-      const anchorNode = anchor.getNode();
-      const anchorOffset = anchor.offset;
-
-      const anchorUpToCaret = anchorNode.getTextContent().slice(0, anchorOffset);
-      let acc = anchorUpToCaret;
-      let prev: LexicalNode | null = anchorNode.getPreviousSibling();
-      while (prev) {
-        acc = prev.getTextContent() + acc;
-        prev = prev.getPreviousSibling();
-      }
-
-      const match = matchTrackerReferenceTrigger(acc);
-      if (!match) return;
-
-      // leadOffset is a DOM offset within the anchor node; clamp the matched
-      // span to the part that actually lives in the anchor node (the rest is in
-      // the preceding hashtag/sibling node).
-      const inAnchor = Math.min(match.replaceableString.length, anchorUpToCaret.length);
-      result = {
-        leadOffset: anchorOffset - inAnchor,
-        matchingString: match.matchingString,
-        replaceableString: match.replaceableString,
-      };
-    });
-
-    return result;
-  }, []);
-
-  // Set of known tracker types (registered models + types present in the data)
-  // used to recognize a `type:` scope prefix in the query.
+  // `#` typeahead (V2) — search EXISTING tracker items to reference. Selecting
+  // one inserts a TrackerReferenceNode pointer (live chip), instead of creating
+  // a frozen inline TrackerItemNode. Types known to the registry or present in
+  // the data recognize a `type:` scope prefix (e.g. `#bug:login`).
   const knownTrackerTypes = useMemo(() => {
-    const set = new Set<string>();
+    const set = collectCandidateTypes(trackerItems.map(trackerRecordToCandidate));
     for (const model of globalRegistry.getAll()) set.add(model.type.toLowerCase());
-    for (const item of trackerItems) {
-      if (item.primaryType) set.add(item.primaryType.toLowerCase());
-      for (const tag of item.typeTags ?? []) set.add(tag.toLowerCase());
-    }
     return set;
   }, [trackerItems]);
-
-  // A leading `type:` prefix (e.g. `#bug:login`) scopes the picker to that type.
-  const { typeFilter, searchQuery } = parseTypeScopedQuery(query, knownTrackerTypes);
-
-  // Typeahead options (V2) — search EXISTING tracker items to reference.
-  // Selecting one inserts a TrackerReferenceNode pointer (live chip), instead
-  // of creating a frozen inline TrackerItemNode. The icon comes from the item's
-  // registered tracker model; `option.id` carries the reference key to insert.
-  const referenceOptions = buildTrackerReferenceOptions(trackerItems, searchQuery, { typeFilter });
-
-  const filteredOptions: TypeaheadMenuOption[] = referenceOptions.map((item) => {
-    const model = globalRegistry.get(item.type);
-    const icon = model?.icon ?? 'sell';
-    const keyLabel = item.issueKey ?? item.referenceKey;
-    const meta = [keyLabel, item.type, item.status].filter(Boolean).join(' · ');
+  const searchReferences = useCallback((query: string | null) => {
+    const knownTypes = knownTrackerTypes;
+    const { typeFilter, searchQuery } = parseTypeScopedQuery(query, knownTypes);
     return {
-      id: item.referenceKey,
-      label: item.title || keyLabel,
-      description: meta,
-      icon: <span className="material-symbols-outlined">{icon}</span>,
-      keywords: [item.referenceKey, keyLabel, item.title, item.type].filter(Boolean) as string[],
-      onSelect: () => {}, // Required by TypeaheadMenuOption but handled in handleSelectOption
+      options: buildTrackerReferenceOptions(trackerItems, searchQuery, { typeFilter }),
+      typeFilter,
+      searchQuery,
     };
-  });
-
-  // When the user has typed a query that matches nothing, show a disabled hint
-  // rather than an empty floating box.
-  const noMatchLabel = typeFilter
-    ? (searchQuery ? `No ${typeFilter} items match “${searchQuery}”` : `No ${typeFilter} items`)
-    : (searchQuery ? `No tracker items match “${searchQuery}”` : 'No tracker items yet');
-  const menuOptions: TypeaheadMenuOption[] = filteredOptions.length > 0
-    ? filteredOptions
-    : [{
-        id: '__no-tracker-matches__',
-        label: noMatchLabel,
-        onSelect: () => {},
-        disabled: true,
-      }];
-
-  // Small header confirming an active type scope.
-  const typeaheadHeader = typeFilter ? (
-    <div className="tracker-typeahead-filter-hint">
-      <span className="material-symbols-outlined">filter_list</span>
-      Filtering by type: <strong>{typeFilter}</strong>
-    </div>
-  ) : undefined;
-
-  const handleSelectOption = useCallback(
-    (option: TypeaheadMenuOption, _textNode: TextNode | null, closeMenu: () => void, matchingString: string) => {
-      // The "no matches" hint is non-actionable.
-      if (option.disabled) {
-        closeMenu();
-        return;
-      }
-
-      editor.update(() => {
-        const selection = $getSelection();
-        if ($isRangeSelection(selection)) {
-          // Remove the `#query` trigger text ourselves (TypeaheadMenuPlugin's
-          // single-node split can't, because the trigger may span a HashtagNode
-          // plus a sibling text node). Delete backward over `#` + the query.
-          const removeCount = (matchingString?.length ?? 0) + 1; // +1 for '#'
-          for (let i = 0; i < removeCount; i++) {
-            selection.deleteCharacter(true);
-          }
-        }
-        // option.id is the reference key (issue key or record id). Insert an
-        // inline TrackerReferenceNode pointer at the caret.
-        $insertTrackerReference(option.id);
-      });
-      closeMenu();
-    },
-    [editor],
+  }, [knownTrackerTypes, trackerItems]);
+  const iconForTrackerType = useCallback(
+    (type: string) => globalRegistry.get(type)?.icon ?? 'sell',
+    [],
   );
 
   // Get model config for the tracker type being edited
@@ -853,13 +739,9 @@ function TrackerPlugin(): JSX.Element | null {
 
   return (
     <>
-      <TypeaheadMenuPlugin
-        options={menuOptions}
-        triggerFn={trackerTriggerFn}
-        onQueryChange={setQuery}
-        onSelectOption={handleSelectOption}
-        header={typeaheadHeader}
-        shouldSplitNodeWithQuery={false}
+      <TrackerReferenceTypeahead
+        search={searchReferences}
+        iconForType={iconForTrackerType}
       />
 
       {editorState && model && (

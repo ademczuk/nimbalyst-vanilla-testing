@@ -85,22 +85,8 @@ function FixedTabHeaderContainerComponent({
   );
 }
 
-// Memoize to prevent re-renders when parent re-renders
-// Re-render only when:
-// 1. filePath or fileName changes (new file)
-// 2. Editor transitions from undefined to defined (initial load)
-// After that, never re-render - the editor instance is stable
-export const FixedTabHeaderContainer = memo(FixedTabHeaderContainerComponent, (prev, next) => {
-  // Always re-render if filePath or fileName changed
-  if (prev.filePath !== next.filePath || prev.fileName !== next.fileName) {
-    return false; // false = do re-render
-  }
-
-  // If editor is transitioning from undefined to defined, re-render
-  if (!prev.editor && next.editor) {
-    return false; // false = do re-render
-  }
-
-  // Otherwise, skip re-render (editor instance reference changes but it's the same logical editor)
-  return true; // true = skip re-render
-});
+// Shallow memo: skip parent re-renders, but re-render on a new editor instance.
+// The Lexical editor is rebuilt on a raw/rich toggle, diff-mode swap, or extension
+// reload; holding the first instance left the find bar searching a destroyed
+// editor that could count matches but never highlight or scroll to them (#1578).
+export const FixedTabHeaderContainer = memo(FixedTabHeaderContainerComponent);

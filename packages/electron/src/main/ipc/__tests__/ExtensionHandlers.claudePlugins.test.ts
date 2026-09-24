@@ -30,12 +30,26 @@ import {
   getClaudePluginPaths,
   getDiscoverableClaudePluginPaths,
   getExtensionClaudePluginPaths,
+  getExtensionPluginCommands,
   getUserExtensionsDirectory,
 } from '../ExtensionHandlers';
-import { setClaudePluginEnabled, setExtensionEnabled } from '../../utils/store';
+import {
+  getExtensionEnabled,
+  setClaudePluginDefaultEnabledMigrationVersion,
+  setClaudePluginEnabled,
+  setExtensionEnabled,
+} from '../../utils/store';
+import {
+  createMigrationGate,
+  runClaudePluginDefaultEnabledMigration,
+} from '../../extensions/claudePluginDefaultEnabledMigration';
 
 /** Write a minimal extension bundle whose manifest contributes a Claude plugin. */
-function writeExtensionWithClaudePlugin(extensionsDir: string, extensionId: string): string {
+function writeExtensionWithClaudePlugin(
+  extensionsDir: string,
+  extensionId: string,
+  options: { defaultEnabled?: boolean } = {},
+): string {
   const extensionPath = path.join(extensionsDir, extensionId);
   const pluginPath = path.join(extensionPath, 'claude-plugin');
   fs.mkdirSync(path.join(pluginPath, '.claude-plugin'), { recursive: true });
@@ -47,7 +61,10 @@ function writeExtensionWithClaudePlugin(extensionsDir: string, extensionId: stri
       version: '0.1.0',
       main: 'dist/index.mjs',
       apiVersion: '1.0.0',
-      contributions: { claudePlugin: { path: 'claude-plugin' } },
+      ...(options.defaultEnabled !== undefined ? { defaultEnabled: options.defaultEnabled } : {}),
+      contributions: {
+        claudePlugin: { path: 'claude-plugin', commands: [{ name: 'go', description: 'Go' }] },
+      },
     }),
     'utf-8',
   );
@@ -181,5 +198,123 @@ describe('Claude plugin path provenance (#1465)', () => {
 
     expect(discovered).toContain(userScopedMarketplacePlugin);
     expect(discovered).not.toContain(projectScopedMarketplacePlugin);
+  });
+});
+
+describe('manifest defaultEnabled:false gates the Claude plugin', () => {
+  let optInUntouched: string;
+  let optInEnabled: string;
+  const createdExtensionDirs: string[] = [];
+
+  beforeAll(async () => {
+    const extensionsDir = await getUserExtensionsDirectory();
+    // Installed after the one-time legacy migration already ran on this profile.
+    await getExtensionClaudePluginPaths();
+    optInUntouched = writeExtensionWithClaudePlugin(extensionsDir, 'nim-optin-untouched', { defaultEnabled: false });
+    optInEnabled = writeExtensionWithClaudePlugin(extensionsDir, 'nim-optin-enabled', { defaultEnabled: false });
+    createdExtensionDirs.push(
+      path.join(extensionsDir, 'nim-optin-untouched'),
+      path.join(extensionsDir, 'nim-optin-enabled'),
+    );
+    setExtensionEnabled('nim-optin-enabled', true);
+  });
+
+  afterAll(() => {
+    for (const dir of createdExtensionDirs) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips skills and commands until the user enables the extension', async () => {
+    const injected = (await getExtensionClaudePluginPaths()).map(plugin => plugin.path);
+    expect(injected).not.toContain(optInUntouched);
+    expect(injected).toContain(optInEnabled);
+
+    const commandOwners = (await getExtensionPluginCommands()).map(command => command.extensionId);
+    expect(commandOwners).not.toContain('nim-optin-untouched');
+    expect(commandOwners).toContain('nim-optin-enabled');
+  });
+});
+
+describe('legacy defaultEnabled:false plugin migration', () => {
+  const legacyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-plugins-legacy-'));
+
+  afterAll(() => {
+    fs.rmSync(legacyDir, { recursive: true, force: true });
+  });
+
+  it('keeps previously loading plugins on once, and never re-enables after the user turns one off', async () => {
+    setClaudePluginDefaultEnabledMigrationVersion(0);
+    writeExtensionWithClaudePlugin(legacyDir, 'legacy-optin', { defaultEnabled: false });
+    writeExtensionWithClaudePlugin(legacyDir, 'legacy-optin-user-off', { defaultEnabled: false });
+    writeExtensionWithClaudePlugin(legacyDir, 'legacy-default-on');
+    setExtensionEnabled('legacy-optin-user-off', false);
+
+    // Launch 1: pins only the untouched opt-in extension.
+    expect(await runClaudePluginDefaultEnabledMigration(legacyDir)).toEqual(['legacy-optin']);
+    expect(getExtensionEnabled('legacy-optin', false)).toBe(true);
+    expect(getExtensionEnabled('legacy-optin-user-off', false)).toBe(false);
+
+    // The user later disables it; an extension installed after the migration stays opt-in.
+    setExtensionEnabled('legacy-optin', false);
+    writeExtensionWithClaudePlugin(legacyDir, 'installed-later', { defaultEnabled: false });
+
+    // Launch 2: already migrated, nothing changes.
+    expect(await runClaudePluginDefaultEnabledMigration(legacyDir)).toEqual([]);
+    expect(getExtensionEnabled('legacy-optin', false)).toBe(false);
+    expect(getExtensionEnabled('installed-later', false)).toBe(false);
+  });
+
+  it('does not record the migration when the extensions directory is unreadable, and pins on the next launch', async () => {
+    const lockedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-plugins-locked-'));
+    writeExtensionWithClaudePlugin(lockedDir, 'locked-optin', { defaultEnabled: false });
+    setClaudePluginDefaultEnabledMigrationVersion(0);
+    fs.chmodSync(lockedDir, 0o000);
+    try {
+      await expect(runClaudePluginDefaultEnabledMigration(lockedDir)).rejects.toThrow(/EACCES/);
+    } finally {
+      fs.chmodSync(lockedDir, 0o755);
+    }
+    expect(await runClaudePluginDefaultEnabledMigration(lockedDir)).toEqual(['locked-optin']);
+    fs.rmSync(lockedDir, { recursive: true, force: true });
+  });
+
+  it('resolves false (legacy behavior) instead of throwing when the store is unavailable', async () => {
+    const gate = createMigrationGate(() => {
+      throw new Error('No "getClaudePluginDefaultEnabledMigrationVersion" export is defined on the mock');
+    });
+    await expect(gate()).resolves.toBe(false);
+  });
+
+  it('retries a partially written migration and finishes the remaining pins', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-plugins-partial-'));
+    writeExtensionWithClaudePlugin(dir, 'partial-a', { defaultEnabled: false });
+    writeExtensionWithClaudePlugin(dir, 'partial-b', { defaultEnabled: false });
+    const settings: Record<string, { enabled: boolean }> = {};
+    let version = 0;
+    let failNextWrite = false;
+    const store = {
+      getVersion: () => version,
+      setVersion: (next: number) => { version = next; },
+      getSettings: () => settings,
+      setEnabled: (id: string, enabled: boolean) => {
+        if (failNextWrite) throw new Error('store write failed');
+        settings[id] = { enabled };
+        failNextWrite = true;
+      },
+    };
+    const gate = createMigrationGate(() => runClaudePluginDefaultEnabledMigration(dir, store));
+
+    // First attempt pins one extension, then the store fails: not recorded, not remembered.
+    expect(await gate()).toBe(false);
+    expect(version).toBe(0);
+    expect(Object.keys(settings)).toHaveLength(1);
+
+    // Storage recovers in the same process; the gate retries and writes only the remaining pin.
+    failNextWrite = false;
+    expect(await gate()).toBe(true);
+    expect(version).toBe(1);
+    expect(settings).toEqual({ 'partial-a': { enabled: true }, 'partial-b': { enabled: true } });
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

@@ -16,6 +16,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { store } from '@nimbalyst/runtime/store';
 import {
+  sessionStoreAtom,
+  setSessionWorkspaceOpenAtom,
   sessionHasPendingInteractivePromptAtom,
   sessionProcessingAtom,
   sessionPendingPromptsAtom,
@@ -38,6 +40,7 @@ import {
   workstreamActiveChildAtom,
   workstreamStatesLoadedAtom,
 } from '../atoms/workstreamState';
+import { TranscriptStreamAccumulator } from '../transcriptStreamAccumulator';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
 
 function seedRegistry(entries: Array<Partial<SessionMeta> & { id: string }>): void {
@@ -1035,6 +1038,35 @@ describe('processing reconcile on terminal events', () => {
       expect(store.get(sessionProcessingAtom(child))).toBe(false); // healed via children union
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+
+describe('closed project transcript retention', () => {
+  it('unloads streamed histories on close or completion while preserving an open project', () => {
+    const apply = vi.spyOn(TranscriptStreamAccumulator.prototype, 'apply');
+    const workspacePath = '/ws/cache-cleanup';
+    const ids = ['idle', 'running', 'other'].map(uniqueSessionId);
+    try {
+      for (const [index, sessionId] of ids.entries()) {
+        store.set(sessionStoreAtom(sessionId), { id: sessionId, workspacePath: index === 2 ? '/other' : workspacePath, messages: [] } as any);
+        handlers.get('transcript:event')!({ id: index + 1, sessionId, sequence: 1, createdAt: new Date(), eventType: 'assistant_message', searchableText: 'retained response', payload: {}, parentEventId: null, searchable: true, subagentId: null, provider: 'claude-code', providerToolCallId: null });
+      }
+      const accumulator = apply.mock.instances[0] as TranscriptStreamAccumulator;
+      expect(accumulator.hasPendingFlush(ids[0])).toBe(true);
+      store.set(sessionProcessingAtom(ids[1]), true);
+      store.set(setSessionWorkspaceOpenAtom, { workspacePath, isOpen: false });
+      expect(accumulator.hasPendingFlush(ids[0])).toBe(false);
+      expect(accumulator.hasPendingFlush(ids[1])).toBe(true);
+      expect(accumulator.hasPendingFlush(ids[2])).toBe(true);
+      handlers.get('ai-session-state:event')!({ type: 'session:completed', sessionId: ids[1], workspacePath });
+      expect(accumulator.hasPendingFlush(ids[1])).toBe(false);
+      expect(accumulator.hasPendingFlush(ids[2])).toBe(true);
+    } finally {
+      apply.mockRestore();
+      store.set(setSessionWorkspaceOpenAtom, { workspacePath, isOpen: true });
+      for (const id of ids) store.set(sessionStoreAtom(id), null);
     }
   });
 });

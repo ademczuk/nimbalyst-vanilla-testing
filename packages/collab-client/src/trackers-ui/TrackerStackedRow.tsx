@@ -1,4 +1,5 @@
 import React from 'react';
+import { getTrackerTypeLabel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerGrouping';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import { getFieldByRole, getRecordStatus, getRecordTitle } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
 import { getStatusColor } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerColumns';
@@ -17,7 +18,7 @@ export function TrackerStackedRow({ item, selected, showType, onOpen }: {
         {status ? <TrackerSwatchBadge label={status} color={getStatusColor(status, item.primaryType)} /> : null}
         {typeof progress === 'number' && Number.isFinite(progress) ? <span>{progress}%</span> : null}
         {updated && Number.isFinite(updated.getTime()) ? <time dateTime={updated.toISOString()}>{updated.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</time> : null}
-        {showType ? <span>{item.primaryType}</span> : null}
+        {showType ? <span>{getTrackerTypeLabel(item.primaryType)}</span> : null}
         {item.issueKey ? <span className="tracker-stacked-key">{item.issueKey}</span> : null}
       </span>
     </button>

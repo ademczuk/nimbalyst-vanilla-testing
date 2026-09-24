@@ -4,6 +4,7 @@ import type { ComponentType, ReactNode } from 'react';
 import type { Awareness } from 'y-protocols/awareness';
 import type { Doc } from 'yjs';
 import type { TeamJwt, TeamMemberId } from './internal/runtime/src/auth/jwtScopes';
+import type { TrackerReferenceResolver } from './internal/collab-client/src/trackers-ui/references/index';
 import type {
   CollaborationContext,
   CollaborationStatus,
@@ -201,6 +202,12 @@ export interface CollabEditorMountOptions {
   readOnly?: boolean;
   comments?: CollabEditorCommentsOptions;
   renderDecisionArtifact?: (entryId: string, artifact: string) => ReactNode;
+  /**
+   * Live data for tracker references in the document. Without it references
+   * render as key-only chips; with it they show live title and status, and
+   * card and statements references render their full views.
+   */
+  trackerReferences?: TrackerReferenceResolver;
   onStateChange?(state: CollabEditorState): void;
   onPresenceChange?(presence: CollabEditorPresence): void;
   onWriteRejected?(rejection: CollabEditorWriteRejection): void;
@@ -649,3 +656,13 @@ export declare function mountExtensionEditor(
 ): ExtensionEditorHandle;
 
 export type { TextFormatType };
+export type { TrackerReferenceResolver };
+export {
+  LiveTrackerReferenceRenderer,
+  TrackerReferenceChipView,
+  TrackerReferenceResolverProvider,
+} from './internal/collab-client/src/trackers-ui/references/index';
+export type {
+  LiveTrackerReferenceRendererProps,
+  TrackerReferenceViewKind,
+} from './internal/collab-client/src/trackers-ui/references/index';

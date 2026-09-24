@@ -26,7 +26,7 @@ import {
   useRole,
 } from '@floating-ui/react';
 import { windowControlsClearance } from '../../../ui/floating/windowControlsClearance';
-import { MaterialSymbol } from '../../../ui';
+import { MaterialSymbol } from '../../../ui/icons/MaterialSymbol';
 import type { FieldDefinition } from '@nimbalyst/tracker-schema';
 import {
   TrackerFieldEditor,
@@ -38,7 +38,7 @@ import type { CitationInspectorHost } from './CitationInspector';
 import { CollectionPickerPopover } from './CollectionPickerPopover';
 import { isCollectionRelationshipField } from '../models/trackerCollections';
 import { UserAvatar } from './UserAvatar';
-import { formatTrackerFieldLabel, isTrackerFieldEmpty } from './trackerFieldLayout';
+import { formatTrackerFieldLabel, isTrackerFieldEmpty, shouldLabelTrackerField } from './trackerFieldLayout';
 import './TrackerFieldPills.css';
 
 /** Default prefix for the `data-testid`s this component emits. */
@@ -47,25 +47,9 @@ const DEFAULT_TEST_ID_BASE = 'tracker-field';
 /** How long a text-like edit sits before it is written through. */
 const TEXT_SAVE_DEBOUNCE_MS = 500;
 
-/**
- * Field types whose value never says which field it belongs to. A date reads
- * "May 29, 2026" and a URL reads "drive.google.com" whether it is the shoot
- * date or the delivery date, the brief or the final cut — so a schema with two
- * of them produces two chips a reader can only tell apart by opening them
- * (#1166). These carry their label in the chip; select and boolean values are
- * already their own label, and text and number chips read as themselves.
- */
-const SELF_ANONYMOUS_FIELD_TYPES = new Set([
-  'date',
-  'datetime',
-  'url',
-  'user',
-  'relationship',
-  'reference',
-  'citation',
-]);
-
 export interface TrackerFieldPillsProps {
+  /** Label otherwise anonymous values; preserve compact document headers by default. */
+  labelFields?: boolean;
   /** Fields to render, already ordered — see `useTrackerFieldLayout`. */
   fields: FieldDefinition[];
   /** Current field values, keyed by field name. */
@@ -106,6 +90,7 @@ export interface TrackerFieldPillsProps {
 }
 
 export interface TrackerFieldPillProps {
+  labelFields?: boolean;
   field: FieldDefinition;
   value: unknown;
   editable: boolean;
@@ -218,6 +203,7 @@ export const TrackerFieldPopoverHeader: React.FC<{
 );
 
 export const TrackerFieldPill: React.FC<TrackerFieldPillProps> = ({
+  labelFields = false,
   field,
   value,
   editable,
@@ -250,7 +236,7 @@ export const TrackerFieldPill: React.FC<TrackerFieldPillProps> = ({
   const label = formatTrackerFieldLabel(field.name);
   const displayValue = fieldDisplayValue(field, localValue, members, relationshipCandidates);
   // An empty chip already reads as its label, so only a filled one needs one.
-  const showLabel = !empty && SELF_ANONYMOUS_FIELD_TYPES.has(field.type);
+  const showLabel = shouldLabelTrackerField(field, localValue, labelFields);
 
   useEffect(() => {
     if (!hasPendingSaveRef.current) {
@@ -493,6 +479,7 @@ export const TrackerFieldPill: React.FC<TrackerFieldPillProps> = ({
 };
 
 export const TrackerFieldPills: React.FC<TrackerFieldPillsProps> = ({
+  labelFields = false,
   fields,
   values,
   editable = true,
@@ -515,6 +502,7 @@ export const TrackerFieldPills: React.FC<TrackerFieldPillsProps> = ({
     >
       {fields.map((field) => (
         <TrackerFieldPill
+          labelFields={labelFields}
           key={field.name}
           field={field}
           value={values[field.name]}

@@ -1,0 +1,62 @@
+// @vitest-environment node
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { afterEach, expect, it, vi } from 'vitest';
+
+const observed = vi.hoisted(() => ({ handles: new Set<fs.StatWatcher>() }));
+vi.mock('fs', async () => {
+  const native = await vi.importActual<typeof import('fs')>('fs');
+  return { ...native, watchFile: (...args: Parameters<typeof native.watchFile>) => {
+    const handle = native.watchFile(...args);
+    observed.handles.add(handle);
+    return handle;
+  } };
+});
+
+vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }));
+vi.mock('../../utils/logger', () => ({ logger: { main: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } } }));
+vi.mock('../../ipc/GitStatusHandlers', () => ({ clearGitStatusCache: vi.fn() }));
+vi.mock('../../utils/gitUncommittedFiles', () => ({ clearGitFactsCache: vi.fn() }));
+import { GitRefWatcher } from '../GitRefWatcher';
+
+const watcher = new GitRefWatcher();
+let fixture: string | undefined;
+afterEach(async () => {
+  await watcher.stopAll();
+  vi.restoreAllMocks();
+  if (fixture) {
+    for (const file of ['index', 'HEAD', 'refs/heads/main']) fs.unwatchFile(path.join(fixture, '.git', file));
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+it('releases native polling listeners after overlapping starts and cancellation', async () => {
+  fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'nimbalyst-native-watcher-'));
+  const gitConfig = path.join(fixture, '.gitconfig');
+  fs.writeFileSync(gitConfig, '');
+  const git = (...args: string[]) => execFileSync('git', args, {
+    cwd: fixture,
+    env: { ...process.env, GIT_CONFIG_GLOBAL: gitConfig, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' },
+    stdio: 'pipe',
+  });
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(fixture, 'file.txt'), 'Synthetic lifecycle test\n');
+  git('add', '.');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Create test fixture');
+
+  const handles = observed.handles;
+
+  await Promise.all([watcher.start(fixture), watcher.start(fixture), watcher.start(fixture)]);
+  expect(watcher.getStats().activeWatchers).toBe(1);
+  expect([...handles].some(handle => handle.listenerCount('change') > 0)).toBe(true);
+  await watcher.stop(fixture);
+  expect([...handles].every(handle => handle.listenerCount('change') === 0)).toBe(true);
+
+  const starting = watcher.start(fixture);
+  await watcher.stop(fixture);
+  await starting;
+  expect(watcher.getStats().activeWatchers).toBe(0);
+  expect([...handles].every(handle => handle.listenerCount('change') === 0)).toBe(true);
+});

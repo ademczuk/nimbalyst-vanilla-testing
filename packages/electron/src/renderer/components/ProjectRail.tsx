@@ -25,7 +25,7 @@ import {
   type VirtualElement,
 } from '@floating-ui/react';
 import { windowControlsClearance } from '@nimbalyst/runtime/ui/floating/windowControlsClearance';
-import { useAtom, useAtomValue, useSetAtom } from 'jotai';
+import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
 import { OrgSwitcher } from './OrgSwitcher';
 import {
   multiProjectModeAtom,
@@ -179,6 +179,7 @@ function ProjectRailIcon({
 }
 
 export function ProjectRail() {
+  const store = useStore();
   const isMultiProjectMode = useAtomValue(multiProjectModeAtom);
   const openProjects = useAtomValue(openProjectsAtom);
   const [activePath, setActivePath] = useAtom(activeWorkspacePathAtom);
@@ -187,6 +188,30 @@ export function ProjectRail() {
   const closeProject = useSetAtom(closeOpenProjectAtom);
   const activity = useAtomValue(globalSessionActivityAtom);
   const activitySummary = useAtomValue(projectActivitySummaryAtom);
+  const projectListRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useLayoutEffect(() => {
+    const list = projectListRef.current;
+    if (!isMultiProjectMode || !list) return;
+
+    const revealActiveProject = () => {
+      const active = list.querySelector<HTMLElement>('.project-rail-item.is-active');
+      if (!active) return;
+      const viewport = list.getBoundingClientRect();
+      const item = active.getBoundingClientRect();
+      // Include the close button's overhang. Scroll only the project list,
+      // leaving the rest of the window and keyboard focus untouched.
+      const above = item.top - viewport.top - 4;
+      const below = item.bottom - viewport.bottom + 4;
+      if (above < 0) list.scrollTop += above;
+      else if (below > 0) list.scrollTop += below;
+    };
+
+    revealActiveProject();
+    const observer = new ResizeObserver(revealActiveProject);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [activePath, openProjects, isMultiProjectMode]);
 
   const handleActivate = useCallback(
     (path: string) => {
@@ -201,6 +226,7 @@ export function ProjectRail() {
 
   const addProjectByPath = useCallback(async (workspacePath: string) => {
     if (!window.electronAPI?.invoke) return;
+    if (store.get(isOpenProjectsAtCapAtom) && !store.get(openProjectsAtom).some(p => p.path === workspacePath)) return;
     try {
       const reg = await window.electronAPI.invoke('workspace:register-additional', { workspacePath });
       if (!reg?.success) {
@@ -215,11 +241,14 @@ export function ProjectRail() {
       };
       // `addOpenProjectAtom` flips `activeWorkspacePathAtom` to this path;
       // the atom subscriber dispatches `workspace:set-active` to main.
-      addProject(project);
+      if (!addProject(project)) {
+        // The limit can change in another window while registration is pending.
+        await window.electronAPI.invoke('workspace:unregister-additional', { workspacePath });
+      }
     } catch (err) {
       console.error('[ProjectRail] addProjectByPath failed:', err);
     }
-  }, [addProject]);
+  }, [addProject, store]);
 
   const handlePickFolder = useCallback(async () => {
     if (!window.electronAPI?.invoke) return;
@@ -249,7 +278,7 @@ export function ProjectRail() {
 
   const handleOpenAddMenu = useCallback(() => {
     if (atCap) {
-      window.alert('You can have at most 8 projects open in the rail. Close one first or open in a new window.');
+      window.alert('The project limit is eight per window. Close a project or enable Allow unlimited projects in Settings > Advanced.');
       return;
     }
     refreshRecents();
@@ -422,21 +451,23 @@ export function ProjectRail() {
     <nav className="project-rail" data-testid="project-rail" aria-label="Open projects">
       {/* Epic H1: org switcher sits above the project switcher. */}
       <OrgSwitcher />
-      {openProjects.map((project) => {
-        const activity = activitySummary.get(project.path);
-        return (
-          <ProjectRailIcon
-            key={project.path}
-            project={project}
-            isActive={project.path === activePath}
-            processingCount={activity?.processing ?? 0}
-            unreadCount={activity?.unread ?? 0}
-            onActivate={handleActivate}
-            onClose={handleClose}
-            onContextMenu={handleContextMenu}
-          />
-        );
-      })}
+      <div ref={projectListRef} className="project-rail-projects" data-testid="project-rail-projects">
+        {openProjects.map((project) => {
+          const activity = activitySummary.get(project.path);
+          return (
+            <ProjectRailIcon
+              key={project.path}
+              project={project}
+              isActive={project.path === activePath}
+              processingCount={activity?.processing ?? 0}
+              unreadCount={activity?.unread ?? 0}
+              onActivate={handleActivate}
+              onClose={handleClose}
+              onContextMenu={handleContextMenu}
+            />
+          );
+        })}
+      </div>
       {openProjects.length > 0 && <div className="project-rail-divider" aria-hidden="true" />}
       <button
         ref={addButtonRef}
@@ -458,7 +489,7 @@ export function ProjectRail() {
             style={addTooltipFloatingStyles}
             {...getAddTooltipFloatingProps()}
           >
-            {atCap ? 'Rail full (8 projects max)' : 'Add project'}
+            {atCap ? 'Eight-project limit reached. Enable Allow unlimited projects in Settings > Advanced.' : 'Add project'}
           </div>
         </FloatingPortal>
       )}

@@ -26,6 +26,8 @@ import { canvasWorkingSetRegistry } from '@nimbalyst/runtime/canvas/canvasPresen
 import { store } from '@nimbalyst/runtime/store';
 import {
   sessionProcessingAtom,
+  pruneClosedSessionDataAtom,
+  sessionDataReleaseListenersAtom,
   reloadSessionDataAtom,
   sessionListWorkspaceAtom,
   updateSessionStoreAtom,
@@ -197,6 +199,9 @@ export function initSessionStateListeners(): () => void {
     return () => {};
   }
 
+  const releaseTranscript = (sessionId: string) => transcriptAccumulator.unload(sessionId);
+  store.set(sessionDataReleaseListenersAtom, listeners => new Set([...listeners, releaseTranscript]));
+
   // Debounced trigger for the processing-state reconcile (assigned once the
   // reconcile function is defined below). Fired on terminal session events so a
   // stuck spinner clears within ~1s instead of waiting for the slow interval.
@@ -310,6 +315,7 @@ export function initSessionStateListeners(): () => void {
       // child finishes this clears the parent's spinner within ~1s rather than
       // leaving it stuck until the user clicks the child.
       scheduleProcessingReconcile?.();
+      store.set(pruneClosedSessionDataAtom);
     }
 
     if (!ownedWorkspacePath) {
@@ -1201,6 +1207,11 @@ export function initSessionStateListeners(): () => void {
     cleanupSyncDraftInput?.();
     cleanupTranscriptEvent?.();
     cleanupTranscriptSessionReparsed?.();
+    store.set(sessionDataReleaseListenersAtom, listeners => {
+      const remaining = new Set(listeners);
+      remaining.delete(releaseTranscript);
+      return remaining;
+    });
     transcriptAccumulator.clear();
   };
 }

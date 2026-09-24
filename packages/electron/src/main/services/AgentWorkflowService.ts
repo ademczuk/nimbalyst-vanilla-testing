@@ -18,6 +18,7 @@ import {
 } from '../utils/store';
 import { usesCodexStyleAgentWorkflows } from '../../shared/agentWorkflowProviders';
 import { createTtlCache } from '../utils/asyncCache';
+import { logger } from '../utils/logger';
 import { resolveClaudeConfigDir } from '@nimbalyst/runtime/ai/server/providers/claudeCode/claudeConfigDir';
 
 export type AgentWorkflowKind = 'command' | 'skill';
@@ -466,6 +467,71 @@ async function syncDirectoryRecursive(
   }
 
   await removeUnexpectedEntries(targetDir, expectedNames);
+}
+
+/**
+ * Remove a generated entry unless it is already a real (non-symlink) entry of
+ * the wanted kind, so a later write can never follow a link out of the export
+ * or trip over a file where a directory now belongs (or the reverse).
+ */
+async function clearIncompatibleGeneratedEntry(targetPath: string, want: 'file' | 'directory'): Promise<void> {
+  try {
+    const stat = await fsp.lstat(targetPath);
+    if (want === 'directory' ? stat.isDirectory() : stat.isFile()) {
+      return;
+    }
+    await fsp.rm(targetPath, { recursive: true, force: true });
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+}
+
+async function writeGeneratedFile(targetPath: string, content: string | Buffer, mode?: number): Promise<void> {
+  await clearIncompatibleGeneratedEntry(targetPath, 'file');
+  await ensureFileMatches(targetPath, content);
+  if (mode !== undefined && ((await fsp.stat(targetPath)).mode & 0o777) !== mode) {
+    await fsp.chmod(targetPath, mode);
+  }
+}
+
+/**
+ * Copy a skill's source directory, minus `skipNames`, into `targetDir` and
+ * return the names copied. Source symlinks are skipped rather than followed:
+ * a skill ships its own files, and following a link would copy whatever it
+ * points at into the workspace.
+ */
+async function syncSkillSupportingFiles(
+  sourceDir: string,
+  targetDir: string,
+  skipNames: ReadonlySet<string> = new Set(),
+): Promise<string[]> {
+  const entries = await fsp.readdir(sourceDir, { withFileTypes: true });
+  const names: string[] = [];
+  for (const entry of entries) {
+    if (skipNames.has(entry.name)) {
+      continue;
+    }
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      await clearIncompatibleGeneratedEntry(targetPath, 'directory');
+      await fsp.mkdir(targetPath, { recursive: true });
+      const childNames = await syncSkillSupportingFiles(sourcePath, targetPath);
+      await removeUnexpectedEntries(targetPath, new Set(childNames));
+    } else if (entry.isFile()) {
+      const stat = await fsp.stat(sourcePath);
+      await writeGeneratedFile(targetPath, await fsp.readFile(sourcePath), stat.mode & 0o777);
+    } else {
+      if (entry.isSymbolicLink()) {
+        logger.main.warn(`[AgentWorkflowService] Skipping symlink in skill export: ${sourcePath}`);
+      }
+      continue;
+    }
+    names.push(entry.name);
+  }
+  return names;
 }
 
 export class AgentWorkflowService {
@@ -1101,12 +1167,19 @@ export class AgentWorkflowService {
       const skillDirName = sanitizeFileName(codexName);
       const skillDir = path.join(generatedRoot, skillDirName);
       expectedSkillDirs.add(skillDirName);
+      await clearIncompatibleGeneratedEntry(skillDir, 'directory');
       await fsp.mkdir(skillDir, { recursive: true });
-      await ensureFileMatches(
+      await writeGeneratedFile(
         path.join(skillDir, 'SKILL.md'),
         renderCodexSkillMarkdown(descriptor, codexName),
       );
-      await removeUnexpectedEntries(skillDir, new Set(['SKILL.md']));
+      // A skill's SKILL.md may point at supporting files next to it
+      // (references/, scripts/); copy them so a Codex agent can resolve them.
+      const supportingNames = descriptor.kind === 'skill' && descriptor.sourcePath
+        && path.basename(descriptor.sourcePath) === 'SKILL.md'
+        ? await syncSkillSupportingFiles(path.dirname(descriptor.sourcePath), skillDir, new Set(['SKILL.md']))
+        : [];
+      await removeUnexpectedEntries(skillDir, new Set(['SKILL.md', ...supportingNames]));
 
       manifestEntries.push({
         id: descriptor.id,

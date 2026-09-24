@@ -38,8 +38,6 @@ import {
   removeTrackerTypeDef,
 } from '../../services/tracker/trackerTypeDefStore';
 import { writeWorkspacePredicateRegistry } from '../../services/tracker/trackerPredicateRegistryFile';
-import { installKnowledgePack } from '../../services/tracker/knowledgePackInstaller';
-import { KNOWLEDGE_PACKS } from '../../services/tracker/packs/knowledgePacks';
 import { getDocumentServiceForWorkspace } from './trackerToolItemAccess';
 import {
   destructiveSchemaChangeToolResult,
@@ -736,101 +734,6 @@ export async function handleTrackerDeleteType(
         {
           type: "text",
           text: `Error deleting tracker type: ${error instanceof Error ? error.message : String(error)}`,
-        },
-      ],
-      isError: true,
-    };
-  }
-}
-
-/**
- * Install a knowledge pack: a set of tracker types plus predicates that only
- * make sense together (knowledge-scopes master plan N11).
- *
- * Thin on purpose. Every decision that matters -- ordering, the destructive
- * gate, what to do about a predicate the project already defines differently --
- * belongs to the installer, which is testable without an MCP server.
- */
-export async function handleTrackerInstallPack(
-  args: { packId?: string; replaceExisting?: boolean; confirmDestructive?: boolean },
-  workspacePath: string | undefined,
-): Promise<McpToolResult> {
-  try {
-    if (!workspacePath) {
-      return {
-        content: [{ type: "text", text: "Error: tracker_install_pack requires an open workspace." }],
-        isError: true,
-      };
-    }
-    await ensureWorkspaceTrackerSchemasLoaded(workspacePath);
-
-    if (!args.packId) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              structured: {
-                action: "listed-packs" as const,
-                packs: KNOWLEDGE_PACKS.map(p => ({
-                  id: p.id,
-                  label: p.label,
-                  description: p.description,
-                  types: p.types.map(t => t.type),
-                  predicates: Boolean(p.predicatesYaml),
-                })),
-              },
-              summary: `Available knowledge packs: ${KNOWLEDGE_PACKS.map(p => p.id).join(', ')}. Pass packId to install one.`,
-            }),
-          },
-        ],
-        isError: false,
-      };
-    }
-
-    const result = await installKnowledgePack(workspacePath, args.packId, {
-      replaceExisting: args.replaceExisting,
-      confirmDestructive: args.confirmDestructive,
-    });
-
-    const parts = [`Installed knowledge pack '${result.packId}'.`];
-    if (result.installed.length) parts.push(`Types: ${result.installed.join(', ')}.`);
-    if (result.skipped.length) {
-      parts.push(
-        `Already present, left alone: ${result.skipped.join(', ')} (pass replaceExisting to overwrite).`,
-      );
-    }
-    if (result.predicatesAdded.length) {
-      parts.push(`Predicates added: ${result.predicatesAdded.join(', ')}.`);
-    }
-    if (result.predicateConflicts.length) {
-      parts.push(
-        `Kept this project's existing definition for: ${result.predicateConflicts.join(', ')}. ` +
-        `Statements already using those verbs were written against it.`,
-      );
-    }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            structured: { action: "installed-pack" as const, ...result },
-            summary: parts.join(' '),
-          }),
-        },
-      ],
-      isError: false,
-    };
-  } catch (error) {
-    if (error instanceof TrackerSchemaChangeBlockedError) {
-      return destructiveSchemaChangeToolResult(error);
-    }
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Error installing knowledge pack: ${error instanceof Error ? error.message : String(error)}`,
         },
       ],
       isError: true,

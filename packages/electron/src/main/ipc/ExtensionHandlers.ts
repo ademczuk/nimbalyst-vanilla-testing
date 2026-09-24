@@ -33,6 +33,7 @@ import {
 } from '../utils/store';
 import { registerFileExtension, clearRegisteredExtensions } from '../extensions/RegisteredFileTypes';
 import { getBuiltinExtensionsDirectory } from '../extensions/builtinExtensionsDirectory';
+import { ensureClaudePluginDefaultEnabledMigration } from '../extensions/claudePluginDefaultEnabledMigration';
 import {
   detectStaleBuiltinExtensionBundle,
   formatStaleBundleWarning,
@@ -421,8 +422,11 @@ export async function getExtensionPluginCommands(): Promise<ExtensionPluginComma
 
     // Scan all extension directories
     const extensionDirs = await getAllExtensionDirectories();
+    const migrated = await ensureClaudePluginDefaultEnabledMigration(extensionDirs[0]);
 
     for (const extensionsDir of extensionDirs) {
+      // Legacy behavior for user extensions until their state is pinned.
+      const honorDefaultEnabled = migrated || extensionsDir !== extensionDirs[0];
       let subdirs;
       try {
         subdirs = await fs.readdir(extensionsDir, { withFileTypes: true });
@@ -463,7 +467,7 @@ export async function getExtensionPluginCommands(): Promise<ExtensionPluginComma
           }
 
           // Check if extension is enabled
-          if (!getExtensionEnabled(extensionId)) {
+          if (!getExtensionEnabled(extensionId, honorDefaultEnabled ? manifest.defaultEnabled : undefined)) {
             continue;
           }
 
@@ -526,7 +530,8 @@ async function scanDirectoryForClaudePlugins(
   extensionsDir: string,
   plugins: Array<{ type: 'local'; path: string }>,
   seenExtensionIds: Set<string>,
-  currentChannel: ReleaseChannel
+  currentChannel: ReleaseChannel,
+  honorDefaultEnabled: boolean
 ): Promise<void> {
   let subdirs;
   try {
@@ -573,7 +578,7 @@ async function scanDirectoryForClaudePlugins(
         continue;
       }
 
-      const isEnabled = getExtensionEnabled(extensionId);
+      const isEnabled = getExtensionEnabled(extensionId, honorDefaultEnabled ? manifest.defaultEnabled : undefined);
       if (!isEnabled) {
         logger.main.debug(`[ExtensionHandlers] Skipping disabled extension: ${extensionId}`);
         continue;
@@ -769,8 +774,11 @@ export async function getExtensionClaudePluginPaths(): Promise<Array<{ type: 'lo
 
     // Scan all extension directories (user first, then built-in)
     const extensionDirs = await getAllExtensionDirectories();
+    const migrated = await ensureClaudePluginDefaultEnabledMigration(extensionDirs[0]);
     for (const extensionsDir of extensionDirs) {
-      await scanDirectoryForClaudePlugins(extensionsDir, plugins, seenExtensionIds, currentChannel);
+      // Legacy behavior for user extensions until their state is pinned.
+      const honorDefaultEnabled = migrated || extensionsDir !== extensionDirs[0];
+      await scanDirectoryForClaudePlugins(extensionsDir, plugins, seenExtensionIds, currentChannel, honorDefaultEnabled);
     }
 
     return dedupeClaudePluginPaths(plugins);

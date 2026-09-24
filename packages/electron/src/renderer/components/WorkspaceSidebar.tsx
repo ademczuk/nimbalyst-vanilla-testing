@@ -837,7 +837,9 @@ export function WorkspaceSidebar({
   const gitWorktreeModifiedPathSet = useMemo(() => new Set(gitWorktreeModifiedFiles), [gitWorktreeModifiedFiles]);
 
   // Filter file tree based on current filter
-  const filterFileTree = useCallback((items: FileTreeItem[], filter: FileTreeFilter): FileTreeItem[] => {
+  const filteredFileTree = useMemo((): FileTreeItem[] => {
+    const items = fileTree;
+    const filter = fileTreeFilter;
     if (filter === 'all') {
       return items;
     }
@@ -950,12 +952,7 @@ export function WorkspaceSidebar({
     };
 
     return filterItems(items);
-  }, [aiReadPathSet, aiWrittenPathSet, gitUncommittedPathSet, gitWorktreeModifiedPathSet]);
-
-  const filteredFileTree = useMemo(
-    () => filterFileTree(fileTree, fileTreeFilter),
-    [fileTree, fileTreeFilter, filterFileTree]
-  );
+  }, [fileTree, fileTreeFilter, aiReadPathSet, aiWrittenPathSet, gitUncommittedPathSet, gitWorktreeModifiedPathSet]);
 
   const isAISessionFilter = CLAUDE_SESSION_FILTERS.has(fileTreeFilter);
   const hasActiveClaudeSession = Boolean(currentAISessionId);

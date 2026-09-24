@@ -1,0 +1,129 @@
+# Knowledge graph predicate registry (software domain).
+#
+# The verbs a software-domain graph is allowed to use. This is the ontology,
+# and it is deliberately small: a predicate earns its place by having qualifiers
+# that a reader needs in order to act on the statement. "Product A integrates
+# with Product B" is close to useless on its own; "via which connector, for
+# which operations, tested against which version" is the part someone can use.
+#
+# Every subject is declared against `entity` rather than against a narrowed
+# kind: domains are values of `entity.kind`, so a new domain satisfies these
+# with no edit here.
+predicates:
+  - id: integrates-with
+    label: integrates with
+    inverseLabel: is integrated by
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: directed
+    transitive: false
+    qualifiers:
+      via:
+        type: relationship
+        targetTrackerTypes: [entity]
+        required: true
+        label: Via
+        description: The connector or mechanism the integration runs through.
+      operations:
+        type: array
+        itemType: string
+        required: true
+        label: Operations
+        description: What the integration can actually do. An integration with no named operations is a logo on a page.
+      authentication:
+        type: string
+        label: Authentication
+      testedClientVersion:
+        type: string
+        label: Tested client version
+        description: The version this was observed against. Absent means documented, not observed.
+
+  - id: implements-protocol
+    label: implements
+    inverseLabel: is implemented by
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: directed
+    qualifiers:
+      role:
+        type: select
+        options: [client, server, both]
+        required: true
+        label: Role
+      specVersion:
+        type: string
+        label: Spec version
+
+  - id: provided-by
+    label: is provided by
+    inverseLabel: provides
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: directed
+
+  - id: component-of
+    label: is a component of
+    inverseLabel: has component
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: directed
+    transitive: true
+
+  - id: requires
+    label: requires
+    inverseLabel: is required by
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: directed
+    qualifiers:
+      optional:
+        type: boolean
+        label: Optional
+        description: True when the requirement is only for a subset of use.
+      minimumVersion:
+        type: string
+        label: Minimum version
+
+  - id: imports-format
+    label: imports
+    inverseLabel: is imported by
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: directed
+    qualifiers:
+      fidelity:
+        type: select
+        options: [full, partial, lossy, unknown]
+        label: Fidelity
+
+  - id: exports-format
+    label: exports
+    inverseLabel: is exported by
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: directed
+    qualifiers:
+      fidelity:
+        type: select
+        options: [full, partial, lossy, unknown]
+        label: Fidelity
+
+  # `boolean-assessment`, not `boolean`, on purpose: support has to be able to
+  # say "partial" and "unknown". Collapsing those to false is how a documented
+  # gap becomes a recorded denial.
+  - id: supports-capability
+    label: supports
+    inverseLabel: is supported by
+    subjectKinds: [entity]
+    valueShape: boolean-assessment
+    direction: directed
+    qualifiers:
+      level:
+        type: select
+        options: [full, partial, none, unknown]
+        required: true
+        label: Level
+      surface:
+        type: string
+        label: Surface
+        description: Where the capability is available -- desktop, web, CLI, mobile.

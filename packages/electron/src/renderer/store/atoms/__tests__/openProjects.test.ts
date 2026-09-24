@@ -1,7 +1,9 @@
+// @vitest-environment node
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createStore } from 'jotai';
 import {
   openProjectsAtom,
+  allowUnlimitedProjectsAtom,
   activeWorkspacePathAtom,
   activeOpenProjectAtom,
   addOpenProjectAtom,
@@ -69,6 +71,37 @@ describe('openProjects atoms', () => {
       expect(jotaiStore.get(openProjectsAtom)).toHaveLength(MAX_OPEN_PROJECTS);
       expect(jotaiStore.get(activeWorkspacePathAtom)).toBe(`/ws/${MAX_OPEN_PROJECTS - 1}`);
     });
+  });
+
+  it('allows unlimited projects and preserves them when the default cap is restored', () => {
+    jotaiStore.set(allowUnlimitedProjectsAtom, true);
+    for (let i = 0; i < 16; i++) jotaiStore.set(addOpenProjectAtom, project(`/ws/${i}`));
+    expect(jotaiStore.get(openProjectsAtom)).toHaveLength(16);
+    expect(jotaiStore.get(isOpenProjectsAtCapAtom)).toBe(false);
+    jotaiStore.set(allowUnlimitedProjectsAtom, false);
+    expect(jotaiStore.get(isOpenProjectsAtCapAtom)).toBe(true);
+    expect(jotaiStore.get(openProjectsAtom)).toHaveLength(16);
+    jotaiStore.set(addOpenProjectAtom, project('/ws/0'));
+    expect(jotaiStore.get(activeWorkspacePathAtom)).toBe('/ws/0');
+    jotaiStore.set(addOpenProjectAtom, project('/ws/extra'));
+    expect(jotaiStore.get(openProjectsAtom)).toHaveLength(16);
+    jotaiStore.set(allowUnlimitedProjectsAtom, true);
+    for (let i = 16; i < 40; i++) jotaiStore.set(addOpenProjectAtom, project(`/ws/${i}`));
+    expect(jotaiStore.get(openProjectsAtom)).toHaveLength(40);
+    expect(jotaiStore.get(isOpenProjectsAtCapAtom)).toBe(false);
+  });
+
+  it.each([false, true])('restores all saved projects and the active project (live window: %s)', (live) => {
+    const paths = Array.from({ length: 32 }, (_,i) => `/ws/${i}`);
+    const result = resolveInitialOpenProjectsState({
+      persistedPaths: [...paths, paths[0]], persistedActivePath: paths[31],
+      restorePreviousProjects: true,
+      windowState: { mode: 'workspace', workspacePath: paths[0],
+        openProjectPaths: live ? [...paths, paths[0]] : [paths[0]],
+        activeWorkspacePath: live ? paths[31] : paths[0] },
+    });
+    expect(result).toEqual({ paths, activePath: paths[31] });
+    expect(selectProjectsToRegister(result.paths, paths[0])).toHaveLength(31);
   });
 
   describe('closeOpenProjectAtom', () => {

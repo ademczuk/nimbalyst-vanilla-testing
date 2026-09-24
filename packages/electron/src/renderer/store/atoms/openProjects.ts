@@ -18,6 +18,7 @@ import { store } from '@nimbalyst/runtime/store';
 import { clearWorkspaceActivityAtom } from './sessionActivity';
 import { activeSessionIdAtom, selectedWorkstreamAtom } from './sessions';
 import { workstreamActiveChildAtom } from './workstreamState';
+import { settingAtom } from './settingAtomFamily';
 
 type JotaiStore = ReturnType<typeof createStore>;
 
@@ -44,7 +45,7 @@ interface ResolveInitialOpenProjectsInput {
   windowState: InitialWorkspaceWindowState | null;
 }
 
-const MAX_OPEN_PROJECTS = 8;
+export const allowUnlimitedProjectsAtom = settingAtom('projects.allowUnlimited');
 
 /**
  * Path of the workspace currently visible in this window.
@@ -77,7 +78,7 @@ export const restorePreviousProjectsAtom = atom<boolean>(false);
 /**
  * Ordered list of open projects in the rail. First entry is leftmost.
  *
- * Capped at `MAX_OPEN_PROJECTS` to bound memory of warm projects.
+ * New additions respect the configured limit. Restored projects are preserved.
  */
 export const openProjectsAtom = atom<OpenProject[]>([]);
 
@@ -95,7 +96,7 @@ export const activeOpenProjectAtom = atom((get) => {
  * the "+" button and show a hint to close a project first.
  */
 export const isOpenProjectsAtCapAtom = atom((get) => {
-  return get(openProjectsAtom).length >= MAX_OPEN_PROJECTS;
+  return !get(allowUnlimitedProjectsAtom) && get(openProjectsAtom).length >= 8;
 });
 
 /**
@@ -113,15 +114,16 @@ export const addOpenProjectAtom = atom(
     const existing = current.find((p) => p.path === project.path);
     if (existing) {
       set(activeWorkspacePathAtom, existing.path);
-      return;
+      return true;
     }
 
-    if (current.length >= MAX_OPEN_PROJECTS) {
-      return;
+    if (get(isOpenProjectsAtCapAtom)) {
+      return false;
     }
 
     set(openProjectsAtom, [...current, project]);
     set(activeWorkspacePathAtom, project.path);
+    return true;
   }
 );
 
@@ -177,7 +179,6 @@ function normalizeProjectPaths(paths: unknown): string[] {
     if (typeof path !== 'string' || path.length === 0 || seen.has(path)) continue;
     seen.add(path);
     normalized.push(path);
-    if (normalized.length >= MAX_OPEN_PROJECTS) break;
   }
   return normalized;
 }
@@ -350,6 +351,10 @@ export async function initOpenProjects(): Promise<void> {
     }),
     attachWorkspaceSwitchCleanup(store),
   );
+
+  // Initial hydration happens before the subscriptions above. Bring the main
+  // process onto the restored project too, even if the user never clicks it.
+  if (store.get(multiProjectModeAtom)) notifyMainSetActive();
 }
 
 /**

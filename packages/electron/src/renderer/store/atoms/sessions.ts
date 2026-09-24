@@ -15,7 +15,7 @@ import {selectedMachineAtom, machineSessionSelectionsAtom} from './remoteMachine
  * 4. Use addSessionAtom/removeSessionAtom for optimistic updates
  */
 
-import { atom } from 'jotai';
+import { atom, type Getter } from 'jotai';
 import { atomFamily } from '../debug/atomFamilyRegistry';
 import { store } from '@nimbalyst/runtime/store';
 import { ModelIdentifier, type ChatAttachment, type SessionData } from '@nimbalyst/runtime/ai/server/types';
@@ -1749,6 +1749,64 @@ export const openSessionsAtom = atom<OpenSession[]>([]);
  * IPC round-trip + DB query (2+ seconds each for large sessions).
  */
 const loadSessionPromises = new Map<string, Promise<SessionData | null>>();
+const loadSessionWorkspaces = new Map<string, string>();
+/** Non-atom transcript caches release their references at the same boundary. */
+export const sessionDataReleaseListenersAtom = atom<ReadonlySet<(sessionId: string) => void>>(new Set<(sessionId: string) => void>());
+const closedSessionWorkspacesAtom = atom<Set<string>>(new Set<string>());
+const sessionWorkspaceGenerationsAtom = atom<Map<string, object>>(new Map());
+
+function canReleaseSessionData(get: Getter, sessionId: string): boolean {
+  return !get(sessionProcessingAtom(sessionId)) && !get(sessionHasPendingInteractivePromptAtom(sessionId));
+}
+
+/** Drop full history only. Drafts and atom identities survive close/reopen. */
+export const pruneClosedSessionDataAtom = atom(null, (get, set) => {
+  const closed = get(closedSessionWorkspacesAtom);
+  if (closed.size === 0) return;
+  const derivedCaches = [sessionMessagesAtom, sessionCurrentTeammatesAtom, sessionCurrentTodosAtom, sessionDocumentContextAtom]
+    .map(family => ({ family, ids: new Set(family.getParams()) }));
+  for (const sessionId of sessionStoreAtom.getParams()) {
+    const data = get(sessionStoreAtom(sessionId));
+    if (!data?.workspacePath || !closed.has(data.workspacePath) || !canReleaseSessionData(get, sessionId)) continue;
+    set(sessionStoreAtom(sessionId), null);
+    for (const release of get(sessionDataReleaseListenersAtom)) release(sessionId);
+    // Unmounted derived atoms can otherwise keep their last large value cached.
+    for (const { family, ids } of derivedCaches) {
+      if (ids.has(sessionId)) get<unknown>(family(sessionId));
+    }
+  }
+});
+
+export const setSessionWorkspaceOpenAtom = atom(
+  null,
+  (get, set, { workspacePath, isOpen }: { workspacePath: string; isOpen: boolean }) => {
+    const closed = new Set(get(closedSessionWorkspacesAtom));
+    if (isOpen) {
+      closed.delete(workspacePath);
+    } else {
+      closed.add(workspacePath);
+      const generations = new Map(get(sessionWorkspaceGenerationsAtom));
+      generations.set(workspacePath, {});
+      set(sessionWorkspaceGenerationsAtom, generations);
+      for (const [id, path] of loadSessionWorkspaces) {
+        if (path === workspacePath) {
+          loadSessionPromises.delete(id);
+          loadSessionWorkspaces.delete(id);
+          set(sessionLoadingAtom(id), false);
+        }
+      }
+      for (const [id, reload] of pendingReloads) {
+        if (reload.workspacePath === workspacePath) {
+          reload.aborted = true;
+          pendingReloads.delete(id);
+        }
+      }
+    }
+    set(closedSessionWorkspacesAtom, closed);
+    set(pruneClosedSessionDataAtom);
+  }
+);
+
 
 /**
  * Load session data into the atom.
@@ -1760,6 +1818,10 @@ export const loadSessionDataAtom = atom(
     if (!sessionId || !workspacePath || !window.electronAPI) {
       return null;
     }
+
+    if (get(closedSessionWorkspacesAtom).has(workspacePath) && canReleaseSessionData(get, sessionId)) return null;
+    const generation = get(sessionWorkspaceGenerationsAtom).get(workspacePath);
+    loadSessionWorkspaces.set(sessionId, workspacePath);
 
     // Deduplicate: if a load is already in-flight for this session, reuse its promise
     const existing = loadSessionPromises.get(sessionId);
@@ -1776,6 +1838,8 @@ export const loadSessionDataAtom = atom(
     const loadPromise = (async () => {
     try {
       const sessionData = await window.electronAPI.aiLoadSession(sessionId, workspacePath);
+      if (get(sessionWorkspaceGenerationsAtom).get(workspacePath) !== generation ||
+          (get(closedSessionWorkspacesAtom).has(workspacePath) && canReleaseSessionData(get, sessionId))) return null;
       if (sessionData) {
         // Validate model field (for debugging)
         const model = sessionData.model;
@@ -1817,7 +1881,9 @@ export const loadSessionDataAtom = atom(
     } catch (error) {
       console.error(`[sessions] Failed to load session ${sessionId}:`, error);
     } finally {
-      set(sessionLoadingAtom(sessionId), false);
+      if (get(sessionWorkspaceGenerationsAtom).get(workspacePath) === generation) {
+        set(sessionLoadingAtom(sessionId), false);
+      }
     }
 
     return null;
@@ -1827,7 +1893,10 @@ export const loadSessionDataAtom = atom(
     try {
       return await loadPromise;
     } finally {
-      loadSessionPromises.delete(sessionId);
+      if (loadSessionPromises.get(sessionId) === loadPromise) {
+        loadSessionPromises.delete(sessionId);
+        loadSessionWorkspaces.delete(sessionId);
+      }
     }
   }
 );
@@ -1854,7 +1923,7 @@ export const updateSessionDataAtom = atom(
  * When multiple reload requests come in rapidly (e.g., multiple message-logged events),
  * only the latest fetch should update the state to avoid stale data overwrites.
  */
-const pendingReloads = new Map<string, { version: number; aborted: boolean }>();
+const pendingReloads = new Map<string, { version: number; aborted: boolean; workspacePath: string }>();
 
 function preserveEquivalentArrayRef<T>(current: T[] | undefined, next: T[] | undefined): T[] | undefined {
   if (!current || !next) return next;
@@ -1939,6 +2008,8 @@ export const reloadSessionDataAtom = atom(
       return;
     }
 
+    if (get(closedSessionWorkspacesAtom).has(workspacePath) && canReleaseSessionData(get, sessionId)) return;
+
     // Create a new version for this reload request
     const existingPending = pendingReloads.get(sessionId);
     if (existingPending) {
@@ -1947,7 +2018,7 @@ export const reloadSessionDataAtom = atom(
     }
 
     const currentVersion = (existingPending?.version || 0) + 1;
-    const thisReload = { version: currentVersion, aborted: false };
+    const thisReload = { version: currentVersion, aborted: false, workspacePath };
     pendingReloads.set(sessionId, thisReload);
     const messagesAtStart = captureTranscriptMessages(get(sessionStoreAtom(sessionId))?.messages ?? []);
 
@@ -1955,7 +2026,8 @@ export const reloadSessionDataAtom = atom(
       const sessionData = await window.electronAPI.aiLoadSession(sessionId, workspacePath);
 
       // Check if this reload was superseded by a newer one
-      if (thisReload.aborted) {
+      if (thisReload.aborted ||
+          (get(closedSessionWorkspacesAtom).has(workspacePath) && canReleaseSessionData(get, sessionId))) {
         return;
       }
 
@@ -1993,7 +2065,7 @@ export const reloadSessionDataAtom = atom(
     } finally {
       // Clean up if this was the latest reload
       const currentPending = pendingReloads.get(sessionId);
-      if (currentPending?.version === currentVersion) {
+      if (currentPending === thisReload) {
         pendingReloads.delete(sessionId);
       }
     }

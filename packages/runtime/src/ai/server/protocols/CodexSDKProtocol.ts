@@ -396,7 +396,7 @@ export class CodexSDKProtocol implements AgentProtocol {
 
     // Our EffortLevel names match the SDK's ModelReasoningEffort, so the only
     // work is clamping to what this model's catalog entry accepts: gpt-5.4/5.5
-    // stop at xhigh, gpt-5.6-luna at max, and only Astra/Sol/Terra reach ultra.
+    // stop at xhigh, the Luna tiers at max, and only Astra/Sol/Terra reach ultra.
     const effortLevel = options.raw?.effortLevel as string | undefined;
     const reasoningEffort = clampEffortLevel(
       parseEffortLevel(effortLevel || 'high'),

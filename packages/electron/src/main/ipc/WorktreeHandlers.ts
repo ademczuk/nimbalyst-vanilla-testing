@@ -20,6 +20,7 @@ import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { getTerminalSessionManager } from '../services/TerminalSessionManager';
 import { getTerminalsByWorktreeId, deleteTerminalInstance } from '../utils/terminalStore';
 import { gitRefWatcher } from '../file/GitRefWatcher';
+import { isGitRepositoryInUse } from '../file/GitWatcherLifecycle';
 import { listReposForRoot, resolveDefaultRepo } from '../services/workspaceRepos';
 import type { WorktreeCreateResult } from '../../shared/ipc/types';
 import { gitOperationLock } from '../services/GitOperationLock';
@@ -331,7 +332,6 @@ export async function archiveWorktree(worktreeId: string, workspacePath: string)
  */
 export function registerWorktreeHandlers(): void {
   const gitWorktreeService = new GitWorktreeService();
-  let watchersInitialized = false;
 
   // In-flight request dedup for worktree:get-status -- if multiple sessions share
   // the same worktree path, only one set of git commands runs at a time.
@@ -443,10 +443,12 @@ export function registerWorktreeHandlers(): void {
         // DB insert succeeded, clear cleanup tracking
         createdWorktree = null;
 
-        // Start git ref watcher for the worktree path to detect commits
-        gitRefWatcher.start(worktree.path).catch((error) => {
-          logger.error('Failed to start GitRefWatcher for worktree:', error);
-        });
+        // The project may have closed while Git created the worktree.
+        if (isGitRepositoryInUse(worktree.path, new Set([workspacePath]))) {
+          gitRefWatcher.start(worktree.path, undefined, workspacePath).catch((error) => {
+            logger.error('Failed to start GitRefWatcher for worktree:', error);
+          });
+        }
 
         const totalDuration = Date.now() - startTime;
         logger.info('Worktree created successfully', {
@@ -667,29 +669,28 @@ export function registerWorktreeHandlers(): void {
       const worktreeStore = createWorktreeStore(db);
       const worktrees = await worktreeStore.list(workspacePath);
 
-      // Start git ref watchers for all non-archived worktrees on first list call.
-      // This ensures commit detection works for worktrees loaded on app restart.
-      // Only runs once; per-worktree start() is called at creation time.
-      // Concurrency-limited to avoid a burst of git processes at startup.
-      if (!watchersInitialized) {
-        watchersInitialized = true;
-        const limitConcurrency = createConcurrencyLimiter(2);
-        const activeWorktrees = worktrees.filter(wt => !wt.isArchived);
+      // Idempotent starts also restore monitoring after a project is reopened.
+      // Each project's list must be initialized, not just the first in the app.
+      const limitConcurrency = createConcurrencyLimiter(2);
+      const activeWorktrees = worktrees.filter(wt => !wt.isArchived);
 
-        Promise.all(
-          activeWorktrees.map(worktree =>
-            limitConcurrency(() => gitRefWatcher.start(worktree.path)).catch((error) => {
-              logger.warn('Failed to start GitRefWatcher for worktree:', {
-                worktreeId: worktree.id,
-                path: worktree.path,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            })
-          )
-        ).catch(error => {
-          logger.error('Error during worktree watcher initialization:', error);
-        });
-      }
+      Promise.all(
+        activeWorktrees.map(worktree =>
+          limitConcurrency(() => {
+            // A list can still be queued when its project closes.
+            if (!isGitRepositoryInUse(worktree.path, new Set([workspacePath]))) return Promise.resolve();
+            return gitRefWatcher.start(worktree.path, undefined, workspacePath);
+          }).catch((error) => {
+            logger.warn('Failed to start GitRefWatcher for worktree:', {
+              worktreeId: worktree.id,
+              path: worktree.path,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          })
+        )
+      ).catch(error => {
+        logger.error('Error during worktree watcher initialization:', error);
+      });
 
       return {
         success: true,
@@ -1492,7 +1493,11 @@ export function registerWorktreeHandlers(): void {
 
       logger.info('Starting git ref watcher for worktree', { worktreePath });
 
-      await gitRefWatcher.start(worktreePath);
+      const db = getDatabase();
+      if (!db) throw new Error('Database not initialized');
+      const worktree = await createWorktreeStore(db).getByPath(worktreePath);
+      if (!worktree) throw new Error('Worktree not found');
+      await gitRefWatcher.start(worktreePath, undefined, worktree.projectPath);
 
       return { success: true };
     } catch (error) {

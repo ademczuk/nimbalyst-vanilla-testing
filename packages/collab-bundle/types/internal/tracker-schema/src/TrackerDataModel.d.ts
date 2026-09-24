@@ -253,7 +253,7 @@ export interface TrackerDataModel {
      * Keep this type out of type lists and create menus until the named type is
      * registered. It stays registered and resolvable, so existing items still
      * render. The knowledge evidence kinds use it to stay out of the way until a
-     * knowledge pack installs `claim`.
+     * workspace defines `claim`.
      */
     hiddenUntilType?: string;
     /** Whether this type can be used as a primary type. Defaults to true. */

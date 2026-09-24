@@ -11,6 +11,7 @@ import type { EditorConfig } from '@nimbalyst/runtime/editor/EditorConfig';
 import '@nimbalyst/runtime/editor/extensions/registerBuiltinExtensions';
 import '@nimbalyst/runtime/editor/index.css';
 import { registerBrowserReferenceNodes } from './referenceNodes';
+import { registerBrowserTrackerReferenceInsertion } from './trackerReferenceInsertion';
 import { CollabLexicalProvider } from '@nimbalyst/runtime/sync/CollabLexicalProvider';
 import type { DocumentSyncProvider } from '@nimbalyst/runtime/sync/DocumentSync';
 
@@ -25,6 +26,10 @@ import { resolveCollabEditorUser } from './presence';
 import { createCollabDocumentSession } from './session';
 import { acquireCollabAssetImageResolver } from './collabAssetImages';
 import { BrowserDocumentEmbedContext, registerBrowserDocumentEmbeds } from './documentEmbeds';
+import {
+  TrackerReferenceInlineAppearanceContext,
+  TrackerReferenceResolverProvider,
+} from '@nimbalyst/collab-client/trackers-ui/references';
 
 import type {
   CollabEditorHandle,
@@ -42,6 +47,7 @@ export function decisionMembersFromComments(members: ReturnType<NonNullable<Coll
 // purpose — see the header of `./referenceNodes`.
 registerBrowserReferenceNodes();
 registerBrowserDocumentEmbeds();
+registerBrowserTrackerReferenceInsertion();
 
 class BundleEditorErrorBoundary extends React.Component<{
   children: React.ReactNode;
@@ -280,10 +286,14 @@ export function mountCollabEditor(options: CollabEditorMountOptions): CollabEdit
     root.render(
       <BundleEditorErrorBoundary onError={(error) => options.onError?.(error)}>
         <BrowserDocumentEmbedContext.Provider value={options.renderDecisionArtifact}>
-          <BrowserEditorSurface
-            config={config}
-            subscribeToPresence={subscribeToPresence}
-          />
+          <TrackerReferenceResolverProvider resolver={options.trackerReferences}>
+            <TrackerReferenceInlineAppearanceContext.Provider value={options.trackerReferenceAppearance ?? 'chip'}>
+              <BrowserEditorSurface
+                config={config}
+                subscribeToPresence={subscribeToPresence}
+              />
+            </TrackerReferenceInlineAppearanceContext.Provider>
+          </TrackerReferenceResolverProvider>
         </BrowserDocumentEmbedContext.Provider>
       </BundleEditorErrorBoundary>,
     );

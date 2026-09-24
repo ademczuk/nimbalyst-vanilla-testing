@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import type { TrackerRecord } from '../../../../core/TrackerRecord';
 import {
   resolveTrackerGroups,
+  getTrackerTypeLabel,
   TRACKER_GROUPING_OPTIONS,
 } from '../../models/trackerGrouping';
 import {
@@ -184,6 +185,28 @@ describe('groupTrackerRecords', () => {
 });
 
 describe('tracker grouping resolver', () => {
+  it('resolves schema names, preserves unknown group fallback, and keeps identical names in separate groups', () => {
+    const model: TrackerDataModel = {
+      type: 'type-label-spec', displayName: 'Research Topic', displayNamePlural: 'Research Topics',
+      icon: 'help', color: 'blue', modes: { inline: true, fullDocument: true },
+      idPrefix: 'TLS', idFormat: 'ulid', sharing: 'personal', draftByDefault: false, fields: [],
+    };
+    globalRegistry.register(model);
+    globalRegistry.register({ ...model, type: 'other-label-spec' });
+    const item = record({ id: 'label', primaryType: model.type });
+    try {
+      expect(getTrackerTypeLabel(model.type)).toBe('Research Topic');
+      expect(resolveTrackerGroups(item, 'type')[0].label).toBe('Research Topics');
+      expect(groupTrackerRecords([item, record({ id: 'other', primaryType: 'other-label-spec' })], 'type')).toHaveLength(2);
+      globalRegistry.register({ ...model, displayNamePlural: '' });
+      expect(getTrackerTypeLabel(model.type, true)).toBe('Research Topic');
+      expect(getTrackerTypeLabel('unknown-type-id')).toBe('unknown-type-id');
+      expect(resolveTrackerGroups(record({ id: 'unknown', primaryType: 'unknown-type-id' }), 'type')[0].label).toBe('Unknown Type Id');
+    } finally {
+      globalRegistry.unregister(model.type);
+      globalRegistry.unregister('other-label-spec');
+    }
+  });
   it('resolves every supported axis to stable keys, display labels, and multi-value memberships', () => {
     const item = record({
       id: 'grouped',

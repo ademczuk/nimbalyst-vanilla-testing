@@ -14,12 +14,14 @@
 import type { JSX, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RevoGrid, type RevoGridCustomEvent } from '@revolist/react-datagrid';
+import { expandSvgIconVNode, GROUP_EXPAND_BTN } from '@revolist/revogrid';
 import type {
   AfterEditEvent,
   BeforeSaveDataDetails,
   ColumnRegular,
   FocusAfterRenderEvent,
   SortingConfig,
+  GroupingOptions,
 } from '@revolist/revogrid';
 import { useAtomValue } from 'jotai';
 import type { TrackerItemType } from '@nimbalyst/runtime/core/DocumentService';
@@ -29,6 +31,7 @@ import { resolveColumnsForType, getDefaultColumnConfig, getFieldForColumn, getCe
 import { coerceCellValue } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerCellEditors';
 import { withEffectiveUpdated, filterTrackerRecords, getTrackerGroupLabel, sortTrackerRecords } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/trackerRowData';
 import { globalRegistry } from '@nimbalyst/tracker-schema';
+import { resolveTrackerGroups } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerGrouping';
 import { TrackerRowContextMenu, type TrackerLinkedSessionOption } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/TrackerRowContextMenu';
 import { isCollectionType } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerCollections';
 import {
@@ -70,6 +73,7 @@ import { errorNotificationService } from '../../services/ErrorNotificationServic
 import '@nimbalyst/collab-client/trackers-ui/grid.css';
 
 const ROW_GROUP_LABEL = '__trackerGroupLabel';
+const ROW_GROUP_KEY = '__trackerGroupKey';
 
 interface BeforeSortingDetail {
   column: ColumnRegular;
@@ -417,6 +421,9 @@ export function TrackerGridView({
   const gridSource = useMemo(
     () => buildGridSource(sortedItems, visibleColumnDefs).map((row, index) => ({
       ...row,
+      [ROW_GROUP_KEY]: groupBy === 'none' ? '' : JSON.stringify(
+        resolveTrackerGroups(sortedItems[index], groupBy, relationshipLabel).map(group => group.key),
+      ),
       [ROW_GROUP_LABEL]: getTrackerGroupLabel(
         sortedItems[index],
         groupBy,
@@ -425,11 +432,21 @@ export function TrackerGridView({
     })),
     [groupBy, sortedItems, visibleColumnDefs, relationshipLabel],
   );
-  const gridGrouping = useMemo(
+  const groupLabels = useMemo(() => new Map(
+    gridSource.map(row => [row[ROW_GROUP_KEY], row[ROW_GROUP_LABEL]]),
+  ), [gridSource]);
+  const gridGrouping = useMemo<GroupingOptions | undefined>(
     () => groupBy !== 'none'
-      ? { props: [ROW_GROUP_LABEL], expandedAll: true }
+      ? {
+        props: [ROW_GROUP_KEY],
+        expandedAll: true,
+        groupLabelTemplate: (h, { name, expanded }) => [
+          h('button', { class: { [GROUP_EXPAND_BTN]: true } }, expandSvgIconVNode(expanded)),
+          groupLabels.get(name) ?? name,
+        ],
+      }
       : undefined,
-    [groupBy],
+    [groupBy, groupLabels],
   );
 
   const resolveGridRowItem = useCallback(async (rowIndex: number): Promise<TrackerRecord | null> => {

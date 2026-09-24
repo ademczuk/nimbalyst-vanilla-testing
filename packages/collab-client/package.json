@@ -49,6 +49,10 @@
       "types": "./src/trackers-ui/index.ts",
       "default": "./src/trackers-ui/index.ts"
     },
+    "./trackers-ui/references": {
+      "types": "./src/trackers-ui/references/index.ts",
+      "default": "./src/trackers-ui/references/index.ts"
+    },
     "./trackers-ui/board.css": "./src/trackers-ui/board/TrackerBoardCard.css",
     "./trackers-ui/grid.css": "./src/trackers-ui/grid/trackerGrid.css"
   },

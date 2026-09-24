@@ -172,6 +172,9 @@ interface AppStoreSchema {
   extensionProjectIntroShown?: boolean;
   // Extension settings (enabled/disabled state and configuration)
   extensionSettings?: Record<string, ExtensionSettings>;
+  // Last applied version of the one-time migration that pins legacy
+  // defaultEnabled:false Claude plugins on (see claudePluginDefaultEnabledMigration.ts).
+  claudePluginDefaultEnabledMigrationVersion?: number;
   // Global-scope privileged-extension capability grants ("Enable for all workspaces").
   // Workspace-scope grants live on WorkspaceState.extensionPermissionGrants.
   // See packages/electron/src/main/extensions/permissionGrantStore.ts for the
@@ -2228,6 +2231,14 @@ export function setExtensionEnabled(extensionId: string, enabled: boolean): void
     settings[extensionId].enabled = enabled;
   }
   setExtensionSettings(settings);
+}
+
+export function getClaudePluginDefaultEnabledMigrationVersion(): number {
+  return getAppStore().get('claudePluginDefaultEnabledMigrationVersion', 0);
+}
+
+export function setClaudePluginDefaultEnabledMigrationVersion(version: number): void {
+  getAppStore().set('claudePluginDefaultEnabledMigrationVersion', version);
 }
 
 export function getClaudePluginEnabled(extensionId: string): boolean | undefined {

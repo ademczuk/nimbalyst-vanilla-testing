@@ -6,6 +6,7 @@ import {
   getTrackerFieldLayout,
   isTrackerFieldEmpty,
   isTrackerRecordEditable,
+  shouldLabelTrackerField,
 } from '../trackerFieldLayout';
 import type { TrackerRecord } from '../../../../core/TrackerRecord';
 
@@ -31,6 +32,28 @@ const model: TrackerDataModel = {
   ],
   roles: { title: 'title', workflowStatus: 'state', assignee: 'owner' },
 };
+
+describe('shouldLabelTrackerField', () => {
+  it('opts anonymous values into labels while preserving compact headers and option icons', () => {
+    const select = { name: 'priority', type: 'select' as const, options: [
+      { value: 'medium', label: 'Medium' },
+      { value: 'high', label: 'High', icon: 'priority_high' },
+    ] };
+    expect(shouldLabelTrackerField(select, 'medium')).toBe(false);
+    expect(shouldLabelTrackerField(select, 'medium', true)).toBe(true);
+    expect(shouldLabelTrackerField(select, 'high', true)).toBe(false);
+    expect(shouldLabelTrackerField(select, 'unknown', true)).toBe(true);
+    expect(shouldLabelTrackerField(select, '', true)).toBe(false);
+    for (const type of ['text', 'number', 'boolean'] as const) {
+      const field = { name: 'customValue', type };
+      const value = type === 'text' ? 'Example' : type === 'number' ? 0 : false;
+      expect(shouldLabelTrackerField(field, value)).toBe(false);
+      expect(shouldLabelTrackerField(field, value, true)).toBe(true);
+    }
+    expect(shouldLabelTrackerField({ name: 'targetDate', type: 'date' }, '2026-09-23')).toBe(true);
+    expect(shouldLabelTrackerField({ name: 'answerFormat', type: 'text' }, null, true)).toBe(false);
+  });
+});
 
 describe('getTrackerFieldLayout', () => {
   it('orders semantic roles first and omits structural, opaque, and read-only fields', () => {

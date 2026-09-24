@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Round-trip tests for tracker reference markdown handling.
  *
@@ -18,6 +19,7 @@ import { $convertFromEnhancedMarkdownString } from '../../../editor/markdown/Enh
 import { CORE_TRANSFORMERS } from '../../../editor/markdown/core-transformers';
 import {
   TrackerReferenceNode,
+  $createTrackerReferenceNode,
   $isTrackerReferenceNode,
 } from '../TrackerReferenceNode';
 import { TrackerReferenceTransformer } from '../TrackerReferenceTransformer';
@@ -48,6 +50,59 @@ describe('TrackerReferenceTransformer', () => {
 
   beforeEach(() => {
     editor = makeEditor();
+  });
+
+  it.each(['chip', 'card', 'statements'] as const)('round-trips %s JSON without changing legacy chip JSON', (view) => {
+    editor.update(() => {
+      const node = $createTrackerReferenceNode('NIM-123', view);
+      const json = node.exportJSON();
+      expect(json).toEqual({ type: 'tracker-reference', version: 1, referenceKey: 'NIM-123', ...(view === 'chip' ? {} : { view }) });
+      expect(TrackerReferenceNode.importJSON(json).getView()).toBe(view);
+      expect(TrackerReferenceNode.clone(node).getView()).toBe(view);
+      const changed = node.setView(view === 'chip' ? 'card' : 'chip');
+      expect(changed.getView()).toBe(view === 'chip' ? 'card' : 'chip');
+    }, { discrete: true });
+  });
+
+  it('defaults missing and unknown serialized views to chip', () => {
+    editor.update(() => {
+      for (const view of [undefined, 'future-view']) {
+        const node = TrackerReferenceNode.importJSON({ type: 'tracker-reference', version: 1, referenceKey: 'NIM-123', view } as Parameters<typeof TrackerReferenceNode.importJSON>[0]);
+        expect(node.getView()).toBe('chip');
+        expect(node.exportJSON()).not.toHaveProperty('view');
+      }
+    }, { discrete: true });
+  });
+
+  it.each(['action', 'auth', 'doc', 'folder', 'install', 'tracker'])('does not claim reserved host %s with a view title', (host) => {
+    expect(TrackerReferenceTransformer.importRegExp!.exec(`[link](nimbalyst://${host} "view=card")`)).toBeNull();
+    expect(TrackerReferenceTransformer.regExp.exec(`[link](nimbalyst://${host} "view=card")`)).toBeNull();
+  });
+
+  it.each([
+    ['"view=card" ', 'card'],
+    ["'view=card'", 'card'],
+    ['(view=statements)', 'statements'],
+    ['"view=card height=3"', 'card'],
+    ['"height=3 view=card"', 'card'],
+    ['"Hover title"', 'chip'],
+    ['"view=Card"', 'chip'],
+    ['"view= card"', 'chip'],
+  ])('normalizes title %s to %s', (title, view) => {
+    editor.update(() => {
+      $convertFromEnhancedMarkdownString(`[label](nimbalyst://NIM-123 ${title})`, getTestTransformers());
+      const node = $getRoot().getFirstDescendant();
+      expect($isTrackerReferenceNode(node)).toBe(true);
+      expect((node as TrackerReferenceNode).getView()).toBe(view);
+      const expectedTitle = view === 'chip' ? '' : ` "view=${view}"`;
+      expect($convertToMarkdownString(getTestTransformers())).toBe(`[NIM-123](nimbalyst://NIM-123${expectedTitle})`);
+    }, { discrete: true });
+  });
+
+  it('does not claim images with tracker view titles', () => {
+    const markdown = '![image](nimbalyst://NIM-123 "view=card")';
+    expect(TrackerReferenceTransformer.importRegExp!.exec(markdown)).toBeNull();
+    expect(TrackerReferenceTransformer.regExp.exec(markdown)).toBeNull();
   });
 
   it('imports a nimbalyst:// link into a TrackerReferenceNode with only the key', () => {

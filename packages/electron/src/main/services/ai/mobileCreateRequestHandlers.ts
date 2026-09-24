@@ -362,7 +362,7 @@ export function registerMobileCreateWorktreeHandler(
       await worktreeStore.create(worktree);
 
       // Start git ref watcher (same as worktree:create)
-      gitRefWatcher.start(worktree.path).catch((err: Error) => {
+      gitRefWatcher.start(worktree.path, undefined, request.projectId).catch((err: Error) => {
         logger.main.error('[MobileSync] Failed to start GitRefWatcher for worktree:', err);
       });
 

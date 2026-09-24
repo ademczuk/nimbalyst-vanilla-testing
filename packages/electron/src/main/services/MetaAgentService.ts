@@ -602,7 +602,7 @@ export class MetaAgentService {
       // the window and its sessions use.
       const worktree = await gitWorktreeService.createWorktree(workspaceKey, { name: finalName });
       await worktreeStore.create(worktree);
-      gitRefWatcher.start(worktree.path).catch((error: Error) => {
+      gitRefWatcher.start(worktree.path, undefined, workspaceId).catch((error: Error) => {
         console.error('[MetaAgentService] Failed to start GitRefWatcher for meta-agent worktree:', error);
       });
       worktreeId = worktree.id;

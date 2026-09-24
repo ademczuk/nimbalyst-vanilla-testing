@@ -9,12 +9,25 @@
   gap: 8px;
   background-color: var(--nim-bg-secondary, #1a1a1a);
   border-right: 1px solid var(--nim-border, rgba(255, 255, 255, 0.06));
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   -webkit-app-region: no-drag;
 }
 
+.project-rail-projects {
+  flex: 1;
+  min-height: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 .project-rail-item {
+  flex-shrink: 0;
   /*
    * --rail-item-accent is set inline per project (see ProjectRail.tsx:
    * style={{ '--rail-item-accent': accentColor }}). It comes from
@@ -124,6 +137,7 @@
 }
 
 .project-rail-divider {
+  flex-shrink: 0;
   width: 32px;
   height: 1px;
   background-color: var(--nim-border, rgba(255, 255, 255, 0.06));
@@ -131,6 +145,7 @@
 }
 
 .project-rail-add {
+  flex-shrink: 0;
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -277,4 +292,3 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-

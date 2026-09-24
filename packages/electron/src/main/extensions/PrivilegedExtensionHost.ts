@@ -235,6 +235,8 @@ const HOST_EVENT_STATE_CHANGED = 'state-changed';
 
 export class PrivilegedExtensionHost extends EventEmitter {
   private modules = new Map<ModuleKey, ManagedModule>();
+  private initializingRuntimes = 0;
+  private runtimeStartQueue: Array<() => void> = [];
 
   constructor() {
     super();
@@ -529,7 +531,11 @@ export class PrivilegedExtensionHost extends EventEmitter {
   ): Promise<void> {
     const key = moduleKey(extensionId, moduleId, workspacePath);
     const managed = this.modules.get(key);
-    if (!managed || !managed.runtime) {
+    if (!managed) {
+      return;
+    }
+    if (!managed.runtime) {
+      this.setState(managed, { status: 'stopped', stoppedAt: Date.now() });
       return;
     }
     const reason = opts.failPendingWith ?? 'Module is shutting down';
@@ -972,6 +978,26 @@ export class PrivilegedExtensionHost extends EventEmitter {
   }
 
   private async spawnRuntime(managed: ManagedModule): Promise<void> {
+    // Restoring many projects must not spawn dozens of backends at once and
+    // exhaust their initialization deadlines. Consent is resolved before this
+    // queue, so an unanswered permission prompt never occupies a startup slot.
+    if (this.initializingRuntimes >= 4) {
+      await new Promise<void>(resolve => this.runtimeStartQueue.push(resolve));
+    } else {
+      this.initializingRuntimes++;
+    }
+    try {
+      if (managed.state.status === 'stopped') return;
+      await this.initializeRuntime(managed);
+      await this.waitForRunning(managed).catch(() => {});
+    } finally {
+      const next = this.runtimeStartQueue.shift();
+      if (next) next();
+      else this.initializingRuntimes--;
+    }
+  }
+
+  private async initializeRuntime(managed: ManagedModule): Promise<void> {
     // Arm the readiness gate before sending init; `setState` settles it when
     // init-ack ('running') or a failure arrives.
     managed.ready = createReadyGate();
@@ -1049,18 +1075,23 @@ export class PrivilegedExtensionHost extends EventEmitter {
       stdio: 'pipe',
     });
 
+    // kill() can return before exit is delivered. A replaced runtime must not
+    // clear its successor or publish stale initialization/tool messages.
     child.on('spawn', () => {
       logger.main.info(
         `[PrivilegedExtensionHost] utility-process spawned for ${logLabel} pid=${child.pid}`
       );
     });
     child.on('message', (msg: unknown) => {
+      if (managed.runtime !== runtime) return;
       this.handleBackendMessage(managed, msg as BackendToHostMessage, ctx);
     });
     child.on('exit', (code: number) => {
+      if (managed.runtime !== runtime) return;
       this.handleRuntimeExit(managed, code, logLabel);
     });
     child.on('error', (type: string, location: string) => {
+      if (managed.runtime !== runtime) return;
       logger.main.error(
         `[PrivilegedExtensionHost] utility-process fatal for ${logLabel}: ${type} @ ${location}`
       );
@@ -1080,7 +1111,7 @@ export class PrivilegedExtensionHost extends EventEmitter {
       });
     }
 
-    return {
+    const runtime: ManagedRuntime = {
       send: (msg) => {
         child.postMessage(msg);
       },
@@ -1095,6 +1126,7 @@ export class PrivilegedExtensionHost extends EventEmitter {
       },
       isAlive: () => child.pid !== undefined,
     };
+    return runtime;
   }
 
   private spawnWorkerThread(
@@ -1110,9 +1142,11 @@ export class PrivilegedExtensionHost extends EventEmitter {
     });
 
     worker.on('message', (msg: unknown) => {
+      if (managed.runtime !== runtime) return;
       this.handleBackendMessage(managed, msg as BackendToHostMessage, ctx);
     });
     worker.on('error', (err) => {
+      if (managed.runtime !== runtime) return;
       logger.main.error(
         `[PrivilegedExtensionHost] worker error for ${logLabel}:`,
         err
@@ -1126,10 +1160,11 @@ export class PrivilegedExtensionHost extends EventEmitter {
       this.rejectPending(managed, `Backend crashed: ${err.message}`);
     });
     worker.on('exit', (code) => {
+      if (managed.runtime !== runtime) return;
       this.handleRuntimeExit(managed, code, logLabel);
     });
 
-    return {
+    const runtime: ManagedRuntime = {
       send: (msg) => {
         worker.postMessage(msg);
       },
@@ -1138,6 +1173,7 @@ export class PrivilegedExtensionHost extends EventEmitter {
       },
       isAlive: () => worker.threadId !== -1,
     };
+    return runtime;
   }
 
   private handleRuntimeExit(

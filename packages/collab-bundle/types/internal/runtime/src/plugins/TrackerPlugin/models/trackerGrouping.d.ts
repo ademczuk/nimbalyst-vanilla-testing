@@ -23,6 +23,8 @@ export interface TrackerRecordGroup {
     label: string;
     items: TrackerRecord[];
 }
+/** Schema names for badges and group headings; unknown types keep their id. */
+export declare function getTrackerTypeLabel(type: string, plural?: boolean): string;
 export declare function resolveEmptyTrackerGroup(axis: TrackerGroupingAxis): ResolvedTrackerGroup;
 /** Axes whose membership is a relationship rather than a scalar field. */
 export type TrackerRelationshipGroupingAxis = 'milestone' | 'goal';

@@ -1,0 +1,655 @@
+/*
+ * Live tracker reference views. The node's own DOM span is inline; the runtime
+ * tags block presentations with `tracker-reference--card` / `--statements`, and
+ * this is where the host decides they take the paragraph's full width.
+ *
+ * Full-width inline-block, not block: the node is inline in Lexical, and a
+ * `display: block` span at a paragraph's start leaves no caret position before
+ * it, so the browser moves typed text to the end of the previous paragraph.
+ * Scoped to spans holding the live block view: hosts that render every view as
+ * a chip (desktop, the resolver-less fallback) keep the inline chip layout.
+ */
+
+.tracker-reference--card:has(> .tracker-reference-block),
+.tracker-reference--statements:has(> .tracker-reference-block) {
+  display: inline-block;
+  width: 100%;
+  margin: 6px 0;
+  vertical-align: top;
+}
+
+.tracker-reference-block[data-selected='true'] > .tracker-reference-card,
+.tracker-reference-block[data-selected='true'] > .tracker-reference-statements {
+  outline: 2px solid var(--nim-primary);
+  outline-offset: 1px;
+}
+
+/* ---- Chip ---------------------------------------------------------------- */
+
+.tracker-reference-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 1px 6px;
+  border-radius: 10px;
+  border: 1px solid var(--nim-border);
+  background: var(--nim-bg-secondary);
+  color: var(--nim-text);
+  font-size: 0.85em;
+  line-height: 1.5;
+  vertical-align: baseline;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.tracker-reference-live-chip[role='link'] {
+  cursor: pointer;
+}
+
+.tracker-reference-live-chip[role='link']:hover {
+  background: var(--nim-bg-hover);
+  border-color: var(--nim-border-focus);
+}
+
+.tracker-reference-live-chip[data-resolved='false'] {
+  color: var(--nim-text-muted);
+  border-style: dashed;
+}
+
+.tracker-reference-live-chip-key {
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+.tracker-reference-live-chip-title {
+  min-width: 0;
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--nim-text-muted);
+}
+
+.tracker-reference-live-chip[data-completed='true'] .tracker-reference-live-chip-title {
+  text-decoration: line-through;
+}
+
+/* ---- Quiet inline link ----------------------------------------------------
+ * Prose appearance: the title in the surrounding text's own size and color,
+ * with a kind-tinted underline as the only chrome. Wraps like text, so it
+ * never changes the line box. */
+
+.tracker-reference-quiet {
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--tracker-reference-kind, var(--nim-text-muted)) 60%, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.tracker-reference-quiet[data-type='question'] {
+  text-decoration-style: dashed;
+}
+
+.tracker-reference-quiet[data-resolved='true']:hover,
+.tracker-reference-quiet[data-resolved='true']:focus-visible {
+  background: color-mix(in srgb, var(--tracker-reference-kind, var(--nim-text-muted)) 14%, transparent);
+  text-decoration-color: var(--tracker-reference-kind, var(--nim-text-muted));
+  outline: none;
+}
+
+.tracker-reference-quiet[data-resolved='false'] {
+  cursor: default;
+  color: var(--nim-text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  text-decoration-color: var(--nim-text-faint);
+}
+
+.tracker-reference-quiet[data-state='missing'] {
+  text-decoration-line: line-through;
+}
+
+.tracker-reference-quiet[data-state='loading'] {
+  text-decoration-line: none;
+}
+
+.tracker-reference-peek {
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--nim-border);
+  background: var(--nim-bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  color: var(--nim-text);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.tracker-reference-peek-meta {
+  display: flex;
+  gap: 8px;
+  color: var(--nim-text-muted);
+  font-size: 12px;
+}
+
+.tracker-reference-peek-key {
+  margin-left: auto;
+  color: var(--nim-text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+
+.tracker-reference-peek-title {
+  font-weight: 600;
+}
+
+.tracker-reference-peek-summary {
+  color: var(--nim-text-muted);
+}
+
+.tracker-reference-type-icon {
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.tracker-reference-status-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.tracker-reference-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--nim-border);
+  background: var(--nim-bg);
+  color: var(--nim-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.tracker-reference-chip-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tracker-reference-value-text {
+  color: var(--nim-text);
+}
+
+/* ---- Card: the embedded box --------------------------------------------- */
+
+/*
+ * Two encodings only. `data-tone` on the state word says what attention the
+ * item needs; `data-border` on the box says whether it is settled: dashed
+ * while not, solid once it is, bare (no fill) when parked or rejected.
+ */
+
+.tracker-reference-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 14px 10px;
+  border: 1px solid var(--nim-border);
+  border-radius: 6px;
+  background: var(--nim-bg-secondary);
+  color: var(--nim-text);
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: normal;
+  user-select: text;
+  transition: box-shadow 0.3s ease;
+}
+
+.tracker-reference-card[data-border='dashed'] {
+  border-style: dashed;
+}
+
+.tracker-reference-card[data-border='bare'] {
+  background: transparent;
+}
+
+.tracker-reference-card[data-border='agent'] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--nim-purple) 55%, var(--nim-border));
+  background: color-mix(in srgb, var(--nim-purple) 8%, transparent);
+}
+
+.tracker-reference-card[data-ring='true'] {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nim-primary) 22%, transparent);
+}
+
+.tracker-reference-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tracker-reference-card-kind {
+  color: var(--nim-text-muted);
+  font-weight: 600;
+}
+
+.tracker-reference-card-sep {
+  color: var(--nim-text-faint);
+}
+
+.tracker-reference-card-key {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--nim-text-faint);
+  white-space: nowrap;
+}
+
+.tracker-reference-card-title {
+  margin: 3px 0 2px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--nim-text);
+}
+
+.tracker-reference-card[data-border='bare'] .tracker-reference-card-title {
+  color: var(--nim-text-muted);
+  font-weight: 500;
+}
+
+.tracker-reference-card-title[role='link'] {
+  cursor: pointer;
+}
+
+.tracker-reference-card-title[role='link']:hover {
+  color: var(--nim-link-hover);
+  text-decoration: underline;
+}
+
+.tracker-reference-card-content {
+  color: var(--nim-text);
+}
+
+.tracker-reference-card-content[data-tentative='true'],
+.tracker-reference-card-content[data-empty='true'] {
+  color: var(--nim-text-muted);
+}
+
+.tracker-reference-card-content[data-empty='true'] {
+  color: var(--nim-text-faint);
+  font-size: 13px;
+}
+
+.tracker-reference-card-lead {
+  margin-right: 6px;
+  color: var(--nim-text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.tracker-reference-card-statement {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tracker-reference-card-predicate {
+  font-style: italic;
+  color: var(--nim-text-muted);
+}
+
+.tracker-reference-card-meta {
+  margin-top: 4px;
+  color: var(--nim-text-faint);
+  font-size: 12.5px;
+}
+
+.tracker-reference-card-live {
+  color: var(--nim-primary);
+}
+
+.tracker-reference-card-undo {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--nim-link);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tracker-reference-card-empty,
+.tracker-reference-statements-empty {
+  color: var(--nim-text-muted);
+  font-style: italic;
+}
+
+/* ---- State word and menu -------------------------------------------------- */
+
+.tracker-state-word {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tracker-state-word[data-tone='settled'] { color: var(--nim-success); }
+.tracker-state-word[data-tone='active'] { color: var(--nim-primary); }
+.tracker-state-word[data-tone='waiting'] { color: var(--nim-warning); }
+.tracker-state-word[data-tone='negative'] { color: var(--nim-error); }
+.tracker-state-word[data-tone='parked'] { color: var(--nim-text-faint); }
+.tracker-state-word[data-tone='open'] { color: var(--nim-text-muted); }
+
+button.tracker-state-word {
+  display: inline-flex;
+  align-items: baseline;
+  margin: 0 -3px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.tracker-state-word:hover,
+button.tracker-state-word[data-open='true'] {
+  background: var(--nim-bg-tertiary);
+}
+
+.tracker-state-word-chevron {
+  display: inline-block;
+  align-self: center;
+  width: 0;
+  height: 0;
+  margin-left: 5px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--nim-text-muted);
+}
+
+.tracker-state-menu {
+  z-index: 1000;
+  width: 300px;
+  box-sizing: border-box;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid var(--nim-border);
+  border-radius: 8px;
+  background: var(--nim-bg);
+  color: var(--nim-text);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.tracker-state-menu-rule {
+  margin: 4px -5px;
+  border-top: 1px solid var(--nim-border);
+}
+
+.tracker-state-menu-row {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tracker-state-menu-row:hover,
+.tracker-state-menu-row[data-active='true'] {
+  background: var(--nim-bg-tertiary);
+}
+
+.tracker-state-menu-row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.tracker-state-menu-label {
+  font-weight: 600;
+  color: var(--nim-text);
+}
+
+.tracker-state-menu-label[data-tone='settled'] { color: var(--nim-success); }
+.tracker-state-menu-label[data-tone='active'] { color: var(--nim-primary); }
+.tracker-state-menu-label[data-tone='waiting'] { color: var(--nim-warning); }
+.tracker-state-menu-label[data-tone='negative'] { color: var(--nim-error); }
+.tracker-state-menu-label[data-tone='parked'] { color: var(--nim-text-faint); }
+.tracker-state-menu-label[data-tone='open'] { color: var(--nim-text-muted); }
+
+.tracker-state-menu-description {
+  color: var(--nim-text-muted);
+  font-size: 12px;
+}
+
+.tracker-state-menu-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 9px 8px;
+}
+
+.tracker-state-menu-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--nim-primary);
+  border-radius: 5px;
+  background: var(--nim-bg);
+  color: var(--nim-text);
+  font: inherit;
+  resize: vertical;
+  outline: none;
+}
+
+.tracker-state-menu-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.tracker-state-menu-button {
+  padding: 2px 10px;
+  border: 1px solid var(--nim-border);
+  border-radius: 5px;
+  background: none;
+  color: var(--nim-text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tracker-state-menu-button[data-primary='true'] {
+  border-color: var(--nim-primary);
+  background: var(--nim-primary);
+  color: var(--nim-bg);
+}
+
+.tracker-state-menu-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.tracker-state-menu-error {
+  padding: 4px 9px;
+  color: var(--nim-error);
+  font-size: 12px;
+}
+
+.tracker-state-menu-footer {
+  margin: 4px -5px -5px;
+  padding: 7px 14px 8px;
+  border-top: 1px solid var(--nim-border);
+  color: var(--nim-text-muted);
+  font-size: 12px;
+}
+
+/* ---- Agent proposals ------------------------------------------------------ */
+
+.tracker-reference-proposal {
+  margin: 9px -14px -10px;
+  padding: 8px 14px 9px;
+  border-top: 1px dashed var(--nim-border);
+  border-radius: 0 0 6px 6px;
+  background: color-mix(in srgb, var(--nim-purple) 8%, transparent);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.tracker-reference-card[data-border='agent'] .tracker-reference-proposal {
+  border-top-color: color-mix(in srgb, var(--nim-purple) 35%, var(--nim-border));
+  background: none;
+}
+
+.tracker-reference-proposal-who {
+  color: var(--nim-purple);
+  font-weight: 600;
+}
+
+.tracker-reference-proposal-why {
+  color: var(--nim-text-muted);
+}
+
+.tracker-reference-proposal-actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 5px;
+}
+
+.tracker-reference-proposal-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--nim-link);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tracker-reference-proposal-action[data-negative='true'] {
+  color: var(--nim-text-muted);
+}
+
+/* ---- Statements ---------------------------------------------------------- */
+
+.tracker-reference-statements {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border: 1px solid var(--nim-border);
+  border-radius: 8px;
+  background: var(--nim-bg-secondary);
+  color: var(--nim-text);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: normal;
+  user-select: text;
+}
+
+.tracker-reference-statements-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tracker-reference-statements-heading {
+  color: var(--nim-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tracker-reference-statements-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tracker-reference-statements-predicate {
+  color: var(--nim-text-faint);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tracker-reference-statements-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tracker-reference-statement-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  border-top: 1px solid var(--nim-border);
+}
+
+.tracker-reference-statement-row:first-child {
+  border-top: none;
+}
+
+.tracker-reference-statement-object {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tracker-reference-statement-object[role='link'] {
+  cursor: pointer;
+}
+
+.tracker-reference-statement-meta {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--nim-text-muted);
+  font-size: 12px;
+}
+
+.tracker-reference-statement-citations {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tracker-reference-statement-citations .material-symbols-outlined {
+  font-size: 14px;
+}

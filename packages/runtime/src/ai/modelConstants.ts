@@ -26,6 +26,13 @@ export const CLAUDE_MODELS: ModelDefinition[] = [
     contextWindow: 1000000,
   },
   {
+    id: 'claude-opus-5-5',
+    displayName: 'Claude Opus 5.5 (1M)',
+    shortName: 'Opus 5.5',
+    maxTokens: 8192,
+    contextWindow: 1000000,
+  },
+  {
     id: 'claude-opus-5',
     displayName: 'Claude Opus 5 (1M)',
     shortName: 'Opus 5',
@@ -123,6 +130,20 @@ export const CLAUDE_MODELS: ModelDefinition[] = [
 ];
 
 export const OPENAI_MODELS: ModelDefinition[] = [
+  {
+    id: 'gpt-6-sol',
+    displayName: 'GPT-6 Sol',
+    shortName: '6 Sol',
+    maxTokens: 128000,
+    contextWindow: 272000,
+  },
+  {
+    id: 'gpt-6-luna',
+    displayName: 'GPT-6 Luna',
+    shortName: '6 Luna',
+    maxTokens: 128000,
+    contextWindow: 272000,
+  },
   {
     id: 'gpt-5.6-sol',
     displayName: 'GPT-5.6 Sol',
@@ -497,15 +518,17 @@ export function resolveClaudeCodeParentContextWindow(
 export const CLAUDE_CODE_SAFE_FALLBACK_MODEL = 'claude-code:opus' as const;
 
 export const DEFAULT_MODELS = {
-  claude: 'claude:claude-opus-5',
-  openai: 'openai:gpt-5.6-sol',
+  claude: 'claude:claude-opus-5-5',
+  openai: 'openai:gpt-6-sol',
   // Plain `opus` (not `opus-1m`): a plan-gated auto-upgrade gives Max/Team/
   // Enterprise 1M on the plain alias, while an explicit `[1m]` would spend usage
   // credits on Pro. The default must not opt anyone into that — see
   // CLAUDE_CODE_SAFE_FALLBACK_MODEL.
   'claude-code': 'claude-code:opus',
   'claude-code-cli': 'claude-code-cli:opus',
-  'openai-codex': 'openai-codex:gpt-5.6-sol',
+  'openai-codex': 'openai-codex:gpt-6-sol',
+  // The deprecated ACP transport runs an older codex build with no GPT-6
+  // catalog entries, so it stays on GPT-5.6.
   'openai-codex-acp': 'openai-codex-acp:gpt-5.6-sol',
   lmstudio: 'lmstudio:local-model',
   opencode: 'opencode:anthropic/claude-sonnet-4-5',

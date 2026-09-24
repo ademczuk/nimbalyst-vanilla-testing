@@ -19,7 +19,7 @@ import taskYaml from './builtins/task.yaml?raw';
 import ideaYaml from './builtins/idea.yaml?raw';
 import milestoneYaml from './builtins/milestone.yaml?raw';
 import releaseYaml from './builtins/release.yaml?raw';
-// Knowledge-scopes `knowledge-core` evidence kinds (master plan section 3, N7).
+// Builtin knowledge evidence kinds, available independently of custom graph types.
 import sourceYaml from './builtins/source.yaml?raw';
 import captureYaml from './builtins/capture.yaml?raw';
 import citationYaml from './builtins/citation.yaml?raw';

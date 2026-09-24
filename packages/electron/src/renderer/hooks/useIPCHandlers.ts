@@ -1,5 +1,5 @@
 import { registerCollabDocumentReadHandler } from './registerCollabDocumentReadHandler';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useAtomValue } from 'jotai';
 import type { LexicalCommand, TextReplacement } from '@nimbalyst/runtime';
 import {
@@ -48,6 +48,7 @@ import {
   menuFindPreviousCommandAtom,
 } from '../store/atoms/menuCommands';
 import { openEditorFind } from '../components/TabEditor/editorFindCommand';
+import { SearchReplaceStateManager, type SearchNavigateDirection } from '@nimbalyst/runtime/plugins/SearchReplace';
 import { dispatchTrackerFocusSearch } from '@nimbalyst/collab-client/trackers-ui';
 import { acquireHeadlessCollabCommentController } from '../services/HeadlessCollabCommentController';
 import { HeadlessCollabDocumentError } from '../services/HeadlessCollabDocument';
@@ -1377,40 +1378,56 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
   const menuFindNextInitialRef = useRef(menuFindNextVersion);
   const menuFindPreviousInitialRef = useRef(menuFindPreviousVersion);
 
+  // The file whose editor owns Find in Files and Collab modes.
+  const getActiveFindPath = useCallback((mode: string): string | null => {
+    if (mode === 'files') {
+      return (window as unknown as { __currentDocumentPath?: string | null }).__currentDocumentPath ||
+        editorRegistry.getActiveFilePath() ||
+        null;
+    }
+    if (mode === 'collab') {
+      return collabModeRef.current?.getActiveDocumentPath?.() ?? null;
+    }
+    return null;
+  }, [collabModeRef]);
+
   useEffect(() => {
     if (menuFindVersion === menuFindInitialRef.current) return;
     const mode = propsRef.current.activeMode;
-    if (mode === 'files') {
-      const activeFilePath =
-        (window as unknown as { __currentDocumentPath?: string | null }).__currentDocumentPath ||
-        editorRegistry.getActiveFilePath();
-      if (activeFilePath) {
-        openEditorFind(activeFilePath);
-      }
-    } else if (mode === 'collab') {
-      const activeDocumentPath = collabModeRef.current?.getActiveDocumentPath?.();
-      if (activeDocumentPath) {
-        openEditorFind(activeDocumentPath);
+    if (mode === 'files' || mode === 'collab') {
+      const findPath = getActiveFindPath(mode);
+      if (findPath) {
+        openEditorFind(findPath);
       }
     } else if (mode === 'agent') {
       window.dispatchEvent(new CustomEvent('menu:find'));
     } else if (mode === 'tracker') {
       dispatchTrackerFocusSearch();
     }
-  }, [collabModeRef, menuFindVersion]);
+  }, [getActiveFindPath, menuFindVersion]);
+
+  // Find Next / Previous. The menu accelerator swallows Cmd+G, so the Lexical
+  // find bar only hears it through SearchReplaceStateManager (#1578). Monaco
+  // keeps handling its own find widget.
+  const dispatchFindNavigate = useCallback((direction: SearchNavigateDirection) => {
+    const mode = propsRef.current.activeMode;
+    if (mode === 'agent') {
+      window.dispatchEvent(new CustomEvent(direction === 'next' ? 'menu:find-next' : 'menu:find-previous'));
+      return;
+    }
+    const findPath = getActiveFindPath(mode);
+    if (findPath) {
+      SearchReplaceStateManager.navigate(findPath, direction);
+    }
+  }, [getActiveFindPath]);
 
   useEffect(() => {
     if (menuFindNextVersion === menuFindNextInitialRef.current) return;
-    if (propsRef.current.activeMode === 'agent') {
-      window.dispatchEvent(new CustomEvent('menu:find-next'));
-    }
-    // Editor mode: Monaco/Lexical handle this via their own keyboard shortcuts.
-  }, [menuFindNextVersion]);
+    dispatchFindNavigate('next');
+  }, [dispatchFindNavigate, menuFindNextVersion]);
 
   useEffect(() => {
     if (menuFindPreviousVersion === menuFindPreviousInitialRef.current) return;
-    if (propsRef.current.activeMode === 'agent') {
-      window.dispatchEvent(new CustomEvent('menu:find-previous'));
-    }
-  }, [menuFindPreviousVersion]);
+    dispatchFindNavigate('previous');
+  }, [dispatchFindNavigate, menuFindPreviousVersion]);
 }

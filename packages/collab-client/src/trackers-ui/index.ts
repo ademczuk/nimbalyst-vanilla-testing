@@ -203,4 +203,42 @@ export type {
 } from './detail/TrackerContextMenu';
 
 export { getSupportedTrackerOrderingColumns } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerOrdering';
-export { TRACKER_GROUPING_OPTIONS } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerGrouping';
+export { getTrackerTypeLabel, TRACKER_GROUPING_OPTIONS } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/trackerGrouping';
+
+// Resolver and context only. The view components are exported from the collab
+// bundle's `./editor` entry, which already carries them for the node renderer;
+// re-exporting them here would put them in the tracker surfaces' eager graph too.
+export {
+  createTrackerReferenceResolver,
+  TrackerReferenceResolverContext,
+  TrackerReferenceResolverProvider,
+  useTrackerBacklinks,
+  useTrackerReference,
+  useTrackerReferenceResolver,
+  useTrackerStatements,
+  // The state word and its menu, for a host's own state line on the page item.
+  TrackerStateMenu,
+  stateTone,
+} from './references';
+export type {
+  CreateTrackerReferenceResolverOptions,
+  StateTone,
+  TrackerBacklink,
+  TrackerReferenceActor,
+  TrackerReferenceStatusOption,
+  TrackerStateChange,
+  TrackerStateMenuProps,
+  TrackerReferenceResolution,
+  TrackerReferenceResolver,
+  TrackerReferenceSchema,
+  TrackerReferenceStatusInfo,
+  TrackerReferenceTypeInfo,
+  TrackerStatement,
+  TrackerStatementGroup,
+} from './references';
+
+// The document-header field bar, for hosts that show a tracker item's fields
+// above its body. Exported from here so a browser host shares this build's
+// `globalRegistry` instead of compiling a second copy from runtime source.
+export { StatusBar } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/StatusBar';
+export type { StatusBarProps } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/StatusBar';

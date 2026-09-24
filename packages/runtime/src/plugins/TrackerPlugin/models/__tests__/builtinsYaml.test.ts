@@ -103,10 +103,10 @@ describe('bundled builtin tracker YAML', () => {
     }
   });
 
-  it('keeps the evidence kinds out of type lists until a knowledge pack registers claim', () => {
+  it('keeps the evidence kinds out of type lists until the workspace defines claim', () => {
     // Every existing tracker user gets these builtins; they must not appear in
     // create menus, Tracker Mode, or tracker_list_types for a workspace that
-    // never installed knowledge-core. They stay registered so citations render.
+    // has not defined claim. They stay registered so citations render.
     loadBuiltinTrackers();
     globalRegistry.clearWorkspaceSchema('claim');
     const listed = () => globalRegistry.getListed().map((m) => m.type);
@@ -121,6 +121,10 @@ describe('bundled builtin tracker YAML', () => {
       for (const type of EVIDENCE_KINDS) expect(listed(), `${type} listed with claim`).toContain(type);
     } finally {
       globalRegistry.clearWorkspaceSchema('claim');
+    }
+    for (const type of EVIDENCE_KINDS) {
+      expect(listed(), `${type} listed after removing claim`).not.toContain(type);
+      expect(globalRegistry.has(type), `${type} still resolvable`).toBe(true);
     }
   });
 

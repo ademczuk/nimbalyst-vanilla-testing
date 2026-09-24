@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Regression tests for the node set `MarkdownCollabContentAdapter` hands to its
  * headless Lexical editor.
@@ -19,6 +20,7 @@ import { createBinding, syncLexicalUpdateToYjs } from '@lexical/yjs';
 import {
   $applyNodeReplacement,
   $createParagraphNode,
+  $createTextNode,
   $getRoot,
   DecoratorNode,
   type EditorConfig,
@@ -31,7 +33,9 @@ import { describe, it, expect, vi } from 'vitest';
 import * as Y from 'yjs';
 
 import { MarkdownCollabContentAdapter } from '../MarkdownCollabContentAdapter';
+import { withHeadlessLexicalBridge } from '../withHeadlessLexicalBridge';
 import HeadlessBodyNodes from '../../editor/nodes/headlessBodyNodes';
+import { $createTrackerReferenceNode, TrackerReferenceNode } from '../../plugins/TrackerLinkPlugin/TrackerReferenceNode';
 import {
   $createDocumentReferenceNode,
   DocumentReferenceNode,
@@ -190,6 +194,71 @@ function trackerReferenceSharedDoc(referenceKey: string): Y.Doc {
 }
 
 describe('MarkdownCollabContentAdapter node set', () => {
+  it('syncs setView to a legacy peer and preserves it when that peer clones the node', () => {
+    const doc = rendererAuthoredSharedDoc('view-sync-writer', 'tracker-reference', TrackerReferenceNode, () => $createTrackerReferenceNode('NIM-123', 'card'));
+    const legacyNodes = HeadlessBodyNodes.map(node => node === TrackerReferenceNode ? RendererTrackerReferenceNode : node);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(error => { throw error; });
+    try {
+      withHeadlessLexicalBridge(doc, { nodes: legacyNodes }, legacy => {
+        const readLegacyView = () => legacy.editor.read(() => {
+          const node = $getRoot().getFirstDescendant() as RendererTrackerReferenceNode & { __view?: string };
+          expect(node).toBeInstanceOf(RendererTrackerReferenceNode);
+          expect(node.__referenceKey).toBe('NIM-123');
+          return node.__view;
+        });
+        expect(readLegacyView()).toBe('card');
+        const updates = vi.fn();
+        doc.on('update', updates);
+        withHeadlessLexicalBridge(doc, { nodes: HeadlessBodyNodes }, writer => {
+          writer.applyUpdate(() => {
+            ($getRoot().getFirstDescendant() as TrackerReferenceNode).setView('statements');
+          });
+        });
+        doc.off('update', updates);
+        expect(updates).toHaveBeenCalledTimes(1);
+        Y.applyUpdate(legacy.binding.doc, Y.encodeStateAsUpdate(doc));
+        legacy.hydrateFromYDoc();
+        expect(readLegacyView()).toBe('statements');
+        legacy.applyUpdate(() => {
+          $getRoot().getFirstDescendant()!.getWritable();
+          $getRoot().getFirstChildOrThrow().getWritable();
+          ($getRoot().getFirstDescendant() as RendererTrackerReferenceNode).insertAfter($createTextNode(' edited'));
+        });
+      });
+      expect(MarkdownCollabContentAdapter.exportToFile(doc)).toBe('[NIM-123](nimbalyst://NIM-123 "view=statements") edited');
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      doc.destroy();
+    }
+  });
+
+  it.each(['chip', 'card', 'statements', 'unknown'] as const)('round-trips tracker %s views through headless markdown and Yjs', (view) => {
+    const doc = new Y.Doc();
+    const restored = new Y.Doc();
+    const title = view === 'chip' ? '' : ` "view=${view}"`;
+    const expectedTitle = view === 'unknown' ? '' : title;
+    const expected = `[NIM-123](nimbalyst://NIM-123${expectedTitle})`;
+    MarkdownCollabContentAdapter.seedFromFile(doc, `[label](nimbalyst://NIM-123${title})`);
+    const markdown = MarkdownCollabContentAdapter.exportToFile(doc) as string;
+    expect(markdown).toBe(expected);
+    MarkdownCollabContentAdapter.seedFromFile(restored, markdown);
+    expect(MarkdownCollabContentAdapter.exportToFile(restored)).toBe(expected);
+    doc.destroy();
+    restored.destroy();
+  });
+
+  it('preserves a renderer-authored card through markdown export and import', () => {
+    const doc = rendererAuthoredSharedDoc('tracker-card-writer', 'tracker-reference', TrackerReferenceNode, () => $createTrackerReferenceNode('NIM-123', 'card'));
+    const restored = new Y.Doc();
+    const markdown = MarkdownCollabContentAdapter.exportToFile(doc) as string;
+    expect(markdown).toBe('[NIM-123](nimbalyst://NIM-123 "view=card")');
+    MarkdownCollabContentAdapter.seedFromFile(restored, markdown);
+    expect(MarkdownCollabContentAdapter.exportToFile(restored)).toBe(markdown);
+    doc.destroy();
+    restored.destroy();
+  });
+
   it('seeds list and link markdown into the Y.Doc instead of aborting', () => {
     const yDoc = new Y.Doc();
 

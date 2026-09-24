@@ -57,6 +57,13 @@ function titleCase(value: string): string {
     .join(' ');
 }
 
+/** Schema names for badges and group headings; unknown types keep their id. */
+export function getTrackerTypeLabel(type: string, plural = false): string {
+  const model = globalRegistry.get(type);
+  if (!model) return type;
+  return (plural && model.displayNamePlural) || model.displayName;
+}
+
 function groupKey(axis: TrackerGroupingAxis, value: string | null): string {
   return value === null ? `${axis}:empty` : `${axis}:value:${encodeURIComponent(value)}`;
 }
@@ -206,7 +213,8 @@ export function resolveTrackerGroups(
     case 'priority':
       return [scalarGroup(axis, getRecordPriority(item))];
     case 'type':
-      return [scalarGroup(axis, item.primaryType)];
+      return [scalarGroup(axis, item.primaryType,
+        globalRegistry.get(item.primaryType) ? getTrackerTypeLabel(item.primaryType, true) : undefined)];
     case 'assignee': {
       const identity = identityParts(getFieldByRole(item, 'assignee'));
       return [identity ? scalarGroup(axis, identity.value, identity.label) : resolveEmptyTrackerGroup(axis)];

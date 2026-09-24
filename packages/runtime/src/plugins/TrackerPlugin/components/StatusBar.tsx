@@ -19,6 +19,8 @@ import './StatusBarSlider.css';
 import './StatusBar.css';
 
 export interface StatusBarProps {
+  /** Show labels for values without a distinguishing option icon. */
+  labelFields?: boolean;
   model: TrackerDataModel;
   data: Record<string, any>;
   onChange: (updates: Record<string, any>) => void;
@@ -35,6 +37,7 @@ export interface StatusBarProps {
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
+  labelFields = false,
   model,
   data,
   onChange,
@@ -119,6 +122,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       {!isCollapsed && (
         <div className="status-bar-content mt-2">
           <TrackerFieldPills
+            labelFields={labelFields}
             fields={chipFields}
             values={localData}
             teamMembers={teamMembers}

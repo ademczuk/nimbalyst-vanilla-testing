@@ -5,6 +5,7 @@ import { getWindowId, windowStates } from '../window/WindowManager';
 import { clearGitStatusCache } from '../ipc/GitStatusHandlers';
 import { optimizedWorkspaceWatcher } from './OptimizedWorkspaceWatcher';
 import { gitRefWatcher } from './GitRefWatcher';
+import { initGitWatcherLifecycle, pruneUnusedGitWatchers } from './GitWatcherLifecycle';
 import * as workspaceEventBus from './WorkspaceEventBus';
 import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import { readdirSync } from 'fs';
@@ -43,6 +44,7 @@ workspaceEventBus.setGitignoreChangeHandler((workspacePath: string) => {
 
 // Set up IPC handlers for folder expand/collapse events
 export function registerWorkspaceWatcherHandlers() {
+    initGitWatcherLifecycle();
     safeHandle('workspace-folder-expanded', async (event, folderPath: string) => {
         const window = BrowserWindow.fromWebContents(event.sender);
         if (!window) return;
@@ -188,8 +190,9 @@ export function stopWorkspaceWatcher(windowId: number) {
     }
 
     optimizedWorkspaceWatcher.stop(windowId);
-    // Note: gitRefWatcher is keyed by workspacePath, not windowId.
-    // It will be stopped when stopAllWorkspaceWatchers is called.
+    void pruneUnusedGitWatchers().catch(error => {
+        logger.workspaceWatcher.error('Failed to release unused Git watchers:', error);
+    });
 }
 
 // Get workspace watcher info for debugging

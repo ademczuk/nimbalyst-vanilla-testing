@@ -86,6 +86,12 @@ function setting<S extends z.ZodTypeAny>(
  *     ai.showMcpSessionStatus, ai.trackerAutomation, ai.diffPeekSize
  */
 export const SETTINGS_REGISTRY = {
+  // The default cap applies to additions, not current or restored projects.
+  'projects.allowUnlimited': setting(
+    z.boolean(),
+    { store: 'app-settings', path: 'allowUnlimitedProjects' },
+    false,
+  ),
   // ---- AI providers (per-key) ----
   'ai.provider.claude': setting(
     ProviderConfigSchema,

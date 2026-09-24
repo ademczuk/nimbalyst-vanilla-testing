@@ -1,4 +1,4 @@
-# Knowledge-scopes `knowledge-core` kind (master plan section 3).
+# Builtin knowledge evidence kind.
 # A passage supporting or challenging an exact revision of a claim. The three
 # fields that make it more than a link: `locator` addresses the passage,
 # `capture` says which retrieval the passage was read from, and `claim` pins the
@@ -16,7 +16,7 @@ modes:
 
 sharing: personal
 draftByDefault: false
-# Not offered in type lists until the knowledge-core pack installs `claim`.
+# Not offered in type lists until the workspace defines `claim`.
 hiddenUntilType: claim
 
 idPrefix: cit
@@ -51,9 +51,8 @@ fields:
   # What this citation is evidence about, pinned to an exact revision via the
   # relationship value's `revisionId` (contract 4.2).
   #
-  # `*` rather than `[claim]` deliberately: the `claim` kind arrives with the
-  # knowledge-core pack (N11), and until then the useful thing to cite is a
-  # decision, a plan, or a bug. N11 narrows this once `claim` exists.
+  # `*` rather than `[claim]` deliberately: citations can refer to a decision,
+  # a plan, or a bug even without a custom `claim` type.
   - name: claim
     type: relationship
     relationshipTypeKey: cites

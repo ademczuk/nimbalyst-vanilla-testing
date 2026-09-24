@@ -76,7 +76,6 @@ import {
   handleTrackerListTypes,
   handleTrackerDefineType,
   handleTrackerDeleteType,
-  handleTrackerInstallPack,
   handleTrackerCreate,
   handleTrackerUpdate,
   handleTrackerLinkSession,
@@ -623,9 +622,6 @@ function createSharedMcpServer(
 
         case "tracker_define_type":
           return handleTrackerDefineType(args, workspacePath);
-
-        case "tracker_install_pack":
-          return handleTrackerInstallPack(args, workspacePath);
 
         case "tracker_delete_type":
           return handleTrackerDeleteType(args, workspacePath);

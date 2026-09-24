@@ -76,6 +76,24 @@ describe('SettingsService', () => {
     try { fs.unlinkSync(STORE_FALLBACK); } catch { /* ok if missing */ }
   });
 
+  it('persists unlimited projects and rejects non-boolean values', async () => {
+    const { getSettingsService } = await import('../SettingsService');
+    const svc = getSettingsService();
+    expect(svc.get('projects.allowUnlimited')).toBe(false);
+    svc.set('projects.allowUnlimited', true);
+    vi.resetModules();
+    const reloaded = (await import('../SettingsService')).getSettingsService();
+    expect(reloaded.get('projects.allowUnlimited')).toBe(true);
+    for (const value of [0, 8, 16, 32, 'true', null]) {
+      expect(() => reloaded.set('projects.allowUnlimited', value as any)).toThrow(/schema validation failed/);
+    }
+    expect(reloaded.get('projects.allowUnlimited')).toBe(true);
+    reloaded.set('projects.allowUnlimited', false);
+    expect(reloaded.getAll()['projects.allowUnlimited']).toBe(false);
+    reloaded.delete('projects.allowUnlimited');
+    expect(reloaded.get('projects.allowUnlimited')).toBe(false);
+  });
+
   it('returns descriptor defaults for keys never written', async () => {
     const { getSettingsService } = await import('../SettingsService');
     const svc = getSettingsService();

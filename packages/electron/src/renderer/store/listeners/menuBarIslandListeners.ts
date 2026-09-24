@@ -11,6 +11,9 @@ import { atom } from 'jotai';
 // Deep path: the renderer store barrel pulls every atom module, and this
 // listener is the only store user in the lightweight menu-bar island entry.
 import { store } from '@nimbalyst/runtime/store/store';
+import { getBaseThemeColors } from '@nimbalyst/runtime/editor/themes/palette';
+import type { ExtendedThemeColors } from '@nimbalyst/runtime/editor/themes/types';
+import { CSS_VAR_MAP } from '../../utils/themeCssVars';
 import { MENU_BAR_ISLAND_CHANNELS, type MenuBarIslandState } from '../../../shared/menuBarIsland';
 import { emptyTrayPanelFeed } from '../../../shared/traySessions';
 
@@ -73,9 +76,10 @@ const BASE_THEMES = ['light', 'dark', 'crystal-dark'] as const;
 
 /**
  * The island's entry skips the app's theme module (it drags in the runtime
- * barrel), so follow theme switches with the base-class logic island.html runs
- * at load. Extension themes resolve to one of these bases, which is all the
- * island's `--nim-*` styling reads.
+ * barrel), so it applies the theme itself. The base class alone is not enough:
+ * NimbalystTheme.css only carries light fallbacks, and the real `--nim-*`
+ * colors are inline styles that useTheme writes. Crystal-dark and extension
+ * themes get the base dark/light palette here, not their own colors.
  */
 function applyIslandBaseTheme(): void {
   const resolved = window.electronAPI.getResolvedThemeSync?.();
@@ -84,9 +88,16 @@ function applyIslandBaseTheme(): void {
   for (const t of BASE_THEMES) root.classList.remove(`${t}-theme`);
   root.classList.add(`${theme}-theme`);
   root.setAttribute('data-theme', theme);
+
+  const colors = getBaseThemeColors(theme !== 'light');
+  for (const [key, cssVar] of Object.entries(CSS_VAR_MAP)) {
+    const value = colors[key as keyof ExtendedThemeColors];
+    if (value) root.style.setProperty(cssVar, value);
+  }
 }
 
 export function initMenuBarIslandListener(): () => void {
+  applyIslandBaseTheme();
   const unsubscribeTheme = window.electronAPI.on('theme-change', applyIslandBaseTheme);
   const unsubscribe = window.electronAPI.on(
     MENU_BAR_ISLAND_CHANNELS.state,

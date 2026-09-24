@@ -31,10 +31,17 @@ import { getTrackerReferenceNodeRenderer } from './TrackerReferenceNodeRenderer'
 
 export const TRACKER_REFERENCE_URN_SCHEME = 'nimbalyst://';
 
+export type TrackerReferenceView = 'chip' | 'card' | 'statements';
+
+export function normalizeTrackerReferenceView(view: unknown): TrackerReferenceView {
+  return view === 'card' || view === 'statements' ? view : 'chip';
+}
+
 export type SerializedTrackerReferenceNode = Spread<
   {
     /** Reference key: an issue key (NIM-123) or local short id (tk_abc123). */
     referenceKey: string;
+    view?: TrackerReferenceView;
   },
   SerializedLexicalNode
 >;
@@ -44,31 +51,33 @@ function convertTrackerReferenceElement(
 ): DOMConversionOutput | null {
   const referenceKey = domNode.getAttribute('data-issue-key');
   if (referenceKey) {
-    return { node: $createTrackerReferenceNode(referenceKey) };
+    return { node: $createTrackerReferenceNode(referenceKey, normalizeTrackerReferenceView(domNode.getAttribute('data-view'))) };
   }
   return null;
 }
 
 export class TrackerReferenceNode extends DecoratorNode<JSX.Element> {
   __referenceKey: string;
+  __view: TrackerReferenceView;
 
   static getType(): string {
     return 'tracker-reference';
   }
 
   static clone(node: TrackerReferenceNode): TrackerReferenceNode {
-    return new TrackerReferenceNode(node.__referenceKey, node.__key);
+    return new TrackerReferenceNode(node.__referenceKey, node.__key, node.__view);
   }
 
   static importJSON(
     serializedNode: SerializedTrackerReferenceNode,
   ): TrackerReferenceNode {
-    return $createTrackerReferenceNode(serializedNode.referenceKey);
+    return $createTrackerReferenceNode(serializedNode.referenceKey, normalizeTrackerReferenceView(serializedNode.view));
   }
 
-  constructor(referenceKey: string, key?: NodeKey) {
+  constructor(referenceKey: string, key?: NodeKey, view: TrackerReferenceView = 'chip') {
     super(key);
     this.__referenceKey = referenceKey;
+    this.__view = view;
   }
 
   exportJSON(): SerializedTrackerReferenceNode {
@@ -77,6 +86,7 @@ export class TrackerReferenceNode extends DecoratorNode<JSX.Element> {
       type: 'tracker-reference',
       version: 1,
       referenceKey: this.__referenceKey,
+      ...(this.getView() === 'chip' ? {} : { view: this.getView() }),
     };
   }
 
@@ -87,12 +97,15 @@ export class TrackerReferenceNode extends DecoratorNode<JSX.Element> {
     if (theme.trackerReference) {
       span.className = `tracker-reference ${theme.trackerReference}`;
     }
+    if (this.getView() !== 'chip') {
+      span.classList.add(`tracker-reference--${this.getView()}`);
+    }
     span.setAttribute('data-issue-key', this.__referenceKey);
     return span;
   }
 
-  updateDOM(): false {
-    return false;
+  updateDOM(prev: TrackerReferenceNode): boolean {
+    return prev.__view !== this.__view;
   }
 
   exportDOM(): DOMExportOutput {
@@ -100,6 +113,9 @@ export class TrackerReferenceNode extends DecoratorNode<JSX.Element> {
     element.className = 'tracker-reference';
     element.setAttribute('data-lexical-tracker-reference', 'true');
     element.setAttribute('data-issue-key', this.__referenceKey);
+    if (this.getView() !== 'chip') {
+      element.setAttribute('data-view', this.getView());
+    }
     element.textContent = this.__referenceKey;
     return { element };
   }
@@ -131,6 +147,7 @@ export class TrackerReferenceNode extends DecoratorNode<JSX.Element> {
       <Renderer
         referenceKey={this.__referenceKey}
         nodeKey={this.getKey()}
+        view={this.getView()}
       />
     );
   }
@@ -147,12 +164,23 @@ export class TrackerReferenceNode extends DecoratorNode<JSX.Element> {
   getReferenceKey(): string {
     return this.__referenceKey;
   }
+
+  getView(): TrackerReferenceView {
+    return normalizeTrackerReferenceView(this.getLatest().__view);
+  }
+
+  setView(view: TrackerReferenceView): this {
+    const writable = this.getWritable();
+    writable.__view = view;
+    return writable;
+  }
 }
 
 export function $createTrackerReferenceNode(
   referenceKey: string,
+  view: TrackerReferenceView = 'chip',
 ): TrackerReferenceNode {
-  return $applyNodeReplacement(new TrackerReferenceNode(referenceKey));
+  return $applyNodeReplacement(new TrackerReferenceNode(referenceKey, undefined, view));
 }
 
 export function $isTrackerReferenceNode(

@@ -185,7 +185,6 @@ export const TRACKER_TOOLS: readonly string[] = [
   'tracker_list_types',
   'tracker_define_type',
   'tracker_delete_type',
-  'tracker_install_pack',
   'tracker_link_session',
   'tracker_unlink_session',
   'tracker_link_file',

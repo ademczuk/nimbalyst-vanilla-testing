@@ -76,8 +76,8 @@ export interface PredicateDefinition {
     /**
      * Tracker types that may be the subject. `['*']` accepts any. A derived type
      * satisfies a base listed here -- see {@link isSubjectKindAllowed} -- which is
-     * what lets `knowledge-core` declare predicates against `entity` while
-     * `knowledge-software` narrows the kinds that extend it.
+     * what lets a workspace declare predicates against `entity` while
+     * domain-specific schemas narrow the kinds that extend it.
      */
     subjectKinds: string[];
     valueShape: PredicateValueShape;

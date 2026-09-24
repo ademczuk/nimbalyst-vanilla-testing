@@ -586,7 +586,7 @@ export function registerPullRequestHandlers(): void {
           baseBranch: branchName,
         });
         await worktreeStore.create(worktree);
-        gitRefWatcher.start(worktree.path).catch((err) => {
+        gitRefWatcher.start(worktree.path, undefined, workspacePath).catch((err) => {
           logger.error('Failed to start GitRefWatcher for PR worktree:', err);
         });
 

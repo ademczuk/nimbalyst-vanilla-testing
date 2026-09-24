@@ -1,0 +1,33 @@
+{
+  "id": "com.nimbalyst.knowledge",
+  "name": "Knowledge",
+  "version": "1.0.0",
+  "description": "Build a shared knowledge graph from tracker items",
+  "author": "Nimbalyst",
+  "apiVersion": "1.0.0",
+  "defaultEnabled": false,
+  "marketplace": {
+    "categories": ["ai-tools"],
+    "tags": ["knowledge", "wiki", "tracker", "ontology"],
+    "icon": "hub",
+    "featured": false,
+    "tagline": "A shared vocabulary for team knowledge graphs",
+    "longDescription": "Knowledge teaches the agent how to set up and write a knowledge graph in your project: entities, claims, questions, findings, and investigations as tracker types, with a small set of verbs for statements. Graphs built this way stay consistent across projects and show up in the team wiki.",
+    "highlights": [
+      "Standard tracker types for entities, claims, questions, findings, and investigations",
+      "A predicate registry for typed statements between entities",
+      "Guidance for writing claims with a stated basis and conditions"
+    ]
+  },
+  "permissions": {
+    "ai": true
+  },
+  "contributions": {
+    "claudePlugin": {
+      "path": "claude-plugin",
+      "displayName": "Knowledge",
+      "description": "Set up and write a team knowledge graph with tracker types",
+      "enabledByDefault": true
+    }
+  }
+}

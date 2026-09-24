@@ -165,10 +165,10 @@ import { initEnhancedPath, getEnhancedPath, getShellEnvironment } from './servic
 import { registerWorkspaceWindow, registerExtensionTools, shutdownHttpServer, startMcpHttpServer, updateDocumentState, getActiveExtensionShortNames } from './mcp/httpServer';
 import { writeMcpEndpointDescriptor, removeMcpEndpointDescriptor, type EndpointWorkspace } from './mcp/mcpEndpointDescriptor';
 import {
-  startWorkspaceBackendModules,
-  syncEnabledBackendModulesOnStartup,
+  WorkspaceBackendLifecycle,
   getDefaultBackendModuleLifecycleDeps,
 } from './extensions/backendModuleLifecycle';
+import { onWorkspaceUsageChanged } from './file/GitWatcherLifecycle';
 // MCP consolidation Phase 7: sessionContextServer / settingsServer no longer run
 // as standalone HTTP servers; their tool dispatch + schemas are imported by the
 // unified httpServer instead. Nothing to start/shutdown from here.
@@ -1163,7 +1163,12 @@ async function handleDeepLink(url: string): Promise<void> {
  * Workspaces we've already kicked backend-module startup for, so the per-document
  * `mcp:updateDocumentState` events don't re-scan extension dirs on every update.
  */
-const backendModulesStartedForWorkspace = new Set<string>();
+const workspaceBackendLifecycle = new WorkspaceBackendLifecycle(getDefaultBackendModuleLifecycleDeps());
+onWorkspaceUsageChanged(() => {
+    // Startup can wait for consent. Closing a window must not wait for it.
+    void workspaceBackendLifecycle.prune().catch(error => logger.main.error('Failed to release workspace extensions:', error));
+    void sweepOpenWindowsForBackendModules().catch(error => logger.main.error('Failed to start workspace extensions:', error));
+});
 
 /**
  * Start the backend modules of every enabled extension across the workspaces of
@@ -1192,12 +1197,11 @@ async function sweepOpenWindowsForBackendModules(): Promise<boolean> {
             }
         }
     }
-    const fresh = workspaces.filter((p) => !backendModulesStartedForWorkspace.has(p));
-    if (fresh.length === 0) return false;
-    for (const p of fresh) backendModulesStartedForWorkspace.add(p);
-    const deps = { ...getDefaultBackendModuleLifecycleDeps(), collectWorkspaces: () => fresh };
-    await syncEnabledBackendModulesOnStartup(deps);
-    return true;
+    let started = false;
+    for (const workspacePath of workspaces) {
+        started = (await workspaceBackendLifecycle.open(workspacePath)) || started;
+    }
+    return started;
 }
 
 function collectOpenWorkspaces(): EndpointWorkspace[] {
@@ -1724,6 +1728,7 @@ BrowserWindow.prototype.focus = function(this: BrowserWindow) {
 
 // App ready handler
 app.whenReady().then(async () => {
+    workspaceBackendLifecycle.observeModuleStarts();
     checkpoint('app-ready');
 
     // Windows opened from here on are revealed without activating; the app is
@@ -3106,13 +3111,10 @@ app.whenReady().then(async () => {
             // so it doubles as the startup path for already-enabled extensions
             // and the open-path for newly-opened workspaces. startModule is
             // idempotent, so the guard is only an efficiency measure.
-            if (!backendModulesStartedForWorkspace.has(state.workspacePath)) {
-                backendModulesStartedForWorkspace.add(state.workspacePath);
-                const ws = state.workspacePath;
-                void startWorkspaceBackendModules(ws, getDefaultBackendModuleLifecycleDeps()).catch(
-                    (err) => logger.mcp.error(`Backend-module start failed for workspace ${ws}:`, err)
-                );
-            }
+            const ws = state.workspacePath;
+            void workspaceBackendLifecycle.open(ws).catch(
+                (err) => logger.mcp.error(`Backend-module start failed for workspace ${ws}:`, err)
+            );
             // Issue #146: also allow `nim-asset://` to serve images from the
             // workspace. addNimAssetRoot is idempotent.
             addNimAssetRoot(state.workspacePath);

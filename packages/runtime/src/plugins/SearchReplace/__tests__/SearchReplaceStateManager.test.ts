@@ -37,3 +37,26 @@ describe('SearchReplaceStateManager.openAndFocus', () => {
     expect(reopened.focusNonce).toBeGreaterThan(opened.focusNonce);
   });
 });
+
+describe('SearchReplaceStateManager.navigate', () => {
+  beforeEach(() => {
+    SearchReplaceStateManager.clearState(TAB);
+  });
+
+  // Cmd+G is a menu accelerator, so the bar never sees the keystroke; the
+  // command has to reach it through the manager (#1578).
+  it('delivers Find Next / Previous to an open bar and declines when closed', () => {
+    const received: string[] = [];
+    const listener = (tabId: string, direction: string) => received.push(`${tabId}:${direction}`);
+    SearchReplaceStateManager.addNavigateListener(listener);
+
+    expect(SearchReplaceStateManager.navigate(TAB, 'next')).toBe(false);
+
+    SearchReplaceStateManager.openAndFocus(TAB);
+    expect(SearchReplaceStateManager.navigate(TAB, 'next')).toBe(true);
+    expect(SearchReplaceStateManager.navigate(TAB, 'previous')).toBe(true);
+
+    SearchReplaceStateManager.removeNavigateListener(listener);
+    expect(received).toEqual([`${TAB}:next`, `${TAB}:previous`]);
+  });
+});

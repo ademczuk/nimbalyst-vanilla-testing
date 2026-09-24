@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { WindowState } from '../../types';
 
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => {
   const handlers = new Map<string, (event: any, data: any) => Promise<any>>();
   return {
     handlers,
+    notifyWorkspaceUsageChanged: vi.fn(),
     startWorkspaceWatcher: vi.fn(),
     stopWorkspaceWatcher: vi.fn(),
     setFileSystemService: vi.fn(),
@@ -124,6 +126,8 @@ vi.mock('electron', () => ({
   },
 }));
 
+vi.mock('../../file/GitWatcherLifecycle', () => ({ notifyWorkspaceUsageChanged: mocks.notifyWorkspaceUsageChanged, pruneUnusedGitWatchers: vi.fn().mockResolvedValue(undefined), releaseWhenWorkspaceUnused: (path: string, release: () => void) => { if (![...mocks.windowStates.values()].some(s => s.workspacePath === path || s.additionalWorkspacePaths?.includes(path))) release(); } }));
+
 vi.mock('../../utils/logger', () => ({
   logger: {
     main: {
@@ -166,6 +170,7 @@ describe('MultiProjectRailHandlers', () => {
     mocks.windowStates.clear();
     mocks.startWorkspaceWatcher.mockReset();
     mocks.stopWorkspaceWatcher.mockReset();
+    mocks.notifyWorkspaceUsageChanged.mockReset();
     mocks.setFileSystemService.mockReset();
     mocks.clearFileSystemService.mockReset();
     registerMultiProjectRailHandlers();
@@ -191,6 +196,7 @@ describe('MultiProjectRailHandlers', () => {
       expect(mocks.documentServices.has('/ws/b')).toBe(true);
       expect(mocks.fileSystemServices.has('/ws/b')).toBe(true);
       expect(mocks.windowStates.get(1)?.additionalWorkspacePaths).toEqual(['/ws/b']);
+      expect(mocks.notifyWorkspaceUsageChanged).toHaveBeenCalledTimes(1);
     });
 
     it('does NOT start the watcher (regression guard for fix #1)', async () => {
@@ -279,6 +285,18 @@ describe('MultiProjectRailHandlers', () => {
       );
       mocks.fileSystemServices.set('/ws/warm', new FakeService() as any);
       mocks.documentServices.set('/ws/warm', new FakeService() as any);
+    });
+
+    it('releases the startup project and promotes a remaining project', async () => {
+      mocks.fileSystemServices.set('/ws/primary', new FakeService() as any);
+      mocks.documentServices.set('/ws/primary', new FakeService() as any);
+      await invoke('workspace:unregister-additional', { workspacePath: '/ws/primary' }, 1);
+      expect(mocks.windowStates.get(1)?.workspacePath).toBe('/ws/warm');
+      expect(mocks.windowStates.get(1)?.additionalWorkspacePaths).toEqual([]);
+      expect(mocks.documentServices.has('/ws/primary')).toBe(false);
+      expect(mocks.fileSystemServices.has('/ws/primary')).toBe(false);
+      await invoke('workspace:set-active', { workspacePath: '/ws/warm' }, 1);
+      expect(mocks.startWorkspaceWatcher).toHaveBeenCalledWith(expect.anything(), '/ws/warm');
     });
 
     it('removes the path from additionalWorkspacePaths', async () => {

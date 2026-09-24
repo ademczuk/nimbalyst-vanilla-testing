@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import type { LexicalEditor } from 'lexical';
 import { $getRoot, $getNodeByKey, $isTextNode, $createRangeSelection, $setSelection } from 'lexical';
-import { SearchReplaceStateManager } from './SearchReplaceStateManager';
+import { SearchReplaceStateManager, type SearchNavigateDirection } from './SearchReplaceStateManager';
 import { resolveMatchRange } from './resolveMatchRange';
 // Only contains global highlight styles for dynamically applied classes
 import './SearchReplaceBar.css';
@@ -461,6 +461,24 @@ export function SearchReplaceBar({ filePath, editor }: SearchReplaceBarProps) {
     highlightManagerRef.current?.updateHighlights(matches, newIndex);
     navigateToMatchInternal(matches, newIndex);
   }, [matches, currentMatchIndex, navigateToMatchInternal]);
+
+  // Find Next / Previous from the app menu (Cmd+G / Cmd+Shift+G)
+  const navigateHandlersRef = useRef({ handleNext, handlePrevious });
+  navigateHandlersRef.current = { handleNext, handlePrevious };
+  useEffect(() => {
+    const handleNavigate = (changedTabId: string, direction: SearchNavigateDirection) => {
+      if (changedTabId !== tabId) return;
+      if (direction === 'next') {
+        navigateHandlersRef.current.handleNext();
+      } else {
+        navigateHandlersRef.current.handlePrevious();
+      }
+    };
+    SearchReplaceStateManager.addNavigateListener(handleNavigate);
+    return () => {
+      SearchReplaceStateManager.removeNavigateListener(handleNavigate);
+    };
+  }, [tabId]);
 
   // Replace current match
   const handleReplace = useCallback(() => {

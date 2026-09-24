@@ -9,7 +9,9 @@
 
 import React from "react";
 import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { globalRegistry } from '@nimbalyst/tracker-schema';
+import { TrackerListView } from '../TrackerListView';
 import type { TrackerRecord } from "@nimbalyst/runtime/core/TrackerRecord";
 import type { TrackerDataModel } from "@nimbalyst/runtime/plugins/TrackerPlugin/models";
 import {
@@ -149,6 +151,30 @@ describe("shared view row composition", () => {
       </TrackersUIProvider>
     );
     expect(screen.getByTestId("composed-row-ids").textContent).toBe("matching");
+  });
+});
+
+describe('list schema arrival', () => {
+  it('refreshes cached-row group labels when the schema registers without a row update', () => {
+    const type = 'late-schema-spec';
+    const rows = [{ ...record('cached'), primaryType: type }];
+    render(<TrackerListView rows={rows} groupBy="type" loaded onOpenItem={() => {}} />);
+    const group = screen.getByTestId('tracker-list-group');
+    expect(group.firstElementChild?.textContent).toContain('Late Schema Spec');
+    const model: TrackerDataModel = {
+      type, displayName: 'Research Topic', displayNamePlural: 'Research Topics',
+      icon: 'help', color: 'blue', modes: { inline: true, fullDocument: true },
+      idPrefix: 'LSS', idFormat: 'ulid', sharing: 'team', draftByDefault: false, fields: [],
+    };
+    try {
+      act(() => globalRegistry.register(model));
+      expect(group.firstElementChild?.textContent).toContain('Research Topics');
+      expect(screen.getByTestId('tracker-list-row').textContent).toContain('Research Topic');
+      act(() => globalRegistry.register({ ...model, displayNamePlural: 'Renamed Topics' }));
+      expect(group.firstElementChild?.textContent).toContain('Renamed Topics');
+    } finally {
+      act(() => { globalRegistry.unregister(type); });
+    }
   });
 });
 

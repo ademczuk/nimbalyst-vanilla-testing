@@ -140,6 +140,104 @@ Review the issue, isolate the root cause, and prepare a fix plan.
     expect(fs.existsSync(path.join(generatedPluginPath, 'commands', 'repair.md'))).toBe(true);
   });
 
+  describe('Codex export of skill supporting files', () => {
+    let skillPath: string;
+    let outsideDir: string;
+    let service: AgentWorkflowService;
+    const exportedDir = () => {
+      const generatedRoot = path.join(workspacePath, '.agents', 'skills', '.nimbalyst-generated');
+      const name = fs.readdirSync(generatedRoot).find(entry => entry.endsWith('graph'));
+      expect(name, fs.readdirSync(generatedRoot).join(', ')).toBeDefined();
+      return path.join(generatedRoot, name!);
+    };
+    const sync = async () => {
+      service.clearCache();
+      await service.listEntries({ provider: 'openai-codex', nativeCommands: [] });
+    };
+
+    beforeEach(() => {
+      const extensionPath = path.join(extensionsDir, 'knowledge');
+      const pluginRoot = path.join(extensionPath, 'claude-plugin');
+      skillPath = path.join(pluginRoot, 'skills', 'graph');
+      outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-workflows-outside-'));
+      fs.mkdirSync(path.join(skillPath, 'references'), { recursive: true });
+      fs.mkdirSync(path.join(pluginRoot, '.claude-plugin'), { recursive: true });
+      fs.writeFileSync(path.join(pluginRoot, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'knowledge' }));
+      fs.writeFileSync(
+        path.join(skillPath, 'SKILL.md'),
+        '---\nname: graph\ndescription: Build a graph\n---\n\nRead references/entity.yaml.\n',
+      );
+      fs.writeFileSync(path.join(skillPath, 'references', 'entity.yaml'), 'type: entity\n');
+      service = new AgentWorkflowService(workspacePath, {
+        userHomePath,
+        extensionDirectoriesLoader: async () => [extensionsDir],
+        nativeClaudePluginPathsLoader: async () => [{ type: 'local', path: pluginRoot }],
+        claudePluginInjectionLoader: async () => [],
+        releaseChannelLoader: () => 'stable',
+      });
+    });
+
+    afterEach(() => {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    });
+
+    it('copies supporting files next to the generated SKILL.md and prunes removed ones', async () => {
+      await sync();
+      expect(fs.readFileSync(path.join(exportedDir(), 'references', 'entity.yaml'), 'utf-8')).toBe('type: entity\n');
+      expect(fs.readFileSync(path.join(exportedDir(), 'SKILL.md'), 'utf-8')).toContain('Read references/entity.yaml.');
+
+      fs.rmSync(path.join(skillPath, 'references', 'entity.yaml'));
+      await sync();
+      expect(fs.existsSync(path.join(exportedDir(), 'references', 'entity.yaml'))).toBe(false);
+    });
+
+    it('does not follow source symlinks out of the skill directory', async () => {
+      fs.writeFileSync(path.join(outsideDir, 'secret.txt'), 'secret\n');
+      fs.symlinkSync(path.join(outsideDir, 'secret.txt'), path.join(skillPath, 'secret.txt'));
+      fs.symlinkSync(outsideDir, path.join(skillPath, 'references', 'outside'));
+      await sync();
+      expect(fs.existsSync(path.join(exportedDir(), 'secret.txt'))).toBe(false);
+      expect(fs.existsSync(path.join(exportedDir(), 'references', 'outside'))).toBe(false);
+      expect(fs.existsSync(path.join(exportedDir(), 'references', 'entity.yaml'))).toBe(true);
+    });
+
+    it('replaces a destination symlink instead of writing through it', async () => {
+      await sync();
+      const target = path.join(exportedDir(), 'references', 'entity.yaml');
+      const victim = path.join(outsideDir, 'victim.txt');
+      fs.writeFileSync(victim, 'untouched\n');
+      fs.rmSync(target);
+      fs.symlinkSync(victim, target);
+      fs.writeFileSync(path.join(skillPath, 'references', 'entity.yaml'), 'type: entity v2\n');
+      await sync();
+      expect(fs.readFileSync(victim, 'utf-8')).toBe('untouched\n');
+      expect(fs.lstatSync(target).isSymbolicLink()).toBe(false);
+      expect(fs.readFileSync(target, 'utf-8')).toBe('type: entity v2\n');
+    });
+
+    it.skipIf(process.platform === 'win32')('preserves the executable bit', async () => {
+      fs.mkdirSync(path.join(skillPath, 'scripts'));
+      fs.writeFileSync(path.join(skillPath, 'scripts', 'run.sh'), '#!/bin/sh\n', { mode: 0o755 });
+      await sync();
+      expect(fs.statSync(path.join(exportedDir(), 'scripts', 'run.sh')).mode & 0o777).toBe(0o755);
+    });
+
+    it('replaces a generated file with a directory and back', async () => {
+      fs.writeFileSync(path.join(skillPath, 'notes'), 'file\n');
+      await sync();
+      fs.rmSync(path.join(skillPath, 'notes'));
+      fs.mkdirSync(path.join(skillPath, 'notes'));
+      fs.writeFileSync(path.join(skillPath, 'notes', 'a.md'), 'dir\n');
+      await sync();
+      expect(fs.readFileSync(path.join(exportedDir(), 'notes', 'a.md'), 'utf-8')).toBe('dir\n');
+
+      fs.rmSync(path.join(skillPath, 'notes'), { recursive: true });
+      fs.writeFileSync(path.join(skillPath, 'notes'), 'file again\n');
+      await sync();
+      expect(fs.readFileSync(path.join(exportedDir(), 'notes'), 'utf-8')).toBe('file again\n');
+    });
+  });
+
   // #1213: the SDK reports every command/skill it discovered in `slash_commands`,
   // not just provider builtins, so those names collide with the files they came
   // from. The file must win, or the palette shows `Execute <name> command`.

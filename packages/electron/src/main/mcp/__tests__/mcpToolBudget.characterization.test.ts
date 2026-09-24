@@ -94,6 +94,11 @@ describe('MCP tool budget characterization (current first-party surface)', () =>
       .filter((name) => !FIRST_PARTY_TOOL_TO_SERVER.has(name) && !allowedUnmapped.has(name));
 
     expect(unmapped).toEqual([]);
+    // Custom ontology setup uses the existing schema/predicate definition tool.
+    const defineType = trackerToolSchemas.find((tool) => tool.name === 'tracker_define_type');
+    expect(defineType?.inputSchema.properties).toHaveProperty('predicates');
+    expect(trackerToolSchemas.filter((tool) => tool.name.includes('_pack'))).toEqual([]);
+    expect([...FIRST_PARTY_TOOL_TO_SERVER.keys()].filter((name) => name.includes('_pack'))).toEqual([]);
   });
 
   it('confirms core is the only eager server', () => {

@@ -1,0 +1,7 @@
+{
+  "name": "@nimbalyst/knowledge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Knowledge graph ontology and authoring guidance for Nimbalyst trackers",
+  "author": "Nimbalyst"
+}
