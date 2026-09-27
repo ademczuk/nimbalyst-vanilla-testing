@@ -10,8 +10,12 @@
  * Serializes to a portable markdown link `[NIM-123](nimbalyst://NIM-123)` via
  * {@link TrackerReferenceTransformer}, so the document stays valid markdown and
  * degrades to a plain link in any other viewer.
+ *
+ * React-free: `./TrackerReferenceNode.tsx` registers the React decorator and
+ * re-exports this module; headless graphs (collab worker, CLI) import this one
+ * directly. See `nodeDecoratorSlot.ts`.
  */
-import type { DOMConversionMap, DOMExportOutput, EditorConfig, LexicalNode, NodeKey, SerializedLexicalNode, Spread } from 'lexical';
+import type { DOMConversionMap, DOMExportOutput, EditorConfig, LexicalEditor, LexicalNode, NodeKey, SerializedLexicalNode, Spread } from 'lexical';
 import type { JSX } from 'react';
 import { DecoratorNode } from 'lexical';
 export declare const TRACKER_REFERENCE_URN_SCHEME = "nimbalyst://";
@@ -22,7 +26,8 @@ export type SerializedTrackerReferenceNode = Spread<{
     referenceKey: string;
     view?: TrackerReferenceView;
 }, SerializedLexicalNode>;
-export declare class TrackerReferenceNode extends DecoratorNode<JSX.Element> {
+export declare const TrackerReferenceNodeDecorator: import("../../editor/nodes/nodeDecoratorSlot").NodeDecoratorSlot<TrackerReferenceNode>;
+export declare class TrackerReferenceNode extends DecoratorNode<JSX.Element | null> {
     __referenceKey: string;
     __view: TrackerReferenceView;
     static getType(): string;
@@ -34,7 +39,7 @@ export declare class TrackerReferenceNode extends DecoratorNode<JSX.Element> {
     updateDOM(prev: TrackerReferenceNode): boolean;
     exportDOM(): DOMExportOutput;
     static importDOM(): DOMConversionMap | null;
-    decorate(): JSX.Element;
+    decorate(editor: LexicalEditor, config: EditorConfig): JSX.Element | null;
     isInline(): true;
     /** Plain-text fallback (copy, non-rich serialization) is the bare key. */
     getTextContent(): string;

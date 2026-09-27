@@ -24,6 +24,8 @@ const BOOLEAN_FLAGS = new Set([
   'no-color',
   'archived',
   'link-session',
+  'overwrite',
+  'bind',
   'help',
   'h',
   'version',

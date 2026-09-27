@@ -1,9 +1,17 @@
 ---
 name: knowledge-graph
-description: Set up and write a knowledge graph in Nimbalyst trackers -- entities, claims, questions, findings, investigations, and the predicates that connect them. Use when the user wants a team wiki, a knowledge base, to record what is known about products/systems/decisions, or to add statements, questions, or findings to an existing graph.
+description: Write a knowledge graph in Nimbalyst trackers -- entities, claims, questions, findings, investigations, and the predicates that connect them -- following the project's wiki guide. Use when the user wants to record what is known about products/systems/decisions in the team wiki or knowledge base, or to add pages, statements, questions, or findings to an existing graph. To set up a new graph, use the knowledge-setup skill.
 ---
 
 # Knowledge graph
+
+## First: read the project's wiki guide
+
+Before writing anything, find the project's guide page: an `entity` whose `aliases` contain `wiki-guide` (usually titled "How we write this wiki"). Read its body with `tracker_get` and follow it; it decides what belongs in this wiki, and it overrides the writing advice below wherever they disagree. The mechanics below (kinds, fields, predicates, hierarchy) still apply.
+
+If the project has no guide page, follow the base guide in `../knowledge-setup/references/wiki-guide.md`, and tell the user they can install it as an editable page with the `knowledge-setup` skill. If the kinds below do not exist yet, run `knowledge-setup` first.
+
+## Vocabulary
 
 A knowledge graph here is ordinary tracker data with a fixed vocabulary:
 
@@ -32,15 +40,6 @@ The canonical definitions are in `references/` next to this file. They are the s
 - The wiki hierarchy reads `entity.kind: area`, `entity.parent` (targets `entity`), and `question.parent` (targets `question`).
 - Predicate ids and their `label` / `inverseLabel` are what the wiki prints. Do not change an existing id.
 
-## Setup
-
-1. Call `tracker_list_types` and note which of the five kinds already exist and who owns them (`personal` or `team:<name>`).
-2. Decide sharing. If the project is shared with a team, define the kinds with `sharing: team` so the web console and teammates see them. Otherwise leave `sharing: personal`. Use the same sharing for all five.
-3. For each missing kind, read its reference file and call `tracker_define_type` with `schema` set to the YAML converted to a JSON object (drop comments; change only `sharing`).
-4. Read the project's current registry from `.nimbalyst/predicates.yaml` at the workspace root (for a team project this is the local copy of the team's registry; a missing file means an empty registry). Merge in every predicate from `references/predicates.yaml` whose `id` is not already there, keep all existing ones unchanged, and call `tracker_define_type` with `predicates` set to the merged array. The call replaces the whole registry, so never send only the reference list. An existing predicate with the same `id` but a different definition is a conflict: keep the existing one and report it.
-5. Idempotence: if a kind already exists, compare it to the reference. Missing fields or options may be added with a `schema` + `overwrite: true` that keeps every existing field. Never remove, rename, or change the type of an existing field or option, never pass `confirmDestructive` on your own, and never overwrite a kind that differs in an incompatible way. Report each conflict to the user with the field names and stop for that kind.
-6. Switching an existing personal kind to team needs `promoteExistingItems: true`; ask the user first.
-
 ## Hierarchy
 
 The wiki's tree comes from links between items, not tracker folders.
@@ -50,6 +49,46 @@ The wiki's tree comes from links between items, not tracker folders.
 - Questions appear under the entities in their `subjects`. A sub-question sets `parent` to the question it helps answer.
 - Never create a cycle: before setting `parent`, walk up from the new parent and make sure you do not reach the item itself.
 - Keep it shallow: an area, a subarea, then pages. Use claims, not deeper nesting, to relate pages to each other.
+- Placement is navigation only. A page lives in one area, but what it is, what market it is in and who makes it are claims, never the area it sits under.
+
+## Kinds, markets, makers, facts
+
+Pick `kind` by what the thing is:
+
+| Kind | Use for |
+| --- | --- |
+| `product` | Software someone ships (Cursor, Notion, Nimbalyst). |
+| `organization` | The company behind products. Title it by its common name; when that equals a product's name, use "Name (company)". |
+| `market` | A category node. Markets live under the `Markets` area; a submarket sets `parent` to its market. |
+| `topic` | A synthesis or overview page: a landscape, a strategy, a practice. |
+| `capability`, `technology`, `protocol`, `format`, `connector`, `person` | What the names say. |
+| `area`, `home` | Page structure only. |
+
+- **Never use `concept`.** It is kept as an option so old data still loads, but nothing new goes there. When no kind fits, draft an ontology proposal (below) instead of forcing it into the nearest kind or a tag.
+- **Every product gets a market and a maker.** When you create a product, add an `in-market` claim to its market (qualifier `primary: true` on the main one) and a `made-by` claim to its organization, creating the organization if it does not exist. If the maker is unknown or an individual, say so on the page rather than inventing one. Put the site in the `website` field.
+- **Competition is a claim, per market.** "We compete with X" is a `competes-with` claim with Nimbalyst (or a Nimbalyst capability) as subject and X as object, qualifiers `market` (the market entity), `threat` (`low`, `medium`, `high`, `critical`), `overlap`, `difference`, `reviewedAt`. A product we compete with in two markets gets two claims. Do not use the legacy entity fields `group`, `overlap`, `difference`, `threat` and `reviewedAt`, or the retired `competitor` tracker.
+- **Facts are dated claims, not prose.** Revenue, funding, valuation, headcount, pricing, licence, platforms, users and lifecycle each have a predicate (see `references/predicates.yaml`). Company facts go on the organization, product facts on the product. Put the display value in `valueText` ("$500M ARR"), the required `asOf` date and, for quantities, `amount` and `unit` (`USD`, `people`, `users`, `seats`) in `qualifiers`, and the source in `citations`. When the source only gives a month or a year, store its first day as `asOf` and set `asOfPrecision` to `month` or `year` (absent means `day`); never describe precision in `applicability`. `lifecycle` takes one of `active`, `declining`, `unmaintained`, `defunct` in `valueText`. A new value is a new claim with its own `asOf`; the latest `asOf` among asserted claims is the current value, and it is stale 90 days after its date (after the end of its month or year for coarser precision). When a sentence in a body states a fact a predicate covers, record the claim too.
+
+## Ontology proposals
+
+Never change the ontology silently. Schema and structure changes are `ontology-proposal` items: `title`, `reason`, `status` (`proposed`, `accepted`, `applied`, `rejected`, `undone`; derived, never set by hand except leaving new items `proposed`), `request`, `healthCheck`, `changes` (a JSON string holding an array) and `undo` (written only by the web console). People review each change in the Ontology inspector (Trackers > Tracker setup > Ontology on web; Settings > Project > Trackers > Ontology on desktop), which is read-only.
+
+Each change is `{ id, type, reason? }` plus the fields for its type. Never set `decision`, `decidedBy`, `decidedAt`, `rejectReason`, `appliedAt` or `undoneAt`, except `appliedAt` as described in step 5.
+
+| `type` | Fields |
+| --- | --- |
+| `add-kind-option` | `value`, `label`, `icon?` (schema change) |
+| `add-predicate` | `predicate`: a `predicates.yaml` entry (schema change) |
+| `reclassify-pages` | `toKind`, `pageIds` |
+| `add-market-node` | `title`, `parentId?` (omitted: under the Markets area), `summary?`, `aliases?` |
+| `merge-duplicates` | `keepId`, `mergeIds` (references are repointed, merged titles become aliases, merged items are archived; works across types) |
+| `move-field-to-claims` | `field`, `predicate`, `pageIds?`, `subjectId?`, `qualifiers?` (qualifier name -> entity field), `staticQualifiers?`, `valueText?` |
+
+1. **Pick up requests.** List `ontology-proposal` items with status `proposed` and empty `changes` (`[]` or blank). The inspector's Improve and Suggest structure buttons create them; `request` names the problem and the affected page ids, and `healthCheck` is one of `catch-all-kind:<kind>`, `sparse-field:<type>[:<kind>]:<field>`, `deprecated-field:entity:<kind>:<field>`, `broken-links`, `undeclared-predicates`, `stale-facts`, `missing-market`, `missing-maker`, `missing-competes-with`, `duplicates`, `suggest-structure`.
+2. **Check history first.** Read every other proposal (any status) for the same `healthCheck` or the same change. Never re-propose a change whose decision is `rejected`; read its `rejectReason`.
+3. **Draft.** Write `changes` and `reason` onto the request item with `tracker_update`, one proposal per request, splitting a large fix into several changes. Leave `status` as `proposed`. You may also create a proposal yourself whenever a write needs a kind or predicate that does not exist.
+4. **Review happens in the inspector.** The person accepts or rejects each change and applies them. The web console writes the data changes and keeps an undo record; nothing is deleted.
+5. **Apply accepted schema changes yourself.** The browser cannot edit schemas. For an accepted `add-kind-option` or `add-predicate` change without `appliedAt`, make the edit (the `entity.kind` option through `tracker_define_type`, or a registry entry through the registry merge in the `knowledge-setup` skill), then set that change's `appliedAt` to the current ISO time in `changes`, keeping every other field as it was.
 
 ## Extending
 
@@ -70,6 +109,7 @@ The wiki's tree comes from links between items, not tracker folders.
 - **Findings cite exact claims** in `claims` and say where the answer holds (`scope`) and where it does not (`limitations`). Link the finding back from `question.answers`.
 - **Investigations are recorded even when inconclusive.** Put versions and config in `environment`; link findings you reused in `reusedFindings`.
 - Search for an existing entity (title and `aliases`) before creating one. Add alternate names to `aliases` instead of creating duplicates.
+- Before creating a product, find or create its market and maker (see "Kinds, markets, makers, facts").
 
 ## References in bodies
 

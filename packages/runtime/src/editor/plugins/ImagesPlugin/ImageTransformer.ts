@@ -3,7 +3,7 @@
  */
 
 import { TextMatchTransformer } from '@lexical/markdown';
-import { $createImageNode, $isImageNode, ImageNode } from './ImageNode';
+import { $createImageNode, $isImageNode, ImageNode } from './ImageNodeCore';
 
 export const IMAGE_TRANSFORMER: TextMatchTransformer = {
   dependencies: [ImageNode],

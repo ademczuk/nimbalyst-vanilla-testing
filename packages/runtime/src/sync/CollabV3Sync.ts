@@ -4606,19 +4606,19 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     /**
      * Push the ambient fleet snapshot to the user's Live Activity.
      *
-     * Unlike `requestMobilePush` this does not reconnect on demand. The lane is
-     * ambient and coalesced, so a disconnected desktop simply misses an update
-     * and the phone's stale date says so -- forcing a reconnect for a card that
-     * nobody may be looking at would be the more expensive mistake, and the next
-     * transition after reconnect carries the full current state anyway.
+     * Unlike `requestMobilePush` this does not reconnect on demand: the lane is
+     * ambient and coalesced, so a disconnected desktop misses an update (and says
+     * so via the return value); the next transition carries the full state.
      */
-    async sendFleetActivity(activity: FleetActivitySnapshot, shownOnDesktop = false): Promise<void> {
-      if (!indexWs || !indexConnected || indexWs.readyState !== WS_OPEN) return;
+    async sendFleetActivity(activity: FleetActivitySnapshot, shownOnDesktop = false): Promise<boolean> {
+      if (!indexWs || !indexConnected || indexWs.readyState !== WS_OPEN) return false;
       const msg: ClientMessage = { type: 'fleetActivityUpdate', activity, shownOnDesktop };
       try {
         indexWs.send(JSON.stringify(msg));
+        return true;
       } catch (error) {
         console.warn('[CollabV3] Failed to send fleet activity update:', error);
+        return false;
       }
     },
 

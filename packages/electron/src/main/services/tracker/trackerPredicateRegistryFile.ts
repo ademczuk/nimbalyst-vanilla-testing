@@ -6,7 +6,7 @@
  * distribution mechanism for a team project. The room owns the registry and
  * publishes it to every client on the schema lane, exactly as it does type
  * definitions; this module projects what arrived onto disk so the project is
- * readable offline, diffable in git, and authorable by a project that has no
+ * readable offline and authorable by a project that has no
  * room yet.
  *
  * A sibling of `trackerSchemaProjection.ts` rather than more of
@@ -22,6 +22,7 @@ import {
   type PredicateDefinition,
 } from '@nimbalyst/tracker-schema';
 import { logger } from '../../utils/logger';
+import { requestTrackerSchemaFlush } from './trackerSchemaFlush';
 
 export const PREDICATE_REGISTRY_FILENAME = 'predicates.yaml';
 
@@ -79,5 +80,7 @@ export async function writeWorkspacePredicateRegistry(
   const filePath = workspacePredicateRegistryPath(workspacePath);
   await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
   await fsPromises.writeFile(filePath, serializePredicateRegistryYAML(predicates), 'utf-8');
+  // A save reaches the room now, not at the next reconnect (NIM-6653).
+  requestTrackerSchemaFlush(workspacePath);
   return filePath;
 }

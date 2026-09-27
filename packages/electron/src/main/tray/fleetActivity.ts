@@ -94,6 +94,26 @@ export const FLEET_ACTIVITY_ROW_LIMIT = 3;
 export const FLEET_ACTIVITY_STALE_AFTER_MS = 12 * 60_000;
 
 /**
+ * How long a finished, unread session keeps the phone card alive.
+ *
+ * Nothing clears the unread flag on a session nobody opens, so counting all of
+ * them kept the card up forever and the server never ended it. Ten minutes is
+ * enough to glance at the phone after a turn finishes; the desktop re-derives on
+ * a clock, so the count drops -- and the card ends -- without another event.
+ */
+export const FLEET_ACTIVITY_UNREAD_WINDOW_MS = 10 * 60_000;
+
+function countRecentUnread(sessions: Iterable<TraySessionInfo>, now: number): number {
+  let count = 0;
+  for (const session of sessions) {
+    if (!session.hasUnread || session.isArchived) continue;
+    const finishedAt = session.completedAt ?? session.updatedAt ?? 0;
+    if (now - finishedAt < FLEET_ACTIVITY_UNREAD_WINDOW_MS) count += 1;
+  }
+  return count;
+}
+
+/**
  * Rank order between the row states.
  *
  * Not `STATE_URGENCY`. That one answers "which transition should the menu bar
@@ -194,14 +214,17 @@ export function buildFleetActivityPayload(
   sessions: Iterable<TraySessionInfo>,
   now: number,
 ): FleetActivityPayload {
-  const { rows, overflow } = rankFleetActivityRows(sessions, now);
+  const sessionList = [...sessions];
+  const { rows, overflow } = rankFleetActivityRows(sessionList, now);
   return {
     running: snapshot.running,
     needsApproval: snapshot.needsApproval,
     needsDecision: snapshot.needsDecision,
     failed: snapshot.failed,
     stalled: snapshot.stalled,
-    unread: snapshot.unread,
+    // Not the snapshot's count: the menu bar lists every unread session, but the
+    // phone card only stays up for recent ones.
+    unread: countRecentUnread(sessionList, now),
     rows,
     overflow,
     revision: snapshot.revision,
@@ -215,9 +238,9 @@ export function buildFleetActivityPayload(
  *
  * The same rule as "idle hides the island", one surface over: an activity that
  * says nothing is a notch of lock-screen real estate charged for no information.
- * Unread counts, because the phone is exactly where you catch up on a session
- * that finished while you were away -- which is the one thing the menu bar
- * cannot do, since you were not at the Mac.
+ * Recently finished unread sessions count, because the phone is exactly where
+ * you catch up on a session that finished while you were away -- which is the
+ * one thing the menu bar cannot do, since you were not at the Mac.
  */
 export function isFleetActive(payload: FleetActivityPayload): boolean {
   return (

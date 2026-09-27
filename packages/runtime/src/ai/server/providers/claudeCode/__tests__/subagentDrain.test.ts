@@ -16,6 +16,7 @@ import {
   shouldArmGraceTimerForResult,
   shouldContinueWithTaskResults,
   buildTaskResultContinuationMessage,
+  summarizeBackgroundWait,
 } from '../subagentDrain';
 
 describe('shouldSettleTaskFromToolResult', () => {
@@ -483,5 +484,19 @@ describe('classifyDrainOutcome', () => {
     expect(
       classifyDrainOutcome({ wasDraining: true, hasRunningTasks: true, cause: 'interrupted' }),
     ).toEqual({ markStopped: true, autoContinue: false });
+  });
+});
+
+describe('summarizeBackgroundWait', () => {
+  const tasks = [
+    { taskId: 'a', description: 'Run the gates', taskType: 'local_bash', status: 'running', startedAt: 100 },
+    { taskId: 'b', description: 'Research', status: 'completed', startedAt: 50 },
+  ];
+
+  it('lists running tasks only once the lead turn is draining', () => {
+    expect(summarizeBackgroundWait(false, tasks)).toEqual([]);
+    expect(summarizeBackgroundWait(true, tasks)).toEqual([
+      { taskId: 'a', description: 'Run the gates', taskType: 'local_bash', startedAt: 100 },
+    ]);
   });
 });

@@ -36,3 +36,22 @@ it('routes targeted external metadata updates into the registry without changing
     expect(store.get(sessionRegistryAtom).get('sibling')).toBe(sibling);
   } finally { dispose(); vi.unstubAllGlobals(); }
 });
+
+import { sessionBackgroundTasksAtom, describeBackgroundWait } from '../sessionBackgroundTasks';
+it('keeps background-wait updates out of the registry and clears them on an empty list', () => {
+  const handlers = new Map<string, (...args: any[]) => void>();
+  vi.stubGlobal('window', { electronAPI: { on: (channel: string, handler: any) => { handlers.set(channel, handler); return () => {}; } } });
+  const registry = new Map([['own', sessionListMetadata({ id: 'own', createdAt: 1, updatedAt: 2 }, '/parent')]]);
+  store.set(sessionRegistryAtom, registry);
+  const dispose = initSessionListListeners();
+  try {
+    const tasks = [{ taskId: 't1', description: 'Run the gates', taskType: 'local_bash', startedAt: 0 }];
+    handlers.get('sessions:session-updated')!('own', { backgroundTasks: tasks });
+    expect(store.get(sessionBackgroundTasksAtom('own'))).toEqual(tasks);
+    // No registry rewrite, so list subscribers do not re-render on every task change.
+    expect(store.get(sessionRegistryAtom)).toBe(registry);
+    expect(describeBackgroundWait(tasks, 12 * 60_000)).toBe('Waiting on background task: Run the gates (12m)');
+    handlers.get('sessions:session-updated')!('own', { backgroundTasks: [] });
+    expect(store.get(sessionBackgroundTasksAtom('own'))).toEqual([]);
+  } finally { dispose(); vi.unstubAllGlobals(); }
+});

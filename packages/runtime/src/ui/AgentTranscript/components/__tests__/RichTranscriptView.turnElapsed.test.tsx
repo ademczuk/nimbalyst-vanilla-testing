@@ -94,4 +94,20 @@ describe('live turn elapsed counter', () => {
     render(view([userTurn, makeMessage(1, { text: 'reply' }), later], true));
     expect(screen.getByTestId('turn-elapsed')).toBeTruthy();
   });
+
+  it('names the background task when the lead turn is over and only a drain is left', () => {
+    render(
+      <RichTranscriptView
+        sessionId="elapsed"
+        sessionStatus="running"
+        isProcessing
+        messages={[userTurn, makeMessage(1, { text: 'launched the gate' })]}
+        provider="claude-code"
+        persistScrollState={false}
+        backgroundTasks={[{ description: 'Run the gates', startedAt: Date.now() - 60_000 }]}
+      />,
+    );
+    screen.getByText('Waiting on background task: Run the gates');
+    screen.getByTestId('turn-elapsed');
+  });
 });

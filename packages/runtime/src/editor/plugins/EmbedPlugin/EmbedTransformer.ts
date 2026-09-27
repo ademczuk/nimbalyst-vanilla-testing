@@ -18,7 +18,7 @@ import type { ElementTransformer } from '@lexical/markdown';
 import {
   $isEmbeddedFileNode,
   EmbeddedFileNode,
-} from './EmbeddedFileNode';
+} from './EmbeddedFileNodeCore';
 import { serializeEmbedAttrs } from './embedAttrs';
 
 export const EMBED_TRANSFORMER: ElementTransformer = {

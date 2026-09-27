@@ -1,4 +1,5 @@
-import { app } from 'electron';
+import { app, BrowserWindow } from 'electron';
+import { safeOn } from './ipcRegistry';
 import { promises as fs } from 'fs';
 import path from 'path';
 import inspector from 'inspector';
@@ -77,8 +78,19 @@ async function captureCpuProfile(triggerCpuPercent: number, reason: string = 'cp
     }
 }
 
+let rendererJankRegistered = false;
+
 export function startPerformanceMonitoring() {
     scheduleLagSample();
+    if (!rendererJankRegistered) {
+        rendererJankRegistered = true;
+        // Pre-formatted, throttled summaries from renderer/devtools/rendererJankMonitor.ts.
+        safeOn('perf:renderer-jank', (event, line: unknown) => {
+            if (typeof line !== 'string') return;
+            const win = BrowserWindow.fromWebContents(event.sender);
+            console.log(`[PERF] Renderer jank (window ${win?.id ?? '?'} "${win?.getTitle() ?? ''}"): ${line.slice(0, 4000)}`);
+        });
+    }
     performanceInterval = setInterval(() => {
         const currentTime = Date.now();
         const currentCpuUsage = process.cpuUsage();

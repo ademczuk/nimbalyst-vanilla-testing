@@ -578,6 +578,7 @@ const config = {
         // which cause "registerNodeTransform: Type Class not in this Editor" errors
         '@lexical/clipboard',
         '@lexical/code',
+        '@lexical/code-core',
         '@lexical/devtools-core',
         '@lexical/dragon',
         '@lexical/file',
@@ -622,6 +623,7 @@ const config = {
         '@floating-ui/react',
         '@lexical/clipboard',
         '@lexical/code',
+        '@lexical/code-core',
         '@lexical/dragon',
         '@lexical/extension',
         '@lexical/hashtag',

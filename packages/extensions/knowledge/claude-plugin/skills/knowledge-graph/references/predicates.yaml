@@ -127,3 +127,223 @@ predicates:
         type: string
         label: Surface
         description: Where the capability is available -- desktop, web, CLI, mobile.
+
+  # --- Market, maker and competition -------------------------------------
+  #
+  # "Competitor" is a relationship, not a location: Nimbalyst competes with a
+  # product IN a market, at a threat level that belongs to that market.
+
+  - id: in-market
+    label: is in market
+    inverseLabel: includes
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: directed
+    qualifiers:
+      primary:
+        type: boolean
+        label: Primary
+        description: The market the product is mainly known for.
+
+  - id: made-by
+    label: is made by
+    inverseLabel: makes
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: directed
+
+  - id: competes-with
+    label: competes with
+    inverseLabel: competes with
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: symmetric
+    qualifiers:
+      market:
+        type: relationship
+        targetTrackerTypes: [entity]
+        label: Market
+        description: "The market (kind: market) this competition is in. Threat is per market."
+      threat:
+        type: select
+        options: [low, medium, high, critical]
+        label: Threat
+      overlap:
+        type: string
+        label: Overlap
+      difference:
+        type: string
+        label: Difference
+      reviewedAt:
+        type: date
+        label: Reviewed
+
+  - id: inspired-by
+    label: is inspired by
+    inverseLabel: inspired
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: directed
+    qualifiers:
+      what:
+        type: string
+        label: What
+        description: The idea or design that was borrowed.
+
+  - id: depends-on
+    label: depends on
+    inverseLabel: is depended on by
+    subjectKinds: [entity]
+    valueShape: entity
+    direction: directed
+    qualifiers:
+      risk:
+        type: select
+        options: [low, medium, high]
+        label: Risk
+
+  # --- Dated facts ----------------------------------------------------------
+  #
+  # A fact is a claim, not a field, because it changes and needs a date and a
+  # source. `asOf` is required (`asOfPrecision` says whether it is a day, month
+# or year; a month is stored as its first day); the display value goes in `claim.valueText`;
+  # quantity facts also carry `amount` and `unit` (USD, people, users, seats);
+  # sources go in `claim.citations`. The current value is the latest `asOf`
+  # among asserted claims. Organization facts: annual-revenue, funding-total,
+  # valuation, last-round, headcount, founded, hq. Product facts: pricing,
+  # license, platforms, launched, users, lifecycle.
+
+  - id: annual-revenue
+    label: annual revenue
+    inverseLabel: annual revenue of
+    subjectKinds: [entity]
+    valueShape: quantity
+    direction: directed
+    qualifiers: &quantityFact
+      asOf:
+        type: date
+        required: true
+        label: As of
+        description: When the value was true. The current value is the latest asOf among asserted claims.
+      asOfPrecision: &asOfPrecision
+        type: select
+        options: [day, month, year]
+        label: As-of precision
+        description: How precise asOf is. Absent means day. A month-precision date is the first of the month.
+      amount:
+        type: number
+        label: Amount
+        description: The number behind valueText, in `unit`.
+      unit:
+        type: string
+        label: Unit
+        description: USD, people, users, or seats.
+
+  - id: funding-total
+    label: total funding
+    inverseLabel: total funding of
+    subjectKinds: [entity]
+    valueShape: quantity
+    direction: directed
+    qualifiers: *quantityFact
+
+  - id: valuation
+    label: valuation
+    inverseLabel: valuation of
+    subjectKinds: [entity]
+    valueShape: quantity
+    direction: directed
+    qualifiers: *quantityFact
+
+  - id: last-round
+    label: last round
+    inverseLabel: last round of
+    subjectKinds: [entity]
+    valueShape: text
+    direction: directed
+    qualifiers:
+      asOf: &asOf
+        type: date
+        required: true
+        label: As of
+        description: When the value was true. The current value is the latest asOf among asserted claims.
+      asOfPrecision: *asOfPrecision
+      stage:
+        type: string
+        label: Stage
+
+  - id: headcount
+    label: headcount
+    inverseLabel: headcount of
+    subjectKinds: [entity]
+    valueShape: quantity
+    direction: directed
+    qualifiers: *quantityFact
+
+  - id: founded
+    label: founded
+    inverseLabel: founded of
+    subjectKinds: [entity]
+    valueShape: text
+    direction: directed
+    qualifiers: &textFact
+      asOf: *asOf
+      asOfPrecision: *asOfPrecision
+
+  - id: hq
+    label: headquarters
+    inverseLabel: headquarters of
+    subjectKinds: [entity]
+    valueShape: text
+    direction: directed
+    qualifiers: *textFact
+
+  - id: pricing
+    label: pricing
+    inverseLabel: pricing of
+    subjectKinds: [entity]
+    valueShape: text
+    direction: directed
+    qualifiers: *textFact
+
+  - id: license
+    label: license
+    inverseLabel: license of
+    subjectKinds: [entity]
+    valueShape: text
+    direction: directed
+    qualifiers: *textFact
+
+  - id: platforms
+    label: platforms
+    inverseLabel: platforms of
+    subjectKinds: [entity]
+    valueShape: text
+    direction: directed
+    qualifiers: *textFact
+
+  - id: launched
+    label: launched
+    inverseLabel: launched of
+    subjectKinds: [entity]
+    valueShape: text
+    direction: directed
+    qualifiers: *textFact
+
+  - id: users
+    label: users
+    inverseLabel: users of
+    subjectKinds: [entity]
+    valueShape: quantity
+    direction: directed
+    qualifiers: *quantityFact
+
+  # `claim.valueText` is one of: active, declining, unmaintained, defunct. A
+  # predicate cannot declare a select's options, so the list lives here.
+  - id: lifecycle
+    label: lifecycle
+    inverseLabel: lifecycle of
+    subjectKinds: [entity]
+    valueShape: select
+    direction: directed
+    qualifiers: *textFact

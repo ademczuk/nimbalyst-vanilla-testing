@@ -11,7 +11,7 @@
  * Example title: `height=400 caption=Overall arch`
  */
 
-import type { EmbedAttrs } from './EmbeddedFileNode';
+import type { EmbedAttrs } from './EmbeddedFileNodeCore';
 
 /**
  * Parse a CommonMark link title string into an EmbedAttrs map.

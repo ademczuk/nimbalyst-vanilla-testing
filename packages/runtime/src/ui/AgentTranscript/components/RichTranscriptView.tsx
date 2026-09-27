@@ -509,6 +509,8 @@ interface RichTranscriptViewProps {
   currentTeammates?: Array<{ agentId: string; status: 'running' | 'completed' | 'errored' | 'idle' }>;
   /** Optional: noun used in waiting text when teammates/workers are still running */
   waitingForNoun?: string;
+  /** Optional: background tasks the session is draining after the lead turn ended */
+  backgroundTasks?: Array<{ description: string; startedAt: number }>;
   /** Optional: App start time (epoch ms) for rendering restart indicator line (dev mode only) */
   appStartTime?: number;
   /** Optional: Render a file using a host-provided embedded editor surface */
@@ -1164,7 +1166,7 @@ export const extractEditsFromToolMessage = (message: TranscriptViewMessage): any
 export const RichTranscriptView = React.forwardRef<
   { scrollToMessage: (index: number) => void; scrollToTop: () => void },
   RichTranscriptViewProps
->(({ sessionId, sessionStatus, isProcessing, hasPendingInteractivePrompt, messages, provider, settings: propsSettings, onSettingsChange, showSettings, documentContext, workspacePath, renderEmptyExtra, hideEmptyHelp, readFile, onOpenFile, onOpenSession, onCompact, promptAdditions, currentTeammates, waitingForNoun, appStartTime, renderEmbeddedFile, canEmbedFile, loadToolCallDiffs, onSearchBarVisibilityChange, persistScrollState = true }, ref) => {
+>(({ sessionId, sessionStatus, isProcessing, hasPendingInteractivePrompt, messages, provider, settings: propsSettings, onSettingsChange, showSettings, documentContext, workspacePath, renderEmptyExtra, hideEmptyHelp, readFile, onOpenFile, onOpenSession, onCompact, promptAdditions, currentTeammates, waitingForNoun, backgroundTasks, appStartTime, renderEmbeddedFile, canEmbedFile, loadToolCallDiffs, onSearchBarVisibilityChange, persistScrollState = true }, ref) => {
   const [collapsedMessages, setCollapsedMessages] = useState<Set<number>>(new Set());
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const scrollButtonRef = useRef<HTMLDivElement>(null);
@@ -1358,11 +1360,13 @@ export const RichTranscriptView = React.forwardRef<
    */
   const turnStartedAt = useMemo(() => {
     if (!isWaitingForResponse) return undefined;
+    // Draining background work: count from when the oldest task started.
+    if (backgroundTasks?.length) return Math.min(...backgroundTasks.map(t => t.startedAt));
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].type === 'user_message') return messages[i].createdAt?.getTime();
     }
     return undefined;
-  }, [isWaitingForResponse, messages]);
+  }, [isWaitingForResponse, messages, backgroundTasks]);
 
   // Ref callback rather than state; see the hook for why.
   const turnElapsedRef = useElapsedTimeRef(turnStartedAt);
@@ -1370,6 +1374,11 @@ export const RichTranscriptView = React.forwardRef<
   // Compute waiting indicator text — show agent/teammate count when lead is idle but agents are running
   const waitingText = useMemo(() => {
     if (!isWaitingForResponse) return '';
+    if (backgroundTasks?.length) {
+      return backgroundTasks.length === 1
+        ? `Waiting on background task: ${backgroundTasks[0].description || 'background task'}`
+        : `Waiting on ${backgroundTasks.length} background tasks...`;
+    }
     if (runningTeammates.length > 0 && !isProcessing && sessionStatus !== 'running') {
       const singular = waitingForNoun || 'agent';
       const plural = singular.endsWith('s') ? singular : `${singular}s`;
@@ -1377,7 +1386,7 @@ export const RichTranscriptView = React.forwardRef<
       return `Waiting for ${runningTeammates.length} ${label} to complete...`;
     }
     return 'Thinking...';
-  }, [isProcessing, isWaitingForResponse, runningTeammates, sessionStatus, waitingForNoun]);
+  }, [isProcessing, isWaitingForResponse, runningTeammates, sessionStatus, waitingForNoun, backgroundTasks]);
 
   // Compute effective target index for prompt additions display
   // Use the stored messageIndex if valid, otherwise find the last user message

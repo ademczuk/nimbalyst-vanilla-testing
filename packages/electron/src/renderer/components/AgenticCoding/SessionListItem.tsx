@@ -11,6 +11,7 @@ import { SessionContextMenu } from './SessionContextMenu';
 import { FullTitleTooltip } from './FullTitleTooltip';
 import { settingAtom } from '../../store/atoms/settingAtomFamily';
 import { sessionAgentWakePendingAtom } from '../../store/atoms/teamInbox';
+import { sessionBackgroundTasksAtom, describeBackgroundWait } from '../../store/atoms/sessionBackgroundTasks';
 
 /**
  * Combined status indicator that subscribes to this session's state atoms.
@@ -25,6 +26,8 @@ export const SessionStatusIndicator = memo<{ sessionId: string; messageCount?: n
   const hasAgentWakePending = useAtomValue(sessionAgentWakePendingAtom(sessionId));
   const hasUnread = useAtomValue(sessionUnreadAtom(sessionId));
   const wakeup = useAtomValue(sessionWakeupAtom(sessionId));
+  // Lead turn is over; the session is only draining background shells/sub-agents.
+  const backgroundTasks = useAtomValue(sessionBackgroundTasksAtom(sessionId));
 
   // Priority: waiting for input > processing > pending prompt > scheduled wakeup > unread > message count
   // All interactive prompts (AskUserQuestion, ExitPlanMode, ToolPermission, etc.) show same indicator
@@ -32,6 +35,14 @@ export const SessionStatusIndicator = memo<{ sessionId: string; messageCount?: n
     return (
       <div className="session-list-item-status waiting-for-input flex items-center justify-center w-5 h-5 text-[var(--nim-warning)] animate-pulse" title="Waiting for your response">
         <MaterialSymbol icon="contact_support" size={14} />
+      </div>
+    );
+  }
+
+  if (isProcessing && backgroundTasks?.length) {
+    return (
+      <div className="session-list-item-status background-wait flex items-center justify-center w-5 h-5 text-[var(--nim-text-muted)] animate-pulse" title={describeBackgroundWait(backgroundTasks, Date.now())}>
+        <MaterialSymbol icon="timelapse" size={14} />
       </div>
     );
   }

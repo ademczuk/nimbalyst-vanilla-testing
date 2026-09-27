@@ -242,3 +242,13 @@ export type {
 // `globalRegistry` instead of compiling a second copy from runtime source.
 export { StatusBar } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/StatusBar';
 export type { StatusBarProps } from '@nimbalyst/runtime/plugins/TrackerPlugin/components/StatusBar';
+
+// Ontology inspector: pure analysis and content-health checks shared by the
+// desktop Settings panel, the web console Tracker setup screen, and the wiki home.
+export type { OntologyViewModel, OntologyInput, TypeSummary, RelationshipGraph as OntologyRelationshipGraph, RelationshipEdge as OntologyRelationshipEdge, PredicatesSummary, KnowledgeSection } from './ontology/ontologyAnalysis';
+export { computeContentHealth, factStaleAt, STALE_FACT_DAYS } from './ontology/ontologyKnowledge';
+export type { HealthItem, ContentHealthOptions, FactValue } from './ontology/ontologyKnowledge';
+export type { OntologyRecordLike } from './ontology/ontologyRecords';
+export { OntologyInspector } from './ontology/LazyOntologyInspector';
+export type { OntologyInspectorProps, OntologyInspectorWriter, OntologyInspectorView } from './ontology/OntologyInspector';
+export type { DomainModel, DomainCategory, DomainGap, DomainLine } from './ontology/ontologyDomain';

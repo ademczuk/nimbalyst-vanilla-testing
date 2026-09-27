@@ -8,6 +8,8 @@ import ActivityKit
 @MainActor
 protocol FleetActivityObserving: AnyObject {
     var areActivitiesEnabled: Bool { get }
+    /// Activities iOS still shows (not ended or dismissed).
+    var liveActivityIds: Set<String> { get }
     func start(pushToken: @escaping (String) -> Void,
                updateToken: @escaping (String, String) -> Void,
                ended: @escaping (String) -> Void)
@@ -26,6 +28,12 @@ final class FleetActivityObserver: FleetActivityObserving {
     private var ended: ((String) -> Void)?
 
     var areActivitiesEnabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
+
+    var liveActivityIds: Set<String> {
+        Set(Activity<FleetActivityAttributes>.activities
+            .filter { $0.activityState != .ended && $0.activityState != .dismissed }
+            .map(\.id))
+    }
 
     func start(pushToken: @escaping (String) -> Void,
                updateToken: @escaping (String, String) -> Void,
@@ -110,6 +118,7 @@ final class FleetActivityObserver: FleetActivityObserving {
     private static func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
     #else
     var areActivitiesEnabled: Bool { false }
+    var liveActivityIds: Set<String> { [] }
     func start(pushToken: @escaping (String) -> Void, updateToken: @escaping (String, String) -> Void, ended: @escaping (String) -> Void) {}
     func reconcile() {}
     func stop() {}

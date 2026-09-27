@@ -297,6 +297,7 @@ export declare class TrackerSyncEngine {
      * matching ack, so it holds at most the in-flight pushes.
      */
     private readonly pendingLaneIds;
+    private readonly schemaOutbox;
     private readonly rollbackSnapshots;
     private readonly pendingConfigChanges;
     constructor(config: TrackerSyncEngineConfig);
@@ -333,6 +334,8 @@ export declare class TrackerSyncEngine {
     flushSavedViews(): Promise<void>;
     /** Flush locally-pending tracker navigation entries while connected. */
     flushNavigation(): Promise<void>;
+    /** Push a schema saved mid-session; before bootstrap finishes, bootstrap pushes it (NIM-6654). */
+    flushSchemas(): Promise<void>;
     /**
      * Optimistically apply an upsert locally and enqueue it for upload.
      *
@@ -463,7 +466,6 @@ export declare class TrackerSyncEngine {
      */
     private driveTransaction;
     private driveTransactionBatch;
-    private pushPendingSchemas;
     private pushPendingSavedViews;
     private pushPendingNavigation;
     private send;

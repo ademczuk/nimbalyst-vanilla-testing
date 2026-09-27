@@ -59,6 +59,15 @@ fields:
       - value: organization
         label: Organization
         icon: apartment
+      # A category node in the market tree. Products join one with an
+      # `in-market` claim; submarkets set `parent` to their market.
+      - value: market
+        label: Market
+        icon: storefront
+      # A synthesis or overview page (a landscape, a strategy, a practice).
+      - value: topic
+        label: Topic
+        icon: topic
       - value: person
         label: Person
         icon: person
@@ -131,6 +140,12 @@ fields:
 
   - name: summary
     type: text
+    displayInline: false
+
+  # Not time-varying, so a field rather than a claim. Facts that change
+  # (revenue, pricing, users) are dated claims instead.
+  - name: website
+    type: string
     displayInline: false
 
   - name: tags

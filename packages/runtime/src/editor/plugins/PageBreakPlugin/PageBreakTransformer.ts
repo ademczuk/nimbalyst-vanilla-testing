@@ -4,7 +4,7 @@
 
 import { ElementTransformer } from '@lexical/markdown';
 import { LexicalNode } from 'lexical';
-import { $createPageBreakNode, $isPageBreakNode, PageBreakNode } from './PageBreakNode';
+import { $createPageBreakNode, $isPageBreakNode, PageBreakNode } from './PageBreakNodeCore';
 
 export const PAGE_BREAK_TRANSFORMER: ElementTransformer = {
   dependencies: [PageBreakNode],

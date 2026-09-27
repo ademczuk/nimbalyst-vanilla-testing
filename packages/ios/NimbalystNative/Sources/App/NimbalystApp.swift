@@ -326,6 +326,8 @@ public struct MainNavigationView: View {
                     appState.signOutForAuthRecovery()
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
+            } else if appState.syncManager != nil, !appState.screenshotMode {
+                SyncReconnectingNotice(isDisconnected: !appState.isConnected)
             }
             // Beneath the auth banner: a sync failure is the narrower problem,
             // and re-signing in is the action that fixes both when both show.

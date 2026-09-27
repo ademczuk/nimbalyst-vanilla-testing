@@ -94,3 +94,10 @@ export { createTrackerReferenceResolver, TrackerReferenceResolverContext, Tracke
 export type { CreateTrackerReferenceResolverOptions, StateTone, TrackerBacklink, TrackerReferenceActor, TrackerReferenceStatusOption, TrackerStateChange, TrackerStateMenuProps, TrackerReferenceResolution, TrackerReferenceResolver, TrackerReferenceSchema, TrackerReferenceStatusInfo, TrackerReferenceTypeInfo, TrackerStatement, TrackerStatementGroup, } from './references';
 export { StatusBar } from '../../../runtime/src/plugins/TrackerPlugin/components/StatusBar';
 export type { StatusBarProps } from '../../../runtime/src/plugins/TrackerPlugin/components/StatusBar';
+export type { OntologyViewModel, OntologyInput, TypeSummary, RelationshipGraph as OntologyRelationshipGraph, RelationshipEdge as OntologyRelationshipEdge, PredicatesSummary, KnowledgeSection } from './ontology/ontologyAnalysis';
+export { computeContentHealth, factStaleAt, STALE_FACT_DAYS } from './ontology/ontologyKnowledge';
+export type { HealthItem, ContentHealthOptions, FactValue } from './ontology/ontologyKnowledge';
+export type { OntologyRecordLike } from './ontology/ontologyRecords';
+export { OntologyInspector } from './ontology/LazyOntologyInspector';
+export type { OntologyInspectorProps, OntologyInspectorWriter, OntologyInspectorView } from './ontology/OntologyInspector';
+export type { DomainModel, DomainCategory, DomainGap, DomainLine } from './ontology/ontologyDomain';

@@ -90,21 +90,17 @@ public final class AppState: ObservableObject {
     private static let refreshFailureBannerThreshold = 3
     private static let refreshFailureEscalationThreshold = 5
 
-    /// Timestamp of the last `isConnected: true -> false` transition while
-    /// the user was authenticated. Cleared on reconnect, logout, or unpair.
-    /// Used to detect sustained auth-class disconnects.
-    private var disconnectedSinceWhileAuthed: Date?
+    /// How long sync must stay disconnected (while authenticated and in the
+    /// foreground) before the degraded banner appears. Long enough to ride out
+    /// normal startup churn and short network blips, short enough that a real
+    /// broken-session day (like the JWKS rotation incident) surfaces visibly
+    /// within a minute. Cleared on reconnect, logout, or unpair.
+    private var disconnectClock = SustainedDisconnectClock(threshold: 60)
 
     /// One-shot timer that re-evaluates `syncAuthDegraded` after the sustained
     /// disconnect window has elapsed. Rescheduled on each disconnect; cancelled
     /// on reconnect, logout, or unpair.
     private var degradedBannerCheckTimer: Timer?
-
-    /// How long sync must stay disconnected (while authenticated) before the
-    /// degraded banner appears. Long enough to ride out normal startup churn
-    /// and short network blips, short enough that a real broken-session day
-    /// (like the JWKS rotation incident) surfaces visibly within a minute.
-    private static let sustainedDisconnectThreshold: TimeInterval = 60
 
     public init() {
         // Initialize analytics early so events can be captured throughout the lifecycle
@@ -254,6 +250,17 @@ public final class AppState: ObservableObject {
         syncManager?.setAppInForeground(foreground, recover: false)
         documentSyncManager?.setAppInForeground(foreground)
         recovery.setForeground(foreground)
+        let checkLater = disconnectClock.setForeground(
+            foreground,
+            isConnected: isConnected || !authManager.isAuthenticated,
+            at: Date()
+        )
+        if checkLater {
+            scheduleDegradedBannerCheck()
+        } else if !foreground {
+            degradedBannerCheckTimer?.invalidate()
+            degradedBannerCheckTimer = nil
+        }
     }
 
     // MARK: - Auth Observation
@@ -451,7 +458,7 @@ public final class AppState: ObservableObject {
     /// or is escalated to sessionExpired, and on unpair.
     private func clearSyncAuthDegradedState() {
         consecutiveRefreshFailures = 0
-        disconnectedSinceWhileAuthed = nil
+        disconnectClock.connected()
         degradedBannerCheckTimer?.invalidate()
         degradedBannerCheckTimer = nil
         if syncAuthDegraded {
@@ -462,23 +469,21 @@ public final class AppState: ObservableObject {
     /// Called whenever the sync manager's connection state changes.
     /// On reconnect we clear all degraded-state tracking. On disconnect
     /// (while authenticated) we record the timestamp and schedule a one-shot
-    /// re-evaluation at `sustainedDisconnectThreshold` seconds out.
+    /// re-evaluation one foreground threshold out (see `SustainedDisconnectClock`).
     private func handleSyncConnectionChange(connected: Bool) {
         if connected {
             clearSyncAuthDegradedState()
             return
         }
         guard authManager.isAuthenticated else { return }
-        if disconnectedSinceWhileAuthed == nil {
-            disconnectedSinceWhileAuthed = Date()
-        }
+        disconnectClock.disconnected(at: Date())
         scheduleDegradedBannerCheck()
     }
 
     private func scheduleDegradedBannerCheck() {
         degradedBannerCheckTimer?.invalidate()
         degradedBannerCheckTimer = Timer.scheduledTimer(
-            withTimeInterval: AppState.sustainedDisconnectThreshold,
+            withTimeInterval: disconnectClock.threshold,
             repeats: false
         ) { [weak self] _ in
             Task { @MainActor in
@@ -487,15 +492,14 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// Fires `sustainedDisconnectThreshold` after a disconnect-while-authed.
+    /// Fires one threshold after a foreground disconnect-while-authed.
     /// If we're still disconnected and still authenticated, surface the
     /// banner. The user can then either tap "Sign in again" or wait for the
     /// refresh-failure escalation path (~20 min) to log them out automatically.
     private func evaluateDegradedBanner() {
         guard authManager.isAuthenticated else { return }
-        guard !isConnected else { return }
-        guard let since = disconnectedSinceWhileAuthed,
-              Date().timeIntervalSince(since) >= AppState.sustainedDisconnectThreshold else {
+        guard disconnectClock.isSustained(at: Date(), isConnected: isConnected),
+              let since = disconnectClock.disconnectedSince else {
             return
         }
         guard !syncAuthDegraded else { return }

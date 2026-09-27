@@ -8,14 +8,16 @@
 
 import type { Klass, LexicalNode } from 'lexical';
 
-import { CodeHighlightNode, CodeNode } from '@lexical/code';
+// code-core, not @lexical/code: the latter loads prismjs at import time, and
+// these classes are the same objects either way.
+import { CodeHighlightNode, CodeNode } from '@lexical/code-core';
 import { HashtagNode } from '@lexical/hashtag';
 import { MarkNode } from '@lexical/mark';
 import { OverflowNode } from '@lexical/overflow';
 import { HeadingNode, QuoteNode } from '@lexical/rich-text';
 import { TableCellNode, TableNode, TableRowNode } from '@lexical/table';
 
-import { EmojiNode } from '../plugins/EmojisPlugin/EmojiNode.tsx';
+import { EmojiNode } from '../plugins/EmojisPlugin/EmojiNode';
 
 const EditorNodes: Array<Klass<LexicalNode>> = [
   HeadingNode,

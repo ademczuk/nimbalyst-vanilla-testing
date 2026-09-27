@@ -1,6 +1,6 @@
 import type { NodeKey } from 'lexical';
 import type { ComponentType, RefObject } from 'react';
-import type { TrackerReferenceView } from './TrackerReferenceNode';
+import type { TrackerReferenceView } from './TrackerReferenceNodeCore';
 export interface TrackerReferenceNodeRendererProps {
     referenceKey: string;
     nodeKey: NodeKey;

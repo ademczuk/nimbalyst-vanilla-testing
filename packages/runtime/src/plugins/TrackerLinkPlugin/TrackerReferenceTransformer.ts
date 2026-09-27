@@ -20,7 +20,7 @@ import {
   TrackerReferenceNode,
   TRACKER_REFERENCE_URN_SCHEME,
   normalizeTrackerReferenceView,
-} from './TrackerReferenceNode';
+} from './TrackerReferenceNodeCore';
 import { TRACKER_REFERENCE_KEY_PATTERN } from './trackerReferenceHref';
 
 const TRACKER_REFERENCE_IMPORT_REGEXP = new RegExp(

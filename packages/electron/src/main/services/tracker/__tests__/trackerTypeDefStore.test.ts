@@ -40,6 +40,7 @@ import {
   materializeYamlTrackerTypeDef,
   markTrackerTypeDefProjected,
 } from '../trackerTypeDefStore';
+import { registerTrackerSchemaFlushHandler, TRACKER_SCHEMA_FLUSH_DEBOUNCE_MS } from '../trackerSchemaFlush';
 import type { TrackerDataModel } from '@nimbalyst/runtime/plugins/TrackerPlugin/models';
 
 const SCHEMA_DIR = path.resolve(__dirname, '..', '..', '..', 'database', 'sqlite', 'schemas');
@@ -378,6 +379,31 @@ describe('trackerTypeDefStore materialization lifecycle (SQLite, migration 0012)
       expect(JSON.parse(all[0].model)).toEqual(edited);
       expect(all[0].sync_id).toBe(14); // still team-owned; server assigns the next version
       expect(JSON.parse(all[0].synced_model!)).toEqual(shared); // baseline stays server truth
+    });
+
+    it('asks the connected engine to push a queued edit instead of waiting for a reconnect (NIM-6654)', async () => {
+      // Let flushes debounced by earlier tests on this workspace fire unobserved.
+      await new Promise(resolve => setTimeout(resolve, TRACKER_SCHEMA_FLUSH_DEBOUNCE_MS + 20));
+      const flush = vi.fn();
+      const unregister = registerTrackerSchemaFlushHandler(flush);
+      try {
+        await applyRemoteTrackerSchemaDef(WS, def('bug', shared, 14), db);
+        await markTrackerTypeDefProjected(WS, 'bug', JSON.stringify(shared), db);
+        await materializeYamlTrackerTypeDef(
+          WS,
+          model('bug', { displayName: 'Defect', fields: [{ name: 'collection' }] }),
+          db,
+        );
+        // A brand-new team type and a deletion enter the same outbox.
+        await materializeYamlTrackerTypeDef(WS, model('ontology-proposal', { sharing: 'team' }), db);
+        await removeTrackerTypeDef(WS, 'ontology-proposal', db);
+
+        await vi.waitFor(() => expect(flush).toHaveBeenCalledWith(WS));
+        // Debounced: a burst of saves is one push, not one per write.
+        expect(flush).toHaveBeenCalledTimes(1);
+      } finally {
+        unregister();
+      }
     });
 
     it('carries the full activity trail forward and attributes a real YAML edit', async () => {

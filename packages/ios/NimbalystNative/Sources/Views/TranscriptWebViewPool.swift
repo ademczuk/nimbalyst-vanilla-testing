@@ -236,7 +236,7 @@ private class WarmupNavigationDelegate: NSObject, WKNavigationDelegate {
         // Warmup provisional navigation failed
     }
 
-    func webView(_ webView: WKWebView, webContentProcessDidTerminate: WKWebView) {
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         // WKNavigationDelegate is called on the main thread.
         // Use MainActor.assumeIsolated to call @MainActor methods synchronously,
         // avoiding the Task race where takeWebView() could run before the cleanup.

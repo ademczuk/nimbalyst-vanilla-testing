@@ -1,9 +1,11 @@
 import { BrowserWindow } from 'electron';
+import { basename } from 'path';
 import { getFolderContents } from '../utils/FileTree';
 import { logger } from '../utils/logger';
 import { getWindowId, markRecentlyDeleted } from '../window/WindowManager';
 import { openFileReconciler } from './OpenFileReconciler';
 import * as workspaceEventBus from './WorkspaceEventBus';
+import { quickOpenFileNameCache } from './QuickOpenFileNameCache';
 
 /**
  * Optimized workspace watcher.
@@ -95,6 +97,8 @@ export class OptimizedWorkspaceWatcher {
         try {
             await workspaceEventBus.subscribe(workspacePath, subscriberId, {
                 onHealthChanged: (health) => {
+                    // A restarted watcher cannot replay structure changes missed while offline.
+                    quickOpenFileNameCache.invalidate(workspacePath);
                     if (!window.isDestroyed()) window.webContents.send('file:watch-health', { root: workspacePath, ...health });
                     if (health.state === 'recovering') recovering = true;
                     if (health.state === 'watching' && recovering) {
@@ -104,6 +108,9 @@ export class OptimizedWorkspaceWatcher {
                     }
                 },
                 onChange: (filePath: string) => {
+                    if (['.gitignore', '.ignore', '.rgignore'].includes(basename(filePath))) {
+                        quickOpenFileNameCache.invalidate(workspacePath);
+                    }
                     // Content modification -- notify editors, do NOT rebuild file tree.
                     // We send for bypassed (gitignored-but-tracked) files too: SessionFileWatcher
                     // skips events that pass through `markEditorSave` (restore from history,
@@ -114,6 +121,7 @@ export class OptimizedWorkspaceWatcher {
                     }
                 },
                 onAdd: (filePath: string, gitignoreBypassed?: boolean) => {
+                    quickOpenFileNameCache.invalidate(workspacePath);
                     // Always refresh file tree for new files — the tree builder has its
                     // own EXCLUDED_DIRS filtering, so gitignored files in non-excluded
                     // dirs (e.g. AI-created files) will correctly appear.
@@ -124,6 +132,7 @@ export class OptimizedWorkspaceWatcher {
                     }
                 },
                 onUnlink: (filePath: string, gitignoreBypassed?: boolean) => {
+                    quickOpenFileNameCache.invalidate(workspacePath);
                     // Always refresh file tree for deleted files
                     triggerUpdate();
                     if (gitignoreBypassed && !filePath.toLowerCase().endsWith('.md') && !workspaceEventBus.hasGitignoreBypass(workspacePath, filePath)) return;

@@ -119,6 +119,7 @@ import {
   shouldArmGraceTimerForResult,
   shouldContinueWithTaskResults,
   buildTaskResultContinuationMessage,
+  summarizeBackgroundWait,
   type DrainExitCause,
   type TaskTerminalNotification,
 } from './claudeCode/subagentDrain';
@@ -246,6 +247,9 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   // is still iterating to drain background sub-agents that outlived the turn.
   // See subagentDrain.ts and NIM-1344 / GitHub #732.
   private drainingBackgroundTasks: boolean = false;
+  // Task ids last published as the session's background wait, so unchanged
+  // task_progress chunks do not re-broadcast.
+  private publishedBackgroundWaitKey = '';
   // Why the current streaming loop stopped iterating. Set at each loop-exit point
   // so finalizeBackgroundDrain() can tell a user stop / supersede (no continuation)
   // apart from an unexpected sub-agent death (auto-continue). Reset each turn.
@@ -1402,6 +1406,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             const willDrainSubagents = shouldDeferTeardownForSubagents(this.hasRunningTasks());
             if (willDrainSubagents) {
               this.drainingBackgroundTasks = true;
+              this.publishBackgroundWait(sessionId);
             }
             // Same ordering constraint for the "settled during the turn" trigger:
             // willResumeAfterCompletion() reads it while the consumer handles the
@@ -1649,6 +1654,7 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // drainingBackgroundTasks, so reset those only afterward. NIM-1344 / #732.
       this.finalizeBackgroundDrain(sessionId, queryForDrainCleanup);
       this.drainingBackgroundTasks = false;
+      this.publishBackgroundWait(sessionId);
       this.drainExitCause = 'resolved';
       this.drainTerminalNotifications = [];
       this.drainGraceExpired = false;
@@ -2365,7 +2371,25 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       notifications: this.drainTerminalNotifications,
       log: (message) => console.log(message),
     });
-    if (changed) this.emitTaskUpdate(sessionId).catch(() => {});
+    if (changed) {
+      this.emitTaskUpdate(sessionId).catch(() => {});
+      this.publishBackgroundWait(sessionId);
+    }
+  }
+
+  /**
+   * Tell the renderer which background tasks the session is waiting on after the
+   * lead's turn ended (an empty list clears it). Rides the metadata-updated
+   * forwarder to `sessions:session-updated`; not persisted, since the tasks die
+   * with the process.
+   */
+  private publishBackgroundWait(sessionId: string | undefined): void {
+    if (!sessionId) return;
+    const backgroundTasks = summarizeBackgroundWait(this.drainingBackgroundTasks, this.activeTasks.values());
+    const key = backgroundTasks.map((t) => t.taskId).join(',');
+    if (key === this.publishedBackgroundWaitKey) return;
+    this.publishedBackgroundWaitKey = key;
+    this.emit('session:metadata-updated', { sessionId, metadata: { backgroundTasks } });
   }
 
   private processTeammateToolResult(

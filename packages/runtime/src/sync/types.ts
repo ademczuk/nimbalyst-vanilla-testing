@@ -423,8 +423,11 @@ export interface SyncProvider {
    * coalesce -- see `FleetActivityPublisher`. Sending one of these per streaming
    * tick would get the activity silently throttled by ActivityKit, which looks
    * identical to the feature being broken.
+   *
+   * Resolves `true` only when the frame was written to an open index socket.
+   * `false` means it was dropped locally and the server never saw it.
    */
-  sendFleetActivity?(activity: FleetActivitySnapshot, shownOnDesktop?: boolean): Promise<void>;
+  sendFleetActivity?(activity: FleetActivitySnapshot, shownOnDesktop?: boolean): Promise<boolean>;
 
   /** Get list of currently connected devices */
   getConnectedDevices?(): DeviceInfo[];

@@ -380,11 +380,15 @@ existing collaboration hooks.
    adapters that implement `toStructured` + `applyStructuredPatch`.
    Visual-only adapters that skip the structured surface remain
    read-only to AI.
-4. **Worker-side adapters: not loaded.** Worker stays
-   adapter-agnostic; all Y.Doc state on the server is opaque.
-   Server-side search indexing and snapshot rollups are deferred
-   until we have a use case that justifies pushing adapters into
-   the Worker bundle.
+4. **Worker-side adapters: built-in markdown only.** Originally the
+   Worker stayed adapter-agnostic, with all server-side Y.Doc state
+   opaque. Revised 2026-09-25: team documents and trackers now use
+   server-managed keys, so opacity no longer protects encryption.
+   Writers without an editor (remote MCP, CLI, curator, headless
+   nodes) need real tracker bodies. The Worker may therefore load a
+   React-free build of the built-in markdown adapter to write tracker
+   bodies. Extension adapters and extension-donated nodes stay
+   client-only; on the server they degrade to text.
 5. **`layoutVersion` + migrations: yes.** Every adapter declares
    `layoutVersion: number`. Mismatches on `applyFromFile` /
    `applyStructuredPatch` run registered migrations before the

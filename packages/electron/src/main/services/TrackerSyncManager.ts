@@ -53,15 +53,9 @@ import { getOrgScopedIdentity, getOrgScopedJwt, listMembers, resolveTeamForWorks
 import { getCollabSyncWsUrl } from '../utils/collabSyncUrl';
 import { getDatabase } from '../database/initialize';
 import { TrackerPGLiteStore } from './tracker/TrackerPGLiteStore';
-import {
-  listUnsyncedTrackerSchemaDefs,
-  markTrackerSchemaDefRejected,
-} from './tracker/trackerTypeDefStore';
-import {
-  applyRemoteWorkspaceTrackerSchemaDef,
-  encodeTrackerSchemaDefForPush,
-  refreshWorkspaceSchemaLayer,
-} from './TrackerSchemaService';
+import { createDesktopTrackerSchemaSyncHooks } from './tracker/desktopTrackerSchemaSyncHooks';
+import { registerTrackerSchemaFlushHandler } from './tracker/trackerSchemaFlush';
+import { refreshWorkspaceSchemaLayer } from './TrackerSchemaService';
 import {
   applyRemoteWorkspaceTrackerNavigationEntry,
   registerTrackerNavigationFlushHandler,
@@ -143,6 +137,10 @@ registerTrackerNavigationFlushHandler((workspacePath) =>
 
 registerTrackerSavedViewFlushHandler((workspacePath) =>
   engines.get(workspacePath)?.engine.flushSavedViews(),
+);
+
+registerTrackerSchemaFlushHandler((workspacePath) =>
+  engines.get(workspacePath)?.engine.flushSchemas(),
 );
 
 /**
@@ -403,14 +401,7 @@ async function doInitializeTrackerSync(workspacePath: string): Promise<void> {
         });
       },
     },
-    schemaSync: {
-      // An override of a builtin goes out as a DELTA so each peer resolves it
-      // against its own builtin and keeps receiving shipped fields (#1178).
-      listUnsynced: async () =>
-        (await listUnsyncedTrackerSchemaDefs(workspacePath)).map(encodeTrackerSchemaDefForPush),
-      applyRemote: (def) => applyRemoteWorkspaceTrackerSchemaDef(workspacePath, def),
-      markRejected: (type) => markTrackerSchemaDefRejected(workspacePath, type),
-    },
+    schemaSync: createDesktopTrackerSchemaSyncHooks(workspacePath),
     navigationSync: {
       getMaxSyncId: () => getMaxTrackerNavigationSyncId(workspacePath),
       listUnsynced: () => listUnsyncedTrackerNavigationEntries(workspacePath),
@@ -998,13 +989,7 @@ export function registerTrackerSyncHandlers(): void {
             avatarUrl: payload.avatarUrl ?? null,
           },
           persistence,
-          schemaSync: {
-                  listUnsynced: async () =>
-              (await listUnsyncedTrackerSchemaDefs(workspacePath)).map(
-                encodeTrackerSchemaDefForPush,
-              ),
-            applyRemote: (def) => applyRemoteWorkspaceTrackerSchemaDef(workspacePath, def),
-          },
+          schemaSync: createDesktopTrackerSchemaSyncHooks(workspacePath),
           navigationSync: {
             getMaxSyncId: () => getMaxTrackerNavigationSyncId(workspacePath),
             listUnsynced: () => listUnsyncedTrackerNavigationEntries(workspacePath),

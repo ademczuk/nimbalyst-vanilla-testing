@@ -1,0 +1,16 @@
+{
+  "description": "Once per session, after substantive work, ask the agent to record what it established in the team wiki.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/keeper-nudge.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -10,7 +10,8 @@
 
 import type {HeadingTagType} from '@lexical/rich-text';
 
-import {$createCodeNode, $isCodeNode, CodeNode} from '@lexical/code';
+// code-core, not @lexical/code: the latter loads prismjs at import time.
+import {$createCodeNode, $isCodeNode, CodeNode} from '@lexical/code-core';
 import {
   $createLinkNode,
   $isAutoLinkNode,

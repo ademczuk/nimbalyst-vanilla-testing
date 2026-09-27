@@ -35,7 +35,7 @@
  */
 import type { TrackerNavigationSyncHooks, TrackerSchemaSyncHooks } from '@nimbalyst/tracker-engine';
 import { type TrackerNavigationEntry } from '../../../../runtime/src/sync/trackerNavigation';
-import { type TrackerDataModel } from '@nimbalyst/tracker-schema';
+import { type PredicateDefinition, type TrackerDataModel } from '@nimbalyst/tracker-schema';
 export interface BrowserTrackerSchemaStoreOptions {
     /**
      * The builtin tracker types this build ships, the seed a delta resolves
@@ -53,6 +53,12 @@ export interface BrowserTrackerSchemaState {
     trackerTypes: TrackerDataModel[];
     /** The team's synced sidebar tree, sorted the way every host sorts it. */
     navigationEntries: TrackerNavigationEntry[];
+    /**
+     * The room's predicate registry: labels, inverse labels and qualifier
+     * definitions for knowledge-graph statements. Empty until the room publishes
+     * one; an unreadable publish leaves the previous registry in place.
+     */
+    predicates: PredicateDefinition[];
 }
 /** A type this host has no lane for: personal items never reach a team room. */
 export declare function isPersonalTrackerModel(model: TrackerDataModel): boolean;
@@ -73,6 +79,7 @@ export declare class BrowserTrackerSchemaStore {
     private readonly builtins;
     private readonly models;
     private readonly navigation;
+    private predicates;
     private readonly listeners;
     private state;
     private disposed;

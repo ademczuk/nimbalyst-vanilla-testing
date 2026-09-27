@@ -13,7 +13,7 @@ import {
   DecisionNode,
   $createDecisionNode,
   $isDecisionNode,
-} from "./DecisionNode";
+} from "./DecisionNodeCore";
 
 const DECISION_START_REGEX = /^[ \t]*```decision[ \t]*$/;
 const DECISION_END_REGEX = /[ \t]*```$/;

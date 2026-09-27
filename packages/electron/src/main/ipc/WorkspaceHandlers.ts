@@ -39,6 +39,8 @@ import {
 import { workspaceLocalKeyStore } from '../services/tracker/workspaceLocalKeyStore';
 import { database } from '../database/PGLiteDatabaseWorker';
 import { getRipgrepPath } from '../services/ripgrepPath';
+import { findWorkspaceFiles } from '../file/QuickOpenFileScanner';
+import { quickOpenFileNameCache } from '../file/QuickOpenFileNameCache';
 
 /**
  * Deep merge utility for workspace state updates.
@@ -88,36 +90,9 @@ function getFileType(filePath: string): string {
     return typeMap[ext] || 'other';
 }
 
-// Cache for quick open file searches
-const fileNameCaches = new Map<string, Array<{ path: string; name: string; type: 'file' | 'directory' }>>();
-
 interface QuickOpenFileNameSearchOptions {
     fileMask?: string | null;
 }
-
-// Binary file extensions to exclude from QuickOpen results
-// Note: Images are NOT excluded - Nimbalyst can display them
-// Note: PDFs are NOT excluded - extensions may add support
-// Note: .mp4 is NOT excluded - the media viewer extension opens it
-const BINARY_EXTENSIONS = new Set([
-    // Audio/Video
-    '.mp3', '.avi', '.mov', '.wmv', '.flac', '.wav', '.ogg', '.webm', '.mkv',
-    // Archives
-    '.zip', '.tar', '.gz', '.rar', '.7z', '.bz2', '.xz',
-    // Binaries/Libraries
-    '.exe', '.dll', '.so', '.dylib', '.o', '.a', '.lib', '.bin',
-    // Documents (non-text)
-    '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-    // Database/Lock files
-    '.db', '.sqlite', '.sqlite3', '.lock',
-    // Fonts
-    '.ttf', '.otf', '.woff', '.woff2', '.eot',
-    // Other binary
-    '.pyc', '.pyo', '.class', '.jar', '.war', '.ear',
-    '.node', '.wasm',
-]);
-
-const NIMBALYST_LOCAL_DIRNAME = 'nimbalyst-local';
 
 function shouldIncludeQuickOpenCacheItem(
     item: { path: string; type: 'file' | 'directory' },
@@ -126,88 +101,6 @@ function shouldIncludeQuickOpenCacheItem(
     if (maskPatterns.length === 0) return true;
     if (item.type === 'directory') return false;
     return matchesFileMask(item.path, maskPatterns);
-}
-
-async function runRipgrepFiles(rootPath: string, options?: { noIgnore?: boolean }): Promise<string[]> {
-    const rgPath = getRipgrepPath();
-    const rgArgs = [
-        '--files',
-        '--hidden',  // Include dotfiles like .gitignore
-        ...(options?.noIgnore ? ['--no-ignore'] : []),
-        ...RIPGREP_EXCLUDE_ARGS_ARRAY,
-        rootPath
-    ];
-
-    let stdout = '';
-    try {
-        const result = await execFileAsync(rgPath, rgArgs, { maxBuffer: 5 * 1024 * 1024 });
-        stdout = result.stdout;
-    } catch (execError: any) {
-        // ripgrep returns exit code 1 when no matches found
-        if (execError.code === 1) {
-            stdout = execError.stdout || '';
-        } else {
-            throw execError;
-        }
-    }
-
-    if (!stdout) return [];
-
-    return stdout
-        .split('\n')
-        .filter(line => line.trim())
-        .map(file => path.normalize(file));
-}
-
-/**
- * Quick-open index for one root: every file, plus every directory on the way
- * to one. Built per root rather than per workspace so attaching or detaching a
- * folder only reindexes that folder.
- */
-async function buildQuickOpenCacheForRoot(
-    rootPath: string,
-): Promise<Array<{ path: string; name: string; type: 'file' | 'directory' }>> {
-    const files = await findWorkspaceFiles(rootPath);
-    const cache: Array<{ path: string; name: string; type: 'file' | 'directory' }> = [];
-
-    // Extract unique directories from file paths
-    const dirs = new Set<string>();
-    for (const file of files) {
-        // Walk up the directory tree from each file
-        let dir = dirname(file);
-        while (dir.length > rootPath.length) {
-            if (dirs.has(dir)) break; // Already seen this dir and its parents
-            dirs.add(dir);
-            dir = dirname(dir);
-        }
-    }
-
-    for (const dir of dirs) {
-        cache.push({ path: dir, name: basename(dir).toLowerCase(), type: 'directory' });
-    }
-    for (const file of files) {
-        cache.push({ path: file, name: basename(file).toLowerCase(), type: 'file' });
-    }
-
-    return cache;
-}
-
-// Cross-platform file finder using ripgrep --files.
-// Respects .gitignore for the general workspace scan, but explicitly includes
-// nimbalyst-local/ so local plan files remain mentionable in @ typeahead.
-async function findWorkspaceFiles(dir: string): Promise<string[]> {
-    const baseFiles = await runRipgrepFiles(dir);
-    const nimbalystLocalPath = path.join(dir, NIMBALYST_LOCAL_DIRNAME);
-    const extraFiles = existsSync(nimbalystLocalPath)
-      ? await runRipgrepFiles(nimbalystLocalPath, { noIgnore: true })
-      : [];
-
-    return Array.from(new Set([...baseFiles, ...extraFiles]))
-        .filter(file => {
-            // Filter out binary files by extension
-            const ext = path.extname(file).toLowerCase();
-            return !BINARY_EXTENSIONS.has(ext);
-        });
 }
 
 export function registerWorkspaceHandlers() {
@@ -359,8 +252,7 @@ export function registerWorkspaceHandlers() {
             const roots = getWorkspaceRoots(workspacePath);
             let fileCount = 0;
             for (const rootPath of roots) {
-                const cache = await buildQuickOpenCacheForRoot(rootPath);
-                fileNameCaches.set(rootPath, cache);
+                const cache = await quickOpenFileNameCache.get(rootPath, true);
                 fileCount += cache.length;
             }
             return { success: true, fileCount };
@@ -385,9 +277,8 @@ export function registerWorkspaceHandlers() {
             // Union the per-root caches: quick open spans every root the
             // workspace shows, in root order.
             const roots = getWorkspaceRoots(workspacePath);
-            const cache = roots.flatMap(rootPath => fileNameCaches.get(rootPath) ?? []);
+            const cache = (await Promise.all(roots.map(rootPath => quickOpenFileNameCache.get(rootPath)))).flat();
             if (cache.length === 0) {
-                console.warn('Quick open cache not built for workspace:', workspacePath);
                 return [];
             }
 

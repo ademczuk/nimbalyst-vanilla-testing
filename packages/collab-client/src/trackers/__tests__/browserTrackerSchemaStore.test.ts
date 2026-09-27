@@ -12,7 +12,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { encodeTrackerSchemaPatchPayload } from '@nimbalyst/runtime/plugins/TrackerPlugin/models/schemaSyncPayload';
+import {
+  encodeTrackerPredicateRegistryPayload,
+  encodeTrackerSchemaPatchPayload,
+  TRACKER_PREDICATE_REGISTRY_SCHEMA_TYPE,
+} from '@nimbalyst/runtime/plugins/TrackerPlugin/models/schemaSyncPayload';
 import type { TrackerDataModel } from '@nimbalyst/tracker-schema';
 import { BrowserTrackerSchemaStore, resolveBrowserTrackerSchema } from '../browser/BrowserTrackerSchemaStore';
 
@@ -90,6 +94,42 @@ describe('a personal tracker type, in a host with no personal lane', () => {
       });
       expect(store.getState().trackerTypes.map((model) => model.type)).toEqual(['idea']);
     } finally {
+      store.dispose();
+    }
+  });
+});
+
+describe('the predicate registry (NIM-6653)', () => {
+  it('is readable from the store state, and an unreadable push leaves the last one in force', async () => {
+    const store = new BrowserTrackerSchemaStore({ builtins: [seed] });
+    const seen: string[][] = [];
+    const unsubscribe = store.subscribe((state) => seen.push(state.predicates.map((p) => p.id)));
+    try {
+      expect(store.getState().predicates).toEqual([]);
+      const worksAt = {
+        id: 'works-at',
+        label: 'works at',
+        inverseLabel: 'employs',
+        subjectKinds: ['*'],
+        valueShape: 'entity' as const,
+        direction: 'directed' as const,
+      };
+      await store.schemaSync.applyRemote({
+        type: TRACKER_PREDICATE_REGISTRY_SCHEMA_TYPE,
+        model: encodeTrackerPredicateRegistryPayload([worksAt]),
+        syncId: 1 as never,
+      });
+      expect(store.getState().predicates).toEqual([worksAt]);
+      expect(seen.at(-1)).toEqual(['works-at']);
+
+      await store.schemaSync.applyRemote({
+        type: TRACKER_PREDICATE_REGISTRY_SCHEMA_TYPE,
+        model: JSON.stringify({ payloadKind: 'trackerPredicateRegistry', version: 1, predicates: [{ id: 'x' }] }),
+        syncId: 2 as never,
+      });
+      expect(store.getState().predicates).toEqual([worksAt]);
+    } finally {
+      unsubscribe();
       store.dispose();
     }
   });

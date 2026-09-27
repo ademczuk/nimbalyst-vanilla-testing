@@ -1,7 +1,7 @@
 {
   "name": "knowledge",
   "version": "1.0.0",
-  "description": "Knowledge graph ontology and authoring guidance for Nimbalyst trackers",
+  "description": "Knowledge graph setup, wiki guide, and authoring guidance for Nimbalyst trackers",
   "author": {
     "name": "Nimbalyst",
     "url": "https://nimbalyst.com"

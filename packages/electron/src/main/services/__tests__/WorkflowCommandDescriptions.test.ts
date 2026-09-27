@@ -49,7 +49,9 @@ describe('workflow command metadata', () => {
     const extensionRoot = path.join(repoRoot, 'packages', 'extensions');
     const pluginCommandFiles = collectMarkdownFiles(extensionRoot).filter((filePath) =>
       filePath.includes(`${path.sep}claude-plugin${path.sep}`) &&
-      !filePath.endsWith(`${path.sep}SKILL.md`)
+      // Everything under a skill directory (SKILL.md and its references) is
+      // skill content, not a slash command.
+      !filePath.includes(`${path.sep}skills${path.sep}`)
     );
     const missing = pluginCommandFiles.filter((filePath) => !hasDescriptionFrontmatter(filePath));
 

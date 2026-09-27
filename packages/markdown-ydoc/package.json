@@ -1,0 +1,29 @@
+{
+  "name": "@nimbalyst/markdown-ydoc",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Worker-safe markdown <-> Lexical Y.Doc conversion for hosts with no editor (collab worker, CLI, headless nodes).",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.js.map",
+    "types"
+  ],
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "typescript": "^5.0.0"
+  }
+}

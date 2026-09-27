@@ -15,6 +15,43 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 afterEach(() => cleanup());
 
+describe('slow commit logging', () => {
+  it('names the slow component, its DOM class, and the tab it renders in', async () => {
+    const { setSlowCommitListener } = await import('../renderProfiler');
+    const { summarizeSlowCommit } = await import('../slowCommitReport');
+    const { formatJankWindow } = await import('../rendererJankMonitor');
+    const seen: ReturnType<typeof summarizeSlowCommit>[] = [];
+    setSlowCommitListener((root, floor) => seen.push(summarizeSlowCommit(root, floor)));
+
+    function ot() {
+      const end = performance.now() + 120;
+      while (performance.now() < end) { /* simulate an expensive extension render */ }
+      return <main className="nn-names">names</main>;
+    }
+    function TabEditorErrorBoundary({ filePath, children }: { filePath: string; children: React.ReactNode }) {
+      return <div data-path={filePath}>{children}</div>;
+    }
+    try {
+      render(<TabEditorErrorBoundary filePath="collab://doc:names"><>{React.createElement(ot)}</></TabEditorErrorBoundary>);
+    } finally {
+      setSlowCommitListener(null);
+    }
+
+    expect(seen).toHaveLength(1);
+    const [heaviest] = seen[0].top;
+    expect(heaviest).toMatchObject({ name: 'ot', element: 'nn-names', context: 'collab://doc:names' });
+    expect(heaviest.selfMs).toBeGreaterThanOrEqual(100);
+    const line = formatJankWindow(
+      { frames: 0, blockedMs: 0, maxFrameMs: 0, scripts: new Map(), inputs: 0, maxInputMs: 0, inputTarget: null, commits: seen, droppedCommits: 0 },
+      'visible',
+      true,
+    );
+    expect(line).toContain('ot ');
+    expect(line).toContain('.nn-names');
+    expect(line).toContain('in collab://doc:names');
+  });
+});
+
 function Leaf({ label }: { label: string }) {
   return <span data-testid="leaf">{label}</span>;
 }

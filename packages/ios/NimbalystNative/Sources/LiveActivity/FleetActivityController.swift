@@ -14,14 +14,26 @@ public final class FleetActivityController: ObservableObject {
     public static let shared = FleetActivityController(observer: FleetActivityObserver())
     private static let enabledKey = "liveActivityEnabled"
     private static let hasStoredEnabledKey = "liveActivityEnabledStored"
+    // Tokens outlive the process: ActivityKit may not re-emit the push-to-start
+    // token after first launch, and a card that ended while the app was gone is
+    // no longer in `Activity.activities` to tell us its token died.
+    private static let pushToStartTokenKey = "liveActivityPushToStartToken"
+    private static let updateTokenKey = "liveActivityUpdateToken"
+    private static let updateActivityIdKey = "liveActivityUpdateActivityId"
     private let observer: any FleetActivityObserving
     private let defaults: UserDefaults
     private var isObserving = false
-    private var updateActivityId: String?
+    private var updateActivityId: String? {
+        didSet { defaults.set(updateActivityId, forKey: Self.updateActivityIdKey) }
+    }
 
     @Published public private(set) var isEnabled: Bool
-    @Published public private(set) var pushToStartToken: String?
-    @Published public private(set) var updateToken: String?
+    @Published public private(set) var pushToStartToken: String? {
+        didSet { defaults.set(pushToStartToken, forKey: Self.pushToStartTokenKey) }
+    }
+    @Published public private(set) var updateToken: String? {
+        didSet { defaults.set(updateToken, forKey: Self.updateTokenKey) }
+    }
     public var onTokenReceived: ((String, LiveActivityTokenKind) -> Void)?
     /// nil kind means all registrations; a token identifies the activity being retired.
     public var onTokenInvalidated: ((LiveActivityTokenKind?, String?) -> Void)?
@@ -30,6 +42,9 @@ public final class FleetActivityController: ObservableObject {
         self.observer = observer
         self.defaults = defaults
         isEnabled = defaults.bool(forKey: Self.hasStoredEnabledKey) ? defaults.bool(forKey: Self.enabledKey) : true
+        pushToStartToken = defaults.string(forKey: Self.pushToStartTokenKey)
+        updateToken = defaults.string(forKey: Self.updateTokenKey)
+        updateActivityId = defaults.string(forKey: Self.updateActivityIdKey)
     }
 
     public var areActivitiesEnabled: Bool { observer.areActivitiesEnabled }
@@ -51,6 +66,9 @@ public final class FleetActivityController: ObservableObject {
             )
         }
         observer.reconcile()
+        if let id = updateActivityId, !observer.liveActivityIds.contains(id) {
+            activityEnded(id)
+        }
     }
 
     public func stop(invalidateTokens: Bool) {

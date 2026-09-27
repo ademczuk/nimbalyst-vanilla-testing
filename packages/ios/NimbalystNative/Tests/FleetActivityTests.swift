@@ -101,6 +101,7 @@ private final class TestFleetObserver: FleetActivityObserving {
     var updateToken: ((String, String) -> Void)?
     var ended: ((String) -> Void)?
     var reconcileAction: (() -> Void)?
+    var liveActivityIds: Set<String> = []
     func start(pushToken: @escaping (String) -> Void, updateToken: @escaping (String, String) -> Void, ended: @escaping (String) -> Void) {
         startCount += 1
         stopped = false
@@ -169,5 +170,38 @@ extension FleetActivityTests {
         let legacy = UnregisterLiveActivityTokenMessage(deviceId: "phone", kind: nil)
         let legacyEncoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as! [String: String]
         XCTAssertNil(legacyEncoded["token"])
+    }
+
+    /// A card that ends while the app is suspended or killed is gone from
+    /// `Activity.activities` by the next launch. The relaunched controller must
+    /// still retire its token, or the server keeps updating a dead card and
+    /// never starts a new one. ActivityKit may also not re-emit the
+    /// push-to-start token after the first launch, so it must survive too.
+    @MainActor
+    func testRelaunchRetiresAnActivityThatEndedWhileTheAppWasGoneAndResendsStartToken() {
+        let suite = "FleetActivityTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let firstObserver = TestFleetObserver()
+        firstObserver.areActivitiesEnabled = true
+        let first = FleetActivityController(observer: firstObserver, defaults: defaults)
+        first.start()
+        firstObserver.pushToken?("start-token")
+        firstObserver.updateToken?("card", "card-token")
+
+        let observer = TestFleetObserver()
+        observer.areActivitiesEnabled = true
+        let relaunched = FleetActivityController(observer: observer, defaults: defaults)
+        var retired: [String] = []
+        var registered: [(String, LiveActivityTokenKind)] = []
+        relaunched.onTokenInvalidated = { _, token in if let token { retired.append(token) } }
+        relaunched.onTokenReceived = { registered.append(($0, $1)) }
+        relaunched.resendTokens()
+
+        XCTAssertEqual(retired, ["card-token"])
+        XCTAssertNil(relaunched.updateToken)
+        XCTAssertTrue(registered.contains { $0.0 == "start-token" && $0.1 == .pushToStart })
+        XCTAssertFalse(registered.contains { $0.1 == .update })
     }
 }

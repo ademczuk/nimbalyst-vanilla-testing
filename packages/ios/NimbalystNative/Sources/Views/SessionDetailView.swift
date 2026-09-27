@@ -484,6 +484,13 @@ public struct SessionDetailView: View {
 
                 Spacer()
 
+                if let modelLabel = ModelLabel.shortLabel(provider: displaySession.provider, model: displaySession.model) {
+                    Text(modelLabel)
+                        .font(.caption2)
+                        .foregroundStyle(NimbalystColors.textMuted)
+                        .lineLimit(1)
+                }
+
                 if let pct = displaySession.contextUsagePercent {
                     ContextUsageBar(percent: pct)
                 }

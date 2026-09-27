@@ -2,6 +2,14 @@
   "name": "@nimbalyst/knowledge",
   "version": "1.0.0",
   "private": true,
-  "description": "Knowledge graph ontology and authoring guidance for Nimbalyst trackers",
-  "author": "Nimbalyst"
+  "description": "Knowledge graph ontology, authoring guidance, and the curator's Jev sorter",
+  "author": "Nimbalyst",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "src/index.tsx",
+  "scripts": {
+    "build": "vite build && vite build --config vite.backend.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"tests run via root vitest\""
+  }
 }

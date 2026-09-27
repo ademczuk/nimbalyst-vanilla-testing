@@ -17,7 +17,7 @@
 
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
 
-type StateManager = Pick<ReturnType<typeof getSessionStateManager>, 'updateActivity'>;
+type StateManager = Pick<ReturnType<typeof getSessionStateManager>, 'updateActivity' | 'isSessionActive'>;
 
 export interface ApplyInteractivePromptSettleTurnStateArgs {
   sessionId: string | undefined;
@@ -32,6 +32,11 @@ export async function applyInteractivePromptSettleTurnState(
   if (!args.sessionId) return;
   // CLI sessions: leave the running/idle indicator to the PID watcher (see above).
   if (args.isCliSession) return;
+  // A prompt can settle after its turn is over: the provider errored or was
+  // stopped while the widget was open, and the MCP call cancels later via
+  // client-abort. The turn's own terminal path already set the final status;
+  // writing `running` now revives the session with nothing left to end it.
+  if (!args.stateManager.isSessionActive(args.sessionId)) return;
   await args.stateManager.updateActivity({
     sessionId: args.sessionId,
     status: 'running',

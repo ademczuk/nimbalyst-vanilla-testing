@@ -26,6 +26,7 @@ import { SessionContextMenu } from './SessionContextMenu';
 import { SessionRelativeTime } from './SessionRelativeTime';
 import { FullTitleTooltip } from './FullTitleTooltip';
 import { sessionAgentWakePendingAtom } from '../../store/atoms/teamInbox';
+import { sessionBackgroundTasksAtom, describeBackgroundWait } from '../../store/atoms/sessionBackgroundTasks';
 
 /**
  * Unified component for rendering expandable session groups in the session history.
@@ -1006,12 +1007,21 @@ const WorkstreamSessionStatusIndicator = memo<{ sessionId: string; uncommittedCo
   const hasPendingPrompt = useAtomValue(sessionPendingPromptAtom(sessionId));
   const hasAgentWakePending = useAtomValue(sessionAgentWakePendingAtom(sessionId));
   const hasUnread = useAtomValue(sessionUnreadAtom(sessionId));
+  const backgroundTasks = useAtomValue(sessionBackgroundTasksAtom(sessionId));
 
   // Priority: interactive prompt > processing > pending prompt > unread > uncommitted count
   if (hasPendingInteractivePrompt) {
     return (
       <div className="workstream-session-item-status waiting-for-input flex items-center justify-center text-[var(--nim-warning)] animate-pulse" title="Waiting for your response">
         <MaterialSymbol icon="contact_support" size={12} />
+      </div>
+    );
+  }
+
+  if (isProcessing && backgroundTasks?.length) {
+    return (
+      <div className="workstream-session-item-status background-wait flex items-center justify-center text-[var(--nim-text-muted)] animate-pulse" title={describeBackgroundWait(backgroundTasks, Date.now())}>
+        <MaterialSymbol icon="timelapse" size={12} />
       </div>
     );
   }

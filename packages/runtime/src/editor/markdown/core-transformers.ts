@@ -25,7 +25,7 @@ import {
 } from './MarkdownTransformers';
 
 import { HR_TRANSFORMER } from './HorizontalRuleTransformer';
-import { PAGE_BREAK_TRANSFORMER } from '../plugins/PageBreakPlugin';
+import { PAGE_BREAK_TRANSFORMER } from '../plugins/PageBreakPlugin/PageBreakTransformer';
 import { HASHTAG_TRANSFORMER } from './HashtagTransformer';
 
 // Element transformers

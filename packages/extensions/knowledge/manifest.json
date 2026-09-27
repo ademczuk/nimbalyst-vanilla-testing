@@ -4,30 +4,67 @@
   "version": "1.0.0",
   "description": "Build a shared knowledge graph from tracker items",
   "author": "Nimbalyst",
+  "main": "dist/index.js",
   "apiVersion": "1.0.0",
   "defaultEnabled": false,
   "marketplace": {
-    "categories": ["ai-tools"],
-    "tags": ["knowledge", "wiki", "tracker", "ontology"],
+    "categories": [
+      "ai-tools"
+    ],
+    "tags": [
+      "knowledge",
+      "wiki",
+      "tracker",
+      "ontology"
+    ],
     "icon": "hub",
     "featured": false,
     "tagline": "A shared vocabulary for team knowledge graphs",
-    "longDescription": "Knowledge teaches the agent how to set up and write a knowledge graph in your project: entities, claims, questions, findings, and investigations as tracker types, with a small set of verbs for statements. Graphs built this way stay consistent across projects and show up in the team wiki.",
+    "longDescription": "Knowledge teaches the agent how to set up and write a knowledge graph in your project: entities, claims, questions, findings, and investigations as tracker types, with a small set of verbs for statements. Setup also installs an editable \"How we write this wiki\" page that tells people and agents what belongs in the wiki. Graphs built this way stay consistent across projects and show up in the team wiki.",
     "highlights": [
       "Standard tracker types for entities, claims, questions, findings, and investigations",
       "A predicate registry for typed statements between entities",
-      "Guidance for writing claims with a stated basis and conditions"
+      "Guidance for writing claims with a stated basis and conditions",
+      "A wiki guide page your team can edit or replace, which the agent reads before writing"
     ]
   },
   "permissions": {
-    "ai": true
+    "ai": true,
+    "network": true
   },
   "contributions": {
     "claudePlugin": {
       "path": "claude-plugin",
       "displayName": "Knowledge",
-      "description": "Set up and write a team knowledge graph with tracker types",
+      "description": "Set up a team knowledge graph and wiki guide, then write to it with tracker types",
       "enabledByDefault": true
-    }
+    },
+    "backendModules": [
+      {
+        "id": "curator",
+        "entry": "dist/backend.js",
+        "runtime": "utility-process",
+        "permissions": [
+          "secrets-read",
+          "mcp-server-register"
+        ],
+        "enablement": {
+          "default": "disabled",
+          "promptOn": "firstUse",
+          "purpose": "Sort work events for the knowledge graph with TypeSafe's Jev model. Sends event text to api.typesafe.ai or your Cloudflare account's Workers AI only after you save a TypeSafe API key or Cloudflare token."
+        }
+      }
+    ],
+    "settingsRoutes": [
+      {
+        "id": "knowledge-curator",
+        "scope": "application",
+        "label": "Knowledge curator",
+        "group": "Extensions",
+        "icon": "hub",
+        "order": 85,
+        "component": "KnowledgeCuratorSettings"
+      }
+    ]
   }
 }

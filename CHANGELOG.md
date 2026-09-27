@@ -11,12 +11,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 <!-- New features go here -->
 - Opt into unlimited open projects with a scrollable project rail and cleanup of unused project resources.
+- Knowledge extension sets up a team wiki and installs an editable "How we write this wiki" guide that agents follow, and its vocabulary now covers markets, makers, competition, and dated, cited facts.
+- Knowledge curator (alpha): agents can sort commits, sessions, and tracker changes with TypeSafe's Jev model to decide what belongs in the knowledge graph, using your own TypeSafe API key or your Cloudflare account through Workers AI.
+- Team wiki from the terminal (alpha): a Claude Code plugin and `nim login` / `nim wiki` commands let an agent read and write a team project's knowledge wiki, with each session's edits listed in the web console.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- iOS: the session detail status bar shows the session's model next to context usage
+- Claude Code sessions that have finished their turn but are still waiting on a background shell or sub-agent show a distinct indicator in the session list and name the task in the transcript
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Agent sessions no longer read and cache large or binary files that other tools write into the workspace (such as browser profiles), which flooded the log and grew memory.
+- File @-mention suggestions now pick up newly created and renamed files without opening Quick Open or reloading the window.
+- iOS: returning to the app after a long background shows a quiet "Reconnecting…" notice instead of the "Sync paused" warning
+- iOS: an open session no longer stays stuck loading after a long background
+- iOS: creating a session no longer shows "Unable to Create Session" when the desktop created it successfully
+- iOS: the running-sessions Live Activity starts again after an earlier card ends, and unread sessions keep it up for only 10 minutes after they finish
+- Changes to a team tracker type now reach teammates right away instead of after the next reconnect
+- A team project's knowledge relationship verbs are shared with teammates and the web console instead of staying on the machine that defined them
+- Improved load performance for very large Codex sessions
+- A session no longer stays marked as running after its turn ended while a question to you was still open
 
 ### Removed
 <!-- Removed features go here -->

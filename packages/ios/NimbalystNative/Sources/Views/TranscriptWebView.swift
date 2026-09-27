@@ -193,6 +193,7 @@ public struct TranscriptWebView: UIViewRepresentable {
     public func updateUIView(_ webView: WKWebView, context: Context) {
         let coordinator = context.coordinator
         coordinator.waitForInitialMessages = waitForInitialMessages
+        coordinator.latestMessages = messages
 
         // Check if session changed
         if coordinator.currentSessionId != session.id {
@@ -209,6 +210,7 @@ public struct TranscriptWebView: UIViewRepresentable {
             }
             return
         }
+        coordinator.currentSession = session
 
         // If we haven't sent the initial loadSession yet, update the pending data
         // instead of trying to append (append requires isReady which needs loadSession first).
@@ -282,6 +284,22 @@ public struct TranscriptWebView: UIViewRepresentable {
         /// Session + messages waiting for the web view to be ready.
         var pendingSession: (Session, [Message])?
 
+        /// The message list from the most recent `updateUIView`. SwiftUI does not
+        /// call `updateUIView` again when the page reloads, so recovering from a
+        /// killed content process must re-send the transcript from here.
+        var latestMessages: [Message] = []
+
+        /// Runs a script in the page. Replaceable so tests can answer for the
+        /// bridge without loading the bundle.
+        var callJavaScript: @MainActor (String, [String: Any], WKWebView, @escaping @MainActor (Any?, Error?) -> Void) -> Void = { script, arguments, webView, completion in
+            webView.callAsyncJavaScript(script, arguments: arguments, in: nil, in: .page) { result in
+                switch result {
+                case .failure(let error): completion(nil, error)
+                case .success(let value): completion(value, nil)
+                }
+            }
+        }
+
         /// Defer the first JS load until Swift has real initial transcript data.
         var waitForInitialMessages: Bool
 
@@ -329,6 +347,17 @@ public struct TranscriptWebView: UIViewRepresentable {
                 logger.info("Bridge 'ready' received (webViewReady was \(self.webViewReady), pending=\(self.pendingSession != nil))")
                 webViewReady = true
                 readyTimeoutItem?.cancel()
+                // A `ready` after a session was loaded means the page reloaded
+                // (WebKit restarts a killed content process on its own) and is
+                // now empty. Re-send the transcript rather than waiting for a new
+                // message that may never come.
+                if pendingSession == nil, currentSessionId != nil, let currentSession {
+                    logger.warning("Bridge ready after load: page reloaded, re-sending session \(currentSession.id)")
+                    isReady = false
+                    isLoadingSession = false
+                    lastMessageCount = 0
+                    pendingSession = (currentSession, latestMessages)
+                }
                 // Load pending session if we have one
                 if let (session, messages) = pendingSession {
                     logger.info("Bridge ready: loading pending session \(session.id) with \(messages.count) messages")
@@ -452,7 +481,9 @@ public struct TranscriptWebView: UIViewRepresentable {
         /// Track content process terminations to avoid crash loops.
         private var contentProcessTerminationCount = 0
 
-        public func webView(_ webView: WKWebView, webContentProcessDidTerminate: WKWebView) {
+        /// iOS kills the content process freely while the app is backgrounded.
+        /// The selector must be exactly this one or WebKit never calls it.
+        public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             contentProcessTerminationCount += 1
             logger.warning("Content process terminated (count: \(self.contentProcessTerminationCount))")
             webViewReady = false
@@ -461,11 +492,11 @@ public struct TranscriptWebView: UIViewRepresentable {
             lastMessageCount = 0
 
             if let currentSession {
-                pendingSession = (currentSession, [])
+                pendingSession = (currentSession, latestMessages)
             }
 
-            // Avoid crash loops: only reload if we haven't had too many terminations.
-            // iOS will kill the app if WKWebView content process crashes repeatedly.
+            // Avoid crash loops: only reload if we haven't had too many terminations
+            // without a successful load in between.
             guard contentProcessTerminationCount <= 2 else {
                 logger.error("Content process terminated too many times, not reloading")
                 onError?("WebView content process crashed \(contentProcessTerminationCount) times — not reloading")
@@ -474,8 +505,8 @@ public struct TranscriptWebView: UIViewRepresentable {
 
             // Delay reload slightly to let iOS recover the content process.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak webView] in
-                guard let webView, self?.webViewReady == false else { return }
-                webView.reload()
+                guard let self, let webView, !self.webViewReady else { return }
+                self.reloadTranscriptHTML(in: webView)
             }
         }
 
@@ -556,7 +587,7 @@ public struct TranscriptWebView: UIViewRepresentable {
         // interpolation, avoiding escaping issues with special characters in
         // message content (code, nested JSON, unicode, etc.).
 
-        private func callJS(_ script: String, arguments: [String: Any] = [:], in webView: WKWebView, completion: ((Error?) -> Void)? = nil) {
+        private func callJS(_ script: String, arguments: [String: Any] = [:], in webView: WKWebView, completion: (@MainActor (Error?) -> Void)? = nil) {
             callJS(script, arguments: arguments, in: webView) { (_: Any?, error: Error?) in
                 completion?(error)
             }
@@ -566,16 +597,9 @@ public struct TranscriptWebView: UIViewRepresentable {
             _ script: String,
             arguments: [String: Any] = [:],
             in webView: WKWebView,
-            completion: @escaping (Any?, Error?) -> Void
+            completion: @escaping @MainActor (Any?, Error?) -> Void
         ) {
-            webView.callAsyncJavaScript(script, arguments: arguments, in: nil, in: .page) { result in
-                switch result {
-                case .failure(let error):
-                    completion(nil, error)
-                case .success(let value):
-                    completion(value, nil)
-                }
-            }
+            callJavaScript(script, arguments, webView, completion)
         }
 
         @discardableResult
@@ -651,6 +675,7 @@ public struct TranscriptWebView: UIViewRepresentable {
                 case .activated, .activatedThenAppend:
                     self.logger.info("loadSession: activated \(session.id), lastMessageCount=\(messages.count)")
                     self.isReady = true
+                    self.contentProcessTerminationCount = 0
                     self.lastMessageCount = messages.count
                     self.lastIsExecuting = session.isExecuting
                     self.lastProvider = session.provider
@@ -712,7 +737,11 @@ public struct TranscriptWebView: UIViewRepresentable {
         /// back through `loadSession` and re-establishes which session is live.
         private func reportMutationResult(_ name: String, sessionId: String, result: Any?, error: Error?) {
             if let error {
-                logger.error("\(name) JS error: \(error.localizedDescription)")
+                // The page may have reloaded or lost its bridge; reload rather
+                // than keep appending to a transcript that is not there.
+                logger.error("\(name) JS error: \(error.localizedDescription); forcing a reload")
+                isReady = false
+                lastMessageCount = 0
                 return
             }
             guard (result as? Bool) == false else { return }
@@ -810,6 +839,7 @@ public struct TranscriptWebView: UIViewRepresentable {
             readyTimeoutItem?.cancel()
             readyTimeoutItem = nil
             pendingSession = nil
+            latestMessages = []
             webViewReady = false
             isReady = false
             isLoadingSession = false

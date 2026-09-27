@@ -301,6 +301,33 @@ describe.each(PERSISTENCE_BACKENDS)('TrackerSyncEngine ($name)', backend => {
     c.engine.destroy();
   });
 
+  it('pushes a schema saved while connected without waiting for a reconnect (NIM-6654)', async () => {
+    const server = createFakeServer();
+    const model = schemaModelJson('epic');
+
+    let pending: Array<{ type: string; model: string | null; deleted: boolean }> = [];
+    const a = await buildEngine({ room: server.room, serverConnect: server.connect, encryptionKey: key });
+    a.config.schemaSync = {
+      listUnsynced: async () => pending,
+      applyRemote: async (def) => { pending = pending.filter(row => row.type !== def.type); },
+    };
+    await a.engine.connect();
+    await waitUntil(() => a.engine.getStatus() === 'connected');
+    expect(server.room.receivedSchemaMutations).toHaveLength(0);
+
+    // The edit lands after bootstrap already drained the outbox.
+    pending = [{ type: 'epic', model, deleted: false }];
+    // Two saves in quick succession: the second must not re-send a change that
+    // is still waiting for its ack.
+    await Promise.all([a.engine.flushSchemas(), a.engine.flushSchemas()]);
+
+    await waitUntil(() => server.room.getStoredSchemas().some(s => s.schemaType === 'epic'));
+    await waitUntil(() => pending.length === 0);
+    expect(server.room.receivedSchemaMutations.map(m => m.schemaType)).toEqual(['epic']);
+
+    a.engine.destroy();
+  });
+
   it('completes schema bootstrap before applying the first item batch', async () => {
     const server = createFakeServer();
     const model = schemaModelJson('epic');

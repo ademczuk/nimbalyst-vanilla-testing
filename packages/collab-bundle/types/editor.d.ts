@@ -666,3 +666,11 @@ export type {
   LiveTrackerReferenceRendererProps,
   TrackerReferenceViewKind,
 } from './internal/collab-client/src/trackers-ui/references/index';
+
+// Tracker body seeding carries the Markdown/Lexical codec, so it ships here;
+// hosts inject it into `BrowserTrackerDataSource` from `./trackers-ui`.
+export type {
+  TrackerBodyRoom,
+  TrackerBodySeeder,
+} from './internal/collab-client/src/trackers/browser/trackerBodyRoom';
+export declare const seedTrackerBody: import('./internal/collab-client/src/trackers/browser/trackerBodyRoom').TrackerBodySeeder;

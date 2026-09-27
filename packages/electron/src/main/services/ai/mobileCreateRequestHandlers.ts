@@ -29,9 +29,29 @@ export interface MobileCreateRequestContext {
   releaseRequest(requestId: string): void;
 }
 
-/** Publication must explicitly cover this row before the phone receives success. */
+/** Bulk-publish reason when a newer publication of the same row landed during encryption. */
+const INDEX_STATE_CHANGED_REASON = 'index state changed during publication';
+const MAX_ROW_PUBLISH_ATTEMPTS = 4;
+
+/**
+ * Publication must explicitly cover this row before the phone receives success.
+ *
+ * Creating the session fires its own metadata publish for the new row (and host
+ * stamping fires another). Those routinely land while this batch is encrypting,
+ * and the batch then drops the row as stale -- every mobile create reported
+ * failure even though the session was on the server. Retry once they settle so
+ * the full row (parent, host) is the last one published and the ack is honest.
+ */
 async function publishSessionRow(syncProvider: SyncProvider, row: SessionIndexData): Promise<IndexPublishOutcome> {
-  const outcome = await syncProvider.syncSessionsToIndex?.([row]);
+  let outcome = await syncProvider.syncSessionsToIndex?.([row]);
+  for (
+    let attempt = 1;
+    attempt < MAX_ROW_PUBLISH_ATTEMPTS && outcome?.reason === INDEX_STATE_CHANGED_REASON && syncProvider.isIndexReady?.() !== false;
+    attempt++
+  ) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 25 * attempt));
+    outcome = await syncProvider.syncSessionsToIndex?.([row]);
+  }
   if (outcome?.published && outcome.publishedSessionIds.includes(row.id)) return outcome;
   return {
     published: false,

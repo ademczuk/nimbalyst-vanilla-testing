@@ -120,6 +120,8 @@ interface AgentTranscriptPanelProps {
   currentTeammates?: Array<{ agentId: string; status: 'running' | 'completed' | 'errored' | 'idle' }>;
   /** Optional: noun used in waiting text when teammates/workers are still running */
   waitingForNoun?: string;
+  /** Optional: background tasks the session is draining after the lead turn ended */
+  backgroundTasks?: Array<{ description: string; startedAt: number }>;
   /** Current session phase for the kanban board */
   currentPhase?: string | null;
   /** Available phase columns for the kanban board picker */
@@ -171,6 +173,7 @@ const AgentTranscriptPanelComponent = React.forwardRef<
   loadToolCallDiffs,
   currentTeammates,
   waitingForNoun,
+  backgroundTasks,
   currentPhase,
   phaseColumns,
   onSetPhase,
@@ -335,6 +338,7 @@ const AgentTranscriptPanelComponent = React.forwardRef<
           promptAdditions={promptAdditions}
           currentTeammates={currentTeammates ?? sessionData.metadata?.currentTeammates as Array<{ agentId: string; status: 'running' | 'completed' | 'errored' | 'idle' }> | undefined}
           waitingForNoun={waitingForNoun}
+          backgroundTasks={backgroundTasks}
           appStartTime={appStartTime}
           renderEmbeddedFile={renderEmbeddedFile}
           canEmbedFile={canEmbedFile}
@@ -593,6 +597,14 @@ export const AgentTranscriptPanel = React.memo(
       logPanelMemoDiff(nextProps.sessionId, 'currentTeammates', {
         prev: summarizePanelTeammates(prevProps.currentTeammates),
         next: summarizePanelTeammates(nextProps.currentTeammates),
+      });
+      return false;
+    }
+
+    if (prevProps.backgroundTasks !== nextProps.backgroundTasks) {
+      logPanelMemoDiff(nextProps.sessionId, 'backgroundTasks', {
+        prev: prevProps.backgroundTasks?.length ?? 0,
+        next: nextProps.backgroundTasks?.length ?? 0,
       });
       return false;
     }

@@ -2,7 +2,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { deriveFleetSnapshot, STALL_AFTER_MS, type TraySessionInfo } from '../fleetSnapshot';
-import { buildFleetActivityPayload, isFleetActive, rankFleetActivityRows } from '../fleetActivity';
+import {
+  buildFleetActivityPayload,
+  FLEET_ACTIVITY_UNREAD_WINDOW_MS,
+  isFleetActive,
+  rankFleetActivityRows,
+} from '../fleetActivity';
 import {
   FLEET_PUBLISH_DEBOUNCE_MS,
   FLEET_PUBLISH_HEARTBEAT_MS,
@@ -135,6 +140,23 @@ describe('buildFleetActivityPayload', () => {
     // The phone is exactly where you catch up on a session that finished while
     // you were away, which is the one thing the menu bar cannot do.
     expect(isFleetActive(buildFleetActivityPayload(snapshot, unreadOnly, NOW))).toBe(true);
+  });
+
+  // Nothing clears unread on a session nobody opens, so counting every one kept
+  // the phone card alive forever and the server never ended it.
+  it('counts an unread session only for a window after it finished', () => {
+    const finished = NOW - FLEET_ACTIVITY_UNREAD_WINDOW_MS;
+    const sessions = [
+      session({ sessionId: 'recent', status: 'completed', hasUnread: true, completedAt: finished + 1 }),
+      session({ sessionId: 'old', status: 'completed', hasUnread: true, completedAt: finished - 1, updatedAt: finished - 1 }),
+      session({ sessionId: 'seeded', status: 'idle', hasUnread: true, updatedAt: finished - 60_000 }),
+    ];
+    const snapshot = deriveFleetSnapshot(sessions, 3, { now: NOW });
+    expect(buildFleetActivityPayload(snapshot, sessions, NOW).unread).toBe(1);
+
+    const later = NOW + 2;
+    const quiet = buildFleetActivityPayload(deriveFleetSnapshot(sessions, 4, { now: later }), sessions, later);
+    expect(isFleetActive(quiet)).toBe(false);
   });
 });
 

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
@@ -10,8 +11,11 @@ const mocks = vi.hoisted(() => {
     getFolderContents: vi.fn(async () => []),
     getWindowId: vi.fn((window: any) => window?.id ?? null),
     markRecentlyDeleted: vi.fn(),
+    scan: vi.fn(async () => [] as Array<{ path: string; name: string; type: 'file' }>),
   };
 });
+
+vi.mock('../QuickOpenFileScanner', () => ({ buildQuickOpenCacheForRoot: mocks.scan }));
 
 vi.mock('electron', () => ({
   BrowserWindow: class FakeBrowserWindow {},
@@ -46,6 +50,7 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 import { OptimizedWorkspaceWatcher } from '../OptimizedWorkspaceWatcher';
+import { quickOpenFileNameCache } from '../QuickOpenFileNameCache';
 
 function fakeWindow(id: number) {
   return {
@@ -61,6 +66,33 @@ describe('OptimizedWorkspaceWatcher', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     watcher = new OptimizedWorkspaceWatcher();
+  });
+
+  it('refreshes search snapshots after add, rename/delete and watcher recovery without Quick Open', async () => {
+    const root = '/ws/mention-cache';
+    const file = (name: string) => ({ path: `${root}/${name}`, name, type: 'file' as const });
+    mocks.scan.mockResolvedValue([file('old.md')]);
+    await watcher.start(fakeWindow(1), root);
+    const listener = (mocks.subscribe.mock.calls[0] as unknown as [string, string, any])[2];
+    expect(await quickOpenFileNameCache.get(root)).toEqual([file('old.md')]);
+    try {
+      mocks.scan.mockResolvedValue([file('old.md'), file('new.md')]);
+      listener.onAdd(`${root}/new.md`);
+      expect(await quickOpenFileNameCache.get(root)).toEqual([file('old.md'), file('new.md')]);
+
+      mocks.scan.mockResolvedValue([file('renamed.md')]);
+      listener.onUnlink(`${root}/old.md`);
+      listener.onUnlink(`${root}/new.md`);
+      listener.onAdd(`${root}/renamed.md`);
+      expect(await quickOpenFileNameCache.get(root)).toEqual([file('renamed.md')]);
+
+      listener.onHealthChanged({ state: 'recovering', generation: 1 });
+      mocks.scan.mockResolvedValue([file('created-during-outage.md')]);
+      listener.onHealthChanged({ state: 'watching', generation: 2 });
+      expect(await quickOpenFileNameCache.get(root)).toEqual([file('created-during-outage.md')]);
+    } finally {
+      watcher.stop(1);
+    }
   });
 
   describe('lifecycle', () => {

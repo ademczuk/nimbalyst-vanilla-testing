@@ -382,12 +382,28 @@ function walk(rootFiber: Fiber): void {
   }
 }
 
+/** Called for any commit whose render took at least `SLOW_COMMIT_MS`, recording or not. */
+let slowCommitListener: ((root: Fiber, commitFloor: number) => void) | null = null;
+const SLOW_COMMIT_MS = 100;
+
+export function setSlowCommitListener(listener: typeof slowCommitListener): void {
+  slowCommitListener = listener;
+}
+
 function onCommit(root: Fiber): void {
   lifetimeCommits += 1;
 
   const began = performance.now();
   const previousCommitAt = lastCommitAt.get(root) ?? -1;
   lastCommitAt.set(root, began);
+
+  if (slowCommitListener && (root?.current?.actualDuration ?? 0) >= SLOW_COMMIT_MS) {
+    try {
+      slowCommitListener(root.current, previousCommitAt);
+    } catch {
+      // Diagnostics must never break a commit.
+    }
+  }
 
   if (!recording) return;
 

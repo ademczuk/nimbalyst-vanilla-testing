@@ -76,7 +76,11 @@ export const COLLAB_BUNDLE_EAGER_GZIP_BUDGET_BYTES = {
   // directly and which exists precisely so the browser rejects a locator the
   // same way the desktop does. Reset with ~5% headroom.
   // StatusBar field-pill header exported for the web console knowledge wiki: 171,945 gzip bytes + ~3% headroom.
-  'trackers-ui': 177_000,
+  // 2026-09-24: 178,920 bytes. The ontology inspector (208,658 with it eager)
+  // was made lazy and its inspector-only helpers left the entry. What remains
+  // is the wiki home's content-health check and the schema store's predicate
+  // registry read, both needed on first paint. Reset with ~2% headroom.
+  'trackers-ui': 182_500,
   // Deliberately tight. This entry is a WebSocket client over the protocol
   // package and nothing else; anything that makes it jump has dragged a UI
   // graph in behind it.

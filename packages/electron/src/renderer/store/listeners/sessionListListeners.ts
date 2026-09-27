@@ -8,6 +8,7 @@
  */
 
 import { store } from '../index';
+import { sessionBackgroundTasksAtom, type BackgroundTaskSummary } from '../atoms/sessionBackgroundTasks';
 import {
   refreshSessionListAtom,
   sessionListWorkspaceAtom,
@@ -61,6 +62,11 @@ export function initSessionListListeners(): () => void {
   // Updates the registry entry directly without a full refresh
   const handleSessionUpdated = (sessionId: string, updates: Record<string, unknown>) => {
     // console.log('[sessionListListeners] session-updated received:', sessionId, updates);
+    // Live-only drain state; it is not a registry field, so a list refresh cannot drop it.
+    if (Array.isArray(updates.backgroundTasks)) {
+      store.set(sessionBackgroundTasksAtom(sessionId), updates.backgroundTasks as BackgroundTaskSummary[]);
+      if (Object.keys(updates).length === 1) return;
+    }
     const registry = new Map(store.get(sessionRegistryAtom));
     const meta = registry.get(sessionId);
     if (meta) {

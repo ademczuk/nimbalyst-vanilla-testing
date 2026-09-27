@@ -1,0 +1,12 @@
+{
+  "name": "nimbalyst-wiki",
+  "version": "0.1.0",
+  "description": "A team wiki kept current by your Claude Code sessions: read it as context, record decisions and established facts, and review each session's changes on one page.",
+  "author": {
+    "name": "Nimbalyst",
+    "url": "https://nimbalyst.com"
+  },
+  "homepage": "https://nimbalyst.com",
+  "repository": "https://github.com/nimbalyst/nimbalyst",
+  "keywords": ["wiki", "knowledge", "knowledge-graph", "team"]
+}

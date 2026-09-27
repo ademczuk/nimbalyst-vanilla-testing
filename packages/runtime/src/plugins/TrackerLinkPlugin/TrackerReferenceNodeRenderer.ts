@@ -11,7 +11,7 @@ import {
   COMMAND_PRIORITY_LOW,
 } from 'lexical';
 import { useContext, useEffect, useMemo, useState } from 'react';
-import type { TrackerReferenceView } from './TrackerReferenceNode';
+import type { TrackerReferenceView } from './TrackerReferenceNodeCore';
 
 export interface TrackerReferenceNodeRendererProps {
   referenceKey: string;

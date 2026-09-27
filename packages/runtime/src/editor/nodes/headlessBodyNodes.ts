@@ -25,6 +25,11 @@
  *
  * Kept in sync by `headlessBodyNodes.test.ts`, which converts representative
  * markdown and asserts no "not registered" error escapes.
+ *
+ * The graph must also stay React-, DOM- and CSS-free: the collab worker and
+ * the CLI load it through `@nimbalyst/markdown-ydoc`. Decorator nodes are
+ * therefore imported from their `*Core.ts` modules, never the `.tsx` ones that
+ * attach the editor's decorator (see `nodeDecoratorSlot.ts`).
  */
 
 import type { Klass, LexicalNode } from 'lexical';
@@ -33,13 +38,13 @@ import { LinkNode, AutoLinkNode } from '@lexical/link';
 import { HorizontalRuleNode } from '@lexical/extension';
 
 import EditorNodes from './EditorNodes';
-import { ImageNode } from '../plugins/ImagesPlugin';
-import { PageBreakNode } from '../plugins/PageBreakPlugin';
-import { MermaidNode } from '../plugins/MermaidPlugin';
-import { DecisionNode } from '../plugins/DecisionPlugin/DecisionNode';
-import { EmbeddedFileNode } from '../plugins/EmbedPlugin/EmbeddedFileNode';
+import { ImageNode } from '../plugins/ImagesPlugin/ImageNodeCore';
+import { PageBreakNode } from '../plugins/PageBreakPlugin/PageBreakNodeCore';
+import { MermaidNode } from '../plugins/MermaidPlugin/MermaidNodeCore';
+import { DecisionNode } from '../plugins/DecisionPlugin/DecisionNodeCore';
+import { EmbeddedFileNode } from '../plugins/EmbedPlugin/EmbeddedFileNodeCore';
 import { DocumentReferenceNode } from '../../plugins/DocumentLinkPlugin/DocumentLinkNode';
-import { TrackerReferenceNode } from '../../plugins/TrackerLinkPlugin/TrackerReferenceNode';
+import { TrackerReferenceNode } from '../../plugins/TrackerLinkPlugin/TrackerReferenceNodeCore';
 
 const HeadlessBodyNodes: Array<Klass<LexicalNode>> = [
   ...EditorNodes,

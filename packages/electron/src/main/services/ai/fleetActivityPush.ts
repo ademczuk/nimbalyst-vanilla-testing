@@ -38,7 +38,14 @@ export async function sendFleetActivity(
   if (!syncProvider?.sendFleetActivity) return;
 
   try {
-    await syncProvider.sendFleetActivity(activity, shownOnDesktop);
+    // Publishes are coalesced to at most one per 15s, so one line each is cheap,
+    // and it is the only desktop-side evidence of whether the server was told.
+    const sent = await syncProvider.sendFleetActivity(activity, shownOnDesktop);
+    logger.main.info(
+      `[fleetActivityPush] ${sent ? 'Sent' : 'Dropped (index socket not open)'}: ` +
+        `running=${activity.running} approval=${activity.needsApproval} decision=${activity.needsDecision} ` +
+        `failed=${activity.failed} stalled=${activity.stalled} unread=${activity.unread}`,
+    );
   } catch (err) {
     logger.main.warn('[fleetActivityPush] Failed to send fleet activity:', err);
   }

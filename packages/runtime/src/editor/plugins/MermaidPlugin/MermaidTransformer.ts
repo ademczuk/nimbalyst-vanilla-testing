@@ -3,7 +3,7 @@
  */
 
 import { MultilineElementTransformer } from '@lexical/markdown';
-import { $createMermaidNode, $isMermaidNode, MermaidNode } from './MermaidNode';
+import { $createMermaidNode, $isMermaidNode, MermaidNode } from './MermaidNodeCore';
 
 const MERMAID_START_REGEX = /^[ \t]*```mermaid/;
 const MERMAID_END_REGEX = /[ \t]*```$/;

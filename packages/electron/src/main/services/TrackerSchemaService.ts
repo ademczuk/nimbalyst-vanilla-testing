@@ -79,10 +79,9 @@ import {
   serializeSchemaForFile,
   writeBackSharedSchema,
 } from './tracker/trackerSchemaProjection';
-import {
-  readWorkspacePredicateRegistry,
-  writeWorkspacePredicateRegistry,
-} from './tracker/trackerPredicateRegistryFile';
+import { readWorkspacePredicateRegistry } from './tracker/trackerPredicateRegistryFile';
+import { applyRemotePredicateRegistry } from './tracker/trackerPredicateRegistrySync';
+import { requestTrackerSchemaFlush } from './tracker/trackerSchemaFlush';
 import {
   reloadWorkspaceSchemaFile,
   stopSchemaWatcher,
@@ -488,6 +487,8 @@ function watchSchemaDirectory(workspacePath: string): void {
 export async function reloadWorkspacePredicateRegistry(workspacePath: string): Promise<void> {
   const predicates = readWorkspacePredicateRegistry(workspacePath);
   if (predicates === null) return;
+  // A hand edit is a save like any other: publish it to the room (NIM-6653).
+  requestTrackerSchemaFlush(workspacePath);
   if (currentWorkspacePath === null || currentWorkspacePath === workspacePath) {
     globalRegistry.setPredicates(predicates);
     notifySchemaChanged();
@@ -1321,59 +1322,30 @@ export async function applyRemoteWorkspaceTrackerSchemaDef(
 
 /**
  * Apply a published PREDICATE REGISTRY (knowledge-scopes 4.1), which arrives on
- * the schema lane under the reserved schema type.
- *
- * Replace, never merge: the room publishes the registry as one artifact, so a
- * merge would keep a predicate the team deleted and each client's view of what
- * verbs exist would depend on what it happened to have seen before.
- *
- * Two differences from the type-definition path above, both deliberate:
- *
- *  - **No `tracker_type_defs` mirror row.** That table is keyed by tracker type
- *    and read as the set of this project's types; a `__predicates__` row would
- *    show up as one. The schema lane bootstraps from zero on every connect
- *    (`runSchemaBootstrap`), so the registry is re-delivered each time and the
- *    local YAML copy below covers the offline case. Push bookkeeping is C4's,
- *    where a real room can verify it.
- *  - **A tombstone empties the registry rather than retiring a file.** There is
- *    exactly one registry per project, so "deleted" means "no predicates", not
- *    "this artifact no longer exists".
+ * the schema lane under the reserved schema type. The lane itself (version gate,
+ * merge with the local copy, bookkeeping, push) is `trackerPredicateRegistrySync`;
+ * this only installs the result in-process.
  */
-async function applyRemoteWorkspacePredicateRegistry(
+function applyRemoteWorkspacePredicateRegistry(
   workspacePath: string,
   def: RemoteTrackerSchemaDef,
 ): Promise<ApplyRemoteSchemaResult> {
-  let predicates: PredicateDefinition[];
-  if (def.model === null) {
-    predicates = [];
-  } else {
-    const decoded = decodeTrackerSchemaPayload(def.type, def.model);
-    if (decoded?.kind !== 'predicates') {
-      logger.main.warn('[TrackerSchemaService] dropped an unreadable predicate registry payload', {
-        workspacePath,
-        syncId: def.syncId,
-      });
-      return { applied: false, reason: 'invalid' };
-    }
-    predicates = decoded.predicates;
-  }
+  return applyRemotePredicateRegistry(workspacePath, def, {
+    onApplied: applyWorkspacePredicateRegistryInProcess,
+  });
+}
 
-  try {
-    await writeWorkspacePredicateRegistry(workspacePath, predicates);
-  } catch (err) {
-    // The in-memory registry is still worth applying: the project can validate
-    // statements this session even if the checkout copy could not be written.
-    logger.main.warn('[TrackerSchemaService] could not write the predicate registry copy', err);
-  }
-
+/** Install a registry for one workspace without leaking it into another open project. */
+export function applyWorkspacePredicateRegistryInProcess(
+  workspacePath: string,
+  predicates: PredicateDefinition[],
+): void {
   if (currentWorkspacePath === workspacePath) {
     globalRegistry.setPredicates(predicates);
     notifySchemaChanged();
   } else {
     globalRegistry.setWorkspacePredicateLayer(workspacePath, predicates);
   }
-
-  return { applied: true, deleted: def.model === null };
 }
 
 export async function deleteWorkspaceTrackerSchema(

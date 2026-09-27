@@ -18,10 +18,21 @@ import type {
   TranscriptEventType,
 } from './types';
 
+const SYNTH_PREFIX = 'nimtc|';
+
 export class InMemoryTranscriptEventStore implements ITranscriptEventStore {
   private events: TranscriptEvent[] = [];
   private nextId = 1;
   private sequenceBySession = new Map<string, number>();
+  // Indexes that keep per-tool-call lookups O(1). A full transcript rebuild
+  // does several lookups per tool call; scanning `events` for each one made
+  // rebuilding a large session quadratic (GitHub #1581).
+  private indexById = new Map<number, number>();
+  // providerToolCallId -> event position(s), ascending. Keyed on the id string
+  // the event already holds, and a lone position is stored unboxed, because
+  // runtime stores stay cached per session. Synthetic `nimtc|<encoded raw>|...`
+  // ids are also filed under the decoded raw id so both lookup forms hit.
+  private positionsByToolCallId = new Map<string, number | number[]>();
   // Optional external id allocator. When RoutingStore (TranscriptRuntime)
   // holds per-session stores, multiple stores would otherwise mint id=1, 2,
   // ... in parallel, so cross-store lookups by id (getEventById, mergeEventPayload)
@@ -37,6 +48,7 @@ export class InMemoryTranscriptEventStore implements ITranscriptEventStore {
     const id = this.idAllocator ? this.idAllocator() : this.nextId++;
     const inserted: TranscriptEvent = { ...event, id };
     this.events.push(inserted);
+    this.indexEvent(inserted, this.events.length - 1);
     const current = this.sequenceBySession.get(event.sessionId) ?? 0;
     if (event.sequence >= current) {
       this.sequenceBySession.set(event.sessionId, event.sequence + 1);
@@ -53,14 +65,14 @@ export class InMemoryTranscriptEventStore implements ITranscriptEventStore {
   }
 
   async updateEventPayload(id: number, payload: Record<string, unknown>): Promise<void> {
-    const idx = this.events.findIndex(e => e.id === id);
+    const idx = this.indexById.get(id) ?? -1;
     if (idx >= 0) {
       this.events[idx] = { ...this.events[idx], payload };
     }
   }
 
   async mergeEventPayload(id: number, partialPayload: Record<string, unknown>): Promise<void> {
-    const idx = this.events.findIndex(e => e.id === id);
+    const idx = this.indexById.get(id) ?? -1;
     if (idx >= 0) {
       this.events[idx] = {
         ...this.events[idx],
@@ -70,7 +82,7 @@ export class InMemoryTranscriptEventStore implements ITranscriptEventStore {
   }
 
   async updateEventText(id: number, searchableText: string): Promise<void> {
-    const idx = this.events.findIndex(e => e.id === id);
+    const idx = this.indexById.get(id) ?? -1;
     if (idx >= 0) {
       this.events[idx] = { ...this.events[idx], searchableText };
     }
@@ -99,12 +111,10 @@ export class InMemoryTranscriptEventStore implements ITranscriptEventStore {
     providerToolCallId: string,
     sessionId: string,
   ): Promise<TranscriptEvent | null> {
-    for (let i = this.events.length - 1; i >= 0; i--) {
-      const event = this.events[i];
-      if (
-        event.providerToolCallId === providerToolCallId &&
-        event.sessionId === sessionId
-      ) {
+    const positions = this.toolCallPositions(providerToolCallId);
+    for (let i = positions.length - 1; i >= 0; i--) {
+      const event = this.events[positions[i]];
+      if (event.providerToolCallId === providerToolCallId && event.sessionId === sessionId) {
         return event;
       }
     }
@@ -116,8 +126,9 @@ export class InMemoryTranscriptEventStore implements ITranscriptEventStore {
     sessionId: string,
   ): Promise<TranscriptEvent | null> {
     const synthPrefix = `nimtc|${encodeURIComponent(rawProviderToolCallId)}|`;
-    for (let i = this.events.length - 1; i >= 0; i--) {
-      const event = this.events[i];
+    const positions = this.toolCallPositions(rawProviderToolCallId);
+    for (let i = positions.length - 1; i >= 0; i--) {
+      const event = this.events[positions[i]];
       if (event.sessionId !== sessionId) continue;
       if (event.eventType !== 'tool_call') continue;
       const ptcid = event.providerToolCallId ?? '';
@@ -132,7 +143,8 @@ export class InMemoryTranscriptEventStore implements ITranscriptEventStore {
   }
 
   async getEventById(id: number): Promise<TranscriptEvent | null> {
-    return this.events.find(e => e.id === id) ?? null;
+    const idx = this.indexById.get(id);
+    return idx === undefined ? null : this.events[idx];
   }
 
   async getChildEvents(parentEventId: number): Promise<TranscriptEvent[]> {
@@ -172,6 +184,39 @@ export class InMemoryTranscriptEventStore implements ITranscriptEventStore {
   async deleteSessionEvents(sessionId: string): Promise<void> {
     this.events = this.events.filter(e => e.sessionId !== sessionId);
     this.sequenceBySession.delete(sessionId);
+    this.indexById.clear();
+    this.positionsByToolCallId.clear();
+    this.events.forEach((event, position) => this.indexEvent(event, position));
+  }
+
+  private indexEvent(event: TranscriptEvent, position: number): void {
+    this.indexById.set(event.id, position);
+    const ptcid = event.providerToolCallId;
+    if (!ptcid) return;
+    this.addToolCallPosition(ptcid, position);
+    if (ptcid.startsWith(SYNTH_PREFIX)) {
+      const encodedRaw = ptcid.slice(SYNTH_PREFIX.length).split('|')[0];
+      let raw: string;
+      try {
+        raw = decodeURIComponent(encodedRaw);
+      } catch {
+        return;
+      }
+      if (raw !== ptcid) this.addToolCallPosition(raw, position);
+    }
+  }
+
+  private addToolCallPosition(key: string, position: number): void {
+    const existing = this.positionsByToolCallId.get(key);
+    if (existing === undefined) this.positionsByToolCallId.set(key, position);
+    else if (typeof existing === 'number') this.positionsByToolCallId.set(key, [existing, position]);
+    else existing.push(position);
+  }
+
+  private toolCallPositions(providerToolCallId: string): readonly number[] {
+    const positions = this.positionsByToolCallId.get(providerToolCallId);
+    if (positions === undefined) return [];
+    return typeof positions === 'number' ? [positions] : positions;
   }
 
   getAllEvents(): TranscriptEvent[] {

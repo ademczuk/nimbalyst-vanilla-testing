@@ -9,7 +9,7 @@
 import type { ComponentType } from 'react';
 import type { NodeKey } from 'lexical';
 
-import type { EmbedAttrs } from './EmbeddedFileNode';
+import type { EmbedAttrs } from './EmbeddedFileNodeCore';
 
 export interface EmbedFrameProps {
   /** Raw path written in the markdown link. May be relative or absolute. */

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-17T18:54:38.839125+00:00",
+  "generatedAt": "2026-09-25T23:21:17.510Z",
   "extensions": [
     {
       "id": "com.nimbalyst.animation",
@@ -804,7 +804,7 @@
       "id": "com.nimbalyst.namenym",
       "name": "Namenym",
       "description": "AI-powered brand naming tool for Nimbalyst",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "author": "Nimbalyst",
       "categories": [
         "ai-tools"
@@ -827,10 +827,10 @@
         "network"
       ],
       "minimumAppVersion": "0.78.0",
-      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.namenym/0.1.1",
-      "checksum": "df9359e52c59b812e6983b2fb9069462c111ce43a32f937aabbea669a5c05dc4",
+      "downloadUrl": "https://extensions.nimbalyst.com/dl/com.nimbalyst.namenym/0.1.2",
+      "checksum": "f32fef392b739d21c39a64320f1e64b31609a14675c7dd099a6b386900144b81",
       "repositoryUrl": "https://github.com/nimbalyst/nimbalyst-namenym",
-      "changelog": "0.1.1: Collaborative sharing with per-member favorites on desktop and the web console.",
+      "changelog": "0.1.2: Faster rendering of large name lists.",
       "tagline": "AI-powered brand naming and domain brainstorming",
       "longDescription": "Move from a product brief to a shortlist with contextual name generation, word exploration, and direct additions to every list.",
       "highlights": [

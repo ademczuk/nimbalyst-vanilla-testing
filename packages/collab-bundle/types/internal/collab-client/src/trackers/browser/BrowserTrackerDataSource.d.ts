@@ -4,6 +4,7 @@ import { IndexedDbTrackerPersistence } from '@nimbalyst/tracker-engine';
 import { type TrackerNavigationSyncHooks, type TrackerPresenceIdentity, type TrackerSchemaSyncHooks } from '@nimbalyst/tracker-engine';
 import type { TrackerAccessTermination } from '@nimbalyst/tracker-engine';
 import type { TrackerDataChange, TrackerDataCommand, TrackerDataCommandResult, TrackerDataSnapshot, TrackerDataSource, TrackerSyncState, TrackerItemRevisionRecord, TrackerRevisionRef } from '../dataSource';
+import { type TrackerBodyRoom, type TrackerBodySeeder } from './trackerBodyRoom';
 export interface BrowserTrackerDataSourceOptions {
     workspacePath: string;
     serverUrl: string;
@@ -24,6 +25,15 @@ export interface BrowserTrackerDataSourceOptions {
     createWebSocket?: (url: string) => WebSocket;
     /** Test seam for a harness that has no HTTP worker in front of its fake room. */
     authorizeRoom?: (jwt: TeamJwt) => Promise<TrackerAccessTermination | null>;
+    /** Test seam for the item body's document room; defaults to a `DocumentSyncProvider`. */
+    openTrackerBodyRoom?: (documentId: string) => TrackerBodyRoom;
+    /**
+     * Writes a new item's description into its body room. Injected by the host
+     * from the `./editor` entry (`seedTrackerBody`) because it carries the
+     * Markdown/Lexical codec, which `trackers-ui` must not reach. Without it,
+     * creating an item with a body fails rather than dropping the body.
+     */
+    seedTrackerBody?: TrackerBodySeeder;
     /**
      * Decide whether a failure to mint a team JWT is terminal, and say which
      * terminal thing it is. Return null for anything retryable.
@@ -74,6 +84,7 @@ export declare class BrowserTrackerDataSource implements TrackerDataSource {
     private updateOne;
     private updateMany;
     private updateExisting;
+    private openTrackerBodyRoom;
     private upsert;
     private readItems;
     private readSavedViews;

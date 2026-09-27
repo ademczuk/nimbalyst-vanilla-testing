@@ -39,13 +39,6 @@ interface FileSearchResult {
 }
 
 // ============================================================
-// Internal State
-// ============================================================
-
-// Track which workspaces have had their QuickOpen cache built
-const cacheBuiltForWorkspace = new Set<string>();
-
-// ============================================================
 // Base Atoms
 // ============================================================
 
@@ -120,23 +113,6 @@ function getDirectoryPath(fullPath: string): string {
   const parts = fullPath.split('/');
   if (parts.length <= 1) return '';
   return parts.slice(0, -1).join('/');
-}
-
-/**
- * Ensure the ripgrep-based QuickOpen cache is built for a workspace.
- */
-async function ensureQuickOpenCache(workspacePath: string): Promise<void> {
-  if (cacheBuiltForWorkspace.has(workspacePath)) return;
-
-  const api = (window as any).electronAPI || (window as any).electron;
-  if (!api?.buildQuickOpenCache) return;
-
-  try {
-    await api.buildQuickOpenCache(workspacePath);
-    cacheBuiltForWorkspace.add(workspacePath);
-  } catch (err) {
-    console.error('[fileMention] Failed to build QuickOpen cache:', err);
-  }
 }
 
 /**
@@ -227,9 +203,6 @@ export const searchFileMentionAtom = atom(
       // use a platform-aware prefix check that accepts the workspace path
       // followed by either `/` or `\`.
       if (!query && api.getRecentWorkspaceFiles) {
-        // Warm the ripgrep cache in the background so the first typed character is fast
-        void ensureQuickOpenCache(workspacePath);
-
         try {
           const recent: string[] = await api.getRecentWorkspaceFiles(workspacePath);
           if (Array.isArray(recent) && recent.length > 0) {
@@ -248,10 +221,7 @@ export const searchFileMentionAtom = atom(
         }
       }
 
-      // Ensure the cache is built (no-op if already done)
-      await ensureQuickOpenCache(workspacePath);
-
-      // Search using the ripgrep-based cache in the main process
+      // Main owns cache freshness, including scans invalidated by file watcher events.
       const results: FileSearchResult[] = await api.searchWorkspaceFileNames(workspacePath, query);
 
       if (Array.isArray(results)) {

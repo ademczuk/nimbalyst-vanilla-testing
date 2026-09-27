@@ -3,4 +3,4 @@ export {
   nestRelationshipFieldsIntoCustomFields,
   readStoredFieldValue,
   writeStoredFieldValue,
-} from '@nimbalyst/collab-client/trackers';
+} from '@nimbalyst/collab-client/trackers/relationshipFieldStorage';

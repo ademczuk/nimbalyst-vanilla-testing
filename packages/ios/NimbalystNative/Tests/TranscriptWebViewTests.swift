@@ -311,6 +311,88 @@ final class TranscriptWebViewTests: XCTestCase {
         await fulfillment(of: [expectation], timeout: 5.0)
         XCTAssertEqual(receivedPrompt, "Create a new feature")
     }
+
+    /// iOS kills the web content process during a long background. The page
+    /// reloads empty and posts `ready` again; the transcript must be re-sent in
+    /// full, or the session sits on "Waiting for session..." until the user
+    /// navigates away and back.
+    @MainActor
+    func testTranscriptIsReloadedAfterContentProcessTermination() throws {
+        let coordinator = TranscriptWebView.Coordinator(
+            session: session,
+            waitForInitialMessages: false,
+            onSendPrompt: { _ in },
+            onInteractiveResponse: { _, _, _ in }
+        )
+        XCTAssertTrue(
+            coordinator.responds(to: #selector(WKNavigationDelegate.webViewWebContentProcessDidTerminate(_:))),
+            "WebKit only calls the termination handler under its exact selector"
+        )
+
+        let webView = RecordingWebView()
+        webView.attach(to: coordinator)
+        coordinator.currentSessionId = session.id
+        coordinator.latestMessages = messages
+        coordinator.pendingSession = (session, messages)
+
+        let ready = MockScriptMessage(body: ["type": "ready"])
+        coordinator.userContentController(WKUserContentController(), didReceive: ready)
+        XCTAssertEqual(webView.loadedMessageCounts, [2])
+        XCTAssertTrue(coordinator.isReady)
+
+        coordinator.webViewWebContentProcessDidTerminate(webView)
+        XCTAssertFalse(coordinator.isReady)
+
+        coordinator.userContentController(WKUserContentController(), didReceive: ready)
+        XCTAssertEqual(webView.loadedMessageCounts, [2, 2])
+        XCTAssertTrue(coordinator.isReady)
+    }
+
+    /// A page that reloads without a termination callback (WebKit may reload a
+    /// killed page on its own) must still get the transcript back.
+    @MainActor
+    func testUnexpectedReadyAfterLoadResendsTranscript() throws {
+        let coordinator = TranscriptWebView.Coordinator(
+            session: session,
+            waitForInitialMessages: false,
+            onSendPrompt: { _ in },
+            onInteractiveResponse: { _, _, _ in }
+        )
+        let webView = RecordingWebView()
+        webView.attach(to: coordinator)
+        coordinator.currentSessionId = session.id
+        coordinator.latestMessages = messages
+        coordinator.pendingSession = (session, messages)
+
+        let ready = MockScriptMessage(body: ["type": "ready"])
+        coordinator.userContentController(WKUserContentController(), didReceive: ready)
+        coordinator.userContentController(WKUserContentController(), didReceive: ready)
+        XCTAssertEqual(webView.loadedMessageCounts, [2, 2])
+    }
+}
+
+/// Records `loadSession` calls and answers them as the bridge would, without
+/// loading the bundle.
+private final class RecordingWebView: WKWebView {
+    var loadedMessageCounts: [Int] = []
+
+    init() { super.init(frame: .zero, configuration: WKWebViewConfiguration()) }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func loadFileURL(_ URL: URL, allowingReadAccessTo readAccessURL: URL) -> WKNavigation? { nil }
+    override func reload() -> WKNavigation? { nil }
+
+    func attach(to coordinator: TranscriptWebView.Coordinator) {
+        coordinator.webView = self
+        coordinator.callJavaScript = { [weak self] script, arguments, _, completion in
+            guard script.contains("loadSession"), let data = arguments["data"] as? [String: Any] else {
+                completion(true, nil)
+                return
+            }
+            self?.loadedMessageCounts.append((data["messages"] as? [Any])?.count ?? -1)
+            completion(data["sessionId"], nil)
+        }
+    }
 }
 
 // MARK: - Test Helpers

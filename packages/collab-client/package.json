@@ -33,6 +33,14 @@
       "types": "./src/trackers/index.ts",
       "default": "./src/trackers/index.ts"
     },
+    "./trackers/relationshipFieldStorage": {
+      "types": "./src/trackers/relationshipFieldStorage.ts",
+      "default": "./src/trackers/relationshipFieldStorage.ts"
+    },
+    "./trackers/body": {
+      "types": "./src/trackers/body/index.ts",
+      "default": "./src/trackers/body/index.ts"
+    },
     "./quick-open": {
       "types": "./src/quick-open/index.ts",
       "default": "./src/quick-open/index.ts"

@@ -18,6 +18,7 @@ import type { TrackerDataModel } from '@nimbalyst/runtime/plugins/TrackerPlugin/
 import { getDatabase } from '../../database/initialize';
 import { logger } from '../../utils/logger';
 import { appendActivity } from './trackerActivity';
+import { requestTrackerSchemaFlush } from './trackerSchemaFlush';
 
 /**
  * Minimal DB surface these writes need (PGLite or better-sqlite3). Injectable so
@@ -261,6 +262,7 @@ export async function materializeYamlTrackerTypeDef(
         WHERE workspace = $1 AND type = $2`,
       [workspace, model.type, JSON.stringify(attributedModel)],
     );
+    requestTrackerSchemaFlush(workspace);
   } catch (err) {
     logger.main.warn('[trackerTypeDefStore] materializeYaml failed for', model.type, err);
   }
@@ -321,6 +323,9 @@ export async function materializeTrackerTypeDef(
              deleted_at = NULL`,
       [typeDefId(workspace, model.type), workspace, model.type, JSON.stringify(model), source],
     );
+    // A new row enters the outbox at 'local'; an existing row keeps its status,
+    // so for it this is a no-op push.
+    requestTrackerSchemaFlush(workspace);
   } catch (err) {
     logger.main.warn('[trackerTypeDefStore] materialize failed for', model.type, err);
   }
@@ -914,6 +919,7 @@ export async function removeTrackerTypeDef(
        WHERE workspace = $1 AND type = $2 AND deleted_at IS NULL`,
       [workspace, type],
     );
+    requestTrackerSchemaFlush(workspace);
   } catch (err) {
     logger.main.warn('[trackerTypeDefStore] remove failed for', type, err);
   }

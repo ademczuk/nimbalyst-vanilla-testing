@@ -11,6 +11,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { TranscriptRuntime } from '../TranscriptRuntime';
+import { InMemoryTranscriptEventStore } from '../InMemoryTranscriptEventStore';
 import type { IRawMessageStore, RawMessage } from '../TranscriptTransformer';
 
 function makeRawStore(messages: RawMessage[]): IRawMessageStore {
@@ -160,5 +161,71 @@ describe('TranscriptRuntime', () => {
     expect(await runtime.needsTransformation('s1')).toBe(true);
     expect(await runtime.needsTransformation('s2')).toBe(false);
     expect(await runtime.needsTransformation('s3')).toBe(false);
+  });
+
+  // GitHub #1581: tool-call lookups scanned every staged event, so rebuilding a
+  // large Codex session on load was quadratic and froze the main process
+  // (~5s here before the fix, ~150ms after).
+  it('rebuilds a large Codex session in linear time', async () => {
+    const messages: RawMessage[] = [];
+    const createdAt = new Date('2026-01-01');
+    const push = (method: string, item: Record<string, unknown>) =>
+      messages.push({
+        id: messages.length + 1,
+        sessionId: 's1',
+        source: 'openai-codex',
+        direction: 'output',
+        content: JSON.stringify({ method, params: { item, threadId: 't', turnId: 'u' } }),
+        createdAt,
+        metadata: { transport: 'app-server' },
+      });
+    const toolCalls = 12_000;
+    for (let i = 0; i < toolCalls; i++) {
+      const item = { type: 'mcpToolCall', id: `exec-${i}`, server: 'nimbalyst', tool: 'x', arguments: {} };
+      push('item/started', { ...item, status: 'inProgress', result: null });
+      push('item/completed', { ...item, status: 'completed', result: { content: [{ type: 'text', text: 'ok' }] } });
+    }
+    const runtime = new TranscriptRuntime(makeRawStore(messages));
+
+    const start = performance.now();
+    const events = await runtime.getCanonicalEvents('s1', 'openai-codex');
+    const elapsed = performance.now() - start;
+
+    expect(events).toHaveLength(toolCalls);
+    expect(events.every((e) => e.payload.status === 'completed')).toBe(true);
+    expect(elapsed).toBeLessThan(2000);
+  });
+});
+
+describe('InMemoryTranscriptEventStore tool-call lookups', () => {
+  const toolCall = (sessionId: string, providerToolCallId: string, status: string, sequence: number) => ({
+    sessionId,
+    sequence,
+    createdAt: new Date('2026-01-01'),
+    eventType: 'tool_call' as const,
+    searchableText: null,
+    payload: { toolName: 'x', status },
+    parentEventId: null,
+    searchable: false,
+    subagentId: null,
+    provider: 'openai-codex',
+    providerToolCallId,
+  });
+
+  it('matches raw and synthetic ids per session, preferring the latest active call', async () => {
+    const store = new InMemoryTranscriptEventStore();
+    const done = await store.insertEvent(toolCall('s1', 'raw|1', 'completed', 0));
+    const synth = await store.insertEvent(toolCall('s1', `nimtc|${encodeURIComponent('raw|1')}|9`, 'running', 1));
+    await store.insertEvent(toolCall('s2', 'raw|1', 'running', 0));
+
+    expect((await store.findByProviderToolCallId('raw|1', 's1'))?.id).toBe(done.id);
+    expect((await store.findActiveToolCallByRawProviderId('raw|1', 's1'))?.id).toBe(synth.id);
+
+    await store.mergeEventPayload(synth.id, { status: 'completed' });
+    expect(await store.findActiveToolCallByRawProviderId('raw|1', 's1')).toBeNull();
+
+    await store.deleteSessionEvents('s1');
+    expect(await store.getEventById(done.id)).toBeNull();
+    expect((await store.findByProviderToolCallId('raw|1', 's2'))?.sessionId).toBe('s2');
   });
 });

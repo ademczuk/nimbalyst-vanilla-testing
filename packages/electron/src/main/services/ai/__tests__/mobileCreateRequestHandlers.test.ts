@@ -126,6 +126,23 @@ describe('mobile create-session request handling', () => {
     });
   });
 
+  it('republishes the row when the create-time metadata push overtakes it, instead of failing the phone', async () => {
+    // SyncedSessionStore.create fires its own metadata publish for the new
+    // session; when it lands during this batch's encryption the batch drops the
+    // row as stale. The session exists and the phone must be told so.
+    const syncSessionsToIndex = vi.fn()
+      .mockResolvedValueOnce({ published: false, reason: 'index state changed during publication', retryable: true, publishedSessionIds: [] })
+      .mockResolvedValueOnce({ published: true, publishedSessionIds: ['session-1'] });
+    const { provider, captured } = fakeProvider(syncSessionsToIndex);
+    registerMobileCreateSessionHandler(provider as never, requestContext());
+
+    await captured.session!({ requestId: 'req-race', projectId: '/workspace', initialPrompt: 'Do work' });
+
+    expect(syncSessionsToIndex).toHaveBeenCalledTimes(2);
+    expect(provider.sendCreateSessionResponse).toHaveBeenCalledWith({ requestId: 'req-race', success: true, sessionId: 'session-1' });
+    expect(mocks.queuePrompt).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['personal-sync writes withheld', 'index transport not connected; publish queued until reconnect'])('reports unpublished creation without running its prompt: %s', async reason => {
     const { provider, captured } = fakeProvider(async () => ({ published: false, reason, retryable: true, publishedSessionIds: [] }));
     registerMobileCreateSessionHandler(provider as never, requestContext());

@@ -53,6 +53,7 @@ The app self-instruments. Use `get_main_process_logs` with `searchTerm`, and `Ba
 | --- | --- | --- |
 | `[PERF] Event loop lag` | Main-thread block. Sampled every 250ms, logged at >=500ms. **A single line reports the whole blocked interval** — the previous lag line's timestamp brackets when the freeze began. | `main/utils/performanceMonitor.ts` |
 | `[PERF] High CPU usage` | 10s sampler, >50% main-process CPU, with heap/handles/requests counts | same |
+| `[PERF] Renderer jank` | **Read this first for typing lag or UI hitches.** At most one line per 10s per window: long frames (>=200ms) with the script that ran them, slow keystrokes/clicks (>=150ms) with their target, and (dev only) each React commit >=100ms with its top components, DOM class, owning tab/file, and `HIDDEN` if that tab isn't displayed. | `renderer/devtools/rendererJankMonitor.ts` |
 | `[PERF] Captured CPU profile (trigger=…) -> <path>` | A `.cpuprofile` was auto-written. Triggers: sustained >80% CPU, or a single lag >=2000ms. | same |
 | `[PERF] SQLite worker hot shapes (elu=…)` | **Top-10 query shapes by total time, dumped from inside the worker.** This usually answers "what is hot?" without opening any profile. Read this before anything else on a DB-shaped problem. | `database/sqlite/worker/sqliteWorker.ts` |
 | `[IpcSlow] <channel> took Nms` | Any `safeHandle` invocation over the threshold | `main/utils/ipcRegistry.ts` |
