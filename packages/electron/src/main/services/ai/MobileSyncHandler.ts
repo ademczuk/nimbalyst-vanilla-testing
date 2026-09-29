@@ -280,6 +280,8 @@ export class MobileSyncHandler {
               request.argsJson,
               request.projectId,
             );
+            // Outcome only, never content: without this a phone voice failure left no trace on the desktop.
+            logger.main.info(`[AIService] Mobile voice tool ${live ? `${live.tool} session=${live.scope.sessionId ?? 'none'}` : request.toolName}: ${outcome.success ? 'ok' : `failed (${outcome.error ?? 'no error'})`}`);
             await syncProvider.sendVoiceToolResponse!({
               requestId: request.requestId,
               success: outcome.success,

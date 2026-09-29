@@ -3,6 +3,7 @@ import { warnIfUnpublished } from '@nimbalyst/runtime/sync/pushOutcome';
 import type { SessionChange } from '@nimbalyst/runtime/sync/types';
 import { sessionInbox } from './sessionInboxService';
 import { codexQuestionTurns } from './codexQuestionTurns';
+import { supersedeOpenQuestions } from './supersedeOpenQuestions';
 /**
  * Streaming message handler for AIService.
  *
@@ -48,6 +49,8 @@ import type { RawDocumentContext } from '@nimbalyst/runtime/ai/services/types';
 import type { DocumentContextService } from '@nimbalyst/runtime/ai/services/DocumentContextService';
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
 import { resolveClaudeCodeParentContextWindow } from '@nimbalyst/runtime/ai/modelConstants';
+import { accumulateClaudeCodeTurnUsage, accumulateProviderTurnUsage } from './tokenUsageAccumulation';
+import { provisionalTitleForFirstMessage } from './provisionalSessionTitle';
 import {
   buildMcpSessionStatusSnapshot,
   type McpSessionStatusInput,
@@ -543,10 +546,10 @@ export class MessageStreamingHandler {
     await this.svc.sessionManager.addMessage(userMessage, session.id);
     // logger.main.info(`[AIService] User message added successfully to session ${session.id}`);
 
-    // Update session title if this is the first user message
-    if (session.messages.length === 0 || (session.messages.length === 1 && session.messages[0].type === 'user_message')) {
-      // Generate a provisional title from the first message without locking out auto-naming
-      const title = message.length > 100 ? message.substring(0, 97) + '...' : message;
+    // Provisional title from the first user message, unless the session was named at creation
+    const title = provisionalTitleForFirstMessage(session, message);
+    if (title !== null) {
+      // Without locking out auto-naming
       await this.svc.sessionManager.updateSessionTitle(session.id, title, {
         force: true,
         markAsNamed: false,
@@ -1326,6 +1329,7 @@ export class MessageStreamingHandler {
       inboxTurn = ['claude-code', 'openai-codex'].includes(session.provider)
         ? await sessionInbox.begin(session.id, session.workspacePath ?? workspacePath) : undefined;
       questionTurn = session.provider === 'openai-codex' ? codexQuestionTurns.begin(session.id) : undefined;
+      await supersedeOpenQuestions({ sessionId: session.id, provider: session.provider, context: documentContext });
       let fullResponse = '';
       let lastTextSection = '';  // Track text after the last tool call (for notifications)
       let prevTextSection = '';  // Previous non-empty text section (fallback if last section is empty)
@@ -2465,25 +2469,6 @@ export class MessageStreamingHandler {
             // For claude-code: use modelUsage for cumulative tokens and contextWindow
             // For other providers: use tokenUsage from chunk.usage
             if (session.provider === 'claude-code' && modelUsage) {
-              // For claude-code, accumulate tokens from modelUsage (SDK provides per-model breakdown)
-              const currentUsage = session.tokenUsage ?? {
-                inputTokens: 0,
-                outputTokens: 0,
-                totalTokens: 0
-              };
-
-              // Cumulative input/output come from result.usage (chunk.usage), which Anthropic
-              // deduplicates by message.id. Do NOT sum modelUsage tokens for these -- the SDK
-              // over-counts them from duplicated assistant events (each message is emitted 2-3x,
-              // one event per content block), inflating the tooltip totals. See NIM-689.
-              // Cost still derives from modelUsage (the only per-model cost source; not displayed).
-              const newInputTokens = tokenUsage?.input_tokens || 0;
-              const newOutputTokens = tokenUsage?.output_tokens || 0;
-              let newCostUSD = 0;
-              for (const modelName of Object.keys(modelUsage)) {
-                newCostUSD += modelUsage[modelName].costUSD || 0;
-              }
-
               // Prefer the REAL per-model context window the CLI reports in
               // modelUsage — the registry value is only a static seed and was
               // wrong for models that changed window across CLI versions (the
@@ -2493,28 +2478,14 @@ export class MessageStreamingHandler {
               // the PARENT model's window by matching the session's family.
               // Fall back to the registry seed before the first result arrives.
               const reportedContextWindow = resolveClaudeCodeParentContextWindow(sessionModelId, modelUsage);
-              const contextWindowForDisplay = reportedContextWindow || selectedModelContextWindow || currentUsage.contextWindow;
-
-              const updatedUsage: NonNullable<SessionData['tokenUsage']> = {
-                inputTokens: currentUsage.inputTokens + newInputTokens,
-                outputTokens: currentUsage.outputTokens + newOutputTokens,
-                totalTokens: currentUsage.totalTokens + newInputTokens + newOutputTokens,
-                costUSD: (currentUsage.costUSD || 0) + newCostUSD,
-                // Both figures go, not just the fill. The meter falls back to
-                // cumulative `totalTokens` over whatever denominator survives,
-                // so clearing the fill alone turns a stale 90% into a confident
-                // 600%. With no denominator it reports plain token totals and
-                // claims nothing about context until a turn measures it.
-                contextWindow: contextCompacted ? undefined : contextWindowForDisplay,
-                // contextFillTokens = input + cacheRead + cacheCreation from last assistant message
-                // This is the actual context fill, not cumulative - updates correctly after compaction
-                // After compaction, clear stale currentContext (next real turn will set accurate value)
-                currentContext: contextCompacted
-                  ? undefined
-                  : (contextFillTokens !== undefined && contextWindowForDisplay)
-                    ? { tokens: contextFillTokens, contextWindow: contextWindowForDisplay }
-                    : currentUsage.currentContext,
-              };
+              const contextWindowForDisplay = reportedContextWindow || selectedModelContextWindow || session.tokenUsage?.contextWindow;
+              const updatedUsage = accumulateClaudeCodeTurnUsage(session.tokenUsage, {
+                usage: tokenUsage,
+                modelUsage,
+                contextFillTokens,
+                contextCompacted,
+                contextWindow: contextWindowForDisplay,
+              });
 
               await this.svc.sessionManager.updateSessionTokenUsage(session.id, updatedUsage);
 
@@ -2549,101 +2520,29 @@ export class MessageStreamingHandler {
               session.tokenUsage = updatedUsage;
             } else if (tokenUsage && session.provider !== 'claude-code') {
               // For non-claude-code providers, use tokenUsage from chunk
-              const currentUsage = session.tokenUsage ?? {
-                inputTokens: 0,
-                outputTokens: 0,
-                totalTokens: 0
-              };
-
-              // Calculate new tokens for this message
-              const newInputTokens = (tokenUsage.input_tokens || 0);
-              const newOutputTokens = tokenUsage.output_tokens || 0;
-              const newTotalTokens = newInputTokens + newOutputTokens;
               const isCodexProvider = session.provider === 'openai-codex';
               const reportsCurrentContext = agentCapabilitiesForProviderType(
                 session.provider,
               ).contextReporting === 'context-window';
               const codexInitData = isCodexProvider ? (provider as any).getInitData?.() : null;
-              const isResumedCodexThread = codexInitData?.isResumedThread === true;
 
               // #914: only providers measured to report both a live fill and
               // denominator may populate currentContext. A catalog window by
               // itself cannot turn cumulative token spend into a percentage.
               const reportedContextWindow = reportsCurrentContext
-                ? (contextWindowFromChunk || selectedModelContextWindow || currentUsage.contextWindow)
+                ? (contextWindowFromChunk || selectedModelContextWindow || session.tokenUsage?.contextWindow)
                 : undefined;
-              const storedContextWindow = reportedContextWindow || currentUsage.contextWindow;
 
-              // Codex SDK turn.completed usage is cumulative for the provider thread.
-              // Convert to per-session deltas using the last seen cumulative snapshot.
-              let nextInputTokens = currentUsage.inputTokens + newInputTokens;
-              let nextOutputTokens = currentUsage.outputTokens + newOutputTokens;
-              let nextTotalTokens = currentUsage.totalTokens + newTotalTokens;
-              let providerCumulativeInputTokens = currentUsage.providerCumulativeInputTokens;
-              let providerCumulativeOutputTokens = currentUsage.providerCumulativeOutputTokens;
-
-              if (isCodexProvider) {
-                const cumulativeInput = tokenUsage.input_tokens ?? 0;
-                const cumulativeOutput = tokenUsage.output_tokens ?? 0;
-
-                const previousCumulativeInput =
-                  typeof currentUsage.providerCumulativeInputTokens === 'number'
-                    ? currentUsage.providerCumulativeInputTokens
-                    : currentUsage.inputTokens > 0
-                      ? currentUsage.inputTokens
-                      : undefined;
-                const previousCumulativeOutput =
-                  typeof currentUsage.providerCumulativeOutputTokens === 'number'
-                    ? currentUsage.providerCumulativeOutputTokens
-                    : currentUsage.outputTokens > 0
-                      ? currentUsage.outputTokens
-                      : undefined;
-
-                const hasPreviousCumulative =
-                  typeof previousCumulativeInput === 'number' &&
-                  typeof previousCumulativeOutput === 'number';
-
-                const deltaInput = hasPreviousCumulative
-                  ? Math.max(cumulativeInput - previousCumulativeInput, 0)
-                  : (isResumedCodexThread ? 0 : cumulativeInput);
-                const deltaOutput = hasPreviousCumulative
-                  ? Math.max(cumulativeOutput - previousCumulativeOutput, 0)
-                  : (isResumedCodexThread ? 0 : cumulativeOutput);
-
-                nextInputTokens = currentUsage.inputTokens + deltaInput;
-                nextOutputTokens = currentUsage.outputTokens + deltaOutput;
-                nextTotalTokens = currentUsage.totalTokens + deltaInput + deltaOutput;
-                providerCumulativeInputTokens = cumulativeInput;
-                providerCumulativeOutputTokens = cumulativeOutput;
-              }
-
-              const updatedUsage: NonNullable<SessionData['tokenUsage']> = {
-                inputTokens: nextInputTokens,
-                outputTokens: nextOutputTokens,
-                totalTokens: isCodexProvider
-                  ? nextTotalTokens
-                  : currentUsage.totalTokens + newTotalTokens,
-                ...(isCodexProvider ? {
-                  providerCumulativeInputTokens,
-                  providerCumulativeOutputTokens,
-                } : {}),
-                // A compaction just replaced the conversation with a summary, so
-                // every fill figure in hand describes context that no longer
-                // exists -- including the one this chunk reports, which is read
-                // off the last assistant message from before the boundary. The
-                // denominator goes with it: the meter otherwise falls back to
-                // cumulative spend over the window and reports a confident,
-                // wrong percentage. Report nothing until a turn measures the new
-                // context. Codex and OpenCode reach this branch.
-                contextWindow: contextCompacted ? undefined : storedContextWindow,
-                currentContext: contextCompacted
-                  ? undefined
-                  : reportsCurrentContext
-                    ? (contextFillTokens !== undefined && reportedContextWindow
-                      ? { tokens: contextFillTokens, contextWindow: reportedContextWindow }
-                      : currentUsage.currentContext)
-                    : currentUsage.currentContext,
-              };
+              const updatedUsage = accumulateProviderTurnUsage(session.tokenUsage, {
+                usage: tokenUsage,
+                // Codex SDK turn.completed usage is cumulative for the provider thread.
+                threadCumulative: isCodexProvider,
+                isResumedThread: codexInitData?.isResumedThread === true,
+                reportsCurrentContext,
+                reportedContextWindow,
+                contextFillTokens,
+                contextCompacted,
+              });
 
               await this.svc.sessionManager.updateSessionTokenUsage(session.id, updatedUsage);
 

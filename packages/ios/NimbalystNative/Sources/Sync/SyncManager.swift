@@ -16,7 +16,7 @@ public final class SyncManager: ObservableObject {
 
     private let crypto: CryptoManager
     private let database: DatabaseManager
-    private let indexClient: WebSocketClient = {
+    let indexClient: WebSocketClient = {
         let client = WebSocketClient()
         client.sendsDeviceAnnounce = true
         return client
@@ -815,7 +815,7 @@ public final class SyncManager: ObservableObject {
     }
 
     func callLiveVoiceTool(toolName: String, argsJson: String, scope: VoiceRelayScope) async -> VoiceToolCallResult {
-        guard connectedDevices.contains(where: { $0.deviceId == scope.hostDeviceId && ($0.type == "desktop" || $0.type == "headless") }) else {
+        guard await awaitVoiceHost(scope.hostDeviceId) else {
             return .init(success: false, result: nil, error: "The selected computer is unavailable.")
         }
         guard let data = try? JSONEncoder().encode(VoiceRelayRequest(scope: scope, tool: toolName, arguments: argsJson)),

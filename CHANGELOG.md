@@ -11,9 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 <!-- New features go here -->
 - Opt into unlimited open projects with a scrollable project rail and cleanup of unused project resources.
+- Sonnet 5.5 for Claude Agent and the Claude API; the Sonnet row now runs Sonnet 5.5 and Sonnet 5 stays selectable.
 - Knowledge extension sets up a team wiki and installs an editable "How we write this wiki" guide that agents follow, and its vocabulary now covers markets, makers, competition, and dated, cited facts.
 - Knowledge curator (alpha): agents can sort commits, sessions, and tracker changes with TypeSafe's Jev model to decide what belongs in the knowledge graph, using your own TypeSafe API key or your Cloudflare account through Workers AI.
 - Team wiki from the terminal (alpha): a Claude Code plugin and `nim login` / `nim wiki` commands let an agent read and write a team project's knowledge wiki, with each session's edits listed in the web console.
+- iOS: Live voice conversations are recorded as voice sessions on the connected desktop, including tool calls and their results
+- Crew (alpha, off by default): hire persistent agent teammates such as a PM that work scheduled shifts within token budgets, keep notes and a journal, and flag you when something needs you; extensions can now start and drive their own agent sessions.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -27,11 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - iOS: returning to the app after a long background shows a quiet "Reconnecting…" notice instead of the "Sync paused" warning
 - iOS: an open session no longer stays stuck loading after a long background
 - iOS: creating a session no longer shows "Unable to Create Session" when the desktop created it successfully
+- iOS: Live voice reads a session's pending question in its own voice instead of a separate system voice, your spoken answer now reaches the session, and this works for sessions started on the desktop
+- A session that asked a question could occasionally lose its waiting-for-your-response state
 - iOS: the running-sessions Live Activity starts again after an earlier card ends, and unread sessions keep it up for only 10 minutes after they finish
 - Changes to a team tracker type now reach teammates right away instead of after the next reconnect
 - A team project's knowledge relationship verbs are shared with teammates and the web console instead of staying on the machine that defined them
 - Improved load performance for very large Codex sessions
 - A session no longer stays marked as running after its turn ended while a question to you was still open
+- iOS: scrolling up in a long session now reaches the first message instead of stopping partway
+- Clicking the Dock or tray icon now brings back the project window, or opens Project Manager if none remains, instead of doing nothing after the app sat in the background
+- Following external Claude Code sessions keeps importing after the agent changes directory, and no longer re-reads every unchanged session log in the background
+- A question you leave unanswered by sending a new message now shows as skipped, instead of staying answerable, keeping the "Jump to question" button, and marking the session as waiting for you
+- Prevent overlapping file scans from exhausting memory while files change in large projects.
 
 ### Removed
 <!-- Removed features go here -->

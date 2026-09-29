@@ -32,6 +32,7 @@ vi.mock('virtua', async () => {
           scrollSize: vlistState.scrollSize,
           viewportSize: vlistState.viewportSize,
           findItemIndex: () => 0,
+          getItemOffset: () => 0,
           scrollToIndex: vi.fn(),
           scrollTo: vi.fn(),
         }));

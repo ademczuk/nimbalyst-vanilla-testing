@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SessionManager } from '../SessionManager';
 import type {
   SessionStore,
@@ -151,6 +151,22 @@ describe('SessionManager (runtime server)', () => {
     const sessions = await manager.getSessions('ws');
     expect(sessions).toHaveLength(1);
     expect(Array.isArray(sessions[0].messages)).toBe(true);
+  });
+
+  it('carries a caller-assigned name through loadSession, including the SQLite 0/1 flag', async () => {
+    // The streaming handler decides the provisional title and the agent's
+    // naming prompt from the loaded session, so a dropped flag re-titles a
+    // session that was named at creation (spawn_session, extension-owned).
+    // The transcript store is not under test; the row mapping is.
+    vi.spyOn(manager as unknown as { loadCanonicalTranscript: () => Promise<unknown[]> }, 'loadCanonicalTranscript')
+      .mockResolvedValue([]);
+    const named = await manager.createSession('openai-codex', { content: 'text' }, 'ws');
+    (await store.get(named.id))!.hasBeenNamed = 1 as unknown as boolean;
+    expect((await manager.loadSession(named.id, 'ws'))?.hasBeenNamed).toBe(true);
+
+    const unnamed = await manager.createSession('openai-codex', { content: 'text' }, 'ws');
+    (await store.get(unnamed.id))!.hasBeenNamed = 0 as unknown as boolean;
+    expect((await manager.loadSession(unnamed.id, 'ws'))?.hasBeenNamed).toBe(false);
   });
 
   it('blocks switching a started Claude Agent session to OpenAI Codex', async () => {

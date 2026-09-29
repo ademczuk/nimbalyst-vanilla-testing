@@ -754,6 +754,8 @@ export class ClaudeProvider extends BaseAIProvider {
           } else {
             totalUsageData.input_tokens = (totalUsageData.input_tokens || 0) + (usageData.input_tokens || 0);
             totalUsageData.output_tokens = (totalUsageData.output_tokens || 0) + (usageData.output_tokens || 0);
+            totalUsageData.cache_read_input_tokens = (totalUsageData.cache_read_input_tokens || 0) + (usageData.cache_read_input_tokens || 0);
+            totalUsageData.cache_creation_input_tokens = (totalUsageData.cache_creation_input_tokens || 0) + (usageData.cache_creation_input_tokens || 0);
           }
         }
 
@@ -890,7 +892,10 @@ export class ClaudeProvider extends BaseAIProvider {
               usage: {
                 input_tokens: totalUsageData.input_tokens || 0,
                 output_tokens: totalUsageData.output_tokens || 0,
-                total_tokens: (totalUsageData.input_tokens || 0) + (totalUsageData.output_tokens || 0)
+                total_tokens: (totalUsageData.input_tokens || 0) + (totalUsageData.output_tokens || 0),
+                // Anthropic's input_tokens excludes cache reads/writes.
+                cache_read_input_tokens: totalUsageData.cache_read_input_tokens || 0,
+                cache_creation_input_tokens: totalUsageData.cache_creation_input_tokens || 0,
               }
             } : {})
           };

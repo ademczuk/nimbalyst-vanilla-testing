@@ -40,6 +40,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 import os from 'os';
 import { ClaudeCodeProvider } from '../ClaudeCodeProvider';
 import type { StreamChunk } from '../../types';
+import { AISessionsRepository } from '../../../../storage/repositories/AISessionsRepository';
 
 /** A scripted stand-in for the SDK's Query handle. */
 function scriptQuery(script: Array<Record<string, unknown> | (() => never)>): AsyncIterable<unknown> {
@@ -1089,5 +1090,35 @@ describe('ClaudeCodeProvider.sendMessage chunk sequence', () => {
     // whatever a user's or enterprise's settings file says. The SDK default is
     // already 'never'; pinning it keeps an inherited setting from changing that.
     expect((options.settings as Record<string, unknown>).askUserQuestionTimeout).toBe('never');
+  });
+
+  // The appended system prompt heads the prompt-cache prefix on every resumed
+  // turn (NIM-1988), so `metadata.sessionDirective` is read on the first turn
+  // and frozen: a mid-session edit must not reach the second turn.
+  it('appends the session directive from metadata and freezes it for the session', async () => {
+    let metadata: Record<string, unknown> = {};
+    AISessionsRepository.setStore({ get: async () => ({ metadata }) } as never);
+    const appendedPrompts = async (): Promise<string[]> => {
+      const { provider } = await makeProvider();
+      queryMock.mockReset();
+      queryMock.mockImplementation(() =>
+        scriptQuery([INIT_CHUNK, { type: 'result', subtype: 'success', is_error: false, num_turns: 1 }]),
+      );
+      await runTurn(provider, 'turn one');
+      metadata = { sessionDirective: 'Directive edited mid-session.' };
+      await runTurn(provider, 'turn two');
+      return queryMock.mock.calls.map(([args]) => (args as { options: { systemPrompt: { append: string } } }).options.systemPrompt.append);
+    };
+    try {
+      const [plainTurn1] = await appendedPrompts();
+
+      metadata = { sessionDirective: 'Only triage GitHub issues.' };
+      const [turn1, turn2] = await appendedPrompts();
+      expect(turn1).toContain('Only triage GitHub issues.');
+      expect(turn2).toBe(turn1);
+      expect(turn1.replace('\nOnly triage GitHub issues.\n', '')).toBe(plainTurn1);
+    } finally {
+      AISessionsRepository.clearStore();
+    }
   });
 });

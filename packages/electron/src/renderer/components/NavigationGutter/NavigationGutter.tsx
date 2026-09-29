@@ -14,6 +14,7 @@ import { CodexUsageIndicator } from '../CodexUsageIndicator';
 import { GeminiUsageIndicator } from '../GeminiUsageIndicator';
 import { VoiceModeButton } from '../UnifiedAI/VoiceModeButton';
 import { useExtensionGutterButtons, useExtensionBottomPanelButtons } from '../../extensions/panels/usePanels';
+import { PanelGutterBadgeBubble } from '../../extensions/panels/PanelGutterBadgeBubble';
 import { openOrganizationSurface } from './openOrganizationSurface';
 import { HelpTooltip } from '../../help';
 import {
@@ -303,6 +304,7 @@ export const NavigationGutter: React.FC<NavigationGutterProps> = ({
         {panel.isAlpha && (
           <AlphaBadge size="dot" className="absolute top-0 right-0.5 pointer-events-none" />
         )}
+        <PanelGutterBadgeBubble panelId={panel.id} />
       </button>
     );
   };

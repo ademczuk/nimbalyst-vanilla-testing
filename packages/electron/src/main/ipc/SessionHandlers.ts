@@ -24,6 +24,7 @@ import { getSessionsForFile } from '../services/fileSessionLookup';
 import { normalizeSessionPhaseMetadataUpdate } from '../services/session/sessionPhaseTransition';
 import { destroyProviderForArchivedSession } from '../services/ai/archiveSessionProviderLifecycle';
 import { resolveSessionModelSelection } from '../services/ai/sessionModelSelection';
+import { inheritedOwnership, stripOwnerControlledMetadata } from '../services/extensionSessions/sessionOwnership';
 
 // Initialize session manager
 const sessionManager = new SessionManager();
@@ -245,6 +246,12 @@ export async function registerSessionHandlers() {
                 worktreeId: session.worktreeId || null,
                 agentRole: session.agentRole || 'standard',
                 createdBySessionId: session.createdBySessionId || null,
+                // Written with the row, so a directive or notifyParent is never
+                // missing when the first turn reads it. Ownership is assigned
+                // only by the host (extension session broker, spawn inheritance).
+                ...(session.metadata && typeof session.metadata === 'object'
+                    ? { metadata: normalizeSessionPhaseMetadataUpdate(stripOwnerControlledMetadata(session.metadata)) }
+                    : {}),
             };
             // console.log('[SessionHandlers] Creating session with payload:', JSON.stringify(createPayload));
 
@@ -256,11 +263,6 @@ export async function registerSessionHandlers() {
                 launchSource,
                 hadPrefilledPrompt,
             });
-
-            // Update with full metadata
-            if (session.metadata) {
-                await AISessionsRepository.updateMetadata(session.id, { metadata: session.metadata });
-            }
 
             return { success: true, id: session.id };
         } catch (error) {
@@ -357,6 +359,9 @@ export async function registerSessionHandlers() {
                 }
             }
 
+            if (updates.metadata) {
+                updates.metadata = stripOwnerControlledMetadata(updates.metadata);
+            }
             await AISessionsRepository.updateMetadata(sessionId, updates);
 
             if (updates.isArchived === true) {
@@ -402,7 +407,7 @@ export async function registerSessionHandlers() {
         try {
             // Extract sessionType and metadata from updates
             const { sessionType, ...rawMetadataFields } = updates;
-            const metadataFields = normalizeSessionPhaseMetadataUpdate(rawMetadataFields);
+            const metadataFields = normalizeSessionPhaseMetadataUpdate(stripOwnerControlledMetadata(rawMetadataFields));
 
             // Build update payload
             const updatePayload: any = {};
@@ -644,6 +649,9 @@ export async function registerSessionHandlers() {
                 providedModel,
             );
 
+            // A child made under an extension-owned session stays owned by that
+            // extension (never inheriting its directive), written at creation.
+            const parentRow = await AISessionsRepository.get(parentSessionId);
             const createPayload = {
                 id: sessionId,
                 provider,
@@ -652,6 +660,7 @@ export async function registerSessionHandlers() {
                 workspaceId: workspacePath,
                 parentSessionId,  // Link to parent
                 worktreeId: worktreeId || null,  // Inherit from parent if provided
+                metadata: inheritedOwnership(parentRow?.metadata),
             };
 
             await AISessionsRepository.create(createPayload as any);

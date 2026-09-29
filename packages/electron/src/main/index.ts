@@ -39,7 +39,8 @@ import {
     dispatchAppActionLink,
     type AppAction,
 } from './utils/appActionLinks';
-import { createWorkspaceManagerWindow, setupWorkspaceManagerHandlers, wasWorkspaceManagerManuallyClosed } from './window/WorkspaceManagerWindow.ts';
+import { createWorkspaceManagerWindow, getWorkspaceManagerWindow, setupWorkspaceManagerHandlers, wasWorkspaceManagerManuallyClosed } from './window/WorkspaceManagerWindow.ts';
+import { initializeApplicationWindowRecovery } from './window/ApplicationWindowRecovery';
 import { createTeamManagementWindow, setupTeamManagementHandlers } from './window/TeamManagementWindow';
 import { setupTrayPanelHandlers } from './window/TrayPanelWindow';
 import { setupMenuBarIslandHandlers } from './window/MenuBarIslandWindow';
@@ -3468,16 +3469,13 @@ app.whenReady().then(async () => {
     });
 });
 
-// Activate handler (macOS)
-app.on('activate', () => {
-    // Avoid resurrecting windows while quitting
-    if (isAppQuitting) return;
-    // Only create window if app is ready (screen module requires app to be ready)
-    if (!app.isReady()) return;
-    // On macOS, show WorkspaceManager when dock icon is clicked and no windows are open
-    if (BrowserWindow.getAllWindows().length === 0) {
-        createWorkspaceManagerWindow();
-    }
+initializeApplicationWindowRecovery({
+    // quit-and-install strips before-quit, so isAppQuitting never flips on that path.
+    isQuitting: () => isAppQuitting || isAppRestarting || AutoUpdaterService.isUpdatingApp(),
+    getPreferredProjectWindow: getMostRecentlyFocusedWorkspaceWindow,
+    getWorkspaceManagerWindow,
+    createWorkspaceManagerWindow,
+    wasWorkspaceManagerManuallyClosed,
 });
 
 let migrationQuitDraining = false;
@@ -4125,35 +4123,6 @@ app.on('before-quit', async (event) => {
         console.log(`[QUIT] [${t16}] Calling app.exit(0) (${t16-t15}ms after timeout set)`);
         try { app.exit(0); } catch {}
     }, 50);
-});
-
-// Window all closed handler
-app.on('window-all-closed', () => {
-  logger.main.info('All windows closed');
-  if (isAppQuitting) {
-    // App is quitting, allow normal quit to proceed
-    app.quit();
-    return;
-  }
-
-  // Check if the WorkspaceManager itself was manually closed by the user
-  // In that case, don't reopen it (quit on Windows/Linux, stay running on macOS)
-  if (wasWorkspaceManagerManuallyClosed()) {
-    if (process.platform !== 'darwin') {
-      logger.main.info('WorkspaceManager manually closed on non-macOS platform, quitting app');
-      app.quit();
-    } else {
-      logger.main.info('WorkspaceManager manually closed on macOS, app stays running (dock icon can reopen)');
-    }
-    return;
-  }
-
-  // A project window was closed (not the WorkspaceManager)
-  // Show the WorkspaceManager so user can open another project
-  if (app.isReady()) {
-    logger.main.info('Project window closed, showing WorkspaceManager');
-    createWorkspaceManagerWindow();
-  }
 });
 
 // Windows-specific shutdown signal handlers

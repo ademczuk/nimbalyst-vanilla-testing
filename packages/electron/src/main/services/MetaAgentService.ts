@@ -32,6 +32,9 @@ import { AIService } from './ai/AIService';
 import { setMetaAgentToolFns } from '../mcp/metaAgentServer';
 import { computeNotificationSignature } from './metaAgentNotificationSignature';
 import { deletePendingChildUpdates } from './ai/pendingChildUpdates';
+import { inheritedOwnership, isParentNotificationSuppressed } from './extensionSessions/sessionOwnership';
+import { startExtensionSessionService } from './extensionSessions/extensionSessionsService';
+import { broadcastSessionCreated } from './session/broadcastSessionCreated';
 import { extractMessageText, extractUserPrompts } from './metaAgentMessageText';
 import type { NotificationOptions, NotificationResult } from './NotificationService';
 import type { MobilePushResult } from '@nimbalyst/runtime/sync/types';
@@ -257,6 +260,9 @@ export class MetaAgentService {
       this.requestMobilePush = requestMobilePush ?? null;
       this.sessionManager = new SessionManager();
       await this.sessionManager.initialize();
+      // Extension backend modules drive their owned sessions through the same
+      // prompt queue, and receive their settles from the same state feed.
+      startExtensionSessionService(aiService);
 
       setMetaAgentToolFns({
         listWorktrees: (metaSessionId, workspaceId) =>
@@ -397,13 +403,10 @@ export class MetaAgentService {
       worktreeId: inheritedWorktreeId,
       model: effectiveModel,
       parentSessionIdOverride: workstreamId,
-    });
-
-    // Always fire-and-forget for human-triggered launches — the user can
-    // watch the new session themselves; no need to surface child-completion
-    // notifications back to the originating session.
-    await AISessionsRepository.updateMetadata(childResult.sessionId, {
-      metadata: { notifyParent: false },
+      // Always fire-and-forget for human-triggered launches — the user can
+      // watch the new session themselves; no need to surface child-completion
+      // notifications back to the originating session.
+      notifyParent: false,
     });
 
     return {
@@ -450,7 +453,11 @@ export class MetaAgentService {
   private async createChildSessionInternal(
     metaSessionId: string,
     workspaceId: string,
-    args: CreateChildSessionArgs & { parentSessionIdOverride?: string | null }
+    args: CreateChildSessionArgs & {
+      parentSessionIdOverride?: string | null;
+      /** false = fire-and-forget; written on the row before the first prompt is queued. */
+      notifyParent?: boolean;
+    }
   ): Promise<{
     sessionId: string;
     title: string;
@@ -502,12 +509,16 @@ export class MetaAgentService {
     let parentProvider: string | null = null;
     let parentModel: string | null = null;
     let callerWorkspacePath: string | null = null;
+    // A failed read is NOT treated like an orphan: the caller may be
+    // extension-owned, and a child created without its owner would escape the
+    // owner's roster and settle routing. Only a missing row falls through.
+    const parentSession = await AISessionsRepository.get(metaSessionId);
+    const callerMetadata: unknown = parentSession?.metadata ?? null;
     try {
-      const parentSession = await AISessionsRepository.get(metaSessionId);
       if (parentSession) {
         parentProvider = parentSession.provider ?? null;
-        parentModel = normalizeStoredChildModelIdentifier(parentProvider, parentSession.model ?? null);
         callerWorkspacePath = parentSession.workspacePath ?? null;
+        parentModel = normalizeStoredChildModelIdentifier(parentProvider, parentSession.model ?? null);
       }
     } catch {
       // Best-effort lookup; fall through to the hardcoded default below.
@@ -626,6 +637,33 @@ export class MetaAgentService {
     // (McpConfigService), and launchActionSession passes a standard parent — so
     // the block actually fired and wrongly relabeled standard parents.
 
+    // Read-only tool segregation: persist a restricted capability scope so the
+    // child is granted only the matching dev tools at turn time (an analyze
+    // child physically cannot run_command, so it cannot build or claim to).
+    const childToolScope =
+      args.toolScope === 'read' || args.toolScope === 'write' ? args.toolScope : undefined;
+
+    // Reasoning effort: every turn reads it back out of session metadata
+    // (MessageStreamingHandler for codex/others, buildClaudeCodeRuntimeConfig
+    // for claude-code). Clamp to the resolved model's ceiling so the child's
+    // effort selector displays the same level the provider will actually run
+    // at, rather than a level the transport would silently lower. Writing
+    // nothing leaves the child on the app-wide default.
+    const childEffortLevel = requestedEffortLevel
+      ? clampEffortLevel(requestedEffortLevel, normalizedModel)
+      : undefined;
+
+    // Everything a reader must never see missing goes in the insert itself:
+    // notifyParent written after the prompt was queued let a fast child settle
+    // notify a parent that asked not to be told. A child of an extension-owned
+    // session inherits the owner (never the directive).
+    const childMetadata: Record<string, unknown> = {
+      ...inheritedOwnership(callerMetadata),
+      ...(childToolScope ? { toolScope: childToolScope } : {}),
+      ...(childEffortLevel ? { effortLevel: childEffortLevel } : {}),
+      ...(args.notifyParent === false ? { notifyParent: false } : {}),
+    };
+
     const sessionId = randomUUID();
     await AISessionsRepository.create({
       id: sessionId,
@@ -642,30 +680,8 @@ export class MetaAgentService {
       // this flag (via documentContext.hasBeenNamed) to set hasOutOfBandNaming
       // and suppress in-band self-naming, so the child keeps the parent's title.
       hasBeenNamed: callerProvidedTitle,
-    } as any);
-
-    // Read-only tool segregation: persist a restricted capability scope so the
-    // child is granted only the matching dev tools at turn time (an analyze
-    // child physically cannot run_command, so it cannot build or claim to).
-    const childToolScope =
-      args.toolScope === 'read' || args.toolScope === 'write' ? args.toolScope : undefined;
-    if (childToolScope) {
-      await AISessionsRepository.updateMetadata(sessionId, { metadata: { toolScope: childToolScope } });
-    }
-
-    // Reasoning effort: every turn reads it back out of session metadata
-    // (MessageStreamingHandler for codex/others, buildClaudeCodeRuntimeConfig
-    // for claude-code), so writing it here is all that's needed. Clamp to the
-    // resolved model's ceiling so the child's effort selector displays the same
-    // level the provider will actually run at, rather than a level the
-    // transport would silently lower. Writing nothing leaves the child on the
-    // app-wide default.
-    const childEffortLevel = requestedEffortLevel
-      ? clampEffortLevel(requestedEffortLevel, normalizedModel)
-      : undefined;
-    if (childEffortLevel) {
-      await AISessionsRepository.updateMetadata(sessionId, { metadata: { effortLevel: childEffortLevel } });
-    }
+      metadata: childMetadata,
+    });
 
     const initialPrompt = args.prompt?.trim();
     const shouldBypassExecution = this.shouldBypassChildAgentExecutionForTests();
@@ -683,30 +699,12 @@ export class MetaAgentService {
       }
     }
 
-    const newChildParentId = args.parentSessionIdOverride ?? null;
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) {
-        window.webContents.send('sessions:refresh-list', {
-          workspacePath: workspaceKey,
-          sessionId,
-        });
-        if (worktreeId) {
-          window.webContents.send('worktree:session-created', { sessionId, worktreeId });
-        }
-        // The general `sessions:refresh-list` only updates `sessionRegistryAtom`.
-        // Workstream surfaces (tab strip, left tree) also read per-parent atoms
-        // (`sessionChildrenAtom`, `workstreamStateAtom`) that the registry
-        // refresh does not touch, so we send a targeted event so listeners can
-        // patch those without re-fetching everything.
-        if (newChildParentId) {
-          window.webContents.send('sessions:child-added', {
-            workspacePath: workspaceKey,
-            parentSessionId: newChildParentId,
-            childSessionId: sessionId,
-          });
-        }
-      }
-    }
+    broadcastSessionCreated({
+      workspacePath: workspaceKey,
+      sessionId,
+      parentSessionId: args.parentSessionIdOverride ?? null,
+      worktreeId,
+    });
 
     if (initialPrompt && !shouldBypassExecution) {
       await this.aiService.triggerQueuedPromptProcessingForSession(sessionId, worktreePath || workspaceKey, 'meta-agent');
@@ -746,6 +744,7 @@ export class MetaAgentService {
     const workspaceKey = resolveStoredWorkspaceId(parent.workspacePath, workspaceId);
 
     const isolated = args.isolated === true;
+    const notifyOnComplete = args.notifyOnComplete === true;
 
     // Sibling mode: resolve (or create) a workstream container so the new
     // session shares files-edited, tabs, and workstream overview with the
@@ -783,16 +782,10 @@ export class MetaAgentService {
       model: effectiveModel,
       effortLevel: args.effortLevel,
       parentSessionIdOverride: workstreamId,
+      // Default is fire-and-forget: kicking off work in a fresh session is the
+      // common /launch-new-session use case (escape a long parent context).
+      notifyParent: notifyOnComplete ? undefined : false,
     });
-
-    // Default is fire-and-forget: kicking off work in a fresh session is the
-    // common /launch-new-session use case (escape a long parent context).
-    const notifyOnComplete = args.notifyOnComplete === true;
-    if (!notifyOnComplete) {
-      await AISessionsRepository.updateMetadata(childResult.sessionId, {
-        metadata: { notifyParent: false },
-      });
-    }
 
     return JSON.stringify({
       ...childResult,
@@ -1270,11 +1263,10 @@ export class MetaAgentService {
         return;
       }
 
-      // Honor fire-and-forget: spawn_session sets metadata.notifyParent=false on
-      // the child for /launch-new-session-style hand-offs where the parent does
-      // not want to receive [Child Session Update] follow-up prompts.
-      const childMetadata = (session.metadata as Record<string, unknown> | undefined) ?? undefined;
-      if (childMetadata && childMetadata.notifyParent === false) {
+      // Honor fire-and-forget (spawn_session writes notifyParent=false on the
+      // child for /launch-new-session-style hand-offs), and owners that route
+      // child settles to themselves (extensionSessionsService delivers those).
+      if (isParentNotificationSuppressed(session.metadata)) {
         return;
       }
 

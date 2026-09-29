@@ -80,6 +80,8 @@ describe('buildClaudeCliTokenUsage', () => {
       inputTokens: 103, // 100 + 3 (cache reads NOT added to cumulative input)
       outputTokens: 92, // 50 + 42
       totalTokens: 195,
+      cacheReadInputTokens: 8000, // prev row predates the cache counters: read as 0
+      cacheCreationInputTokens: 400,
       costUSD: 1.25, // preserved (proxy can't compute cost)
       contextWindow: 200_000,
       currentContext: { tokens: 3 + 8000 + 400, contextWindow: 200_000 },

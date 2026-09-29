@@ -105,6 +105,8 @@ export interface AIInputProps {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
+    cacheReadInputTokens?: number;
+    cacheCreationInputTokens?: number;
     contextWindow?: number;
     categories?: TokenUsageCategory[];
     currentContext?: {

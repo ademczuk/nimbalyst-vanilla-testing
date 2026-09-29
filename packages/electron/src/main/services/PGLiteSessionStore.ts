@@ -5,6 +5,12 @@
 import { toMillis } from '../utils/timestampUtils';
 import { parseJsonObjectColumn } from '../utils/jsonColumn';
 import {
+  OWNER_METADATA_KEY,
+  SESSION_OWNER_KEY,
+  readSessionOwner,
+  stripOwnerControlledMetadata,
+} from './extensionSessions/sessionOwnership';
+import {
   computeSessionPhaseTransition,
   normalizeSessionPhaseMetadataUpdate,
 } from './session/sessionPhaseTransition';
@@ -53,6 +59,16 @@ function buildSessionArchiveFilter(includeArchived: boolean, sessionAlias = 's',
 // Shared with other JSON-typed column readers; see ../utils/jsonColumn.ts
 // for the metadata-corruption postmortem.
 const normalizeJsonObject = parseJsonObjectColumn;
+
+/** A metadata column SQL can merge into: absent, or a stored JSON object (not a string or array). */
+function isStoredJsonObject(value: unknown): boolean {
+  if (value == null) return true;
+  let parsed = value;
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value); } catch { return false; }
+  }
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+}
 
 /**
  * Parse a TEXT column that's supposed to hold JSON back into the value the
@@ -480,6 +496,23 @@ export function createPGLiteSessionStore(db: PGliteLike, ensureDbReady?: EnsureR
 
       const branchedAt = payload.branchedAt ? new Date(payload.branchedAt) : null;
 
+      // The insert below upserts. Re-creating an existing extension-owned row
+      // (e.g. a renderer re-issuing sessions:create) must not wipe its owner or
+      // the owner's bag: ownership is immutable once assigned.
+      let createMetadata: Record<string, unknown> = payload.metadata ?? {};
+      const { rows: existingRows } = await db.query<{ metadata: unknown }>(
+        `SELECT metadata FROM ai_sessions WHERE id = $1`,
+        [payload.id],
+      );
+      const existingMetadata = existingRows[0] ? normalizeJsonObject(existingRows[0].metadata) : null;
+      if (existingMetadata && readSessionOwner(existingMetadata)) {
+        createMetadata = {
+          ...stripOwnerControlledMetadata(createMetadata),
+          [SESSION_OWNER_KEY]: existingMetadata[SESSION_OWNER_KEY],
+          [OWNER_METADATA_KEY]: existingMetadata[OWNER_METADATA_KEY] ?? {},
+        };
+      }
+
       await db.query(
         `INSERT INTO ai_sessions (
           id, workspace_id, file_path, worktree_id, parent_session_id, provider, model, title, session_type, mode,
@@ -534,8 +567,8 @@ export function createPGLiteSessionStore(db: PGliteLike, ensureDbReady?: EnsureR
           payload.providerConfig ?? null,
           payload.providerSessionId ?? null,
           null,
-          (payload as any).metadata ?? {},
-          (payload as any).hasBeenNamed ?? false,
+          createMetadata,
+          payload.hasBeenNamed ?? false,
           createdAt,
           updatedAt,
           payload.branchedFromSessionId ?? null,  // Branch tracking - separate from parent
@@ -586,7 +619,14 @@ export function createPGLiteSessionStore(db: PGliteLike, ensureDbReady?: EnsureR
       // loudly so the upstream caller surfaces in main.log instead of
       // silently amplifying corruption.
       if (metadata.metadata !== undefined) {
-        const incoming = metadata.metadata;
+        // Owner keys are assigned at creation and edited only by the owning
+        // extension's broker; drop them from every ordinary write. Non-objects
+        // pass through untouched to be refused below.
+        const raw = metadata.metadata as unknown;
+        const incoming =
+          raw && typeof raw === 'object' && !Array.isArray(raw)
+            ? stripOwnerControlledMetadata(raw as Record<string, unknown>)
+            : metadata.metadata;
         if (
           incoming === null ||
           typeof incoming !== 'object' ||
@@ -602,7 +642,10 @@ export function createPGLiteSessionStore(db: PGliteLike, ensureDbReady?: EnsureR
             [sessionId],
           );
           const existingMetadata = normalizeJsonObject(rows[0]?.metadata);
-          const merged: Record<string, any> = { ...existingMetadata, ...normalizedIncoming };
+          // Only the incoming keys are written, merged in SQL. Writing back the whole
+          // blob read above let two overlapping updates each drop the other's keys: a
+          // question's `hasPendingPrompt` vanished when a token-usage write raced it.
+          const patch: Record<string, any> = { ...normalizedIncoming };
           // Record workflow-phase transitions into metadata.activity[] so the
           // session's lifecycle history is self-contained and renderable on the
           // project-graph timeline (see session/sessionPhaseTransition.ts). This
@@ -618,10 +661,16 @@ export function createPGLiteSessionStore(db: PGliteLike, ensureDbReady?: EnsureR
               null,
               Date.now(),
             );
-            if (transition.changed) merged.activity = transition.metadata.activity;
+            if (transition.changed) patch.activity = transition.metadata.activity;
           }
-          updates.push(`metadata = $${values.length + 1}`);
-          values.push(JSON.stringify(merged));
+          if (isStoredJsonObject(rows[0]?.metadata)) {
+            updates.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${values.length + 1}::jsonb`);
+            values.push(JSON.stringify(patch));
+          } else {
+            // A malformed column cannot be merged into; replace it with the repaired object.
+            updates.push(`metadata = $${values.length + 1}`);
+            values.push(JSON.stringify({ ...existingMetadata, ...patch }));
+          }
         }
       }
       if ((metadata as any).hasBeenNamed !== undefined) pushUpdate('has_been_named =', (metadata as any).hasBeenNamed);

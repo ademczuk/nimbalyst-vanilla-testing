@@ -205,6 +205,7 @@ function makeOptimisticUserMessage(
     subagentId: null,
     mode,
     attachments,
+    optimistic: true,
   };
 }
 

@@ -76,7 +76,7 @@ final class WorkspaceNavigationState: ObservableObject {
 
     func openSession(_ sessionId: String, database: DatabaseManager?) {
         let plan = SessionNavigation.plan(for: sessionId, in: database)
-        hostDeviceId = (try? database?.session(byId: sessionId))?.hostDeviceId
+        hostDeviceId = host(for: try? database?.session(byId: sessionId))
         project = plan.project
         select(.session(sessionId))
     }
@@ -84,8 +84,16 @@ final class WorkspaceNavigationState: ObservableObject {
     /// A late sync response must not replace a newer sidebar choice.
     func adoptResolvedSession(_ session: Session, database: DatabaseManager?) {
         guard selection == .session(session.id) else { return }
-        hostDeviceId = session.hostDeviceId
+        hostDeviceId = host(for: session)
         project = SessionNavigation.plan(for: session.id, in: database).project
+    }
+
+    /// Desktop-created sessions carry no hostDeviceId and are listed under a desktop.
+    /// Clearing the computer for them would unscope the list and end a voice conversation.
+    private func host(for session: Session?) -> String? {
+        if let owner = session?.hostDeviceId { return owner }
+        if hosts.contains(where: { $0.deviceId == hostDeviceId && $0.type == "desktop" }) { return hostDeviceId }
+        return hosts.first(where: { $0.type == "desktop" })?.deviceId ?? hostDeviceId
     }
 }
 

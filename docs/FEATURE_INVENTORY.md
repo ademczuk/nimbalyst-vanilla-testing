@@ -260,7 +260,8 @@ Twelve built-in provider lanes, plus any agent an extension contributes. Every l
 - Mobile voice audio selection: view the active microphone and speaker, choose supported routes through native pickers (iOS 26 microphone picker with an older-iOS fallback), and switch to the phone speaker. Headphone disconnection pauses voice until explicit Resume.
 - Mobile voice: asking the voice agent to start a new session opens it automatically on the device that asked
 - Mobile voice: the floating mic shows a tool-call indicator (animated ring + tool-icon badge) while the agent runs a tool
-- Mobile voice follows the session on screen for summaries and new tasks, while queued tasks and presented questions retain their source session. GPT Live preview supports spoken answers to simple questions, one-time permissions, and commit proposals after the app reads the exact prompt aloud; requires an updated source desktop with its workspace open. Longer or richer prompts and older hosts use existing UI cards.
+- Mobile voice follows the session on screen for summaries and new tasks, while queued tasks and presented questions retain their source session. GPT Live preview supports spoken answers to simple questions, one-time permissions, and commit proposals after the voice agent reads the exact prompt; requires an updated source desktop with its workspace open. Longer or richer prompts and older hosts use existing UI cards.
+- GPT Live voice conversations on the phone are recorded as voice sessions on the connected desktop (what you said, the agent's replies, and tool calls with results); requires an updated desktop
 - Opt-in GPT Live voice can open existing synced project files and carry the file reference into a coding request; idle closes the paid connection and foreground resume restores bounded conversation context
 - GPT Live can announce source-desktop questions and completions with cross-device presentation ownership; the source workspace must be open in the desktop app. Interrupting a question readout requires reading it again before answering; completion announcements are explicitly dismissed on the phone.
 - Session fleet Live Activity — Lock Screen card and Dynamic Island mirroring the macOS menu bar strip, with the sessions waiting on you ranked by wait time; tap a row to open that session. Server-started, so it appears without opening the app; stays visible while using the Mac, dims when the Mac stops reporting, ends when the fleet goes quiet. Toggled in Settings
@@ -399,6 +400,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Claude slash command contribution
 - Nested settings panel contribution plus first-class application/project settings routes with project context
 - Tracker importer contribution (`trackerImporters`) — external-source importers backed by a backend module
+- Extension-driven AI sessions (`ai-sessions` permission): a backend module can create sessions with a system-prompt directive (agent providers only), queue prompts, read status, results, and token usage, and receive settle events for the sessions it owns and their descendants; panels can embed a session transcript with its composer and set a gutter badge, including from the backend while the panel is closed
 - Extension hot reload
 - Extension developer kit with scaffolding
 - Extension marketplace (alpha)
@@ -410,6 +412,7 @@ Companion app; pairs with a desktop over encrypted sync. Voice mode is not inclu
 - Astro Editor
 - CSV Spreadsheet
 - Calc Sheets
+- Crew (Alpha) -- off by default; persistent agent personas (for example a PM) defined as markdown files in `nimbalyst-local/crew/`, each with a role directive, notes, a journal, weekly/interval shift schedules, notification limits, and token budgets counted across all tokens including cache. Shifts run as ordinary agent sessions grouped under the member's workstream, in the project's normal permission mode. Fullscreen panel with roster, per-member desk (embedded transcript), feed, and hire templates. Desktop only; schedules run only while the project is open, and a missed run fires once on reopen
 - DataModelLM
 - Developer Tools
 - Excalidraw

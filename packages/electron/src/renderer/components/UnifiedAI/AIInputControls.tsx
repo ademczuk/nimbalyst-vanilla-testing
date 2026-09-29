@@ -199,6 +199,8 @@ export function AIInputControls({
         provider={currentProvider ?? provider}
         inputTokens={tokenUsage?.inputTokens || 0}
         outputTokens={tokenUsage?.outputTokens || 0}
+        cacheReadInputTokens={tokenUsage?.cacheReadInputTokens || 0}
+        cacheCreationInputTokens={tokenUsage?.cacheCreationInputTokens || 0}
         totalTokens={tokenUsage?.totalTokens || 0}
         contextWindow={tokenUsage?.contextWindow || 0}
         categories={tokenUsage?.categories}

@@ -14,6 +14,7 @@ import {
 } from "../services/ai/gitCommitProposalPromptUtils";
 import { setSessionPendingPrompt } from "../services/ai/pendingPromptPersistence";
 import { deliverCodexQuestionAnswer } from "../services/ai/codexQuestionDelivery";
+import { isInteractivePromptClosed } from "../services/ai/questionTerminalResultLookup";
 
 export function registerSessionPromptResponseHandler(): void {
   /**
@@ -57,6 +58,15 @@ export function registerSessionPromptResponseHandler(): void {
             });
           }
           return result;
+        }
+        // A form closed by a newer user turn (or already answered) must not be
+        // answered again, and must never reach the session fallback channel
+        // where it could settle a newer form with these answers.
+        if (
+          promptType === "request_user_input_request" &&
+          (await isInteractivePromptClosed(sessionId, promptId))
+        ) {
+          return { success: false, error: "This form is already closed." };
         }
         const { database } = await import("../database/PGLiteDatabaseWorker");
         const timestamp = Date.now();

@@ -140,6 +140,7 @@ import { initCollabReplicaListeners } from './store/listeners/collabReplicaListe
 import { initCollabConversionListeners } from './store/listeners/collabConversionListeners';
 import { initNotificationListeners } from './store/listeners/notificationListeners';
 import { initExtensionPermissionListeners } from './store/listeners/extensionPermissionListeners';
+import { initPanelGutterBadgeListeners } from './store/listeners/panelGutterBadgeListeners';
 import { initPermissionListeners } from './store/listeners/permissionListeners';
 import { initSoundListeners } from './store/listeners/soundListeners';
 import { initStytchAuthListeners } from './store/listeners/stytchAuthListeners';
@@ -411,6 +412,7 @@ export default function App() {
     const cleanupMenuCommand = initMenuCommandListeners();
     const cleanupNotification = initNotificationListeners();
     const cleanupExtensionPermission = initExtensionPermissionListeners();
+    const cleanupPanelGutterBadges = initPanelGutterBadgeListeners();
     const cleanupPermission = initPermissionListeners();
     const cleanupSound = initSoundListeners();
     const cleanupStytchAuth = initStytchAuthListeners();
@@ -459,6 +461,7 @@ export default function App() {
       cleanupMenuCommand?.();
       cleanupNotification?.();
       cleanupExtensionPermission?.();
+      cleanupPanelGutterBadges();
       cleanupPermission?.();
       cleanupSound?.();
       cleanupStytchAuth?.();

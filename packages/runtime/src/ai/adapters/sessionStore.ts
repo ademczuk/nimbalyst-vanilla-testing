@@ -79,6 +79,14 @@ export interface CreateSessionPayload {
   branchedFromSessionId?: string;  // ID of the session this was forked from
   branchPointMessageId?: number;  // Message ID where this branch diverged
   branchedAt?: number;  // Timestamp when the branch was created
+  /** Session already has a caller-assigned name; suppresses in-band self-naming. */
+  hasBeenNamed?: boolean;
+  /**
+   * Initial `metadata` blob, written in the same insert as the row. Anything a
+   * reader must never see missing (e.g. `sessionOwner`, `sessionDirective`,
+   * `notifyParent`) belongs here rather than in a follow-up updateMetadata.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 /**

@@ -5,7 +5,6 @@ import OpenAI from 'openai';
 import { BaseAgentProvider } from './BaseAgentProvider';
 import { buildUserMessageAddition } from './documentContextUtils';
 import { describeUnusableWorkspacePath } from './workspacePreconditions';
-import { buildClaudeCodeSystemPrompt, buildMetaAgentSystemPrompt, type MetaAgentWorkflowPreset } from '../../prompt';
 import { DEFAULT_MODELS } from '../../modelConstants';
 import { AIToolCall, AIToolResult } from '../../types';
 import {
@@ -30,8 +29,9 @@ import { ToolPermissionService } from '../permissions/ToolPermissionService';
 import { PermissionMode, TrustChecker, PermissionPatternSaver, PermissionPatternChecker, SecurityLogger } from './ProviderPermissionMixin';
 import { CodexSdkModuleLike, loadCodexSdkModule } from './codex/codexSdkLoader';
 import { resolvePackagedCodexBinaryPath } from './codex/codexBinaryPath';
+import { buildCodexSystemPrompt } from './codex/codexSystemPrompt';
 import { McpConfigService } from '../services/McpConfigService';
-import { getMcpConfigService, isInternalMcpServerEnabled, areTrackerToolsEnabled, resolveTrackersWorkspacePath } from '../services/mcpServerConfig';
+import { getMcpConfigService } from '../services/mcpServerConfig';
 import { MCPServerConfig } from '../../../types/MCPServerConfig';
 import { safeJSONSerialize } from '../../../utils/serialization';
 import { AskUserQuestionPrompt, AskUserQuestionPromptOption } from './shared/askUserQuestionTypes';
@@ -979,7 +979,11 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     const agentRole = await this.getAgentRole(sessionId);
     const isMetaAgent = agentRole === 'meta-agent';
     const workflowPreset = isMetaAgent ? await this.getWorkflowPreset(sessionId) : 'default';
-    const systemPrompt = this.buildSystemPrompt(documentContext, isMetaAgent, workflowPreset);
+    const systemPrompt = buildCodexSystemPrompt({
+      documentContext, isMetaAgent, workflowPreset, model: this.config?.model ?? undefined,
+      sessionDirective: await this.getSessionDirective(sessionId),
+      hasOutOfBandNaming: this.isNamedOutOfBand(sessionId, documentContext),
+    });
     const { userMessageAddition, messageWithContext } = buildUserMessageAddition(message, documentContext);
     const unsupportedAttachmentHints = attachments?.filter(
       (attachment) => attachment.type !== 'image' && attachment.type !== 'document'
@@ -1885,37 +1889,6 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     this.permissionService.clearSessionCache();
     // Call base class destroy (calls abort, sessions.clear, permissions.clearSessionCache, removeAllListeners)
     super.destroy();
-  }
-
-  /**
-   * Build system prompt for Codex using the same addendum as Claude Code.
-   * Uses buildClaudeCodeSystemPrompt to include Nimbalyst-specific instructions
-   * for visual tools, worktrees, session naming, etc.
-   */
-  protected buildSystemPrompt(documentContext?: DocumentContext, isMetaAgent: boolean = false, workflowPreset: MetaAgentWorkflowPreset = 'default'): string {
-    if (isMetaAgent) {
-      return buildMetaAgentSystemPrompt('codex', workflowPreset, {
-        provider: 'openai-codex',
-        model: this.config?.model ?? undefined,
-      });
-    }
-
-    const hasSessionNaming = isInternalMcpServerEnabled();
-    const worktreePath = documentContext?.worktreePath;
-    const isVoiceMode = (documentContext as any)?.isVoiceMode;
-    const voiceModeCodingAgentPrompt = (documentContext as any)?.voiceModeCodingAgentPrompt;
-    // Note: Agent teams are not currently supported for Codex
-    const enableAgentTeams = false;
-
-    return buildClaudeCodeSystemPrompt({
-      hasSessionNaming,
-      toolReferenceStyle: 'codex',
-      worktreePath,
-      isVoiceMode,
-      voiceModeCodingAgentPrompt,
-      enableAgentTeams,
-      trackersEnabled: areTrackerToolsEnabled(resolveTrackersWorkspacePath(documentContext)),
-    });
   }
 
   private async getConfiguredModel(): Promise<string> {

@@ -124,6 +124,29 @@ final class PendingSessionResolverTests: XCTestCase {
         XCTAssertEqual(navigation.selection, .session("late"))
     }
 
+    func testOpeningDesktopCreatedSessionKeepsADesktopSelected() throws {
+        let db = try makeDatabase()
+        let navigation = WorkspaceNavigationState()
+        let device = { (id: String, type: String) in
+            DeviceInfo(deviceId: id, name: id, type: type, platform: "test", appVersion: nil, connectedAt: 0, lastActiveAt: 0, isFocused: nil, status: nil)
+        }
+        let roster = CurrentValueSubject<[DeviceInfo], Never>([device("mac", "desktop"), device("studio", "desktop"), device("vm", "headless")])
+        navigation.observeHosts(source: roster, publisher: roster.eraseToAnyPublisher())
+        try db.upsertSession(makeSession(id: "unattributed"))
+        var owned = makeSession(id: "owned")
+        owned.hostDeviceId = "vm"
+        try db.upsertSession(owned)
+
+        navigation.hostDeviceId = "studio"
+        navigation.openSession("unattributed", database: db)
+        XCTAssertEqual(navigation.hostDeviceId, "studio")
+
+        navigation.openSession("owned", database: db)
+        XCTAssertEqual(navigation.hostDeviceId, "vm")
+        navigation.openSession("unattributed", database: db)
+        XCTAssertEqual(navigation.hostDeviceId, "mac", "A headless host never lists unattributed sessions")
+    }
+
     func testComposeStateSurvivesColumnRemountAndRejectsOldRemoteDrafts() {
         let navigation = WorkspaceNavigationState()
         let compose = navigation.composeState(for: "session")
